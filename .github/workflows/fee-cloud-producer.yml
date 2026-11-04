@@ -92,6 +92,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
+      actions: read
     outputs:
       outcome: ${{ steps.plan.outputs.outcome }}
       target: ${{ steps.plan.outputs.target }}
@@ -109,6 +110,7 @@ jobs:
         shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          FEE_REPORT_ACTIONS_TOKEN: ${{ github.token }}
           FEE_REPORT_ONCE_MAIN: ${{ vars.FEE_REPORT_ONCE_MAIN }}
           FEE_REPORT_DAILY_ENABLED: ${{ vars.FEE_REPORT_DAILY_ENABLED }}
           FEE_REPORT_PERIODS_ENABLED: ${{ vars.FEE_REPORT_PERIODS_ENABLED }}
@@ -143,8 +145,10 @@ jobs:
             args+=("--recovery-main=$REVIEWED_RECOVERY_MAIN")
           fi
           summary=$(node scripts/fee-report-producer.mjs "${args[@]}")
-          node - "$summary" <<'NODE'
-          const fs=require('fs'),r=JSON.parse(process.argv[2]);
+          node --input-type=module - "$summary" <<'NODE'
+          import fs from 'node:fs';
+          import {reportPreflightSummary} from './scripts/fee-report-producer.mjs';
+          const r=JSON.parse(process.argv[2]);
           if(r.schema!=='fee-console.report-preflight.v1'||!['produce','already-published','not-due','waiting','candidate-pending','recovery-required'].includes(r.outcome))throw Error('unexpected period decision');
           fs.appendFileSync(process.env.GITHUB_OUTPUT,`outcome=${r.outcome}\n`);
           if(r.outcome==='produce'){
@@ -152,7 +156,7 @@ jobs:
             const kind=r.plan.kind.startsWith('daily')?'daily':r.plan.kind==='monthly'?'monthly':'weekly';
             fs.appendFileSync(process.env.GITHUB_OUTPUT,`target=${r.plan.accountingThrough}\nkind=${kind}\nmain=${r.mainSha}\nplan=${JSON.stringify(r.plan)}\n`);
           }
-          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY,`## Fee report period\n\n- Decision: ${r.outcome}\n- Accounting cutoff: ${r.plan?.accountingThrough||'not due'}\n- Price cutoff: ${r.plan?.priceThrough||'not due'}\n\nNo financial source or encrypted economic book is read by this gate.\n`);
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY,reportPreflightSummary(r));
           if(r.outcome==='recovery-required')throw Error('FEE_REPORT_RECOVERY_REQUIRED');
           NODE
 

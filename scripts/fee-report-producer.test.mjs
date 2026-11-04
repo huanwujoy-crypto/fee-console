@@ -8,7 +8,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import {CLOUD_ACCOUNTS,parseSourceJson} from './fee-cloud-source.mjs';
-import {dailyPublicationPreflight,managedTransferIdentitiesFromFund,periodBenchmark,captureReportRange,publishedReportMatches,reportPublicationPreflight as nativeReportPreflight,readPeriodSourceAttempts,reportPublicationWatch,explicitReportPlan,periodIbRetryAllowed,readPeriodRetryRuns,assertPeriodIbRecheckUnchanged,reviewedSyncConfirmation,sourceAttemptWindowStart,produceReportPeriod,reportFailureCode,reviewedRecoveryConfirmation,readReportRecoveryRelease,validateReportRecoveryEvidence,authorizeReportRecovery} from './fee-report-producer.mjs';
+import {reportPreflightSummary,dailyPublicationPreflight,managedTransferIdentitiesFromFund,periodBenchmark,captureReportRange,publishedReportMatches,reportPublicationPreflight as nativeReportPreflight,readPeriodSourceAttempts,reportPublicationWatch,explicitReportPlan,periodIbRetryAllowed,readPeriodRetryRuns,assertPeriodIbRecheckUnchanged,reviewedSyncConfirmation,sourceAttemptWindowStart,produceReportPeriod,reportFailureCode,reviewedRecoveryConfirmation,readReportRecoveryRelease,validateReportRecoveryEvidence,authorizeReportRecovery} from './fee-report-producer.mjs';
 import {producerFailureCode,safeProducerFailureSummary,UNRESOLVED_FLOW_DIAGNOSTIC_PREFIX} from './fee-cloud-producer.mjs';
 import {SourceFetchError} from './fee-economic-source.mjs';
 import {dailyReportPlan,weeklyReportPlan,monthlyReportPlan,reportAddDays} from './fee-report-period.mjs';
@@ -962,4 +962,41 @@ test('actual daily preflight starts at09:00 without clearing candidate, budget o
  assert.equal((await dailyPublicationPreflight({...args,runAttempt:'2'})).reasonCode,'REPORT_SOURCE_RERUN_NOT_ALLOWED');
  assert.equal((await dailyPublicationPreflight({...args,readState:async()=>({...old,pending:true})})).outcome,'candidate-pending');
  await assert.rejects(dailyPublicationPreflight({...args,reviewedSyncDate:'2026-11-03'}),/MANUAL_SYNC_CONFIRMATION/);
+});
+
+test('period metadata token stays on fixed GET routes and preserves source-entry counting',async()=>{
+ const token='synthetic-ephemeral-token-canary',r=budgetRun();let calls=0;
+ const fetchImpl=async(url,init)=>{calls++;assert.match(url,/^https:\/\/api\.github\.com\/repos\/huanwujoy-crypto\/fee-console\/actions\//);assert.equal(init.method,'GET');assert.equal(init.redirect,'error');assert.equal(init.headers.Authorization,'Bearer '+token);const value=url.includes('/workflows/')?{total_count:1,workflow_runs:[r]}:{total_count:1,jobs:[budgetJob(r)]};const response=new Response(JSON.stringify(value));Object.defineProperty(response,'url',{value:url});return response;};
+ assert.deepEqual(await readPeriodSourceAttempts({plan:budgetPlan,now:budgetNow,actionsToken:token,fetchImpl}),{attempts:1,inProgress:false});assert.equal(calls,2);
+ for(const actionsToken of ['',null,'short','a'.repeat(20)+'\n'])await assert.rejects(readPeriodSourceAttempts({plan:budgetPlan,now:budgetNow,actionsToken,fetchImpl:()=>assert.fail('invalid token must stop before network')}),/BOUNDED_JSON_AUTH_REQUIRED/);
+});
+test('period metadata diagnostics are closed and never render raw exceptions or extra fields',async()=>{
+ const {BoundedJsonError}=await import('./fee-http-json.mjs'),old=state(weeklyReportPlan('2026-10-23'),'2026-10-27T01:00:00Z');
+ for(const [error,code] of [...['CONFIG','ABORTED','HTTP','HTTP_401','HTTP_403','HTTP_429','TYPE','SIZE','BODY','TIMEOUT','JSON','NETWORK'].map(c=>[new BoundedJsonError(c),c]),[Error('FEE_REPORT_SOURCE_ATTEMPT_METADATA'),'METADATA_INVALID'],[new BoundedJsonError('AUTH_REQUIRED'),'AUTH_REQUIRED'],[Error('private-canary url header token body'),'UNKNOWN'],[new BoundedJsonError('private-canary'),'UNKNOWN']]){
+  const r=await nativeReportPreflight({plan:budgetPlan,now:budgetNow,readState:async()=>old,readSourceAttempts:async()=>{throw error;}});assert.equal(r.outcome,'waiting');assert.equal(r.reasonCode,'REPORT_SOURCE_ATTEMPT_METADATA_UNVERIFIED');assert.equal(r.metadataCode,code);
+  const summary=reportPreflightSummary({...r,message:'private-canary',stack:'private-canary',url:'private-canary'});assert.match(summary,new RegExp('Metadata result: '+code));assert.doesNotMatch(summary,/private-canary|BOUNDED_JSON_/);
+ }
+ const summary=reportPreflightSummary({schema:'fee-console.report-preflight.v1',outcome:'waiting',reasonCode:'REPORT_SOURCE_private-canary',metadataCode:'HTTP',plan:{accountingThrough:'private-canary'}});assert.match(summary,/Reason: UNKNOWN/);assert.doesNotMatch(summary,/private-canary|Metadata result/);
+});
+test('actual period CLI and workflow summary carry the scoped token and safe failure reason end to end',t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'fee-period-auth-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+ const s=state(dailyReportPlan('2026-11-02',['NYSE','NASDAQ']),'2026-11-03T03:47:41Z'),preload=path.join(dir,'preload.mjs'),token='synthetic-ephemeral-token-canary';
+ fs.writeFileSync(preload,`const D=Date,now=D.parse('2026-11-04T01:34:52Z');globalThis.Date=class extends D{constructor(...a){super(...(a.length?a:[now]));}static now(){return now;}};
+ const data=${JSON.stringify(s.data.toString())},health=${JSON.stringify(s.health)};
+ globalThis.fetch=async(url,init={})=>{url=String(url);if(init.method&&init.method!=='GET'||init.redirect!=='error')throw Error('method or redirect');
+ const prefix='https://api.github.com/repos/huanwujoy-crypto/fee-console/';if(!url.startsWith(prefix))throw Error('financial access forbidden');const route=url.slice(prefix.length);let v,status=200;
+ if(route.startsWith('actions/workflows/fee-cloud-producer.yml/runs?')){if(init.headers?.Authorization!=='Bearer '+process.env.FEE_REPORT_ACTIONS_TOKEN)throw Error('missing header');v={total_count:0,workflow_runs:[]};if(/^http[0-9]+$/.test(process.env.SYNTHETIC_CASE||''))status=Number(process.env.SYNTHETIC_CASE.slice(4));if(process.env.SYNTHETIC_CASE==='network')throw Error('private-canary');if(process.env.SYNTHETIC_CASE==='partial')v.total_count=1;}
+ else{if(init.headers?.Authorization)throw Error('token escaped action scope');if(route==='git/ref/heads/main')v={object:{sha:'a'.repeat(40)}};else if(route.startsWith('contents/')){const text=route.startsWith('contents/data.json?')?data:route.startsWith('contents/fee-data-health.json?')?JSON.stringify(health):null;if(text===null)throw Error('unknown file');v={type:'file',encoding:'base64',size:Buffer.byteLength(text),content:Buffer.from(text).toString('base64')};}else if(route.startsWith('git/matching-refs/heads/'))v=[];else throw Error('unknown route');}
+ const r=new Response(JSON.stringify(v),{status});Object.defineProperty(r,'url',{value:url});return r;};`);
+ const workflow=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8'),period=workflow.split('\n  period:\n')[1].split('\n  once-admit:\n')[0];
+ assert.match(period,/permissions:\n      contents: read\n      actions: read/);assert.match(period,/FEE_REPORT_ACTIONS_TOKEN: \$\{\{ github.token \}\}/);assert.equal((workflow.match(/FEE_REPORT_ACTIONS_TOKEN:/g)||[]).length,1);
+ const receiver=period.split(`node --input-type=module - "$summary" <<'NODE'\n`)[1].split('\n          NODE')[0].replace(/^          /gm,'');assert.ok(receiver.includes('reportPreflightSummary(r)'));
+ const cli=new URL('./fee-report-producer.mjs',import.meta.url).pathname,cwd=path.resolve(path.dirname(cli),'..');
+ for(const [kind,expected]of [['ok',null],['http401','HTTP_401'],['http403','HTTP_403'],['http429','HTTP_429'],['http500','HTTP'],['network','NETWORK'],['partial','METADATA_INVALID'],['missing','AUTH_REQUIRED']]){
+  const env={PATH:process.env.PATH,FEE_REPORT_ACTIONS_TOKEN:kind==='missing'?'':token,IB_MANAGER_READ_ENABLED:'true',GITHUB_RUN_ID:'1001',GITHUB_RUN_ATTEMPT:'1',SYNTHETIC_CASE:kind};
+  const run=spawnSync(process.execPath,['--import',preload,cli,'--mode=preflight','--report-kind=daily','--report-target=2026-11-03','--report-markets=NYSE,NASDAQ'],{env,encoding:'utf8',timeout:10000});assert.equal(run.status,0,run.stderr);assert.doesNotMatch(run.stdout+run.stderr,/private-canary|synthetic-ephemeral-token-canary/);const r=JSON.parse(run.stdout);assert.equal(r.outcome,expected?'waiting':'produce');assert.equal(r.metadataCode,expected||undefined);
+  const output=path.join(dir,kind+'.output'),summary=path.join(dir,kind+'.summary');
+  const received=spawnSync(process.execPath,['--input-type=module','-',run.stdout],{cwd,input:receiver,encoding:'utf8',env:{PATH:process.env.PATH,GITHUB_OUTPUT:output,GITHUB_STEP_SUMMARY:summary},timeout:10000});assert.equal(received.status,0,received.stderr);
+  const saved=fs.readFileSync(summary,'utf8');assert.doesNotMatch(saved+received.stdout+received.stderr,/private-canary|synthetic-ephemeral-token-canary/);if(expected){assert.match(saved,new RegExp('Metadata result: '+expected));assert.equal(fs.readFileSync(output,'utf8'),'outcome=waiting\n');}else{assert.match(saved,/Decision: produce/);assert.match(fs.readFileSync(output,'utf8'),/target=2026-11-03/);}
+ }
 });
