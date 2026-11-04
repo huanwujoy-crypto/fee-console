@@ -720,15 +720,21 @@ assert.equal(ratioUiHash(instantFixtureBytes),'f4903f4e28f8f5a53ae7d2387db589652
 const instantFixture=JSON.parse(instantFixtureBytes);
 const actualInstalledUiBytes=fs.readFileSync(unifiedUiFile,'utf8');
 const sixFixtureBytes=fs.readFileSync(new URL('./fixtures/fee-ratio-six-allocation-ui.json',import.meta.url));
-assert.equal(ratioUiHash(sixFixtureBytes),'fc628cf1c6dcb70aafd7e1545de69743ce8bdd9a7a27a4953f8f726813e3e3dc');
+assert.equal(ratioUiHash(sixFixtureBytes),'b86797b1ca00198c61228c5dca45f50489ff8e2b5d20b6ea80814c2e9dab5039');
 const sixFixture=JSON.parse(sixFixtureBytes);
 function sixUiAdapter(page,forward=true){
  assert.equal(typeof forward,'boolean');assert.equal(ratioUiHash(page),forward?sixFixture.priorSha256:sixFixture.nextSha256,'unreviewed six-category input');
  for(const r of (forward?sixFixture.regions:[...sixFixture.regions].reverse())){const [from,to]=forward?[r.prior,r.next]:[r.next,r.prior];assert.equal(page.split(from).length,2);page=page.replace(from,()=>to);}
  assert.equal(ratioUiHash(page),forward?sixFixture.nextSha256:sixFixture.priorSha256,'unreviewed six-category output');return page;
 }
-let sixStageUiSource=actualInstalledUiBytes;
-let performanceReviewedUiSource=actualInstalledUiBytes;
+function notesUiAdapter(page,forward=true){
+ assert.equal(ratioUiHash(page),forward?sixFixture.notesPriorSha256:sixFixture.notesNextSha256,'unreviewed notes input');
+ for(const r of (forward?sixFixture.notesRegions:[...sixFixture.notesRegions].reverse())){const [from,to]=forward?[r.prior,r.next]:[r.next,r.prior];assert.equal(page.split(from).length,2);page=page.replace(from,()=>to);}
+ assert.equal(ratioUiHash(page),forward?sixFixture.notesNextSha256:sixFixture.notesPriorSha256,'unreviewed notes output');return page;
+}
+const notesReviewedUiSource=ratioUiHash(actualInstalledUiBytes)===sixFixture.notesPriorSha256?notesUiAdapter(actualInstalledUiBytes):actualInstalledUiBytes;
+let sixStageUiSource=ratioUiHash(actualInstalledUiBytes)===sixFixture.notesNextSha256?notesUiAdapter(actualInstalledUiBytes,false):actualInstalledUiBytes;
+let performanceReviewedUiSource=sixStageUiSource;
 if(ratioUiHash(sixStageUiSource)===sixFixture.releaseNextSha256){for(const r of [...sixFixture.releaseRegions].reverse()){assert.equal(sixStageUiSource.split(r.next).length,2);sixStageUiSource=sixStageUiSource.replace(r.next,()=>r.prior);}assert.equal(ratioUiHash(sixStageUiSource),sixFixture.releasePriorSha256);performanceReviewedUiSource=sixStageUiSource;}
 if(ratioUiHash(performanceReviewedUiSource)===sixFixture.performancePriorSha256){
  for(const r of sixFixture.performanceRegions){assert.equal(performanceReviewedUiSource.split(r.prior).length,2);performanceReviewedUiSource=performanceReviewedUiSource.replace(r.prior,()=>r.next);}
@@ -1613,3 +1619,61 @@ test('fund details use the same full source-name formatter as top-five and keep 
  assert.match(sixReviewedUiSource,/\.ratio-fund-holding-name\{min-width:0;overflow-wrap:anywhere\}/);
  assert.match(sixReviewedUiSource,/\.ratio-distribution-account ul\{list-style:none;margin:0;padding:0\}/);
 });
+
+
+test('numbered fund notes successor changes only reviewed display regions and version',()=>{
+ const prior=notesUiAdapter(notesReviewedUiSource,false);
+ assert.equal(notesUiAdapter(prior),notesReviewedUiSource);
+ for(const [page,forward]of [[prior,true],[notesReviewedUiSource,false]])assert.throws(()=>notesUiAdapter(page+' ',forward),/unreviewed notes/);
+ const block=(p,a,b)=>p.slice(p.indexOf(a),p.indexOf(b,p.indexOf(a)));
+ for(const [a,b]of [['function createFeeRatioCore(','/* ratio-presentation:v1 */'],['const ratioExposureCore=','/* ============ 渲染 ============ */']])assert.equal(block(prior,a,b),block(notesReviewedUiSource,a,b));
+});
+
+// Execute the proposed DOM-only disclosure change against synthetic nodes.
+{
+const page=notesReviewedUiSource;
+const a=page.indexOf('function foldRatioFundNotes('),b=page.indexOf('function ratioHoldingDisplayName(',a);
+const code=page.slice(a,b);
+class Node{
+ constructor(tag,text=''){this.tagName=tag;this.nodes=[];this.className='';this.parent=null;this.open=false;this.value=text;this.classList={contains:c=>this.className.split(' ').includes(c)};}
+ get children(){return this.nodes.filter(n=>n.tagName!=='#text');}
+ get firstChild(){return this.nodes[0]||null;}
+ get textContent(){return this.value+this.nodes.map(n=>n.textContent).join('');}
+ set textContent(value){this.nodes=[];this.value='';if(value)this.append(new Node('#text',value));}
+ append(...nodes){for(const node of nodes){if(node.parent)node.parent.nodes.splice(node.parent.nodes.indexOf(node),1);node.parent=this;this.nodes.push(node);}}
+ insertBefore(node,reference){if(node.parent)node.parent.nodes.splice(node.parent.nodes.indexOf(node),1);node.parent=this;const i=this.nodes.indexOf(reference);if(i<0)this.nodes.push(node);else this.nodes.splice(i,0,node);}
+ querySelectorAll(selector){if(selector.includes(','))return selector.split(',').flatMap(s=>this.querySelectorAll(s.trim()));return this.nodes.flatMap(n=>[...(selector[0]==='.'&&n.classList.contains(selector.slice(1))?[n]:[]),...n.querySelectorAll(selector)]);}
+}
+function fixture(reverse=false){
+ const report=new Node('DIV'),sets=[];
+ for(const title of (reverse?['对冲基金分布','常青基金分布']:['常青基金分布','对冲基金分布'])){
+  const section=new Node('SECTION'),h2=new Node('H2'),details=new Node('DETAILS'),summary=new Node('SUMMARY');
+  section.className='ratio-fund-distribution';h2.textContent=title;details.className='ratio-distribution-details';summary.textContent='分类、账户与参考目标';
+  const paragraphs=['按原始名称首字段分类；分母仅为本类市值。','组合参考目标35%；策略目标未设。','本类合计 USD 123.45；明细按账户及金额降序，同名合并。'].map(t=>{const n=new Node('P');n.textContent=t;return n;});
+  const holding=new Node('SECTION');holding.className='ratio-distribution-category';holding.textContent='Synthetic Account / Synthetic Fund / USD 123.45';
+  details.append(summary,...paragraphs,holding);section.append(h2,details);report.append(section);sets.push({title,details,summary,paragraphs,holding,texts:paragraphs.map(p=>p.textContent)});
+ }
+ const asset=new Node('DETAILS'),assetSummary=new Node('SUMMARY');asset.className='ratio-asset-notes';assetSummary.textContent='分类、账户与参考目标';asset.append(assetSummary);report.append(asset);
+ const context={document:{createElement:tag=>new Node(tag.toUpperCase())}};vm.createContext(context);vm.runInContext(code,context);
+ return {report,sets,asset,run:()=>context.foldRatioFundNotes(report)};
+}
+test('all explanatory paragraphs preserved inside closed numbered notes, holdings left directly accessible',()=>{
+ const f=fixture();f.run();
+ for(const set of f.sets){
+  const number=set.title.startsWith('常青')?'5':'6',note=set.details.children[1];
+  assert.equal(note.tagName,'DETAILS');assert.equal(note.open,false);assert.ok(note.classList.contains('ratio-fund-notes'));
+  assert.equal(note.children[0].textContent,'说明 '+number);
+  assert.deepEqual(note.children.slice(1),set.paragraphs);
+  for(const [i,p]of set.paragraphs.entries())assert.equal(p.textContent,number+'.'+(i+1)+set.texts[i]);
+  assert.equal(set.holding.parent,set.details);assert.equal(set.holding.textContent,'Synthetic Account / Synthetic Fund / USD 123.45');
+  assert.equal(set.summary.textContent,'明细');
+ }
+ assert.equal(f.asset.textContent,'明细');
+});
+test('repeated styling does not duplicate or renumber notes; order changes do not change identifiers',()=>{
+ const f=fixture(true);f.run();const first=f.report.textContent;f.run();assert.equal(f.report.textContent,first);
+ assert.equal(f.report.querySelectorAll('.ratio-fund-notes').length,2);
+ for(const set of f.sets)assert.ok(set.details.children[1].textContent.startsWith(set.title.startsWith('常青')?'说明 5':'说明 6'));
+});
+
+}

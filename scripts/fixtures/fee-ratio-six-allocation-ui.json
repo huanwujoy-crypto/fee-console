@@ -114,5 +114,25 @@
       "prior": "const UI_VERSION_LABEL=\" · v4.9.36\";",
       "next": "const UI_VERSION_LABEL=\" · v4.9.37\";"
     }
+  ],
+  "notesPriorSha256": "31101cf73ec304acd401d765b7013cdceaf1b5bb9be46628c3dc98dcaf205509",
+  "notesNextSha256": "0d72a8f1ab1eed9e1b57248c791a1ac946b752b8b035f980f5de8c4cc4c0552f",
+  "notesRegions": [
+    {
+      "prior": "<meta name=\"fee-console-build\" content=\"4.9.37\">",
+      "next": "<meta name=\"fee-console-build\" content=\"4.9.38\">"
+    },
+    {
+      "prior": "const UI_VERSION_LABEL=\" · v4.9.37\";",
+      "next": "const UI_VERSION_LABEL=\" · v4.9.38\";"
+    },
+    {
+      "prior": "function ratioHoldingDisplayName(raw,securityCode=''){",
+      "next": "function foldRatioFundNotes(report){\n  for(const details of report.querySelectorAll('.ratio-asset-notes, .ratio-distribution-details')){\n    const summary=Array.from(details.children).find(n=>n.tagName==='SUMMARY');\n    if(summary?.textContent==='分类、账户与参考目标')summary.textContent='明细';\n  }\n  const numbers={'常青基金分布':'5','对冲基金分布':'6'};\n  for(const section of report.querySelectorAll('.ratio-fund-distribution')){\n    const title=Array.from(section.children).find(n=>n.tagName==='H2')?.textContent;\n    const number=numbers[title],details=Array.from(section.children).find(n=>n.tagName==='DETAILS'&&n.classList.contains('ratio-distribution-details'));\n    if(!number||!details||Array.from(details.children).some(n=>n.classList.contains('ratio-fund-notes')))continue;\n    const paragraphs=Array.from(details.children).filter(n=>n.tagName==='P');\n    if(!paragraphs.length)continue;\n    const note=document.createElement('details'),summary=document.createElement('summary');\n    note.className='ratio-explanation ratio-fund-notes';\n    summary.textContent='说明 '+number;note.append(summary);\n    for(const [i,p] of paragraphs.entries()){\n      const label=document.createElement('span'),body=document.createElement('span');\n      label.className='ratio-note-number';body.className='ratio-note-text';label.textContent=number+'.'+(i+1);\n      while(p.firstChild)body.append(p.firstChild);p.append(label,body);note.append(p);\n    }\n    details.insertBefore(note,details.children[1]||null);\n  }\n}\nfunction ratioHoldingDisplayName(raw,securityCode=''){"
+    },
+    {
+      "prior": "  report.classList.add('ratio-styled');\n}",
+      "next": "  foldRatioFundNotes(report);\n  report.classList.add('ratio-styled');\n}"
+    }
   ]
 }
