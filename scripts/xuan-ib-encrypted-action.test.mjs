@@ -720,7 +720,7 @@ assert.equal(ratioUiHash(instantFixtureBytes),'f4903f4e28f8f5a53ae7d2387db589652
 const instantFixture=JSON.parse(instantFixtureBytes);
 const actualInstalledUiBytes=fs.readFileSync(unifiedUiFile,'utf8');
 const sixFixtureBytes=fs.readFileSync(new URL('./fixtures/fee-ratio-six-allocation-ui.json',import.meta.url));
-assert.equal(ratioUiHash(sixFixtureBytes),'b86797b1ca00198c61228c5dca45f50489ff8e2b5d20b6ea80814c2e9dab5039');
+assert.equal(ratioUiHash(sixFixtureBytes),'21d9bbddea14fbfaa8092ac1e5cb03059481034cc4c8f30549062fb918085683');
 const sixFixture=JSON.parse(sixFixtureBytes);
 function sixUiAdapter(page,forward=true){
  assert.equal(typeof forward,'boolean');assert.equal(ratioUiHash(page),forward?sixFixture.priorSha256:sixFixture.nextSha256,'unreviewed six-category input');
@@ -732,8 +732,15 @@ function notesUiAdapter(page,forward=true){
  for(const r of (forward?sixFixture.notesRegions:[...sixFixture.notesRegions].reverse())){const [from,to]=forward?[r.prior,r.next]:[r.next,r.prior];assert.equal(page.split(from).length,2);page=page.replace(from,()=>to);}
  assert.equal(ratioUiHash(page),forward?sixFixture.notesNextSha256:sixFixture.notesPriorSha256,'unreviewed notes output');return page;
 }
-const notesReviewedUiSource=ratioUiHash(actualInstalledUiBytes)===sixFixture.notesPriorSha256?notesUiAdapter(actualInstalledUiBytes):actualInstalledUiBytes;
-let sixStageUiSource=ratioUiHash(actualInstalledUiBytes)===sixFixture.notesNextSha256?notesUiAdapter(actualInstalledUiBytes,false):actualInstalledUiBytes;
+function assetNotesUiAdapter(page,forward=true){
+ assert.equal(ratioUiHash(page),forward?sixFixture.assetNotesPriorSha256:sixFixture.assetNotesNextSha256,'unreviewed asset notes input');
+ for(const r of (forward?sixFixture.assetNotesRegions:[...sixFixture.assetNotesRegions].reverse())){const [from,to]=forward?[r.prior,r.next]:[r.next,r.prior];assert.equal(page.split(from).length,2);page=page.replace(from,()=>to);}
+ assert.equal(ratioUiHash(page),forward?sixFixture.assetNotesNextSha256:sixFixture.assetNotesPriorSha256,'unreviewed asset notes output');return page;
+}
+const notesInstalledUiSource=ratioUiHash(actualInstalledUiBytes)===sixFixture.assetNotesNextSha256?assetNotesUiAdapter(actualInstalledUiBytes,false):actualInstalledUiBytes;
+const notesReviewedUiSource=ratioUiHash(notesInstalledUiSource)===sixFixture.notesPriorSha256?notesUiAdapter(notesInstalledUiSource):notesInstalledUiSource;
+const assetNotesReviewedUiSource=assetNotesUiAdapter(notesReviewedUiSource);
+let sixStageUiSource=ratioUiHash(notesInstalledUiSource)===sixFixture.notesNextSha256?notesUiAdapter(notesInstalledUiSource,false):notesInstalledUiSource;
 let performanceReviewedUiSource=sixStageUiSource;
 if(ratioUiHash(sixStageUiSource)===sixFixture.releaseNextSha256){for(const r of [...sixFixture.releaseRegions].reverse()){assert.equal(sixStageUiSource.split(r.next).length,2);sixStageUiSource=sixStageUiSource.replace(r.next,()=>r.prior);}assert.equal(ratioUiHash(sixStageUiSource),sixFixture.releasePriorSha256);performanceReviewedUiSource=sixStageUiSource;}
 if(ratioUiHash(performanceReviewedUiSource)===sixFixture.performancePriorSha256){
@@ -1644,7 +1651,7 @@ class Node{
  insertBefore(node,reference){if(node.parent)node.parent.nodes.splice(node.parent.nodes.indexOf(node),1);node.parent=this;const i=this.nodes.indexOf(reference);if(i<0)this.nodes.push(node);else this.nodes.splice(i,0,node);}
  querySelectorAll(selector){if(selector.includes(','))return selector.split(',').flatMap(s=>this.querySelectorAll(s.trim()));return this.nodes.flatMap(n=>[...(selector[0]==='.'&&n.classList.contains(selector.slice(1))?[n]:[]),...n.querySelectorAll(selector)]);}
 }
-function fixture(reverse=false){
+function fixture(reverse=false,selectedCode=code){
  const report=new Node('DIV'),sets=[];
  for(const title of (reverse?['对冲基金分布','常青基金分布']:['常青基金分布','对冲基金分布'])){
   const section=new Node('SECTION'),h2=new Node('H2'),details=new Node('DETAILS'),summary=new Node('SUMMARY');
@@ -1654,7 +1661,7 @@ function fixture(reverse=false){
   details.append(summary,...paragraphs,holding);section.append(h2,details);report.append(section);sets.push({title,details,summary,paragraphs,holding,texts:paragraphs.map(p=>p.textContent)});
  }
  const asset=new Node('DETAILS'),assetSummary=new Node('SUMMARY');asset.className='ratio-asset-notes';assetSummary.textContent='分类、账户与参考目标';asset.append(assetSummary);report.append(asset);
- const context={document:{createElement:tag=>new Node(tag.toUpperCase())}};vm.createContext(context);vm.runInContext(code,context);
+ const context={document:{createElement:tag=>new Node(tag.toUpperCase())}};vm.createContext(context);vm.runInContext(selectedCode,context);
  return {report,sets,asset,run:()=>context.foldRatioFundNotes(report)};
 }
 test('all explanatory paragraphs preserved inside closed numbered notes, holdings left directly accessible',()=>{
@@ -1669,6 +1676,31 @@ test('all explanatory paragraphs preserved inside closed numbered notes, holding
   assert.equal(set.summary.textContent,'明细');
  }
  assert.equal(f.asset.textContent,'明细');
+});
+test('asset overview explanations fold separately without moving account tables or changing text',()=>{
+ const start=assetNotesReviewedUiSource.indexOf('function foldRatioFundNotes('),end=assetNotesReviewedUiSource.indexOf('function ratioHoldingDisplayName(',start);
+ const f=fixture(false,assetNotesReviewedUiSource.slice(start,end));
+ const paragraphs=['互斥分类与来源日期。','指定基准排除，真实账户保留。','参考目标100%；零目标不是交易指令。','黄金数值归属不重复合计。'].map(text=>{const p=new Node('P');p.textContent=text;return p;});
+ const link=new Node('A');link.textContent='原说明链接';paragraphs[0].append(link);
+ const texts=paragraphs.map(p=>p.textContent),accounts=new Node('TABLE');accounts.textContent='Synthetic account / category / 123.45';
+ f.asset.append(...paragraphs,accounts);f.run();
+ const note=f.asset.children[1];assert.equal(note.tagName,'DETAILS');assert.equal(note.open,false);assert.ok(note.classList.contains('ratio-asset-explanation'));
+ assert.equal(note.children[0].textContent,'说明 7');assert.deepEqual(note.children.slice(1),paragraphs);
+ paragraphs.forEach((p,i)=>assert.equal(p.textContent,'7.'+(i+1)+texts[i]));
+ assert.equal(paragraphs[0].children[1].children[0],link);
+ assert.equal(accounts.parent,f.asset);assert.equal(accounts.textContent,'Synthetic account / category / 123.45');
+ note.open=true;const content=f.report.textContent;f.run();assert.equal(f.report.textContent,content);assert.equal(note.open,true);
+ assert.equal(f.report.querySelectorAll('.ratio-asset-explanation').length,1);
+ assert.equal(f.report.querySelectorAll('.ratio-fund-notes').length,2);
+});
+test('asset notes successor is exact and keeps financial, auth and loading code unchanged',()=>{
+ assert.equal(assetNotesUiAdapter(assetNotesReviewedUiSource,false),notesReviewedUiSource);
+ assert.throws(()=>assetNotesUiAdapter(notesReviewedUiSource+' '),/unreviewed asset notes/);
+ const normalised=assetNotesReviewedUiSource.replace('content="4.9.39"','content="4.9.38"').replace('UI_VERSION_LABEL=" · v4.9.39"','UI_VERSION_LABEL=" · v4.9.38"');
+ const region=p=>{const a=p.indexOf('function foldRatioFundNotes('),b=p.indexOf('function ratioHoldingDisplayName(',a);return [p.slice(0,a),p.slice(b)];};
+ assert.deepEqual(region(normalised),region(notesReviewedUiSource));
+ assert.match(assetNotesReviewedUiSource,/\.ratio-note-text\{min-width:0;overflow-wrap:anywhere\}/);
+ assert.match(assetNotesReviewedUiSource,/#p-ratio \.ratio-explanation>summary/);
 });
 test('repeated styling does not duplicate or renumber notes; order changes do not change identifiers',()=>{
  const f=fixture(true);f.run();const first=f.report.textContent;f.run();assert.equal(f.report.textContent,first);

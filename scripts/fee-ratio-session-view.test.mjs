@@ -12,8 +12,9 @@ const downloadedPage=fs.readFileSync(new URL('../index.html',import.meta.url),'u
 // Adapt only these exact reviewed bytes for the existing historical stage tests.
 let installed=downloadedPage;
 const sixFixtureBytes=fs.readFileSync(new URL('./fixtures/fee-ratio-six-allocation-ui.json',import.meta.url));
-assert.equal(hash(sixFixtureBytes),'b86797b1ca00198c61228c5dca45f50489ff8e2b5d20b6ea80814c2e9dab5039');
+assert.equal(hash(sixFixtureBytes),'21d9bbddea14fbfaa8092ac1e5cb03059481034cc4c8f30549062fb918085683');
 const sixFixture=JSON.parse(sixFixtureBytes);
+if(hash(installed)===sixFixture.assetNotesNextSha256){for(const r of [...sixFixture.assetNotesRegions].reverse()){assert.equal(installed.split(r.next).length,2);installed=installed.replace(r.next,()=>r.prior);}assert.equal(hash(installed),sixFixture.assetNotesPriorSha256);}
 if(hash(installed)===sixFixture.notesNextSha256){for(const r of [...sixFixture.notesRegions].reverse()){assert.equal(installed.split(r.next).length,2);installed=installed.replace(r.next,()=>r.prior);}assert.equal(hash(installed),sixFixture.notesPriorSha256);}
 if(hash(installed)===sixFixture.releaseNextSha256){for(const r of [...sixFixture.releaseRegions].reverse()){assert.equal(installed.split(r.next).length,2);installed=installed.replace(r.next,()=>r.prior);}assert.equal(hash(installed),sixFixture.releasePriorSha256);}
 if(hash(installed)===sixFixture.performanceNextSha256){
