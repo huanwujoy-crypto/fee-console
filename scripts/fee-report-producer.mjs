@@ -14,7 +14,7 @@ import {fetchEconomicSnapshot,SourceFetchError} from './fee-economic-source.mjs'
 import {incomeDateEvidenceFromData} from './fee-income-date-policy.mjs';
 import {canonicalJson} from './fee-receipt-core.mjs';
 import {validateHealth} from './fee-data-health.mjs';
-import {boundedJson} from './fee-http-json.mjs';
+import {boundedJson,BoundedJsonError} from './fee-http-json.mjs';
 import {createFundInvestorCore} from './fund-investor-core.mjs';
 import {validateManagedTransferIdentities} from './fee-sharesight-transfers.mjs';
 import {reportDate,reportAddDays,selectReportBenchmark,weeklyReportPlan,monthlyReportPlan,coalesceReportPlans,validateReportPlan,reportPlanReadiness,reportPlansAround,reportWindowDates,dailyReportPlan,isReviewedDailyPlan} from './fee-report-period.mjs';
@@ -347,12 +347,20 @@ const RECOVERY_SCOPES=Object.freeze([
   ]),uiBlob:'26096fe78ad571d7a8a43476d2fbf72f1194797d'}),
 ]);
 const recoveryScope=target=>RECOVERY_SCOPES.find(s=>s.target===target);
-export async function readPeriodSourceAttempts({plan,now,currentRunId=null,recoveryMain=null,fetchImpl=globalThis.fetch}={}){
+export async function readPeriodSourceAttempts({plan,now,currentRunId=null,recoveryMain=null,actionsToken=process.env.FEE_REPORT_ACTIONS_TOKEN,fetchImpl=globalThis.fetch}={}){
   if(!validateReportPlan(plan)||!Number.isFinite(now?.getTime()))fail('SOURCE_ATTEMPT_METADATA');
   if(recoveryMain!==null&&!/^[a-f0-9]{40}$/.test(recoveryMain))fail('RECOVERY_METADATA');
   const root='https://api.github.com/repos/huanwujoy-crypto/fee-console/actions',from=new Date(sourceAttemptWindowStart(plan)).toISOString();
   const query=new URLSearchParams({branch:'main',created:from+'..'+now.toISOString(),per_page:'100'});
-  const get=url=>boundedJson(fetchImpl,url,{method:'GET',headers:{Accept:'application/vnd.github+json'}},{timeoutMs:5000,maxBytes:512*1024});
+  // Only the period job opts into its ephemeral actions:read token. An empty
+  // configured token fails closed; unrelated public observers stay unchanged.
+  if(actionsToken!==undefined&&(typeof actionsToken!=='string'||actionsToken.length<20||actionsToken.length>4096||/\s/.test(actionsToken)))throw new BoundedJsonError('AUTH_REQUIRED');
+  const headers={Accept:'application/vnd.github+json',...(actionsToken===undefined?{}:{Authorization:'Bearer '+actionsToken})};
+  const get=url=>boundedJson(async(target,init)=>{
+    const response=await fetchImpl(target,init);
+    if([401,403,429].includes(response?.status))throw new BoundedJsonError('HTTP_'+response.status);
+    return response;
+  },url,{method:'GET',headers},{timeoutMs:5000,maxBytes:512*1024});
   const listing=await get(root+'/workflows/fee-cloud-producer.yml/runs?'+query),seen=new Set(),jobsSeen=new Set();
   if(!Number.isSafeInteger(listing.total_count)||!Array.isArray(listing.workflow_runs)||listing.total_count!==listing.workflow_runs.length||listing.total_count>32)fail('SOURCE_ATTEMPT_METADATA');
   const runs=listing.workflow_runs;
@@ -440,6 +448,22 @@ export async function authorizeReportRecovery({plan,expectedMain,now=new Date(),
   }
   validateReportRecoveryEvidence({plan,expectedMain,currentRunId,budget,release});
 }
+const PERIOD_REASONS=new Set(['REPORT_NOT_DUE','ACCOUNTING_DAY_NOT_COMPLETE','SOURCE_DAY_NOT_CLOSED','CALENDAR_SCOPE_UNVERIFIED','ALL_RELEVANT_MARKETS_CLOSED','REPORT_SOURCE_RANGE_UNVERIFIED','REPORT_TARGET_OUTSIDE_PROMOTION_WINDOW','REPORT_SOURCE_RERUN_NOT_ALLOWED','REPORT_SOURCE_RUN_IN_PROGRESS','REPORT_SOURCE_ATTEMPT_BUDGET_EXHAUSTED','REPORT_DAILY_SOURCE_ALREADY_ATTEMPTED','REPORT_SOURCE_ATTEMPT_METADATA_UNVERIFIED','IB_BOUNDED_SAME_PERIOD_RECHECK']);
+const METADATA_ERRORS=new Set(['CONFIG','ABORTED','HTTP','HTTP_401','HTTP_403','HTTP_429','TYPE','SIZE','BODY','TIMEOUT','JSON','NETWORK','METADATA_INVALID','AUTH_REQUIRED','UNKNOWN']);
+function periodMetadataError(error){
+  if(error instanceof BoundedJsonError&&METADATA_ERRORS.has(error.code))return error.code;
+  if(error?.message==='FEE_REPORT_SOURCE_ATTEMPT_METADATA')return 'METADATA_INVALID';
+  return 'UNKNOWN';
+}
+// The workflow uses this same projection; never render exception text or raw
+// API fields. Reason/error enums describe a gate, not a source-read receipt.
+export function reportPreflightSummary(result){
+  if(result?.schema!=='fee-console.report-preflight.v1'||!['produce','already-published','not-due','waiting','candidate-pending','recovery-required'].includes(result.outcome))fail('PLAN');
+  const date=value=>typeof value==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(value)?value:'not due';
+  const reason=result.reasonCode===undefined?'NONE':PERIOD_REASONS.has(result.reasonCode)?result.reasonCode:'UNKNOWN';
+  const metadata=result.reasonCode==='REPORT_SOURCE_ATTEMPT_METADATA_UNVERIFIED'&&METADATA_ERRORS.has(result.metadataCode)?result.metadataCode:null;
+  return `## Fee report period\n\n- Decision: ${result.outcome}\n- Reason: ${reason}\n- Accounting cutoff: ${date(result.plan?.accountingThrough)}\n- Price cutoff: ${date(result.plan?.priceThrough)}\n${metadata?'- Metadata stage: SOURCE_ATTEMPTS\n- Metadata result: '+metadata+'\n':''}\nNo financial source or encrypted economic book is read by this gate.\n`;
+}
 export async function reportPublicationPreflight({now=new Date(),plan=null,reviewedSyncDate=null,recoveryMain=null,scheduledDaily=false,ibEnabled=process.env.IB_MANAGER_READ_ENABLED==='true',currentRunId=process.env.GITHUB_RUN_ID,runAttempt=process.env.GITHUB_RUN_ATTEMPT,readRetryRuns=readPeriodRetryRuns,readSourceAttempts=readPeriodSourceAttempts,readRecoveryRelease=readReportRecoveryRelease,readState}={}){
   readState||=((target,start)=>readPublicationState(target,start,undefined,{requireIb:ibEnabled}));
   const plans=plan?[plan]:reportPlansAround(now);
@@ -490,7 +514,7 @@ export async function reportPublicationPreflight({now=new Date(),plan=null,revie
     // automatic retry after financial entry. Keep the ordinary 2-attempt
     // accounting intact; a separate reviewed recovery must authorize reuse.
     if(scheduledDaily&&budget.attempts!==0)return {schema:'fee-console.report-preflight.v1',outcome:'waiting',reasonCode:'REPORT_DAILY_SOURCE_ALREADY_ATTEMPTED',plan:next,mainSha:state.mainSha};
-  }catch{return {schema:'fee-console.report-preflight.v1',outcome:'waiting',reasonCode:'REPORT_SOURCE_ATTEMPT_METADATA_UNVERIFIED',plan:next,mainSha:state.mainSha};}
+  }catch(error){return {schema:'fee-console.report-preflight.v1',outcome:'waiting',reasonCode:'REPORT_SOURCE_ATTEMPT_METADATA_UNVERIFIED',metadataCode:periodMetadataError(error),plan:next,mainSha:state.mainSha};}
   return {schema:'fee-console.report-preflight.v1',outcome:'produce',plan:next,mainSha:state.mainSha};
 }
 export async function dailyPublicationPreflight({now=new Date(),targetDate=null,reviewedSyncDate=null,markets=String(process.env.FEE_REPORT_MARKETS||'').split(',').filter(Boolean),readState,...options}={}){
