@@ -116,7 +116,7 @@ jobs:
 
       - name: Test manual ratio transport and fee isolation with synthetic inputs
         if: ${{ github.event.pull_request.draft == false }}
-        run: node --test scripts/fee-ratio-cloud-publish.test.mjs scripts/fee-ratio-cloud-runtime.test.mjs
+        run: node --test scripts/fee-ratio-cloud-publish.test.mjs scripts/fee-ratio-cloud-runtime.test.mjs scripts/fee-ratio-aggregate-returns.test.mjs scripts/fee-ratio-performance-integration.test.mjs scripts/fee-ratio-session-view.test.mjs
 
       - name: IB daily read-only comparison fixtures
         run: python3 cloud/ib-daily/test_daily_wiring.py -v

@@ -1,3 +1,4 @@
+import {createAggregateReturnsCore} from './fee-ratio-aggregate-returns.mjs';
 // Pure publication orchestration. Fixed-service IO is supplied explicitly;
 // tests use memory-only fakes. The runtime owns credentials and bounded transport.
 import crypto from 'node:crypto';
@@ -38,7 +39,7 @@ export function validateRatioCloudPlan(plan){
 export function createRatioCloudPublisher({exposureCore=createRankedExposureCore()}={}){
   const ratio=createFeeRatioCore(exposureCore,crypto.webcrypto);
   const snapshot=createRatioSnapshotCore(ratio,exposureCore,createRatioSourceCore,parse,crypto.webcrypto);
-  const profile=()=>ratio.digest([createOfficialRatioSourceCore.toString(),createFeeCompanyExposureCore.toString(),createRatioSnapshotCore.toString(),createRatioSourceCore.toString(),createFeeRatioCore.toString(),createRankedExposureCore.toString()]);
+  const profile=()=>ratio.digest([createAggregateReturnsCore.toString(),createOfficialRatioSourceCore.toString(),createFeeCompanyExposureCore.toString(),createRatioSnapshotCore.toString(),createRatioSourceCore.toString(),createFeeRatioCore.toString(),createRankedExposureCore.toString()]);
   function destination(v,identity){
     if(!exact(v,['id','ownerId','authenticatedUserId','public','revision','recipientBytes','snapshotBytes'])||v.id!==identity.gistId||v.ownerId!==identity.ownerId||v.authenticatedUserId!==identity.ownerId||v.public!==false||typeof v.revision!=='string'||!/^[a-f0-9]{40,64}$/.test(v.revision))refuse();
     return {...v,recipientBytes:bytes(v.recipientBytes),snapshotBytes:bytes(v.snapshotBytes)};
@@ -52,15 +53,15 @@ export function createRatioCloudPublisher({exposureCore=createRankedExposureCore
   }
   async function prepare({plan,originalBytes,inputBytes,manager,previous,now}){
     const raw=parse(originalBytes),input=parse(inputBytes);
-    if(sha(originalBytes)!==plan.original.sha256||sha(inputBytes)!==plan.input.sha256||raw.schemaVersion!=='sharesight-private-full-v2'||input.schema!=='fee-console.ratio-sources.v2')refuse();
+    if(sha(originalBytes)!==plan.original.sha256||sha(inputBytes)!==plan.input.sha256||!((raw.schemaVersion==='sharesight-private-full-v2'&&input.schema==='fee-console.ratio-sources.v2')||(raw.schemaVersion==='sharesight-private-performance-v1'&&input.schema==='fee-console.ratio-sources.v3')))refuse();
     // Exact approved Library identity and version are bound to the uploaded
     // object's hash/generation by the future transport. A hash is not consent.
     const source=createRatioSourceCore(accounts=>sha(JSON.stringify(accounts.map(s=>s.replaceAll('&amp;','&')).sort())));
     const facts=source.verifyBrowserSourceAssociations(raw,input,{scopeHash:exposureCore.ALL_TOGETHER_SCOPE_SHA256,now});
     const model=await buildRatioModel(input,{kind:'snapshot',targetDate:input.exposure.summary.asOf,feeAccountingThrough:null,now,viewCore:ratio,previewOnly:true});
-    const {companyExposure,sourceDates,classificationSummary,...association}=facts;
+    const {companyExposure,sourceDates,classificationSummary,performance,...association}=facts;
     model.book.browserEvidence={...model.book.browserEvidence,integrity:'verified-original-library-association',associationId:await ratio.digest([plan.original.sha256,plan.input.sha256,plan.library,manager.recipient.scopeId]),managerScopeId:manager.recipient.scopeId,sourceVersion:plan.library.version,migrationPending:association.migrationPending,classificationDeltaCents:association.classificationDeltaCents,exposureDeltaCents:association.exposureDeltaCents};
-    model.companyExposure=companyExposure;model.sourceDates=sourceDates;model.classificationSummary=classificationSummary;
+    model.companyExposure=companyExposure;model.sourceDates=sourceDates;model.classificationSummary=classificationSummary;if(performance)model.performance=performance;
     const proof=await snapshot.verifyOriginal({originalBytes,inputBytes,model,recipient:manager.recipient,sourceSha256:plan.original.sha256,inputSha256:plan.input.sha256,libraryVersion:plan.library.version,now});
     if(previous.body.source.sourceSha256===proof.evidence.sourceSha256&&previous.body.source.inputSha256===proof.evidence.inputSha256) return {sameSource:true};
     const candidate=await snapshot.candidate({model,recipient:manager.recipient,proof,previous,now});
