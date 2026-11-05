@@ -145,7 +145,7 @@ export function createFeeCompanyExposureCore(){
   }
   const esc=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const usd=v=>'USD '+v.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
-  function renderCompanyExposure(model,exposure,sourceSha256){
+  function renderCompanyExposure(model,exposure,sourceSha256,renderReturns=()=> ''){
     const v=validate(model,exposure,sourceSha256);
     if(!v.top)return '<p class="ratio-key-status" role="status">公司敞口待核实：原份穿透归属或杠杆倍数依据未完整核实；保留原证券前五，不重复计算杠杆。</p>';
     const tie=(a,b)=>canonical([a.account||'',a.securityCode,a.market,a.product||'',a.sourceRows]).localeCompare(canonical([b.account||'',b.securityCode,b.market,b.product||'',b.sourceRows]));
@@ -160,7 +160,7 @@ export function createFeeCompanyExposureCore(){
       }).join('')+'</ol>':'<p>无</p>')+'</section>').join('');
     };
     const legacy=model.ruleVersion===LEGACY_RULE&&model.components.some(r=>r.product==='TQQQ.NASDAQ'||r.securityCode==='TQQQ')?'<p class="ratio-key-status">当前历史快照保留原TQQQ口径；3倍规则将在更新快照后生效。</p>':'';
-    return legacy+'<table><thead><tr><th>公司／组成</th><th>经济敞口 USD</th><th>占总资产／占二级资产</th></tr></thead><tbody>'+v.top.map((r,i)=>'<tr><td>'+(i+1)+'. '+esc(r.name)+(r.accounts.length?'<span class="ratio-holding-accounts">'+esc(r.accounts.join(' · '))+'</span>':'')+'<details><summary>持仓与穿透明细</summary>'+detail(r,i+1)+'</details></td><td>'+usd(r.valueUsd)+'</td><td>'+r.portfolioWeightPct.toFixed(2)+'%／'+r.categoryWeightPct.toFixed(2)+'%</td></tr>').join('')+'</tbody></table>';
+    return legacy+'<table><thead><tr><th>公司／组成</th><th>经济敞口 USD</th><th>占总资产／占二级资产</th></tr></thead><tbody>'+v.top.map((r,i)=>'<tr><td>'+(i+1)+'. '+esc(r.name)+(r.accounts.length?'<span class="ratio-holding-accounts">'+esc(r.accounts.join(' · '))+'</span>':'')+'<details><summary>持仓与穿透明细</summary>'+detail(r,i+1)+'</details>'+renderReturns(r)+'</td><td>'+usd(r.valueUsd)+'</td><td>'+r.portfolioWeightPct.toFixed(2)+'%／'+r.categoryWeightPct.toFixed(2)+'%</td></tr>').join('')+'</tbody></table>';
   }
   return {SCHEMA,RULE,LEGACY_RULE,PREVIOUS_RULE,build,validate,render:renderCompanyExposure};
 }

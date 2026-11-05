@@ -8,6 +8,7 @@ import path from 'node:path';
 import {authenticated,syntheticOfficialSource} from './fee-ratio-official-source.test.mjs';
 import {createOfficialRatioSourceCore} from './fee-ratio-official-source.mjs';
 import {createAggregateReturnsCore} from './fee-ratio-aggregate-returns.mjs';
+import {createFeeCompanyExposureCore} from './fee-ratio-company-exposure.mjs';
 import {aggregateUiFixture,aggregateUiStage} from './fee-ratio-aggregate-ui-fixture.mjs';
 import {buildRatioModel} from './fee-ratio-packet.mjs';
 import {createRatioCloudPublisher,RATIO_CLOUD_FILE} from './fee-ratio-cloud-publish.mjs';
@@ -21,7 +22,7 @@ function performance(base){
 }
 async function fixture(t,edit=x=>x,allocation=syntheticOfficialSource()){
  const f=await authenticated(t,allocation),raw={schemaVersion:'sharesight-private-performance-v1',accounts:[...f.raw.accounts],allocation:structuredClone(f.raw),performance:performance(f.raw),performanceCapturedAt:'2026-10-30T05:50:00.000Z'};
- edit(raw);const original=bytes(raw),base=createOfficialRatioSourceCore().build(raw.allocation,{sourceSha256:hash(original),sourceBytes:original.length}).input,input={...base,schema:'fee-console.ratio-sources.v3',performance:structuredClone(raw.performance)},inputBytes=bytes(input);
+ edit(raw,f);const original=bytes(raw),base=createOfficialRatioSourceCore().build(raw.allocation,{sourceSha256:hash(original),sourceBytes:original.length}).input,input={...base,schema:'fee-console.ratio-sources.v3',performance:structuredClone(raw.performance)},inputBytes=bytes(input);
  const facts=f.source.verifyBrowserSourceAssociations(raw,input,{scopeHash:f.scope,now:f.now}),model=await buildRatioModel(input,{kind:'snapshot',targetDate:'2026-10-30',viewCore:f.ratio,previewOnly:true,now:f.now});
  model.book.browserEvidence={...model.book.browserEvidence,integrity:'verified-original-library-association',associationId:'c'.repeat(64),managerScopeId:f.manager.recipient.scopeId,sourceVersion:0,migrationPending:facts.migrationPending,classificationDeltaCents:facts.classificationDeltaCents,exposureDeltaCents:facts.exposureDeltaCents};
  model.companyExposure=facts.companyExposure;model.sourceDates=facts.sourceDates;model.classificationSummary=facts.classificationSummary;
@@ -31,7 +32,7 @@ async function fixture(t,edit=x=>x,allocation=syntheticOfficialSource()){
 }
 test('native aggregates bind to original bytes, encrypt, authenticate, reopen and render without individual rates',async t=>{
  const f=await fixture(t),r=await f.snapshot.verify(f.performanceSigned,f.manager,{now:f.now}),html=f.ratio.render(r.model);
- assert.equal(r.source.sourceDates.performance,'2026-10-30');assert.deepEqual(r.model.performance,f.raw.performance);assert.match(html,/收益截至 2026-10-30/);assert.match(html,/8.25% p.a./);assert.match(html,/-2.10%/);assert.match(html,/虚拟持仓/);assert.doesNotMatch(html,/SYNTHETIC-CLOSED/);
+ assert.equal(r.source.sourceDates.performance,'2026-10-30');assert.deepEqual(r.model.performance,f.raw.performance);assert.match(html,/收益截至 2026-10-30/);assert.match(html,/8.25%/);assert.match(html,/年化/);assert.match(html,/-2.10%/);assert.match(html,/虚拟持仓/);assert.doesNotMatch(html,/SYNTHETIC-CLOSED/);
  assert.equal(r.model.feeCalculationReceipt,undefined);assert.deepEqual(r.model.classificationSummary,f.built.input.classification);assert.deepEqual(r.model.book.holdings,f.model.book.holdings);assert.equal(r.source.capturedAt,f.signed.body.source.capturedAt);
  const holdings=html.match(/<li class="ratio-fund-holding"[^]*?<\/li>/g)||[];assert.ok(holdings.every(x=>!x.includes('ratio-returns')));
 });
@@ -48,9 +49,34 @@ test('accepted native benchmark scope survives authentication and discloses with
  const allocation=JSON.parse(JSON.stringify(syntheticOfficialSource()).replaceAll('Synthetic 7','Citi-HK & 地产四期'));
  const f=await fixture(t,r=>{for(const p of r.performance.reports){p.rows[0].scope=scope('All Together');p.rows[0].members.push({account:r.accounts[9],market:'NASDAQ',securityCode:'QQQ'});p.unavailable=p.unavailable.filter(x=>x.scope.name!=='All Together');}},allocation);
  const reopened=await f.snapshot.verify(f.performanceSigned,f.manager,{now:f.now}),html=f.ratio.render(reopened.model);
- assert.match(html,/含 1 项用于程序取值的模拟基准/);assert.match(html,/未剔除其影响/);assert.match(html,/8.25% p.a./);
+ assert.match(html,/含 1 项用于程序取值的模拟基准/);assert.match(html,/未剔除其影响/);assert.match(html,/8.25%/);
  assert.deepEqual(reopened.model.classificationSummary,f.built.input.classification);assert.deepEqual(reopened.model.book.holdings,f.model.book.holdings);
  assert.deepEqual(reopened.model.performance,f.raw.performance);assert.equal(reopened.model.feeCalculationReceipt,undefined);
+});
+
+function addTopReturns(raw,f){
+ const core=createAggregateReturnsCore(),companies=createFeeCompanyExposureCore().validate(f.model.companyExposure,f.model.exposure,f.model.book.sourceSha256).top;
+ const targets=core.topTargets(f.model.exposure,companies);
+ raw.performance.topHoldings={schema:'fee-console.ratio-top5-source.v1',targets,reports:raw.performance.reports.map(r=>({...structuredClone(r),additionalSources:[],rows:targets.filter(t=>t.members.length).map((t,i)=>({target:{category:t.category,name:t.name},memberEvidence:t.members.map((m,n)=>({...m,name:t.name,category:t.category,sourceRow:100+i*10+n})),sourceSheet:'Synthetic official subtotal '+i,sourceRow:100+i*10,returnPct:7.62+i,unit:'unknown',termEvidence:{type:'unknown'}})),unavailable:targets.filter(t=>!t.members.length).map(t=>({target:{category:t.category,name:t.name},reason:'no-direct-holding'}))}))};
+}
+test('top-five actual selected scopes survive original proof, encryption, authentication and reopen',async t=>{
+ const f=await fixture(t,addTopReturns),reopened=await f.snapshot.verify(f.performanceSigned,f.manager,{now:f.now}),html=f.ratio.render(reopened.model);
+ assert.deepEqual(reopened.model.performance.topHoldings,f.raw.performance.topHoldings);
+ assert.match(html,/直接持仓收益率/);assert.match(html,/7.62%/);assert.match(html,/不包括 ETF 穿透公司敞口/);
+ const fundDetails=html.match(/<li class="ratio-fund-holding"[^]*?<\/li>/g)||[];assert.ok(fundDetails.every(x=>!x.includes('ratio-returns')));
+ assert.deepEqual(reopened.model.classificationSummary,f.model.classificationSummary);assert.deepEqual(reopened.model.companyExposure,f.model.companyExposure);
+ for(const change of [m=>m.performance.topHoldings.reports[0].rows[0].returnPct++,m=>m.performance.topHoldings.targets[0].members[0].account='Wrong account']){const bad=structuredClone(f.model);change(bad);await assert.rejects(f.snapshot.verifyOriginal({...f.args,model:bad}));}
+});
+test('wrong ranked membership or invented sixth entry fails original association',async t=>{
+ for(const change of [raw=>raw.performance.topHoldings.targets[0].name='Other fund',raw=>raw.performance.topHoldings.targets.push(structuredClone(raw.performance.topHoldings.targets[0]))])await assert.rejects(fixture(t,(raw,f)=>{addTopReturns(raw,f);change(raw);}));
+});
+test('compact overview retains exact dollars, native returns and distinct six-class scope',async t=>{
+ const f=await fixture(t),html=f.ratio.render(f.model);
+ assert.match(html,/<th>市值（USD）<\/th><th>收益率<\/th>/);assert.match(html,/全部：/);assert.match(html,/近一年：/);assert.match(html,/M＝百万美元/);assert.match(html,/二级市场整体收益/);assert.match(html,/不等于上方股票市场子集/);assert.doesNotMatch(html,/ratio-performance-overview|<h2>投资收益率/);
+ const m=structuredClone(f.model);m.classificationSummary.assetAllocation.groups[0].valueCents=1725250072;
+ const exact=f.ratio.render(m);assert.match(exact,/17.25M<\/summary><span>USD 17,252,500.72/);assert.doesNotMatch(exact,/1725.25M/);
+ m.classificationSummary.assetAllocation.groups[0].valueCents=1;assert.match(f.ratio.render(m),/&lt;0.01M<\/summary><span>USD 0.01/);
+ m.classificationSummary.assetAllocation.groups[0].valueCents=0;assert.match(f.ratio.render(m),/0.00M<\/summary><span>USD 0.00/);
 });
 test('prior performance date cannot disappear through a later signed legacy snapshot',async t=>{
  const f=await fixture(t),oldProof=await f.snapshot.verifyOriginal(f.args);
@@ -77,8 +103,11 @@ test('browser uses exact tested factories and preserves existing note/session co
  const actual=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8');
  // The required support-only PR leaves the prior page intact. Accept only
  // either exact reviewed page, and prove the frozen transition before use.
- assert.ok([aggregateUiFixture.priorSha256,aggregateUiFixture.nextSha256].includes(hash(actual)));
- const page=hash(actual)===aggregateUiFixture.priorSha256?aggregateUiStage(actual):actual;
+ assert.ok([aggregateUiFixture.priorSha256,aggregateUiFixture.supportSha256,aggregateUiFixture.nextSha256].includes(hash(actual)));
+ const page=hash(actual)!==aggregateUiFixture.nextSha256?aggregateUiStage(actual):actual;
+ const css=page.split('<style>')[1].split('</style>')[0];
+ assert.doesNotMatch(css,/\\n/,'stylesheet must contain actual newlines, not escaped selector prefixes');
+ assert.match(css,/(?:^|\n)\.ratio-overview-table\{width:100%;table-layout:fixed\}/);
  for(const file of ['fee-ratio-aggregate-returns','fee-ratio-management','fee-ratio-source-core','fee-ratio-snapshot']){const code=fs.readFileSync(new URL('./'+file+'.mjs',import.meta.url),'utf8'),factory=code.slice(code.indexOf('export function ')).replace('export function ','function ').trim();assert.ok(page.includes(factory),file);}
  assert.match(page,/summary\?\.textContent==='分类、账户与参考目标'/);assert.match(page,/summary\.textContent='明细'/);assert.match(page,/createAggregateReturnsCore\.toString\(\)/);
 });

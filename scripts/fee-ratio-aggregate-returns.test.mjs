@@ -70,3 +70,53 @@ test('same sheet and total coordinate in different original workbooks stay disti
  const v=build(s);assert.equal(v.items.length,2);assert.equal(v.items[1].periods.all.nativePct,3.25);assert.equal(v.items[0].periods.all.source.libraryFileId,ref(1).libraryFileId);
  r.rows.push({...structuredClone(r.rows[1]),scope:scope('Duplicate source coordinate')});assert.throws(()=>build(s),/REFUSED/);
 });
+
+function topFixture(){
+ const s=fixture(),targets=[];
+ for(const category of ['PE/VC','对冲基金','常青基金','二级市场'])for(let i=0;i<5;i++)targets.push({category,name:category+' Synthetic '+i,members:[member('Account A',category+'-'+i)],basis:category==='二级市场'?'direct-holdings-only':'fund-holding'});
+ s.topHoldings={schema:'fee-console.ratio-top5-source.v1',targets,reports:s.reports.map(r=>({...structuredClone(r),additionalSources:[],rows:targets.map((t,i)=>({target:{category:t.category,name:t.name},memberEvidence:t.members.map(m=>({...m,name:t.name,category:t.category,sourceRow:i+30})),sourceSheet:'Combined',sourceRow:i+30,returnPct:i+0.25,unit:'unknown',termEvidence:{type:'unknown'}})),unavailable:[]}))};return s;
+}
+const topBuild=s=>c.build(s,{...opts,topTargets:s.topHoldings.targets});
+test('top-five has exactly twenty selected scopes and two native periods, no percent arithmetic',()=>{
+ const s=topFixture(),before=structuredClone(s),v=topBuild(s);assert.deepEqual(s,before);assert.equal(v.topHoldings.items.length,20);
+ const last=v.topHoldings.items.at(-1),h=c.renderTop(last);assert.match(h,/直接持仓收益率/);assert.match(h,/19.25%/);assert.match(h,/不包括 ETF 穿透/);assert.doesNotMatch(h,/38.50%|57.75%|未满一年|未确认/);
+ assert.equal(c.selectTop(v,{category:'二级市场',name:'二级市场 Synthetic 4'}),last);
+});
+test('top-five exact target and current member binding refuses a sixth item, missing or changed account',()=>{
+ for(const change of [s=>s.topHoldings.targets.push(structuredClone(s.topHoldings.targets[0])),s=>s.topHoldings.targets.pop(),s=>s.topHoldings.targets[0].members[0].account='Account B']){
+  const s=topFixture(),expected=structuredClone(s.topHoldings.targets);change(s);assert.throws(()=>c.build(s,{...opts,topTargets:expected}),/REFUSED/);
+ }
+});
+test('top-five each period must cover every target once, including explicit missing source',()=>{
+ for(const change of [s=>s.topHoldings.reports[0].rows.pop(),s=>s.topHoldings.reports[0].rows.push(structuredClone(s.topHoldings.reports[0].rows[0])),s=>s.topHoldings.reports[0].unavailable.push({target:s.topHoldings.reports[0].rows[0].target,reason:'native-aggregate-not-provided'})]){const s=topFixture();change(s);assert.throws(()=>topBuild(s),/REFUSED/);}
+ const s=topFixture(),row=s.topHoldings.reports[0].rows.pop();s.topHoldings.reports[0].unavailable.push({target:row.target,reason:'native-aggregate-not-provided'});assert.match(c.renderTop(topBuild(s).topHoldings.items.find(r=>r.target.name===row.target.name)),/暂未提供/);
+});
+test('same instrument sold in another account stays in its exact native scope',()=>{
+ const s=topFixture(),r=s.topHoldings.reports[0].rows[0];r.memberEvidence.push({...r.memberEvidence[0],account:'Account B',sourceRow:90});const p=topBuild(s).topHoldings.items[0].periods.all;assert.equal(p.memberCount,2);assert.deepEqual(p.accounts,accounts);
+});
+test('unrelated instrument, account, category and duplicate evidence are refused',()=>{
+ for(const change of [r=>r.memberEvidence[0].securityCode='different',r=>r.memberEvidence[0].account='Stranger',r=>r.memberEvidence[0].category='常青基金',r=>r.memberEvidence.push(structuredClone(r.memberEvidence[0]))]){const s=topFixture();change(s.topHoldings.reports[0].rows[0]);assert.throws(()=>topBuild(s),/REFUSED/);}
+});
+test('evergreen exact dated name admits closed members but preserves share classes and hyphens',()=>{
+ const s=topFixture(),t=s.topHoldings.targets[10];t.name='Synthetic Alt E-1';t.members[0].securityCode='2021-01-Synthetic Alt E-1';
+ for(const r of s.topHoldings.reports){const x=r.rows[10];x.target.name=t.name;x.memberEvidence[0]={...x.memberEvidence[0],securityCode:t.members[0].securityCode,name:t.name};x.memberEvidence.push({...x.memberEvidence[0],sourceRow:99,securityCode:'Strategy-2020-01-Synthetic Alt E-1'});}
+ assert.equal(topBuild(s).topHoldings.items[10].periods.all.memberCount,2);
+ for(const code of ['Strategy-2020-01-Synthetic Alt E-2','Strategy-2020-01-Synthetic Alt E1']){const bad=structuredClone(s);bad.topHoldings.reports[0].rows[10].memberEvidence[1].securityCode=code;assert.throws(()=>topBuild(bad),/REFUSED/);}
+});
+test('top-five merges only an official native subtotal with exact source identity',()=>{
+ const s=topFixture(),r=s.topHoldings.reports[0],t=s.topHoldings.targets[0];t.members.push(member('Account B',t.members[0].securityCode));
+ for(const report of s.topHoldings.reports){report.rows[0].memberEvidence.push({...report.rows[0].memberEvidence[0],account:'Account B',sourceRow:91});report.additionalSources=[ref(report.period==='all'?5:6)];report.rows[0].sourceFileId=report.additionalSources[0].libraryFileId;report.rows[0].sourceSheet='Synthetic subtotal';report.rows[0].sourceRow=7;report.rows[0].returnPct=17.43;}
+ assert.equal(topBuild(s).topHoldings.items[0].periods.all.nativePct,17.43);assert.equal(topBuild(s).topHoldings.items[0].periods.all.source.libraryFileId,ref(5).libraryFileId);
+ r.rows[0].sourceFileId=ref(9).libraryFileId;assert.throws(()=>topBuild(s),/REFUSED/);
+});
+test('top-five source scope and cutoff cannot replace the aggregate source',()=>{
+ for(const change of [r=>r.source=ref(9),r=>r.startDate='2021-01-01',r=>r.endDate='2026-11-03',r=>r.includeClosed=false]){const s=topFixture();change(s.topHoldings.reports[0]);assert.throws(()=>topBuild(s),/REFUSED/);}
+});
+test('top-five annualisation uses its own exact evidence only',()=>{
+ const s=topFixture(),r=s.topHoldings.reports[0],x=r.rows[0];x.termEvidence={type:'sharesight-average-years-invested',years:0.5,scope:structuredClone(x.target),period:r.period,endDate:end,source:ref(7)};
+ assert.match(c.renderTop(topBuild(s).topHoldings.items[0]),/未满一年/);assert.match(c.renderTop(topBuild(s).topHoldings.items[0]),/0.25%/);
+ x.termEvidence.scope.name='Another';assert.throws(()=>topBuild(s),/REFUSED/);
+});
+test('no-direct-holding cannot conceal an actual holding or supply a false rate',()=>{
+ const s=topFixture(),t=s.topHoldings.targets.at(-1);for(const r of s.topHoldings.reports){const x=r.rows.pop();r.unavailable.push({target:x.target,reason:'no-direct-holding'});}assert.throws(()=>topBuild(s),/REFUSED/);t.members=[];assert.doesNotThrow(()=>topBuild(s));
+});

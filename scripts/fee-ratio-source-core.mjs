@@ -24,7 +24,7 @@ function verifyBrowserSourceAssociations(raw,input,{scopeHash,now=new Date()}={}
     const core=createAggregateReturnsCore(),performance=raw.performance;
     // Native returns retain the owner's accepted small benchmark positions.
     // Membership-derived disclosure does not change allocation exclusions.
-    core.build(performance,{expectedAccounts:raw.accounts,expectedAsOf:performance?.asOf});
+    core.build(performance,{expectedAccounts:raw.accounts,expectedAsOf:performance?.asOf,topTargets:core.topTargets(input.exposure,createFeeCompanyExposureCore().validate(facts.companyExposure,input.exposure,input.book.sourceSha256).top)});
     const captured=time(raw.performanceCapturedAt),clock=now.getTime(),age=Math.floor((Date.parse(now.toISOString().slice(0,10))-Date.parse(performance.asOf))/86400000);
     if(performance.asOf>facts.asOf||age<0||age>4||clock<captured||clock-captured>36*3600000||createOfficialRatioSourceCore().canonical(input.performance)!==createOfficialRatioSourceCore().canonical(performance))fail();
     return {...facts,observedAt:new Date(Math.min(Date.parse(facts.observedAt),captured)).toISOString(),sourceDates:{...facts.sourceDates,performance:performance.asOf},performance:structuredClone(performance)};
