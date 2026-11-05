@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="管理费">
 <meta name="theme-color" content="#fcfcfb">
-<meta name="fee-console-build" content="4.9.41">
+<meta name="fee-console-build" content="4.9.42">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -1107,7 +1107,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.9.41";
+const UI_VERSION_LABEL=" · v4.9.42";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -3003,7 +3003,8 @@ function styleRatioReport(root){
     if(rows.length&&labels.length===3&&rows.every(row=>row.cells.length===3&&row.cells[2].textContent.split('／').length===2)){
       const holdings=make('div','ratio-holding-list');
       for(const [index,row] of rows.entries()){
-        const [nameCell,amountCell,weightCell]=Array.from(row.cells),details=nameCell.querySelector('details');
+        const [nameCell,amountCell,weightCell]=Array.from(row.cells);
+        const disclosures=direct(nameCell,'DETAILS'),details=disclosures.find(n=>!n.classList.contains('ratio-returns'));
         const original=Array.from(nameCell.childNodes).filter(n=>n.nodeType===3).map(n=>n.textContent).join('').trim();
         const ranked=original.match(/^(\d+\.\s*)([\s\S]*)$/),sourceName=ranked?ranked[2]:original;
         const card=make('article','ratio-holding-row'),head=make('div','ratio-holding-head'),name=make('span','ratio-holding-name'),amount=make('span','ratio-holding-amount');
@@ -3028,8 +3029,10 @@ function styleRatioReport(root){
             }
             oldList.replaceWith(items);
           }
-          card.append(details);
         }
+        // Preserve every direct disclosure in source order. Return panels keep
+        // their own title and are never relabeled as composition details.
+        for(const disclosure of disclosures)card.append(disclosure);
         holdings.append(card);
       }
       table.replaceWith(holdings);
