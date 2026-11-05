@@ -123,3 +123,65 @@ test('local private handoff deeply freezes returns and stages a candidate with t
  assert.equal(result.status,'RATIO_INDEPENDENT_CANDIDATE_ONLY');assert.equal(result.publicationReady,false);assert.equal(result.managerAuthentication,false);assert.equal(result.financialRead,false);assert.equal(result.feeOrHealthWrite,false);
  const packet=JSON.parse(fs.readFileSync(path.join(dir,'ratio-independent-candidate','fee-console-ratio-snapshot.candidate.json'),'utf8'));assert.equal(packet.body.source.sourceDates.performance,'2026-10-30');
 });
+
+// Minimal DOM with normal move semantics. Exercise the actual browser card
+// transformation after rendering, rather than checking pre-transform HTML.
+class PresentationNode {
+ constructor(tag=null,text=''){this.tagName=tag?.toUpperCase();this.nodeType=tag?1:3;this.data=text;this.childNodes=[];this.parentNode=null;this.className='';this.dataset={};this.title='';}
+ get children(){return this.childNodes.filter(n=>n.nodeType===1);}
+ get firstChild(){return this.childNodes[0]||null;}
+ get lastElementChild(){return this.children.at(-1)||null;}
+ get nextSibling(){return this.parentNode?.childNodes[this.parentNode.childNodes.indexOf(this)+1]||null;}
+ get textContent(){return this.nodeType===3?this.data:this.childNodes.map(n=>n.textContent).join('');}
+ set textContent(s){if(this.nodeType===3){this.data=String(s);return;}for(const n of this.childNodes)n.parentNode=null;this.childNodes=[];if(s!=='')this.append(new PresentationNode(null,String(s)));}
+ get classList(){const node=this;return {contains:c=>node.className.split(/\s+/).includes(c),add(c){node.className=[...new Set([...node.className.split(/\s+/).filter(Boolean),c])].join(' ');}};}
+ append(...nodes){for(const n of nodes){if(n.parentNode)n.parentNode.childNodes.splice(n.parentNode.childNodes.indexOf(n),1);n.parentNode=this;this.childNodes.push(n);}}
+ insertBefore(n,before){if(!before){this.append(n);return;}if(n.parentNode)n.parentNode.childNodes.splice(n.parentNode.childNodes.indexOf(n),1);const at=this.childNodes.indexOf(before);assert.ok(at>=0);n.parentNode=this;this.childNodes.splice(at,0,n);}
+ replaceWith(n){const p=this.parentNode;assert.ok(p);p.insertBefore(n,this);p.childNodes.splice(p.childNodes.indexOf(this),1);this.parentNode=null;}
+ matches(s){return s.startsWith('.')?this.classList.contains(s.slice(1)):this.tagName===s.toUpperCase();}
+ querySelectorAll(s){return this.children.flatMap(n=>[...(n.matches(s)?[n]:[]),...n.querySelectorAll(s)]);}
+ querySelector(s){return this.querySelectorAll(s)[0]||null;}
+ closest(s){for(let n=this;n;n=n.parentNode)if(n.matches(s))return n;return null;}
+ get tHead(){return this.children.find(n=>n.tagName==='THEAD');}
+ get tBodies(){return this.children.filter(n=>n.tagName==='TBODY');}
+ get rows(){return this.children.filter(n=>n.tagName==='TR');}
+ get cells(){return this.children.filter(n=>['TH','TD'].includes(n.tagName));}
+}
+function presentationFixture({returns=true,reverse=false,extra=false}={}){
+ const el=(tag,cls='',text='')=>{const n=new PresentationNode(tag);n.className=cls;n.textContent=text;return n;};
+ const root=el('div'),report=el('div','ratio-report'),overview=el('section','ratio-asset-overview'),exposure=el('section','sharesight-exposure'),originals=[];
+ root.append(report);report.append(overview,exposure);overview.append(el('h2','','Synthetic overview'));exposure.append(el('h2','','Synthetic top twenty'));
+ for(const [category,group]of ['PE/VC','对冲基金','常青基金','二级市场'].entries()){
+  const section=el('section'),table=el('table'),head=el('thead'),hrow=el('tr'),body=el('tbody');
+  section.append(el('h3','',group),table);table.append(head,body);head.append(hrow);hrow.append(el('th','','名称'),el('th','','金额'),el('th','','占总资产／占本类资产'));exposure.append(section);
+  for(let i=0;i<5;i++){
+   const row=el('tr'),name=el('td'),amount=el('td','',String(1000+category*100+i)),weight=el('td','','1.25%／4.50%'),account=el('span','ratio-holding-accounts','Synthetic account '+category),disclosures=[];
+   name.dataset.securityCode='SYNTH-'+category+'-'+i;name.append(new PresentationNode(null,(i+1)+'. Synthetic product '+category+'-'+i),account);row.append(name,amount,weight);body.append(row);
+   let composition=null,rate=null;
+   if(category===3||category===2&&i<3){composition=el('details');const list=el('ul');list.append(el('li','','Synthetic member A'),el('li','','Synthetic member B'));composition.append(el('summary','',category===3?'持仓与穿透明细':'合并持仓 · 2笔'),list);disclosures.push(composition);}
+   if(returns){rate=el('details','ratio-returns');rate.append(el('summary','',category===3?'直接持仓收益率':'收益率'));const pair=el('div','ratio-return-pair');pair.append(el('div','ratio-return-period','All '+(7.5+category+i)+'% 原报表口径'),el('div','ratio-return-period','近12个月 '+(-2.5+i)+'% 未满一年'));rate.append(pair);disclosures.push(rate);}
+   if(reverse)disclosures.reverse();if(extra){const note=el('details','synthetic-note');note.append(el('summary','','Extra preserved note'),el('p','','Synthetic note body'));disclosures.push(note);}
+   name.append(...disclosures);originals.push({section,account,composition,rate,disclosures,amount:amount.textContent,weights:weight.textContent,rateText:rate?.textContent,category});
+  }
+ }
+ return {root,report,exposure,originals,document:{createElement:tag=>el(tag)}};
+}
+function actualPresentation(f){
+ const actual=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8'),page=hash(actual)===aggregateUiFixture.nextSha256?actual:aggregateUiStage(actual);
+ const start=page.indexOf('function styleRatioReport('),end=page.indexOf('\n/* ratio-presentation:v1:end */',start);assert.ok(start>=0&&end>start);
+ return new Function('document','ratioHoldingDisplayName','foldRatioFundNotes',page.slice(start,end)+'\nreturn styleRatioReport;')(f.document,s=>s,()=>{});
+}
+for(const mode of [{returns:true},{returns:true,reverse:true,extra:true},{returns:false}])test('card styling preserves all direct disclosures and native values '+JSON.stringify(mode),()=>{
+ const f=presentationFixture(mode),style=actualPresentation(f);style(f.root);
+ const cards=f.exposure.querySelectorAll('.ratio-holding-row');assert.equal(cards.length,20);
+ assert.equal(f.exposure.querySelectorAll('.ratio-returns').length,mode.returns?20:0);
+ assert.equal(f.exposure.querySelectorAll('.ratio-return-period').length,mode.returns?40:0);
+ for(const [i,card]of cards.entries()){
+  const o=f.originals[i];assert.equal(card.querySelector('.ratio-holding-amount').textContent,o.amount);assert.equal(card.querySelector('.ratio-holding-accounts'),o.account);
+  assert.deepEqual(card.querySelectorAll('dd').map(n=>n.textContent),o.weights.split('／'));
+  assert.deepEqual(card.children.filter(n=>n.tagName==='DETAILS'),o.disclosures,'preserve source order and node identity');
+  if(o.rate){assert.equal(o.rate.textContent,o.rateText);assert.equal(o.rate.classList.contains('ratio-composition'),false);assert.equal(o.rate.querySelector('summary').textContent,o.category===3?'直接持仓收益率':'收益率');}
+  if(o.composition){assert.equal(o.composition.classList.contains('ratio-composition'),true);assert.match(o.composition.querySelector('summary').textContent,/^明细 [1-5] · /);assert.equal(o.composition.querySelectorAll('li').length,2);}
+ }
+ const before=f.root.textContent;style(f.root);assert.equal(f.root.textContent,before);assert.equal(f.exposure.querySelectorAll('.ratio-holding-row').length,20,'second styling is inert');
+});

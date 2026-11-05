@@ -1,7 +1,7 @@
 {
   "schema": "fee-console.ratio-aggregate-ui-stage.v1",
   "priorSha256": "e98b04d9f95353596410cf1f6c7a1f06a3072dca9d6211a5f390afcb6fa2b194",
-  "nextSha256": "eda347ed1a283f811b070a43b56a7c71342fd335aea40b821588acc07b0e0739",
+  "nextSha256": "74157f32603c8380b54c1d032effe2b0ff09e706328f841bd00b6d2d5f140491",
   "regions": [
     {
       "prior": ".ratio-fund-distribution{margin-bottom:10px}.ratio-fund-distribution h2{margin-bottom:4px}.ratio-fund-distribution>p{font-size:11px;color:var(--ink-2);margin:0 0 8px}.ratio-distribution-row{margin:8px 0}.ratio-distribution-label{display:flex;justify-content:space-between;gap:12px;font-size:12px;line-height:1.5}.ratio-distribution-label span{min-width:0;overflow-wrap:anywhere}.ratio-distribution-label strong{flex-shrink:0;font-variant-numeric:tabular-nums}.ratio-distribution-track{height:6px;background:var(--line);border-radius:4px;overflow:hidden;margin-top:4px}.ratio-distribution-track i{display:block;height:100%;background:var(--accent,#4d8ec9);border-radius:4px}.ratio-fund-distribution details{font-size:11px;color:var(--ink-2);margin-top:10px}\n</style>\n",
@@ -98,8 +98,24 @@
     {
       "prior": "const UI_VERSION_LABEL=\" · v4.9.40\";",
       "next": "const UI_VERSION_LABEL=\" · v4.9.41\";"
+    },
+    {
+      "prior": "const [nameCell,amountCell,weightCell]=Array.from(row.cells),details=nameCell.querySelector('details');",
+      "next": "const [nameCell,amountCell,weightCell]=Array.from(row.cells);\n        const disclosures=direct(nameCell,'DETAILS'),details=disclosures.find(n=>!n.classList.contains('ratio-returns'));"
+    },
+    {
+      "prior": "          card.append(details);\n        }\n        holdings.append(card);",
+      "next": "        }\n        // Preserve every direct disclosure in source order. Return panels keep\n        // their own title and are never relabeled as composition details.\n        for(const disclosure of disclosures)card.append(disclosure);\n        holdings.append(card);"
+    },
+    {
+      "prior": "content=\"4.9.41\"",
+      "next": "content=\"4.9.42\""
+    },
+    {
+      "prior": "UI_VERSION_LABEL=\" · v4.9.41\"",
+      "next": "UI_VERSION_LABEL=\" · v4.9.42\""
     }
   ],
-  "supportSha256": "e41b59a83b238dbc70bc3af85406c141ddf45b557136755bcf74f4edd298a6a0",
-  "supportRegionCount": 17
+  "supportSha256": "eda347ed1a283f811b070a43b56a7c71342fd335aea40b821588acc07b0e0739",
+  "supportRegionCount": 24
 }
