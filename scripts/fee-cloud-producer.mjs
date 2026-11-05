@@ -17,7 +17,7 @@ import { boundedJson } from './fee-http-json.mjs';
 import { isIsoDate, isWeekend, classifyFlow, flowId, inKindBusinessKey, notificationIncomeFlowAudit } from "./daily-core.mjs";
 import { validateHealth } from "./fee-data-health.mjs";
 import { STYLE_ACCOUNTS } from './fee-style-registry.mjs';
-import {prepareIbManagerReport,assertIbManagerConfiguration,assertIbManagerPublication} from './ib-manager-report.mjs';
+import {prepareIbManagerReport,assertIbManagerConfiguration,assertIbManagerPublication,IB_PUBLICATION_DIAGNOSTIC_PREFIX,validateIbPublicationDiagnostic} from './ib-manager-report.mjs';
 import {validateReportPlan,selectReportBenchmark} from './fee-report-period.mjs';
 import {REPORT_METADATA_FAILURE_CODES} from './fee-report-metadata.mjs';
 
@@ -590,18 +590,21 @@ export function safeProducerFailureSummary(privateStderr) {
   if (typeof privateStderr !== 'string' || Buffer.byteLength(privateStderr) > 65536) return fallback;
   const lines = privateStderr.replace(/\n$/, '').split('\n'), last = lines.at(-1);
   const code = SAFE_PRODUCER_FAILURE_CODES.has(last) ? last : fallback.code;
-  const prefixes = [UNRESOLVED_FLOW_DIAGNOSTIC_PREFIX, WRITER_DIAGNOSTIC_PREFIX];
+  const prefixes = [UNRESOLVED_FLOW_DIAGNOSTIC_PREFIX, WRITER_DIAGNOSTIC_PREFIX, IB_PUBLICATION_DIAGNOSTIC_PREFIX];
   const candidates = lines.filter(line => prefixes.some(prefix => line.includes(prefix)));
   let diagnostic = null;
   const prefix = code === 'FEE_CLOUD_UNRESOLVED_FLOW' ? UNRESOLVED_FLOW_DIAGNOSTIC_PREFIX
-    : WRITER_FAILURE_CODES.has(code) ? WRITER_DIAGNOSTIC_PREFIX : null;
+    : WRITER_FAILURE_CODES.has(code) ? WRITER_DIAGNOSTIC_PREFIX
+    : code === 'FEE_CLOUD_IB_INCOMPLETE' ? IB_PUBLICATION_DIAGNOSTIC_PREFIX : null;
   if (prefix && candidates.length === 1) {
     const line = candidates[0];
     if (line.startsWith(prefix) && Buffer.byteLength(line) <= 16384) try {
       const json = line.slice(prefix.length), parsed = JSON.parse(json);
       // Canonical emission also rejects duplicate JSON keys before validation.
       if (JSON.stringify(parsed) === json && parsed.code === code
-          && (prefix === WRITER_DIAGNOSTIC_PREFIX ? validateWriterFailureDiagnostic(parsed) : validateUnresolvedFlowDiagnostic(parsed))) diagnostic = parsed;
+          && (prefix === WRITER_DIAGNOSTIC_PREFIX ? validateWriterFailureDiagnostic(parsed)
+            : prefix === IB_PUBLICATION_DIAGNOSTIC_PREFIX ? validateIbPublicationDiagnostic(parsed)
+            : validateUnresolvedFlowDiagnostic(parsed))) diagnostic = parsed;
     } catch { /* private malformed metadata remains private */ }
   }
   return {code,diagnostic};

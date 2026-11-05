@@ -19,7 +19,30 @@ import { buildWriterFailureDiagnostic, validateWriterFailureDiagnostic, WRITER_D
 import { reportFailureCode } from './fee-report-producer.mjs';
 import { CLOUD_ACCOUNTS, parseSourceJson } from './fee-cloud-source.mjs';
 import { reportAddDays } from './fee-report-period.mjs';
+import { IB_PUBLICATION_DIAGNOSTIC_PREFIX, validateIbPublicationDiagnostic } from './ib-manager-report.mjs';
 import { isSharesightDeclaredTradeCash, sharesightCashRelations, resolveTradeCashEvidence } from './fee-trade-cash-evidence.mjs';
+
+test('IB diagnostic summary rejects unknown fields, arbitrary reasons, duplicate/mixed records and oversized input',()=>{
+ const code='FEE_CLOUD_IB_INCOMPLETE',prefix=IB_PUBLICATION_DIAGNOSTIC_PREFIX;
+ const value={schema:'fee-console.ib-publication-diagnostic.v1',code,predicate:'SOURCE_CUTOFF',sourceReason:'IB_SOURCE_PAST_POINT_CHANGED',returnReason:'NOT_CHECKED',drawdownReason:'NOT_CHECKED'};
+ const line=prefix+JSON.stringify(value);
+ assert.equal(validateIbPublicationDiagnostic(value),true);
+ assert.deepEqual(safeProducerFailureSummary('PRIVATE_CANARY\n'+line+'\n'+code+'\n'),{code,diagnostic:value});
+ for(const key of Object.keys(value)){
+  const bad={...value,[key]:'PRIVATE_CANARY account=123 amount=456.78'};
+  assert.equal(validateIbPublicationDiagnostic(bad),false);
+  assert.deepEqual(safeProducerFailureSummary(prefix+JSON.stringify(bad)+'\n'+code+'\n'),{code,diagnostic:null});
+  const missing={...value};delete missing[key];assert.equal(validateIbPublicationDiagnostic(missing),false);
+ }
+ for(const bad of [null,[],{...value,account:'PRIVATE_CANARY'},{...value,sourceReason:{code:'IB_SOURCE_NETWORK',raw:'PRIVATE_CANARY'}}])assert.equal(Boolean(validateIbPublicationDiagnostic(bad)),false);
+ for(const stderr of [line+'\n'+line+'\n'+code+'\n',line+'\n'+WRITER_DIAGNOSTIC_PREFIX+'{}\n'+code+'\n',
+  line+'\n'+UNRESOLVED_FLOW_DIAGNOSTIC_PREFIX+'{}\n'+code+'\n','prefix '+line+'\n'+code+'\n',
+  line.replace('{','{"sourceReason":"PRIVATE_CANARY",')+'\n'+code+'\n',
+  prefix+'{"schema":"PRIVATE_CANARY"}\n'+code+'\n',line+'\nFEE_CLOUD_FAILED\n','x'.repeat(65537)+'\n'+code+'\n']){
+  const result=safeProducerFailureSummary(stderr);assert.equal(result.diagnostic,null);assert.equal(JSON.stringify(result).includes('PRIVATE_CANARY'),false);
+ }
+ assert.deepEqual(safeProducerFailureSummary(code+'\n'),{code,diagnostic:null});
+});
 
 const D = "2026-09-23";
 function quotedPrincipalFixture(){

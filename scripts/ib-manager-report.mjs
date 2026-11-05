@@ -20,23 +20,61 @@ export function assertIbManagerConfiguration(environ=process.env){
   if(environ.IB_MANAGER_READ_ENABLED!=='true')throw Error('FEE_CLOUD_IB_CONFIG');
   if(!/^[a-f0-9]{64}$/.test(environ.IB_MANAGER_BASELINE_SHA256||''))throw Error('FEE_CLOUD_IB_BASELINE_LOCK');
 }
+// Only closed program enums leave the private producer. Never copy source
+// strings, Error text, dates, hashes, identifiers or receipt values into logs.
+export const IB_PUBLICATION_DIAGNOSTIC_PREFIX='FEE_CLOUD_IB_PUBLICATION_DIAGNOSTIC=';
+const IB_PREDICATES=new Set(['FEE_CUTOFF','FEE_RECEIPT','SOURCE_STATE','SOURCE_CUTOFF',
+  'RETURN_RECEIPT','DRAWDOWN_RECEIPT','RETURN_CUTOFF','DRAWDOWN_CUTOFF','VALIDATION_EXCEPTION']);
+const IB_SOURCE_REASONS=new Set(['NONE','UNKNOWN',...`CONFIG BASELINE_LOCK BASELINE_MISMATCH
+  SCOPE IDENTITY INCOMPLETE DATE DATE_ALIGNMENT AMOUNT SCHEMA CASH_RECONCILIATION
+  UNRESOLVED_FLOW UNVERIFIED_TRANSFER NONCASH_EVIDENCE UNSUPPORTED_CURRENCY UNSTABLE
+  HISTORY_LIMIT PAST_POINT_CHANGED STATE NETWORK STATE_INVALID COVERAGE_UNVERIFIED
+  PERIOD_MISMATCH`.split(/\s+/).map(code=>'IB_SOURCE_'+code)]);
+const IB_RETURN_REASONS=new Set(['NOT_CHECKED','VERIFIED','UNKNOWN','source-unavailable',
+  'missing','invalid','fee-pending','period-mismatch']);
+const IB_DRAWDOWN_REASONS=new Set([...IB_RETURN_REASONS,'missing-daily-path','invalid-daily-path']);
+export function validateIbPublicationDiagnostic(value){
+  return exact(value,['schema','code','predicate','sourceReason','returnReason','drawdownReason'])
+    &&value.schema==='fee-console.ib-publication-diagnostic.v1'
+    &&value.code==='FEE_CLOUD_IB_INCOMPLETE'&&IB_PREDICATES.has(value.predicate)
+    &&IB_SOURCE_REASONS.has(value.sourceReason)&&IB_RETURN_REASONS.has(value.returnReason)
+    &&IB_DRAWDOWN_REASONS.has(value.drawdownReason);
+}
+const ibViewReason=(view,allowed)=>view===undefined?'NOT_CHECKED':view?.state==='verified'?'VERIFIED'
+  :allowed.has(view?.reason)?view.reason:'UNKNOWN';
 export async function assertIbManagerPublication(payload,targetDate,environ=process.env){
   assertIbManagerConfiguration(environ);
   const status=payload?.ibManagerSourceStatus,fee=payload?.feeCalculationReceipt;
-  if(fee?.asOf!==targetDate)
-    throw Error('FEE_CLOUD_IB_INCOMPLETE');
+  let predicate='FEE_CUTOFF',ret,dd;
   try{
+    if(fee?.asOf!==targetDate)throw Error();
+    predicate='FEE_RECEIPT';
     if(!validateFeeCalculationReceipt(fee,payload).ok)throw Error();
     const core=createIbManagerReturnConsumer();
     if(payload.ibManagerReturnReceipt?.schema===core.dailySchema){
+      predicate='SOURCE_STATE';
       const source=await validateIbManagerReportState(payload,environ.IB_MANAGER_BASELINE_SHA256);
+      predicate='SOURCE_CUTOFF';
       if(!source||source.sourceAsOf!==targetDate)throw Error();
     }
     const view={state:'verified',...fee};
-    const ret=await core.project(payload.ibManagerReturnReceipt,view,status);
-    const dd=await createIbManagerDrawdownConsumer().project(payload.ibManagerDrawdownReceipt,payload.ibManagerReturnReceipt,view,status);
-    if(ret.state!=='verified'||dd.state!=='verified'||ret.asOf!==targetDate||dd.asOf!==targetDate)throw Error();
-  }catch{throw Error('FEE_CLOUD_IB_INCOMPLETE');}
+    predicate='RETURN_RECEIPT';ret=await core.project(payload.ibManagerReturnReceipt,view,status);
+    predicate='DRAWDOWN_RECEIPT';dd=await createIbManagerDrawdownConsumer().project(payload.ibManagerDrawdownReceipt,payload.ibManagerReturnReceipt,view,status);
+    if(ret.state!=='verified'){predicate='RETURN_RECEIPT';throw Error();}
+    if(dd.state!=='verified'){predicate='DRAWDOWN_RECEIPT';throw Error();}
+    if(ret.asOf!==targetDate){predicate='RETURN_CUTOFF';throw Error();}
+    if(dd.asOf!==targetDate){predicate='DRAWDOWN_CUTOFF';throw Error();}
+  }catch{
+    // Logging failure must never change the original fail-closed result.
+    try{
+      const diagnostic={schema:'fee-console.ib-publication-diagnostic.v1',code:'FEE_CLOUD_IB_INCOMPLETE',
+        predicate:IB_PREDICATES.has(predicate)?predicate:'VALIDATION_EXCEPTION',
+        sourceReason:status?.state==='pending'?(IB_SOURCE_REASONS.has(status.reasonCode)&&status.reasonCode.startsWith('IB_SOURCE_')?status.reasonCode:'UNKNOWN'):'NONE',
+        returnReason:ibViewReason(ret,IB_RETURN_REASONS),drawdownReason:ibViewReason(dd,IB_DRAWDOWN_REASONS)};
+      if(validateIbPublicationDiagnostic(diagnostic))process.stderr.write(IB_PUBLICATION_DIAGNOSTIC_PREFIX+JSON.stringify(diagnostic)+'\n');
+    }catch{/* keep the original publication refusal even when stderr is unavailable */}
+    throw Error('FEE_CLOUD_IB_INCOMPLETE');
+  }
 }
 
 // Finite reconciliation scope in the existing authenticated private payload.

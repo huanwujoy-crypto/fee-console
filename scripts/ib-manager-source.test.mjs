@@ -6,9 +6,10 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import {nyDate} from './daily-core.mjs';
-import {SharesightIbManagerReader,ibBaselineBusinessHash,ibSourceFailureCode,validateIbBootstrapCoverage,validateIbManagerReportInput} from './ib-manager-source.mjs';
+import {SharesightIbManagerReader,IbManagerSourceError,ibBaselineBusinessHash,ibSourceFailureCode,validateIbBootstrapCoverage,validateIbManagerReportInput} from './ib-manager-source.mjs';
 import {buildIbManagerReportBundle,validateIbManagerReportState,buildIbOwnerBaseline,validateIbOwnerBaselineState,buildIbManagerReturnReceipt,buildIbManagerDrawdownReceipt,createIbManagerReturnConsumer,createIbManagerDrawdownConsumer} from './ib-manager-return.mjs';
-import {prepareIbManagerReport,loadIbManagerReport,sameIbManagerData,validateIbManagerCoverage,assertIbManagerConfiguration,assertIbManagerPublication} from './ib-manager-report.mjs';
+import {prepareIbManagerReport,loadIbManagerReport,sameIbManagerData,validateIbManagerCoverage,assertIbManagerConfiguration,assertIbManagerPublication,IB_PUBLICATION_DIAGNOSTIC_PREFIX,validateIbPublicationDiagnostic} from './ib-manager-report.mjs';
+import {safeProducerFailureSummary} from './fee-cloud-producer.mjs';
 import {buildFeeCalculationReceipt,validateFeeCalculationReceipt} from './fee-receipt-core.mjs';
 
 // Synthetic portfolio/holding/cash IDs. No real source, credentials or NAV.
@@ -330,6 +331,56 @@ test('real producer CLI refuses missing IB activation or baseline before source 
     assert.equal(result.status,1);assert.equal(result.stdout,'');assert.match(result.stderr,/^FEE_CLOUD_IB_(CONFIG|BASELINE_LOCK)\n$/);
   }
 });
+
+test('IB publication diagnostics preserve rejection, predicate order and payload while exposing only finite reasons',async()=>{
+  const environ={IB_MANAGER_READ_ENABLED:'true',IB_MANAGER_BASELINE_SHA256:lock()},b=await buildIbManagerReportBundle(await source(),lock());
+  const live={...feeData(),ibManagerReturnReceipt:b.returnReceipt,ibManagerDrawdownReceipt:b.drawdownReceipt,ibManagerSourceState:b.sourceState,ibManagerSourceStatus:{state:'verified',targetDate:baseline.asOf}};
+  const frozen={...feeData(),...(await frozenFixture()).payload};
+  const later=structuredClone(live),laterDate=add(baseline.asOf);
+  later.daily.push({d:laterDate,schwab:60,webull:40});later.status.asOf=laterDate;
+  later.feeCalculationReceipt=buildFeeCalculationReceipt({data:later,economicInput:{v:4,settings:{start:baseline.from,mgmt:2,carry:20,fx:{USD:1}},accounts:[{id:'schwab',opening:60},{id:'webull',opening:40}],months:[],fees:[]}});
+  const cases=[
+    [live,x=>x.feeCalculationReceipt.asOf='2026-09-01','FEE_CUTOFF','NONE','NOT_CHECKED','NOT_CHECKED'],
+    [live,x=>x.feeCalculationReceipt.receiptId='e'.repeat(64),'FEE_RECEIPT','NONE','NOT_CHECKED','NOT_CHECKED'],
+    [live,x=>x.ibManagerSourceState.stateId='e'.repeat(64),'SOURCE_STATE','NONE','NOT_CHECKED','NOT_CHECKED'],
+    [live,x=>delete x.ibManagerSourceState,'SOURCE_CUTOFF','NONE','NOT_CHECKED','NOT_CHECKED'],
+    [live,x=>x.ibManagerSourceStatus={state:'pending',targetDate:baseline.asOf,reasonCode:'IB_SOURCE_CASH_RECONCILIATION'},'RETURN_RECEIPT','IB_SOURCE_CASH_RECONCILIATION','source-unavailable','source-unavailable'],
+    [live,x=>x.ibManagerSourceStatus={state:'pending',reasonCode:'IB_SOURCE_PRIVATE_CANARY account=123 amount=456.78'},'RETURN_RECEIPT','UNKNOWN','source-unavailable','source-unavailable'],
+    [frozen,x=>delete x.ibManagerReturnReceipt,'RETURN_RECEIPT','NONE','missing','invalid-daily-path'],
+    [frozen,x=>delete x.ibManagerDrawdownReceipt,'DRAWDOWN_RECEIPT','NONE','VERIFIED','missing-daily-path'],
+    [later,x=>x.ibManagerSourceStatus={state:'pending',targetDate:laterDate,reasonCode:'IB_SOURCE_PAST_POINT_CHANGED'},'SOURCE_CUTOFF','IB_SOURCE_PAST_POINT_CHANGED','NOT_CHECKED','NOT_CHECKED',laterDate],
+  ];
+  for(const [base,mutate,predicate,sourceReason,returnReason,drawdownReason,target=baseline.asOf] of cases){
+    const data=structuredClone(base);mutate(data);const before=structuredClone(data);let stderr='';const write=process.stderr.write;
+    try{process.stderr.write=chunk=>{stderr+=String(chunk);return true;};await assert.rejects(assertIbManagerPublication(data,target,environ),{message:'FEE_CLOUD_IB_INCOMPLETE'});}
+    finally{process.stderr.write=write;}
+    assert.deepEqual(data,before);assert.equal(stderr.trim().split('\n').length,1);
+    const expected={schema:'fee-console.ib-publication-diagnostic.v1',code:'FEE_CLOUD_IB_INCOMPLETE',predicate,sourceReason,returnReason,drawdownReason};
+    assert.equal(stderr,IB_PUBLICATION_DIAGNOSTIC_PREFIX+JSON.stringify(expected)+'\n');
+    assert.equal(validateIbPublicationDiagnostic(expected),true);
+    assert.deepEqual(safeProducerFailureSummary(stderr+'FEE_CLOUD_IB_INCOMPLETE\n'),{code:'FEE_CLOUD_IB_INCOMPLETE',diagnostic:expected});
+    for(const hidden of ['PRIVATE_CANARY','123','456.78',baseline.asOf,lock()])assert.equal(stderr.includes(hidden),false);
+  }
+  // Success is silent; an unavailable diagnostic sink still refuses publication.
+  let stderr='';const write=process.stderr.write;
+  try{
+    process.stderr.write=chunk=>{stderr+=String(chunk);return true;};await assertIbManagerPublication(live,baseline.asOf,environ);assert.equal(stderr,'');
+    process.stderr.write=()=>{throw Error('PRIVATE_CANARY');};
+    await assert.rejects(assertIbManagerPublication({},baseline.asOf,environ),{message:'FEE_CLOUD_IB_INCOMPLETE'});
+  }finally{process.stderr.write=write;}
+});
+
+test('all existing IB source failure categories survive pending handoff without exposing raw errors',async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ib-diagnostic-synthetic-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  const environ={IB_MANAGER_READ_ENABLED:'true',IB_MANAGER_BASELINE_SHA256:lock()},data=feeData();
+  const codes=['CONFIG','BASELINE_LOCK','BASELINE_MISMATCH','SCOPE','IDENTITY','INCOMPLETE','DATE','DATE_ALIGNMENT','AMOUNT','SCHEMA','CASH_RECONCILIATION','UNRESOLVED_FLOW','UNVERIFIED_TRANSFER','NONCASH_EVIDENCE','UNSUPPORTED_CURRENCY','UNSTABLE','HISTORY_LIMIT','PAST_POINT_CHANGED','STATE','NETWORK'];
+  for(const code of codes){
+    let reads=0;const prep=await prepareIbManagerReport({payload:data,targetDate:baseline.asOf,outputDir:dir,environ,reader:{async readStable(){reads++;throw new IbManagerSourceError(code);}}});
+    assert.equal(reads,1);const pending=(await loadIbManagerReport(prep.file,{environ})).apply(data,baseline.asOf);let stderr='';const write=process.stderr.write;
+    try{process.stderr.write=chunk=>{stderr+=String(chunk);return true;};await assert.rejects(assertIbManagerPublication(pending,baseline.asOf,environ),/IB_INCOMPLETE/);}finally{process.stderr.write=write;}
+    assert.equal(safeProducerFailureSummary(stderr+'FEE_CLOUD_IB_INCOMPLETE\n').diagnostic.sourceReason,'IB_SOURCE_'+code);fs.unlinkSync(prep.file);
+  }
+});
 test('normal handoff preserves fee accounts, amounts and receipt; pending suppresses stale IB',async t=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ib-source-synthetic-'));fs.chmodSync(dir,0o700);t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
   const environ={IB_MANAGER_READ_ENABLED:'true',IB_MANAGER_BASELINE_SHA256:lock()},data=feeData(),original=structuredClone(data),s=await source();
@@ -376,13 +427,13 @@ test('real normal daily CLI encrypts independent IB only, preserves fees and rep
   const p=run([`--ib-manager-input=${pending.file}`]);assert.equal(p.status,0,p.stderr);const after=decrypt();assert.equal(after.ibManagerSourceStatus.state,'pending');assert.deepEqual(after.feeCalculationReceipt,before.feeCalculationReceipt);assert.deepEqual(after.ibManagerReturnReceipt,out.ibManagerReturnReceipt);
 });
 
-test('normal producer validates synthetic encrypted IB candidate through the existing reporter and health path',async t=>{
+test('normal producer validates IB and carries a failed handoff through the actual safe workflow summary',async t=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ib-producer-synthetic-'));fs.chmodSync(dir,0o700);t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
   const root=path.join(dir,'checkout');fs.mkdirSync(root,{mode:0o700});fs.cpSync(new URL('.',import.meta.url),path.join(root,'scripts'),{recursive:true});
   fs.mkdirSync(path.join(root,'claude'));fs.copyFileSync(new URL('../claude/fee-style-mapping.json',import.meta.url),path.join(root,'claude/fee-style-mapping.json'));
   const target='2026-10-23',key=crypto.randomBytes(32),clock=path.join(dir,'clock.mjs');
   // The synthetic producer and each writer/reporter/health child share the fixture clock.
-  fs.writeFileSync(clock,`const RealDate=Date,now=RealDate.parse('2026-10-24T06:00:00Z');globalThis.Date=class extends RealDate{constructor(...args){super(...(args.length?args:[now]));}static now(){return now;}};`,{mode:0o600});
+  fs.writeFileSync(clock,`const RealDate=Date,now=RealDate.parse('2026-10-24T06:00:00Z');globalThis.Date=class extends RealDate{constructor(...args){super(...(args.length?args:[now]));}static now(){return now;}};globalThis.fetch=async()=>{process.exitCode=97;throw Error('UNMOCKED_FETCH_FORBIDDEN');};`,{mode:0o600});
   const encrypt=(o,v)=>{const iv=crypto.randomBytes(12),c=crypto.createCipheriv('aes-256-gcm',key,iv);return JSON.stringify({enc:true,v,data:Buffer.concat([iv,c.update(JSON.stringify(o)),c.final(),c.getAuthTag()]).toString('base64')});};
   const data=feeData();for(let d=add(baseline.asOf);d<=target;d=add(d))data.daily.push({d,schwab:60,webull:40});
   Object.assign(data.status,{asOf:target,notes:[],splitDelta:0});for(const p of data.daily)Object.assign(p,{cash:100,stock:0,other:0,spy:100,qqq:100,acctCash:{schwab:60,webull:40}});
@@ -393,24 +444,39 @@ test('normal producer validates synthetic encrypted IB candidate through the exi
   const ibFile=path.join(dir,'synthetic-source.json');fs.writeFileSync(ibFile,JSON.stringify(s),{mode:0o600});
   const script=path.join(root,'exercise.mjs');fs.writeFileSync(script,`
     import fs from 'node:fs';import path from 'node:path';import crypto from 'node:crypto';import assert from 'node:assert/strict';
-    import {produce} from './scripts/fee-cloud-producer.mjs';import {STYLE_ACCOUNTS} from './scripts/fee-style-registry.mjs';
+    import {produce,producerFailureCode} from './scripts/fee-cloud-producer.mjs';import {STYLE_ACCOUNTS} from './scripts/fee-style-registry.mjs';import {IbManagerSourceError} from './scripts/ib-manager-source.mjs';
     const source=JSON.parse(fs.readFileSync(process.env.SYNTHETIC_IB_FILE)),target=source.sourceAsOf,dir=path.dirname(process.env.SYNTHETIC_IB_FILE),key=Buffer.from(process.env.FEE_DATA_KEY,'base64url');
     const decode=file=>{const b=Buffer.from(JSON.parse(fs.readFileSync(file)).data,'base64'),d=crypto.createDecipheriv('aes-256-gcm',key,b.subarray(0,12));d.setAuthTag(b.subarray(-16));return JSON.parse(Buffer.concat([d.update(b.subarray(12,-16)),d.final()]));};
     let ibReads=0,feeReads=0,cleanups=0;const results=[],checkedAt=new Date().toISOString();
-    for(const enabled of [false,true]){
-      process.env.IB_MANAGER_READ_ENABLED=enabled?'true':'';const output=path.join(dir,enabled?'enabled':'disabled');fs.mkdirSync(output,{mode:0o700});
-      const result=await produce({requireIb:enabled,cli:{'benchmark-file':process.env.SYNTHETIC_CACHE,'target-date':target,'out-dir':output,'checked-at':checkedAt},
+    for(const mode of ['disabled','enabled','failed']){
+      const enabled=mode!=='disabled';process.env.IB_MANAGER_READ_ENABLED=enabled?'true':'';const output=path.join(dir,mode);fs.mkdirSync(output,{mode:0o700});
+      const options={requireIb:enabled,cli:{'benchmark-file':process.env.SYNTHETIC_CACHE,'target-date':target,'out-dir':output,'checked-at':checkedAt},
         fetchEconomic:async()=>({envelopeVersion:4,sourcePath:process.env.FEE_ECON_FILE,async checkCurrent(){},cleanup(){cleanups++;}}),
-        ibReader:{async readStable(){ibReads++;return structuredClone(source);}},
-        reader:{async readStable(_target,benchmark){feeReads++;return {targetDate:target,accounts:{schwab:60,webull:40},splits:{cash:100,stock:0,other:0},acctCash:{schwab:60,webull:40},prevAcctCash:{schwab:60,webull:40},sourceDates:{schwab:target,webull:target},benchmark:{...benchmark,sourceDate:target,state:'session'},sourceFingerprint:'a'.repeat(64),flows:[],styleInput:{schemaVersion:1,date:target,portfolios:Object.entries(STYLE_ACCOUNTS).map(([account,portfolioId])=>({account,portfolioId,sourceDate:target,stockTotalUsd:0,holdings:[]})),proposals:[]}};}}});
+        ibReader:{async readStable(){ibReads++;if(mode==='failed')throw new IbManagerSourceError('CASH_RECONCILIATION');return structuredClone(source);}},
+        reader:{async readStable(_target,benchmark){feeReads++;return {targetDate:target,accounts:{schwab:60,webull:40},splits:{cash:100,stock:0,other:0},acctCash:{schwab:60,webull:40},prevAcctCash:{schwab:60,webull:40},sourceDates:{schwab:target,webull:target},benchmark:{...benchmark,sourceDate:target,state:'session'},sourceFingerprint:'a'.repeat(64),flows:[],styleInput:{schemaVersion:1,date:target,portfolios:Object.entries(STYLE_ACCOUNTS).map(([account,portfolioId])=>({account,portfolioId,sourceDate:target,stockTotalUsd:0,holdings:[]})),proposals:[]}};}}};
+      if(mode==='failed'){
+        await assert.rejects(produce(options),error=>{assert.equal(error.message,'FEE_CLOUD_IB_INCOMPLETE');console.error(producerFailureCode(error,'UNKNOWN'));return true;});
+        assert.equal(fs.existsSync(path.join(output,'ib-manager-input.json')),false);assert.equal(fs.existsSync(path.join(output,'fee-data-health.json')),false);continue;
+      }
+      const result=await produce(options);
       results.push(decode(result.dataFile));assert.equal(fs.existsSync(path.join(output,'ib-manager-input.json')),false);assert.equal(fs.existsSync(result.healthFile),true);
     }
-    assert.equal(ibReads,1);assert.equal(feeReads,2);assert.equal(cleanups,2);assert.equal(results[1].ibManagerSourceStatus.state,'verified');assert.deepEqual(results[1].feeCalculationReceipt,results[0].feeCalculationReceipt);
+    assert.equal(ibReads,2);assert.equal(feeReads,3);assert.equal(cleanups,3);assert.equal(results[1].ibManagerSourceStatus.state,'verified');assert.deepEqual(results[1].feeCalculationReceipt,results[0].feeCalculationReceipt);
     const strip=o=>Object.fromEntries(Object.entries(o).filter(([k])=>!k.startsWith('ibManager')&&k!=='updatedAt'));assert.deepEqual(strip(results[0]),strip(results[1]));
     console.log('SYNTHETIC_NORMAL_PRODUCER_VERIFIED');
   `);
   const result=spawnSync(process.execPath,[script],{encoding:'utf8',env:{...process.env,NODE_OPTIONS:[process.env.NODE_OPTIONS||'','--import='+clock].join(' ').trim(),FEE_DATA_KEY:key.toString('base64url'),FEE_ECON_FILE:econ,FEE_STYLE_INPUT_FILE:'',FEE_MANAGEMENT_INPUT_FILE:'',IB_MANAGER_READ_ENABLED:'',IB_MANAGER_BASELINE_SHA256:lock(),SYNTHETIC_IB_FILE:ibFile,SYNTHETIC_CACHE:cache},timeout:20000});
   assert.equal(result.status,0,result.stderr);assert.match(result.stdout,/SYNTHETIC_NORMAL_PRODUCER_VERIFIED/);assert.equal(fs.readFileSync(path.join(root,'data.json'),'utf8'),original);
+  assert.equal(result.stderr.trim().split('\n').length,2);const projection=safeProducerFailureSummary(result.stderr);
+  assert.deepEqual(projection,{code:'FEE_CLOUD_IB_INCOMPLETE',diagnostic:{schema:'fee-console.ib-publication-diagnostic.v1',code:'FEE_CLOUD_IB_INCOMPLETE',predicate:'RETURN_RECEIPT',sourceReason:'IB_SOURCE_CASH_RECONCILIATION',returnReason:'source-unavailable',drawdownReason:'missing-daily-path'}});
+  const workflow=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8');
+  const failureScript=workflow.match(/node --input-type=module - \"\$error_file\" <<'NODE'\n([\s\S]+?)\n          NODE/)[1];
+  const errorFile=path.join(dir,'private.stderr'),summary=path.join(dir,'safe-summary.md');fs.writeFileSync(errorFile,'PRIVATE_CANARY amount=123456.78 /private/path\n'+result.stderr,{mode:0o600});fs.writeFileSync(summary,'',{mode:0o600});
+  const published=spawnSync(process.execPath,['--input-type=module','-',errorFile],{cwd:new URL('..',import.meta.url),input:failureScript,encoding:'utf8',env:{PATH:process.env.PATH,GITHUB_STEP_SUMMARY:summary}});
+  assert.equal(published.status,0,published.stderr);assert.equal(published.stderr,'');
+  const safeText=published.stdout+fs.readFileSync(summary,'utf8');assert.match(safeText,/IB_SOURCE_CASH_RECONCILIATION/);assert.match(safeText,/RETURN_RECEIPT/);
+  for(const hidden of ['PRIVATE_CANARY','123456.78','/private/path',key.toString('base64url')])assert.equal(safeText.includes(hidden),false);
+  assert.equal(published.stdout.trim().split('\n').at(-1),'FEE_CLOUD_IB_INCOMPLETE');
 });
 
 // A reported in-transit migration cannot be proved complete by two identical
