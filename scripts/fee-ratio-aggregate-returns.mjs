@@ -14,8 +14,8 @@ export function createAggregateReturnsCore(){
  }
  function ref(r){if(!exact(r,['libraryFileId','version','sha256','locator'])||!/^libfile_[a-f0-9]{32}$/.test(r.libraryFileId||'')||!Number.isSafeInteger(r.version)||r.version<0||!/^[a-f0-9]{64}$/.test(r.sha256||'')||!text(r.locator))fail();}
  function oneYearBefore(end){if(!date(end))fail();const y=Number(end.slice(0,4))-1,m=Number(end.slice(5,7)),d=Number(end.slice(8,10));return String(y).padStart(4,'0')+'-'+String(m).padStart(2,'0')+'-'+String(Math.min(d,new Date(Date.UTC(y,m,0)).getUTCDate())).padStart(2,'0');}
- function build(s,{expectedAccounts,expectedAsOf,excludedMembers=[],benchmarkMembers=[{account:'Citi-HK & 地产四期',market:'NASDAQ',securityCode:'QQQ'},{account:'Citi-HK & 地产四期',market:'NYSE',securityCode:'SPY'}]}={}){
-  if(!exact(s,['schema','provider','currency','asOf','accounts','reports'])||s.schema!==SCHEMA||s.provider!=='Sharesight'||s.currency!=='USD'||!date(s.asOf)||s.asOf!==expectedAsOf)fail();
+ function build(s,{expectedAccounts,expectedAsOf,topTargets:expectedTopTargets=null,excludedMembers=[],benchmarkMembers=[{account:'Citi-HK & 地产四期',market:'NASDAQ',securityCode:'QQQ'},{account:'Citi-HK & 地产四期',market:'NYSE',securityCode:'SPY'}]}={}){
+  if(!exact(s,['schema','provider','currency','asOf','accounts','reports',...(Object.hasOwn(s||{},'topHoldings')?['topHoldings']:[])])||s.schema!==SCHEMA||s.provider!=='Sharesight'||s.currency!=='USD'||!date(s.asOf)||s.asOf!==expectedAsOf)fail();
   const accounts=s.accounts;
   if(!Array.isArray(accounts)||!accounts.length||!accounts.every(text)||new Set(accounts).size!==accounts.length||!Array.isArray(expectedAccounts)||!same([...accounts].sort(),[...expectedAccounts].sort())||!Array.isArray(s.reports)||s.reports.length!==2||!Array.isArray(excludedMembers))fail();
   const member=m=>{if(!exact(m,['account','market','securityCode'])||![m.account,m.market,m.securityCode].every(text))fail();return memberKey(m);};
@@ -52,8 +52,97 @@ export function createAggregateReturnsCore(){
    }
    for(const row of r.unavailable){if(!exact(row,['scope','reason'])||!['benchmark-members-included','native-aggregate-not-provided','cash-scope-unverified'].includes(row.reason))fail();put(row.scope,{status:row.reason,nativePct:null,startDate:r.startDate,endDate:r.endDate,includeClosed:true});}
   }
-  return {schema:'fee-console.ratio-performance-view.v2',provider:'Sharesight',asOf:s.asOf,currency:'USD',accounts:[...accounts],items:[...items.values()]};
+  return {schema:'fee-console.ratio-performance-view.v2',provider:'Sharesight',asOf:s.asOf,currency:'USD',accounts:[...accounts],items:[...items.values()],...(Object.hasOwn(s,'topHoldings')?{topHoldings:buildTop(s.topHoldings,s,expectedTopTargets)}:{})};
  }
+
+ // Only current ranked entries are eligible. The historical return scope can
+ // retain sold members of the same exact product; no display-name fuzzy join.
+ const topId=t=>canon([t.category,t.name]);
+ function topTargets(exposure,companyTop=null){
+  const out=[];
+  const clean=m=>({account:m.account.replaceAll('&amp;','&'),market:m.market,securityCode:m.securityCode});
+  const unique=xs=>[...new Map(xs.map(m=>[memberKey(m),m])).values()].sort((a,b)=>memberKey(a).localeCompare(memberKey(b)));
+  for(const g of exposure.summary.classes.slice(0,3))for(const r of g.top5){
+   const members=r.sourceHoldings?.map(clean)||r.accounts?.map(account=>clean({...r,account}));
+   if(!members?.length)fail();
+   out.push({category:g.name,name:r.name,members:unique(members),basis:'fund-holding'});
+  }
+  if(companyTop)for(const r of companyTop){
+   const members=r.constituents.filter(c=>c.product===null||c.basis==='product-asset-replacement').map(clean);
+   out.push({category:'二级市场',name:r.name,members:unique(members),basis:'direct-holdings-only'});
+  }
+  return out;
+ }
+ function datedName(r){
+  for(const value of [r.securityCode,r.name]){
+   const marker=value.match(/(?:^|[-–—_:：/\s])(?=(?:19|20)\d{2}(?:[-/.]|年))/);if(!marker)continue;
+   const tail=value.slice(marker.index+marker[0].length);
+   const n=tail.match(/^(?:19|20)\d{2}[-/.](?:0[1-9]|1[0-2])(?:\s*[-–—_:：/]\s*|\s+)(\S[\s\S]*)$/)?.[1]||tail.match(/^(?:19|20)\d{2}年(?:0?[1-9]|1[0-2])月\s*(?:[-–—_:：/]\s*)?(\S[\s\S]*)$/)?.[1];
+   if(n)return n.trim();
+  }return null;
+ }
+ function buildTop(source,parent,expectedTargets=null){
+  if(!exact(source,['schema','targets','reports'])||source.schema!=='fee-console.ratio-top5-source.v1'||!Array.isArray(source.targets)||source.targets.length<15||source.targets.length>20||!Array.isArray(source.reports)||source.reports.length!==2)fail();
+  const targets=new Map();
+  for(const t of source.targets){
+   if(!exact(t,['category','name','members','basis'])||!['PE/VC','对冲基金','常青基金','二级市场'].includes(t.category)||!text(t.name)||t.basis!==(t.category==='二级市场'?'direct-holdings-only':'fund-holding')||!Array.isArray(t.members)||!t.members.length&&t.category!=='二级市场'||targets.has(topId(t)))fail();
+   const keys=t.members.map(m=>{if(!exact(m,['account','market','securityCode'])||![m.account,m.market,m.securityCode].every(text)||!parent.accounts.includes(m.account))fail();return memberKey(m);});
+   if(new Set(keys).size!==keys.length||!same(keys,[...keys].sort((a,b)=>a.localeCompare(b))))fail();targets.set(topId(t),t);
+  }
+  for(const category of ['PE/VC','对冲基金','常青基金'])if(source.targets.filter(t=>t.category===category).length!==5)fail();
+  const secondary=source.targets.filter(t=>t.category==='二级市场').length;if(secondary!==0&&secondary!==5)fail();
+  if(expectedTargets!==null&&!same(source.targets,expectedTargets))fail();
+  const normalized=structuredClone(parent);delete normalized.topHoldings;
+  normalized.reports=source.reports.map(r=>{
+   if(!exact(r,['period','startDate','endDate','includeClosed','calculationMethod','currency','cashPerformance','source','additionalSources','rows','unavailable'])||!Array.isArray(r.rows)||!Array.isArray(r.unavailable)||!Array.isArray(r.additionalSources)||r.additionalSources.length>1)fail();
+   const original=parent.reports.find(p=>p.period===r.period);
+   if(!original||!same(r.source,original.source)||r.startDate!==original.startDate||r.endDate!==original.endDate||r.cashPerformance!==original.cashPerformance)fail();
+   const seen=new Set(),scope=t=>({type:'classification',name:topId(t),parent:null});
+   const take=t=>{if(!exact(t,['category','name'])||!targets.has(topId(t))||seen.has(topId(t)))fail();seen.add(topId(t));return targets.get(topId(t));};
+   const rows=r.rows.map(row=>{
+    const keys=['target','memberEvidence','sourceSheet','sourceRow','returnPct','unit','termEvidence'];
+    if(!(exact(row,keys)||exact(row,[...keys,'sourceFileId']))||!Array.isArray(row.memberEvidence)||!row.memberEvidence.length)fail();
+    const t=take(row.target),current=new Set(t.members.map(memberKey)),instruments=new Set(t.members.map(m=>canon([m.market,m.securityCode]))),hist=new Set(),coordinates=new Set();
+    const members=row.memberEvidence.map(e=>{
+     if(!exact(e,['account','market','securityCode','name','category','sourceRow'])||![e.account,e.market,e.securityCode,e.name,e.category].every(text)||!Number.isSafeInteger(e.sourceRow)||e.sourceRow<1||coordinates.has(e.sourceRow)||hist.has(memberKey(e)))fail();
+     if(e.category!==t.category)fail();
+     const sameInstrument=instruments.has(canon([e.market,e.securityCode]));
+     if(!sameInstrument&&!(t.category==='常青基金'&&datedName(e)===t.name))fail();
+     coordinates.add(e.sourceRow);hist.add(memberKey(e));return {account:e.account,market:e.market,securityCode:e.securityCode};
+    });
+    if(!t.members.length||[...current].some(k=>!hist.has(k)))fail();
+    const rowScope=scope(t),term=structuredClone(row.termEvidence);
+    if(term?.type==='sharesight-average-years-invested'){
+     if(!same(term.scope,row.target))fail();term.scope=rowScope;
+    }
+    return {scope:rowScope,members,sourceSheet:row.sourceSheet,sourceRow:row.sourceRow,returnPct:row.returnPct,unit:row.unit,termEvidence:term,...(Object.hasOwn(row,'sourceFileId')?{sourceFileId:row.sourceFileId}:{})};
+   });
+   const unavailable=r.unavailable.map(row=>{if(!exact(row,['target','reason'])||!['native-aggregate-not-provided','no-direct-holding'].includes(row.reason))fail();const t=take(row.target);if(row.reason==='no-direct-holding'&&t.members.length)fail();return {scope:scope(t),reason:'native-aggregate-not-provided'};});
+   if(seen.size!==targets.size)fail();
+   const result={...r,rows,unavailable};if(!result.additionalSources.length)delete result.additionalSources;return result;
+  });
+  const view=build(normalized,{expectedAccounts:parent.accounts,expectedAsOf:parent.asOf});
+  return {targets:structuredClone(source.targets),items:view.items.map(item=>({...item,target:((value)=>({category:value[0],name:value[1]}))(JSON.parse(item.scope.name))}))};
+ }
+ function selectTop(view,target){return view?.topHoldings?.items.find(x=>same(x.target,target))||null;}
+
+ function renderCompact(item){
+  scopeKey(item.scope);
+  const lines=[['all','全部'],['oneYear','近一年']].map(([key,label])=>{
+   const p=item.periods[key],has=Number.isFinite(p?.nativePct),badge={annualised:'年化','under-one-year':'未满一年','period-return':'期间收益','source-unit-unspecified':'原报表口径'}[p?.status]||'';
+   return '<span class="ratio-return-compact-line"><span>'+label+'：</span><strong>'+(has?esc(p.nativePct.toFixed(2)+'%'):'—')+'</strong>'+(badge?'<small>'+badge+'</small>':!has?'<small>'+esc(p?.status==='benchmark-members-included'?'含虚拟持仓，暂无匹配小计':p?.status==='cash-scope-unverified'?'现金收益范围待核实':'暂无官方小计')+'</small>':'')+'</span>';
+  }).join('');
+  return '<div class="ratio-return-compact">'+lines+'</div>';
+ }
+
+ function renderTop(item){
+  if(!item)return '';
+  const secondary=item.target.category==='二级市场';
+  const html=renderAggregate(item).replace('<summary>收益率</summary>','<summary>'+(secondary?'直接持仓收益率':'收益率')+'</summary>');
+  const note=secondary?'仅对应直接持有的实际产品；不包括 ETF 穿透公司敞口。杠杆产品采用自身原生收益，不按敞口倍数乘算。':'同名合并使用精确成员的 Sharesight 官方小计，不平均各项百分比。';
+  return html.replace('只显示组合或分类原生收益；已平仓计入历史，不用当前市值权重或穿透敞口重算。',note+' 已平仓计入历史。');
+ }
+
  function select(v,s){const k=scopeKey(s);return v.items.find(x=>scopeKey(x.scope)===k)||{scope:structuredClone(s),periods:{}};}
  const esc=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  function renderAggregate(item){
@@ -70,5 +159,5 @@ export function createAggregateReturnsCore(){
   const note=cash.includes('unknown')?'现金账户收益覆盖未获来源确认。':cash.includes('mixed')||cash.length>1?'现金收益覆盖分别保留各期原报表设置。':cash[0]==='included'?'含现金账户收益。':cash[0]==='excluded'?'未含现金账户收益。':'';
   return '<details class="ratio-returns"><summary>收益率</summary><div class="ratio-return-pair">'+rows+'</div><p class="ratio-return-scope">'+esc(accounts.join(' · '))+' · USD · Sharesight 原生口径</p><p>只显示组合或分类原生收益；已平仓计入历史，不用当前市值权重或穿透敞口重算。'+note+'</p></details>';
  }
- return {SCHEMA,build,select,render:renderAggregate,scopeKey,oneYearBefore};
+ return {SCHEMA,build,select,render:renderAggregate,scopeKey,oneYearBefore,topTargets,buildTop,selectTop,renderTop,renderCompact};
 }

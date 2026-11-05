@@ -327,11 +327,11 @@ test('six-category snapshot validates targets, account membership, sums and rend
   const bad=structuredClone(f.model);edit(bad.classificationSummary.assetAllocation);await assert.rejects(f.ratio.validateModel(bad));
  }
  const html=f.ratio.render(result.model),overview=html.split('<section class="card ratio-asset-overview')[1].split('</table>')[0];
- assert.equal((overview.match(/<tr>/g)||[]).length,7);assert.match(overview,/PE\/VC<\/td><td>USD 490\.00<\/td><td>[\d.]+%／0%/);assert.match(overview,/资产分类截至 2026-10-29/);assert.doesNotMatch(overview,/2026-10-30/);
+ assert.equal((overview.match(/<tr>/g)||[]).length,8);assert.match(overview,/PE\/VC<small class="ratio-overview-weights">[\d.]+%／0%[^]*?USD 490\.00/);assert.match(overview,/资产分类截至 2026-10-29/);assert.doesNotMatch(overview,/2026-10-30/);
  assert.match(html,/参考目标合计100%/);assert.match(html,/DEF-OTHER/);assert.match(html,/不代表卖出指令/);assert.doesNotMatch(html,/NaN|Infinity|<details[^>]* open/);
  const old=structuredClone(f.model);delete old.classificationSummary.assetAllocation;await f.ratio.validateModel(old);assert.match(f.ratio.render(old),/四类资产配置总览/);assert.doesNotMatch(f.ratio.render(old),/ratio-six-allocation/);
  const zero=sixAllocationFixture();for(const p of zero.classification.positions)if(p.sharesightCategory==='VC/PE')p.valueUSD=0;
- const z=await authenticated(t,zero);await z.ratio.validateModel(z.model);assert.match(z.ratio.render(z.model),/PE\/VC<\/td><td>USD 0\.00<\/td><td>0\.00%／0%/);
+ const z=await authenticated(t,zero);await z.ratio.validateModel(z.model);assert.match(z.ratio.render(z.model),/PE\/VC<small class="ratio-overview-weights">0\.00%／0%[^]*?USD 0\.00/);
 });
 
 test('fund display merges exact dated names only within the same class strategy and account',async t=>{
