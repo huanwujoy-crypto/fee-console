@@ -17,10 +17,27 @@ import { buildFeeCalculationReceipt } from './fee-receipt-core.mjs';
 import { createFundInvestorCore } from './fund-investor-core.mjs';
 import { buildWriterFailureDiagnostic, validateWriterFailureDiagnostic, WRITER_DIAGNOSTIC_PREFIX } from './fee-cloud-producer.mjs';
 import { reportFailureCode } from './fee-report-producer.mjs';
-import { CLOUD_ACCOUNTS, parseSourceJson } from './fee-cloud-source.mjs';
+import { CLOUD_ACCOUNTS, parseSourceJson, cashCents } from './fee-cloud-source.mjs';
 import { reportAddDays } from './fee-report-period.mjs';
 import { IB_PUBLICATION_DIAGNOSTIC_PREFIX, validateIbPublicationDiagnostic } from './ib-manager-report.mjs';
 import { isSharesightDeclaredTradeCash, sharesightCashRelations, resolveTradeCashEvidence } from './fee-trade-cash-evidence.mjs';
+
+test('native payout retains exact money tokens without changing source values or serialized fields',()=>{
+  const text='{"id":13,"paid_on":"2026-11-04","gross_amount":1e1,"resident_withholding_tax":3.00,"amount":7.0,"tax_credit":0}';
+  for(const wrapped of [false,true]){
+    const original=wrapped?'{"data":'+text+'}':text,parsed=parseSourceJson(original),row=wrapped?parsed.data:parsed;
+    assert.deepEqual(JSON.parse(JSON.stringify(parsed)),JSON.parse(original));
+    assert.deepEqual(['gross_amount','resident_withholding_tax','amount','tax_credit'].map(k=>cashCents(row,k)),[1000n,300n,700n,0n]);
+  }
+});
+test('native payout rejects hidden subcent precision, underflow and missing money evidence',()=>{
+  for(const [key,value] of [['gross_amount','10.00000000000000001'],['resident_withholding_tax','3.00000000000000001'],['amount','7.00000000000000001'],['tax_credit','1e-999'],['amount','"7"'],['amount','null']]){
+    const fields={gross_amount:'10',resident_withholding_tax:'3',amount:'7',tax_credit:'0'};fields[key]=value;
+    const text='{"id":13,"paid_on":"2026-11-04",'+Object.entries(fields).map(([k,v])=>JSON.stringify(k)+':'+v).join(',')+'}';
+    assert.throws(()=>cashCents(parseSourceJson(text),key),/CASH_PRECISION/);
+  }
+  assert.throws(()=>cashCents(parseSourceJson('{"id":13,"paid_on":"2026-11-04"}'),'amount'),/CASH_PRECISION/);
+});
 
 test('IB diagnostic summary rejects unknown fields, arbitrary reasons, duplicate/mixed records and oversized input',()=>{
  const code='FEE_CLOUD_IB_INCOMPLETE',prefix=IB_PUBLICATION_DIAGNOSTIC_PREFIX;
