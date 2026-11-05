@@ -18,8 +18,8 @@ concurrency:
 
 jobs:
   supervise:
-    # Ratio-only runs do not represent fee production or recovery.
-    if: ${{ github.event.workflow_run.display_title != 'Manual ratio snapshot' }}
+    # Ratio-only and the fixed read-only diagnostic are not fee production.
+    if: ${{ github.event.workflow_run.display_title != 'Manual ratio snapshot' && !(github.event.workflow_run.display_title == 'IB diagnostic 2026-11-04' && github.event.workflow_run.event == 'workflow_dispatch' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.path == '.github/workflows/fee-cloud-producer.yml' && github.event.workflow_run.actor.id == 283054367 && github.event.workflow_run.run_attempt == 1) }}
     runs-on: ubuntu-latest
     steps:
       - name: Check out trusted main

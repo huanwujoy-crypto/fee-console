@@ -10,10 +10,20 @@ const ISSUE_TITLE = "[fee-cloud] producer needs Codex diagnosis";
 const ALLOWED_EVENTS = new Set(["schedule", "workflow_dispatch"]);
 const FAILED_CONCLUSIONS = new Set(['failure', 'timed_out']);
 
+// This fixed reviewed job has no writer. Its outcome is neither a production
+// failure nor recovery evidence. Titles alone cannot suppress production alerts.
+export function isIbReadOnlyDiagnostic(run) {
+  return run?.display_title === 'IB diagnostic 2026-11-04'
+    && run.event === 'workflow_dispatch' && run.head_branch === 'main'
+    && run.path === '.github/workflows/fee-cloud-producer.yml'
+    && run.actor?.id === 283054367 && run.run_attempt === 1
+    && /^[a-f0-9]{40}$/.test(run.head_sha || '');
+}
+
 export function consecutiveFailures(runs) {
   let count = 0;
   for (const run of runs) {
-    if (!run || !ALLOWED_EVENTS.has(run.event) || run.status !== "completed") continue;
+    if (!run || isIbReadOnlyDiagnostic(run) || !ALLOWED_EVENTS.has(run.event) || run.status !== "completed") continue;
     if (run.conclusion === "success" && run.producerValidated === true) break;
     if (FAILED_CONCLUSIONS.has(run.conclusion)) count++;
   }
@@ -21,7 +31,7 @@ export function consecutiveFailures(runs) {
 }
 
 export function diagnosticBody(runs) {
-  const failures = runs.filter(run => run && FAILED_CONCLUSIONS.has(run.conclusion) && ALLOWED_EVENTS.has(run.event)).slice(0, 5);
+  const failures = runs.filter(run => run && !isIbReadOnlyDiagnostic(run) && FAILED_CONCLUSIONS.has(run.conclusion) && ALLOWED_EVENTS.has(run.event)).slice(0, 5);
   const lines = failures.map(run => `- ${run.created_at}: ${run.html_url}`);
   return [
     "The deterministic fee cloud producer failed at least twice consecutively.",
@@ -80,7 +90,7 @@ async function main() {
   // Inspect historical successes too, so a new failure does not accumulate
   // failures that precede a genuinely validated producer execution.
   for (const run of runs) {
-    if (!run || !ALLOWED_EVENTS.has(run.event) || run.status !== 'completed' || run.conclusion !== 'success') continue;
+    if (!run || isIbReadOnlyDiagnostic(run) || !ALLOWED_EVENTS.has(run.event) || run.status !== 'completed' || run.conclusion !== 'success') continue;
     if (!Number.isSafeInteger(run.id) || run.id <= 0) continue;
     try {
       const jobs = await api(`/repos/${repo}/actions/runs/${run.id}/jobs?filter=latest&per_page=100`, token);

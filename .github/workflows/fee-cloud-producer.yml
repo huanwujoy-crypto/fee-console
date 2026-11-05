@@ -1,5 +1,5 @@
 name: Fee console cloud producer
-run-name: ${{ (inputs.ratio_plan != '' || inputs.ratio_main != '') && 'Manual ratio snapshot' || github.workflow }}
+run-name: ${{ inputs.ib_diagnostic_once && 'IB diagnostic 2026-11-04' || (inputs.ratio_plan != '' || inputs.ratio_main != '') && 'Manual ratio snapshot' || github.workflow }}
 
 on:
   schedule:
@@ -10,6 +10,16 @@ on:
     - cron: '0 6 * * *'
   workflow_dispatch:
     inputs:
+      ib_diagnostic_once:
+        description: Separately approved read-only Jenny diagnostic for 2026-11-04; no production or publication
+        type: boolean
+        required: false
+        default: false
+      ib_diagnostic_main:
+        description: Exact approved main for the one read-only diagnostic
+        type: string
+        required: false
+        default: ''
       ratio_main:
         description: Exact reviewed main for a manual ratio operation; leave blank for fees
         type: string
@@ -87,7 +97,7 @@ concurrency:
 jobs:
   period:
     # The clock has an explicit automatic-daily mode; it never asserts human review.
-    if: ${{ !inputs.ratio_plan && !inputs.ratio_main && !inputs.source_plan_check_only && !inputs.source_acceptance_once && ((github.event_name == 'schedule' && vars.FEE_REPORT_PERIODS_ENABLED == 'true' && (vars.FEE_REPORT_ONCE_MAIN != '' || (vars.FEE_REPORT_DAILY_ENABLED == 'true' && vars.FEE_CLOUD_MODE == 'publish'))) || (github.event_name == 'workflow_dispatch' && ((inputs.run_reviewed_once && inputs.report_kind != 'automatic-daily') || (!inputs.run_reviewed_once && inputs.report_kind == 'automatic-daily' && vars.FEE_REPORT_ONCE_MAIN == '' && vars.FEE_REPORT_DAILY_ENABLED == 'true' && vars.FEE_REPORT_PERIODS_ENABLED == 'true' && vars.FEE_CLOUD_MODE == 'publish' && github.actor_id == '283054367' && github.ref == 'refs/heads/main' && github.run_attempt == 1)))) && (vars.FEE_CLOUD_MODE == 'shadow' || vars.FEE_CLOUD_MODE == 'publish') }}
+    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && !inputs.ratio_plan && !inputs.ratio_main && !inputs.source_plan_check_only && !inputs.source_acceptance_once && ((github.event_name == 'schedule' && vars.FEE_REPORT_PERIODS_ENABLED == 'true' && (vars.FEE_REPORT_ONCE_MAIN != '' || (vars.FEE_REPORT_DAILY_ENABLED == 'true' && vars.FEE_CLOUD_MODE == 'publish'))) || (github.event_name == 'workflow_dispatch' && ((inputs.run_reviewed_once && inputs.report_kind != 'automatic-daily') || (!inputs.run_reviewed_once && inputs.report_kind == 'automatic-daily' && vars.FEE_REPORT_ONCE_MAIN == '' && vars.FEE_REPORT_DAILY_ENABLED == 'true' && vars.FEE_REPORT_PERIODS_ENABLED == 'true' && vars.FEE_CLOUD_MODE == 'publish' && github.actor_id == '283054367' && github.ref == 'refs/heads/main' && github.run_attempt == 1)))) && (vars.FEE_CLOUD_MODE == 'shadow' || vars.FEE_CLOUD_MODE == 'publish') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -163,7 +173,7 @@ jobs:
 
   once-admit:
     needs: period
-    if: ${{ !inputs.ratio_plan && !inputs.ratio_main && vars.FEE_REPORT_ONCE_MAIN != '' && needs.period.outputs.outcome == 'produce' }}
+    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && !inputs.ratio_plan && !inputs.ratio_main && vars.FEE_REPORT_ONCE_MAIN != '' && needs.period.outputs.outcome == 'produce' }}
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
@@ -185,7 +195,7 @@ jobs:
   produce:
     name: Produce ${{ needs.period.outputs.kind }} ${{ needs.period.outputs.target }}
     needs: [period, once-admit]
-    if: ${{ !inputs.ratio_plan && !inputs.ratio_main && !cancelled() && !inputs.source_plan_check_only && github.run_attempt == 1 && needs.period.outputs.outcome == 'produce' && (vars.FEE_REPORT_ONCE_MAIN == '' || needs['once-admit'].result == 'success') && (vars.FEE_CLOUD_MODE == 'shadow' || vars.FEE_CLOUD_MODE == 'publish') }}
+    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && !inputs.ratio_plan && !inputs.ratio_main && !cancelled() && !inputs.source_plan_check_only && github.run_attempt == 1 && needs.period.outputs.outcome == 'produce' && (vars.FEE_REPORT_ONCE_MAIN == '' || needs['once-admit'].result == 'success') && (vars.FEE_CLOUD_MODE == 'shadow' || vars.FEE_CLOUD_MODE == 'publish') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: fee-cloud-producer
@@ -387,7 +397,7 @@ jobs:
 
   once-finish:
     needs: [period, once-admit, produce]
-    if: ${{ !inputs.ratio_plan && !inputs.ratio_main && always() && vars.FEE_REPORT_ONCE_MAIN != '' }}
+    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && !inputs.ratio_plan && !inputs.ratio_main && always() && vars.FEE_REPORT_ONCE_MAIN != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
@@ -409,7 +419,7 @@ jobs:
 
   source-plan-check:
     name: Public source plan check ${{ inputs.source_target }}
-    if: ${{ !inputs.ratio_plan && !inputs.ratio_main && github.event_name == 'workflow_dispatch' && github.run_attempt == 1 && inputs.report_kind != 'automatic-daily' && inputs.source_plan_check_only && !inputs.source_acceptance_once && !inputs.run_reviewed_once }}
+    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && !inputs.ratio_plan && !inputs.ratio_main && github.event_name == 'workflow_dispatch' && github.run_attempt == 1 && inputs.report_kind != 'automatic-daily' && inputs.source_plan_check_only && !inputs.source_acceptance_once && !inputs.run_reviewed_once }}
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
@@ -432,7 +442,7 @@ jobs:
 
   source-acceptance:
     name: Source acceptance ${{ inputs.source_target }}
-    if: ${{ !inputs.ratio_plan && !inputs.ratio_main && vars.FEE_REPORT_ONCE_MAIN == '' && github.event_name == 'workflow_dispatch' && github.run_attempt == 1 && inputs.report_kind != 'automatic-daily' && !inputs.source_plan_check_only && inputs.source_acceptance_once && !inputs.run_reviewed_once }}
+    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && !inputs.ratio_plan && !inputs.ratio_main && vars.FEE_REPORT_ONCE_MAIN == '' && github.event_name == 'workflow_dispatch' && github.run_attempt == 1 && inputs.report_kind != 'automatic-daily' && !inputs.source_plan_check_only && inputs.source_acceptance_once && !inputs.run_reviewed_once }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: fee-cloud-producer
@@ -486,7 +496,7 @@ jobs:
           fi
 
   ratio-preflight:
-    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor_id == '283054367' && github.run_attempt == 1 && inputs.report_kind != 'automatic-daily' && inputs.ratio_plan != '' && inputs.ratio_main == github.sha && !inputs.run_reviewed_once && !inputs.source_plan_check_only && !inputs.source_acceptance_once }}
+    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor_id == '283054367' && github.run_attempt == 1 && inputs.report_kind != 'automatic-daily' && inputs.ratio_plan != '' && inputs.ratio_main == github.sha && !inputs.run_reviewed_once && !inputs.source_plan_check_only && !inputs.source_acceptance_once }}
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
@@ -504,7 +514,7 @@ jobs:
 
   ratio:
     needs: ratio-preflight
-    if: ${{ needs.ratio-preflight.result == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && inputs.ratio_main == github.sha }}
+    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && needs.ratio-preflight.result == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && inputs.ratio_main == github.sha }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: fee-cloud-producer
@@ -545,3 +555,54 @@ jobs:
           path: ${{ runner.temp }}/fee-ratio-result.safe.json
           if-no-files-found: warn
           retention-days: 7
+
+  ib-diagnostic:
+    name: IB diagnostic 2026-11-04
+    if: ${{ inputs.ib_diagnostic_once && inputs.ib_diagnostic_main == github.sha && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor_id == '283054367' && github.run_attempt == 1 }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: fee-cloud-producer
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Verify exact one-time diagnostic and frozen baseline before credentials
+        env:
+          DIAGNOSTIC_MAIN: ${{ inputs.ib_diagnostic_main }}
+          FEE_IB_DIAGNOSTIC_ACTIONS_TOKEN: ${{ github.token }}
+        run: node scripts/ib-manager-diagnostic.mjs --check-plan --expected-main="$DIAGNOSTIC_MAIN"
+      - name: Reuse the existing read identity
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          project_id: family-portfolio-gateway
+          workload_identity_provider: projects/860729177589/locations/global/workloadIdentityPools/fee-console-github/providers/fee-console-main
+          service_account: fee-cloud-producer@family-portfolio-gateway.iam.gserviceaccount.com
+      - name: Read only the existing Sharesight pair
+        id: diagnostic_credentials
+        uses: google-github-actions/get-secretmanager-secrets@bc9c54b29fdffb8a47776820a7d26e77b379d262
+        with:
+          secrets: |-
+            client_id:family-portfolio-gateway/sharesight-broker-sync-client-id/1
+            client_secret:family-portfolio-gateway/sharesight-broker-sync-client-secret/1
+      - name: Inspect Jenny without a writer or publication token
+        env:
+          DIAGNOSTIC_MAIN: ${{ inputs.ib_diagnostic_main }}
+          FEE_IB_DIAGNOSTIC_ACTIONS_TOKEN: ${{ github.token }}
+          FEE_CLOUD_SHARESIGHT_CLIENT_ID: ${{ steps.diagnostic_credentials.outputs.client_id }}
+          FEE_CLOUD_SHARESIGHT_CLIENT_SECRET: ${{ steps.diagnostic_credentials.outputs.client_secret }}
+          FEE_DATA_KEY: ${{ secrets.FEE_DATA_KEY }}
+          IB_MANAGER_READ_ENABLED: 'true'
+          IB_MANAGER_BASELINE_SHA256: ${{ vars.IB_MANAGER_BASELINE_SHA256 }}
+        run: node scripts/ib-manager-diagnostic.mjs --expected-main="$DIAGNOSTIC_MAIN"
+      - name: Remove diagnostic temporary inputs without artifacts
+        if: always()
+        run: |
+          if [[ -d "$RUNNER_TEMP/fee-ib-diagnostic" ]]; then
+            find "$RUNNER_TEMP/fee-ib-diagnostic" -type f -exec shred -u {} + 2>/dev/null || true
+            rm -rf "$RUNNER_TEMP/fee-ib-diagnostic"
+          fi
