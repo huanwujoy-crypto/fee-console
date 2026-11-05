@@ -129,8 +129,10 @@ export function createAggregateReturnsCore(){
  function renderCompact(item){
   scopeKey(item.scope);
   const lines=[['all','全部'],['oneYear','近一年']].map(([key,label])=>{
-   const p=item.periods[key],has=Number.isFinite(p?.nativePct),badge={annualised:'年化','under-one-year':'未满一年','period-return':'期间收益','source-unit-unspecified':'原报表口径'}[p?.status]||'';
-   return '<span class="ratio-return-compact-line"><span>'+label+'：</span><strong>'+(has?esc(p.nativePct.toFixed(2)+'%'):'—')+'</strong>'+(badge?'<small>'+badge+'</small>':!has?'<small>'+esc(p?.status==='benchmark-members-included'?'含虚拟持仓，暂无匹配小计':p?.status==='cash-scope-unverified'?'现金收益范围待核实':'暂无官方小计')+'</small>':'')+'</span>';
+   const p=item.periods[key],has=Number.isFinite(p?.nativePct),badge={annualised:'年化','under-one-year':'未满一年','period-return':'期间收益'}[p?.status]||'';
+   const reason=has?(badge||'原报表未注明是否年化'):p?.status==='benchmark-members-included'?'含虚拟持仓，尚无匹配小计':p?.status==='cash-scope-unverified'?'现金收益范围待核实':p?.status==='source-unavailable'?'Sharesight 未提供此范围的收益率':'尚无此范围的官方合并收益率';
+   const value=has?p.nativePct.toFixed(2)+'%':'—';
+   return '<span class="ratio-return-compact-line" aria-label="'+esc(label+'：'+value+'；'+reason)+'"><span>'+label+'：</span><strong title="'+esc(reason)+'">'+esc(value)+'</strong>'+(badge?'<small>'+badge+'</small>':'')+'</span>';
   }).join('');
   return '<div class="ratio-return-compact">'+lines+'</div>';
  }
