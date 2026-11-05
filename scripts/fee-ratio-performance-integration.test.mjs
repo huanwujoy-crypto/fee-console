@@ -72,11 +72,13 @@ test('wrong ranked membership or invented sixth entry fails original association
 });
 test('compact overview retains exact dollars, native returns and distinct six-class scope',async t=>{
  const f=await fixture(t),html=f.ratio.render(f.model);
- assert.match(html,/<th>市值（USD）<\/th><th>收益率<\/th>/);assert.match(html,/全部：/);assert.match(html,/近一年：/);assert.match(html,/M＝百万美元/);assert.match(html,/二级市场整体收益/);assert.match(html,/不等于上方股票市场子集/);assert.doesNotMatch(html,/ratio-performance-overview|<h2>投资收益率/);
+ assert.match(html,/<th>市值（USD）<\/th><th>收益率<\/th>/);assert.match(html,/全部：/);assert.match(html,/近一年：/);assert.match(html,/<details class="ratio-overview-return-notes"><summary>收益说明<\/summary>/);assert.match(html,/二级市场整体收益/);assert.match(html,/不等于上方股票市场子集/);assert.doesNotMatch(html,/M＝百万美元|ratio-money-exact|ratio-performance-overview|<h2>投资收益率/);
  const m=structuredClone(f.model);m.classificationSummary.assetAllocation.groups[0].valueCents=1725250072;
- const exact=f.ratio.render(m);assert.match(exact,/17.25M<\/summary><span>USD 17,252,500.72/);assert.doesNotMatch(exact,/1725.25M/);
- m.classificationSummary.assetAllocation.groups[0].valueCents=1;assert.match(f.ratio.render(m),/&lt;0.01M<\/summary><span>USD 0.01/);
- m.classificationSummary.assetAllocation.groups[0].valueCents=0;assert.match(f.ratio.render(m),/0.00M<\/summary><span>USD 0.00/);
+ const before=structuredClone(m),exact=f.ratio.render(m);assert.match(exact,/<span class="ratio-money-precise">17,252,500\.72<\/span>/);assert.doesNotMatch(exact,/17.25M/);assert.deepEqual(m,before,'display cannot change amounts, returns or source evidence');
+ for(const [valueCents,label]of [[1,'0.01'],[0,'0.00'],[99999999999999,'999,999,999,999.99'],[100000000000000,'1,000,000,000,000.00']]){m.classificationSummary.assetAllocation.groups[0].valueCents=valueCents;assert.ok(f.ratio.render(m).includes('<span class="ratio-money-precise">'+label+'</span>'));}
+ const overview=exact.slice(exact.indexOf('<table class="ratio-overview-table">'),exact.indexOf('</table>',exact.indexOf('<table class="ratio-overview-table">')));
+ assert.equal((overview.match(/class="ratio-money-precise"/g)||[]).length,7);assert.equal((overview.match(/class="ratio-return-compact-line"/g)||[]).length,14);
+ assert.doesNotMatch(overview,/<small>原报表口径|<small>暂无官方小计/);assert.match(exact,/没有这些标记的数值，原报表未注明是否年化/);assert.match(exact,/不代表0%/);
 });
 test('prior performance date cannot disappear through a later signed legacy snapshot',async t=>{
  const f=await fixture(t),oldProof=await f.snapshot.verifyOriginal(f.args);
@@ -108,6 +110,8 @@ test('browser uses exact tested factories and preserves existing note/session co
  const css=page.split('<style>')[1].split('</style>')[0];
  assert.doesNotMatch(css,/\\n/,'stylesheet must contain actual newlines, not escaped selector prefixes');
  assert.match(css,/(?:^|\n)\.ratio-overview-table\{width:100%;table-layout:fixed\}/);
+ assert.match(css,/\.ratio-overview-table th:first-child\{width:24%\}/);assert.match(css,/\.ratio-overview-table th:nth-child\(2\)\{width:39%\}/);assert.match(css,/\.ratio-overview-table th:nth-child\(3\)\{width:37%\}/);
+ assert.match(css,/\.ratio-money-precise\{[^}]*font-variant-numeric:tabular-nums;overflow-wrap:anywhere\}/);assert.doesNotMatch(css,/\.ratio-money-precise\{[^}]*(?:text-overflow:ellipsis|overflow:hidden)/);
  for(const file of ['fee-ratio-aggregate-returns','fee-ratio-management','fee-ratio-source-core','fee-ratio-snapshot']){const code=fs.readFileSync(new URL('./'+file+'.mjs',import.meta.url),'utf8'),factory=code.slice(code.indexOf('export function ')).replace('export function ','function ').trim();assert.ok(page.includes(factory),file);}
  assert.match(page,/summary\?\.textContent==='分类、账户与参考目标'/);assert.match(page,/summary\.textContent='明细'/);assert.match(page,/createAggregateReturnsCore\.toString\(\)/);
 });

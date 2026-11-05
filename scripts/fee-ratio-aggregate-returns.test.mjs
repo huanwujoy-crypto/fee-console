@@ -120,3 +120,26 @@ test('top-five annualisation uses its own exact evidence only',()=>{
 test('no-direct-holding cannot conceal an actual holding or supply a false rate',()=>{
  const s=topFixture(),t=s.topHoldings.targets.at(-1);for(const r of s.topHoldings.reports){const x=r.rows.pop();r.unavailable.push({target:x.target,reason:'no-direct-holding'});}assert.throws(()=>topBuild(s),/REFUSED/);t.members=[];assert.doesNotThrow(()=>topBuild(s));
 });
+
+test('compact overview keeps two native values and moves unknown-basis text out of visible lines',()=>{
+ const s=fixture(),v=build(s),before=structuredClone(v),h=c.renderCompact(c.select(v,scope()));
+ assert.equal((h.match(/class="ratio-return-compact-line"/g)||[]).length,2);
+ assert.match(h,/>12\.50%<\/strong>/);assert.match(h,/>-1\.25%<\/strong>/);
+ assert.doesNotMatch(h,/<small>|p\.a\.|未满一年/);assert.match(h,/aria-label="全部：12\.50%；原报表未注明是否年化"/);
+ assert.deepEqual(v,before);
+});
+test('compact overview never turns a missing value into zero or suppresses its reason',()=>{
+ for(const status of ['benchmark-members-included','cash-scope-unverified','source-unavailable','native-aggregate-not-provided']){
+  const h=c.renderCompact({scope:scope(),periods:{all:{status,nativePct:null},oneYear:{status:'source-unit-unspecified',nativePct:0}}});
+  assert.match(h,/>—<\/strong>/);assert.match(h,/>0\.00%<\/strong>/);assert.doesNotMatch(h,/<small>/);
+  assert.match(h,/aria-label="全部：—；[^"]+"/);
+ }
+});
+test('compact overview preserves each proven return basis without inventing investment duration',()=>{
+ for(const [status,label]of [['annualised','年化'],['period-return','期间收益'],['under-one-year','未满一年']]){
+  const h=c.renderCompact({scope:scope(),periods:{all:{status,nativePct:7.125}}});
+  assert.match(h,/>7\.13%<\/strong>/);assert.ok(h.includes('<small>'+label+'</small>'));
+  assert.equal((h.match(/<small>/g)||[]).length,1);
+ }
+ const absent=c.renderCompact({scope:scope(),periods:{}});assert.equal((absent.match(/>—<\/strong>/g)||[]).length,2);
+});
