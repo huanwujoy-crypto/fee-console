@@ -1026,6 +1026,117 @@ test('actual daily preflight starts at09:00 without clearing candidate, budget o
  await assert.rejects(dailyPublicationPreflight({...args,reviewedSyncDate:'2026-11-03'}),/MANUAL_SYNC_CONFIRMATION/);
 });
 
+const incomeRecoveryBase='c4effb80f56c913f4a903a4f016e6ae1cdf6cc97';
+const incomeRecoveryNow=new Date('2026-11-05T06:00:00Z');
+const incomeRecoveryFiles=['.github/workflows/fee-cloud-producer.yml','scripts/fee-report-producer.mjs','scripts/fee-report-producer.test.mjs'];
+function incomeRecoveryFixture(){
+ const f=recoveryFixture();f.plan=dailyReportPlan('2026-11-04',['NYSE','NASDAQ'],{periodFrom:'2026-11-04',reviewedSyncDate:'2026-11-04'});
+ f.runs=[f.run(recoveryId,recoveryHead,'2026-11-05T05:55:00Z'),
+  f.run(41945445626,'5923e40afcf4fa17e91a4be8d05aedce0fe8cc28','2026-11-05T01:00:00Z'),
+  f.run(41964614855,'f1d8a9e453e80cb5644749313597fe78faf171c8','2026-11-05T03:55:48Z')];
+ f.jobs={41945445626:[f.job(f.runs[1],126976478739,'Produce daily 2026-11-04')],41964614855:[f.job(f.runs[2],127038682646,'Produce daily 2026-11-04')]};
+ f.commit.parents=[{sha:incomeRecoveryBase}];f.supportCommit.sha=incomeRecoveryBase;
+ f.supportCommit.parents=[{sha:'f1d8a9e453e80cb5644749313597fe78faf171c8'}];
+ f.comparison.base_commit.sha=f.comparison.merge_base_commit.sha=incomeRecoveryBase;
+ f.comparison.files=incomeRecoveryFiles.map(filename=>({filename,status:'modified',sha:'b'.repeat(40)}));
+ f.tree.tree[0].sha='a2c44b8e0e19b875221ccf537141d9435683f72b';return f;
+}
+test('November4 recovery preserves both failures and ordinary cap, and cannot enter pending or published state',async()=>{
+ const f=incomeRecoveryFixture(),before=JSON.parse(JSON.stringify(f)),readers=recoveryReaders(f),args={plan:f.plan,now:incomeRecoveryNow,currentRunId:recoveryId,...readers};
+ const budget=await readers.readSourceAttempts({...args,recoveryMain:recoveryHead});assert.equal(budget.attempts,2);assert.deepEqual(budget.recoveryEvidence.entries.map(x=>x.runId),[41945445626,41964614855]);
+ await authorizeReportRecovery({...args,expectedMain:recoveryHead});assert.deepEqual(JSON.parse(JSON.stringify(f)),before);
+ const old=state(dailyReportPlan('2026-11-03',['NYSE','NASDAQ']),'2026-11-04T04:30:00Z');old.mainSha=old.finalMainSha=recoveryHead;
+ const preflight={...args,ibEnabled:false,reviewedSyncDate:'2026-11-04',readState:async()=>old};
+ assert.equal((await nativeReportPreflight(preflight)).reasonCode,'REPORT_SOURCE_ATTEMPT_BUDGET_EXHAUSTED');
+ assert.equal((await nativeReportPreflight({...preflight,recoveryMain:recoveryHead})).outcome,'produce');
+ assert.equal((await nativeReportPreflight({...preflight,recoveryMain:recoveryHead,readState:async()=>({...old,pending:true}),readSourceAttempts:()=>assert.fail('pending must not authorize source')})).outcome,'candidate-pending');
+ const published=state(f.plan,'2026-11-05T05:30:00Z');published.mainSha=published.finalMainSha=recoveryHead;
+ assert.equal((await nativeReportPreflight({...preflight,recoveryMain:recoveryHead,readState:async()=>published,readSourceAttempts:()=>assert.fail('published must not authorize source')})).outcome,'already-published');
+ const release=await readers.readRecoveryRelease(recoveryHead);
+ for(const target of ['2026-10-28','2026-10-30','2026-11-03','2026-11-05'])assert.throws(()=>validateReportRecoveryEvidence({plan:dailyReportPlan(target,['NYSE','NASDAQ'],{reviewedSyncDate:target}),expectedMain:recoveryHead,currentRunId:recoveryId,budget,release}),/RECOVERY_SCOPE/);
+});
+test('November4 recovery rejects altered historical evidence, reruns, wrong identity, missing history and competing source',async()=>{
+ const f=incomeRecoveryFixture(),readers=recoveryReaders(f),budget=await readers.readSourceAttempts({plan:f.plan,now:incomeRecoveryNow,currentRunId:recoveryId,recoveryMain:recoveryHead});
+ const good={plan:f.plan,expectedMain:recoveryHead,currentRunId:recoveryId,budget,release:await readers.readRecoveryRelease(recoveryHead)};
+ for(const change of [x=>x.budget.attempts=1,x=>x.budget.attempts=3,x=>x.budget.inProgress=true,x=>x.budget.recoveryEvidence.otherSourceActive=true,
+  x=>x.budget.recoveryEvidence.entries.pop(),x=>x.budget.recoveryEvidence.entries[0].runId++,x=>x.budget.recoveryEvidence.entries[0].jobId++,x=>x.budget.recoveryEvidence.entries[0].head=recoveryHead,
+  x=>x.budget.recoveryEvidence.entries[0].attempt=2,x=>x.budget.recoveryEvidence.entries[0].runStatus='in_progress',x=>x.budget.recoveryEvidence.entries[0].runConclusion='cancelled',x=>x.budget.recoveryEvidence.entries[0].conclusion='success',
+  x=>x.budget.recoveryEvidence.currentRun.attempt=2,x=>x.budget.recoveryEvidence.currentRun.actorId=1,x=>x.budget.recoveryEvidence.currentRun.workflowId=1,x=>x.budget.recoveryEvidence.currentRun.event='schedule',x=>x.budget.recoveryEvidence.currentRun.head=incomeRecoveryBase]){
+  const x=structuredClone(good);change(x);assert.throws(()=>validateReportRecoveryEvidence(x),/RECOVERY_/);
+ }
+ for(const id of [41945445626,41964614855])for(const conclusion of ['success','cancelled',null]){
+  const bad=incomeRecoveryFixture();bad.runs.find(r=>r.id===id).conclusion=conclusion;
+  await assert.rejects(authorizeReportRecovery({plan:bad.plan,expectedMain:recoveryHead,now:incomeRecoveryNow,currentRunId:recoveryId,...recoveryReaders(bad)}),/RECOVERY_PRIOR_RUNS/);
+ }
+});
+test('November4 queued cancelled skipped or failed admission burns the extra chance; the earlier diagnostic remains separate',async()=>{
+ for(const head of [incomeRecoveryBase,recoveryHead])for(const [status,conclusion]of [['queued',null],['completed','cancelled'],['completed','skipped'],['completed','failure']]){
+  const f=incomeRecoveryFixture(),r=f.run(90000000002,head,'2026-11-05T05:00:00Z');Object.assign(r,{status,conclusion});f.runs.push(r);
+  f.jobs[r.id]=[{...f.job(r,90000000003,'period',status,conclusion),started_at:null}];
+  await assert.rejects(authorizeReportRecovery({plan:f.plan,expectedMain:recoveryHead,currentRunId:recoveryId,now:incomeRecoveryNow,...recoveryReaders(f)}),/RECOVERY_CONSUMED/);
+ }
+ const f=incomeRecoveryFixture(),r=f.run(41957865621,'757b360de94f4e3b37c10b6fda2cbe79c6d7a2ec','2026-11-05T03:00:00Z');r.display_title='IB diagnostic 2026-11-04';f.runs.push(r);f.jobs[r.id]=[f.job(r,90000000003,r.display_title)];
+ const before=JSON.parse(JSON.stringify(f)),args={plan:f.plan,expectedMain:recoveryHead,currentRunId:recoveryId,now:incomeRecoveryNow,...recoveryReaders(f)};
+ await authorizeReportRecovery(args);assert.deepEqual(JSON.parse(JSON.stringify(f)),before);
+ r.run_attempt=2;await assert.rejects(authorizeReportRecovery(args),/SOURCE_ATTEMPT_METADATA/);
+});
+test('November4 release requires exactly three reviewed files, immediate signed successor and unchanged deployed UI',async()=>{
+ for(const change of [f=>f.commit.parents=[{sha:recoveryHead}],f=>f.commit.parents.push({sha:incomeRecoveryBase}),f=>f.supportCommit.parents=[],
+  f=>f.commit.commit.verification.verified=false,f=>f.supportCommit.author.id=1,f=>f.ref.object.sha='e'.repeat(40),
+  f=>f.comparison.total_commits=2,f=>f.comparison.files.pop(),f=>f.comparison.files[0].filename='data.json',f=>f.comparison.files[0].status='renamed',
+  f=>f.comparison.files.push({filename:'security/approval-tiers.json',status:'modified',sha:'b'.repeat(40)}),f=>f.tree.tree[0].sha='e'.repeat(40)]){
+  const f=incomeRecoveryFixture();change(f);await assert.rejects(readReportRecoveryRelease(recoveryHead,{fetchImpl:recoveryWire(f)}),/RECOVERY_/);
+ }
+});
+test('both admission checks use the existing ephemeral read token without extending other workflow steps or permissions',()=>{
+ const wf=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8');
+ const produce=wf.split('\n  produce:\n')[1].split('\n  once-finish:\n')[0];
+ const step=produce.split('      - name: Read, calculate and validate the encrypted candidate\n')[1].split('\n      - name:')[0];
+ assert.match(produce,/permissions:\n      contents: read\n      actions: read\n      id-token: write/);
+ assert.match(step,/FEE_REPORT_ACTIONS_TOKEN: \$\{\{ github.token \}\}/);assert.equal((produce.match(/FEE_REPORT_ACTIONS_TOKEN:/g)||[]).length,1);
+ assert.equal((wf.match(/FEE_REPORT_ACTIONS_TOKEN:/g)||[]).length,2);assert.doesNotMatch(produce,/contents: write|actions: write/);
+ assert.deepEqual([...wf.matchAll(/cron: '([^']+)'/g)].map(m=>m[1]),['0 1 * * *','30 3 * * *','0 6 * * *']);
+ assert.match(wf,/group: fee-cloud-producer\n  cancel-in-progress: false/);assert.match(wf,/github\.run_attempt == 1/);
+});
+test('November4 actual CLI rechecks authenticated recovery metadata before economic access and never leaks the token',t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'fee-income-recovery-cli-'));fs.chmodSync(dir,0o700);t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+ const root=path.join(dir,'checkout');fs.mkdirSync(root);fs.cpSync(new URL('.',import.meta.url),path.join(root,'scripts'),{recursive:true});
+ const f=incomeRecoveryFixture(),key=crypto.randomBytes(32),iv=crypto.randomBytes(12),cipher=crypto.createCipheriv('aes-256-gcm',key,iv);
+ const data=JSON.stringify({enc:true,v:3,data:Buffer.concat([iv,cipher.update(JSON.stringify({daily:[{d:'2026-11-03'}]})),cipher.final(),cipher.getAuthTag()]).toString('base64')});fs.writeFileSync(path.join(root,'data.json'),data);
+ const health={...state(dailyReportPlan('2026-11-03',['NYSE','NASDAQ']),'2026-11-04T04:30:00Z').health,dataSha256:crypto.createHash('sha256').update(data).digest('hex')};
+ const cache={v:1,benchmarks:Object.fromEntries([['spy','SPY','NYSEArca'],['qqq','QQQ','NasdaqGS']].map(([k,s,e])=>[k,{symbol:s,currency:'USD',exchange:e,series:['2026-11-03','2026-11-04'].map(d=>({d,p:100,div:0}))}]))};
+ const benchmark=path.join(dir,'benchmark.json');fs.writeFileSync(benchmark,JSON.stringify(cache));
+ const event={inputs:{run_reviewed_once:'true',report_kind:'daily',report_target:'2026-11-04',manual_sync_completed_for:'2026-11-04',recovery_main:recoveryHead,source_plan_check_only:'false',source_acceptance_once:'false'},sender:{id:283054367},repository:{full_name:'huanwujoy-crypto/fee-console'}};
+ const eventFile=path.join(dir,'event.json');fs.writeFileSync(eventFile,JSON.stringify(event));
+ const trace=path.join(dir,'trace.json'),preload=path.join(dir,'mock-only.mjs'),token='synthetic-recovery-token-canary';
+ fs.writeFileSync(preload,`import fs from 'node:fs';const D=Date,now=D.parse('2026-11-05T06:00:00Z');globalThis.Date=class extends D{constructor(...a){super(...(a.length?a:[now]));}static now(){return now;}};
+ const f=${JSON.stringify(f)},data=${JSON.stringify(data)},health=${JSON.stringify(health)},calls=[];
+ globalThis.fetch=async(url,init={})=>{url=String(url);if(init.method&&init.method!=='GET')throw Error('unexpected request');let value,status=200;
+ const api='https://api.github.com/repos/huanwujoy-crypto/fee-console/';
+ if(url.startsWith(api)){if(init.redirect!=='error')throw Error('metadata redirect');const p=url.slice(api.length);calls.push('metadata');
+ if(p.startsWith('actions/')){if(init.headers?.Authorization!=='Bearer '+process.env.FEE_REPORT_ACTIONS_TOKEN)throw Error('auth missing');if(process.env.SYNTHETIC_CASE==='unauthorized')status=401;}else if(init.headers?.Authorization)throw Error('token escaped metadata scope');
+ if(p.startsWith('actions/workflows/fee-cloud-producer.yml/runs?'))value={total_count:f.runs.length,workflow_runs:f.runs};
+ else if(/^actions\\/runs\\/\\d+\\/jobs\\?filter=all&per_page=100$/.test(p)){const jobs=f.jobs[Number(p.match(/runs\\/(\\d+)/)[1])];if(!jobs)throw Error('unexpected jobs');value={total_count:jobs.length,jobs};}
+ else if(p==='git/ref/heads/main')value=f.ref;
+ else if(p==='commits/${recoveryHead}?per_page=1')value=f.commit;else if(p==='commits/${incomeRecoveryBase}?per_page=1')value=f.supportCommit;
+ else if(p==='compare/${incomeRecoveryBase}...${recoveryHead}?per_page=100')value=f.comparison;
+ else if(p==='git/trees/${'a'.repeat(40)}'){value=structuredClone(f.tree);if(process.env.SYNTHETIC_CASE==='release-drift')value.tree[0].sha='e'.repeat(40);}
+ else if(p.startsWith('contents/')){const text=p.startsWith('contents/data.json?')?data:p.startsWith('contents/fee-data-health.json?')?JSON.stringify(health):null;if(text===null)throw Error('unexpected file');value={type:'file',encoding:'base64',size:Buffer.byteLength(text),content:Buffer.from(text).toString('base64')};}
+ else if(p.startsWith('git/matching-refs/heads/'))value=[];else throw Error('unexpected metadata');
+ }else if(url==='https://api.github.com/gists/${'a'.repeat(32)}'){if(init.redirect!=='manual'||init.headers?.Authorization)throw Error('economic request scope');calls.push('economic-mock');status=403;value={message:'private-canary'};}
+ else throw Error('real financial routes forbidden');
+ fs.writeFileSync(${JSON.stringify(trace)},JSON.stringify(calls));const r=new Response(JSON.stringify(value),{status,headers:{'content-type':'application/json'}});Object.defineProperty(r,'url',{value:url});return r;};`);
+ const env={PATH:process.env.PATH,NODE_OPTIONS:'--import='+preload,FEE_REPORT_ACTIONS_TOKEN:token,FEE_DATA_KEY:key.toString('base64url'),FEE_ECON_GIST_ID:'a'.repeat(32),IB_MANAGER_READ_ENABLED:'true',IB_MANAGER_BASELINE_SHA256:'b'.repeat(64),GITHUB_ACTIONS:'true',GITHUB_EVENT_NAME:'workflow_dispatch',GITHUB_RUN_ATTEMPT:'1',GITHUB_REF:'refs/heads/main',GITHUB_SHA:recoveryHead,GITHUB_REPOSITORY:'huanwujoy-crypto/fee-console',GITHUB_ACTOR_ID:'283054367',GITHUB_RUN_ID:String(recoveryId),GITHUB_EVENT_PATH:eventFile};
+ const cli=path.join(fs.realpathSync(root),'scripts/fee-report-producer.mjs'),common=['--report-kind=daily','--report-target=2026-11-04','--manual-sync-completed-for=2026-11-04','--recovery-main='+recoveryHead];
+ const gate=spawnSync(process.execPath,[cli,'--mode=preflight',...common,'--report-markets=NYSE,NASDAQ'],{encoding:'utf8',env,timeout:10000});assert.equal(gate.status,0,gate.stderr);assert.equal(JSON.parse(gate.stdout).outcome,'produce');assert.ok(JSON.parse(fs.readFileSync(trace)).every(x=>x==='metadata'));
+ for(const [kind,expected,economicCalls]of [['ok','SOURCE_FORBIDDEN',1],['unauthorized','FEE_REPORT_RECOVERY_METADATA',0],['release-drift','FEE_REPORT_RECOVERY_RELEASE',0]]){
+  const out=path.join(dir,kind);fs.mkdirSync(out,{mode:0o700});
+  const result=spawnSync(process.execPath,[cli,'--mode=produce',...common,'--report-plan='+JSON.stringify(f.plan),'--benchmark-file='+benchmark,'--out-dir='+out],{encoding:'utf8',env:{...env,SYNTHETIC_CASE:kind},timeout:10000});
+  assert.equal(result.status,1);assert.equal(result.stderr.trim(),expected);assert.equal(result.stdout,'');assert.doesNotMatch(result.stdout+result.stderr,/synthetic-recovery-token-canary|private-canary/);
+  assert.equal(JSON.parse(fs.readFileSync(trace)).filter(x=>x==='economic-mock').length,economicCalls);assert.deepEqual(fs.readdirSync(out),[]);assert.equal(fs.readFileSync(path.join(root,'data.json'),'utf8'),data);
+ }
+});
+
 test('period metadata token stays on fixed GET routes and preserves source-entry counting',async()=>{
  const token='synthetic-ephemeral-token-canary',r=budgetRun();let calls=0;
  const fetchImpl=async(url,init)=>{calls++;assert.match(url,/^https:\/\/api\.github\.com\/repos\/huanwujoy-crypto\/fee-console\/actions\//);assert.equal(init.method,'GET');assert.equal(init.redirect,'error');assert.equal(init.headers.Authorization,'Bearer '+token);const value=url.includes('/workflows/')?{total_count:1,workflow_runs:[r]}:{total_count:1,jobs:[budgetJob(r)]};const response=new Response(JSON.stringify(value));Object.defineProperty(response,'url',{value:url});return response;};
@@ -1051,7 +1162,7 @@ test('actual period CLI and workflow summary carry the scoped token and safe fai
  else{if(init.headers?.Authorization)throw Error('token escaped action scope');if(route==='git/ref/heads/main')v={object:{sha:'a'.repeat(40)}};else if(route.startsWith('contents/')){const text=route.startsWith('contents/data.json?')?data:route.startsWith('contents/fee-data-health.json?')?JSON.stringify(health):null;if(text===null)throw Error('unknown file');v={type:'file',encoding:'base64',size:Buffer.byteLength(text),content:Buffer.from(text).toString('base64')};}else if(route.startsWith('git/matching-refs/heads/'))v=[];else throw Error('unknown route');}
  const r=new Response(JSON.stringify(v),{status});Object.defineProperty(r,'url',{value:url});return r;};`);
  const workflow=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8'),period=workflow.split('\n  period:\n')[1].split('\n  once-admit:\n')[0];
- assert.match(period,/permissions:\n      contents: read\n      actions: read/);assert.match(period,/FEE_REPORT_ACTIONS_TOKEN: \$\{\{ github.token \}\}/);assert.equal((workflow.match(/FEE_REPORT_ACTIONS_TOKEN:/g)||[]).length,1);
+ assert.match(period,/permissions:\n      contents: read\n      actions: read/);assert.match(period,/FEE_REPORT_ACTIONS_TOKEN: \$\{\{ github.token \}\}/);assert.equal((workflow.match(/FEE_REPORT_ACTIONS_TOKEN:/g)||[]).length,2);
  const receiver=period.split(`node --input-type=module - "$summary" <<'NODE'\n`)[1].split('\n          NODE')[0].replace(/^          /gm,'');assert.ok(receiver.includes('reportPreflightSummary(r)'));
  const cli=new URL('./fee-report-producer.mjs',import.meta.url).pathname,cwd=path.resolve(path.dirname(cli),'..');
  for(const [kind,expected]of [['ok',null],['http401','HTTP_401'],['http403','HTTP_403'],['http429','HTTP_429'],['http500','HTTP'],['network','NETWORK'],['partial','METADATA_INVALID'],['missing','AUTH_REQUIRED']]){

@@ -333,9 +333,9 @@ const RECOVERY_FAILED_RUNS=Object.freeze([
 // Filled from the final index-only candidate bytes before this package freezes.
 const RECOVERY_UI_BLOB='1f1218943293e035bbfe07fa56e9b74341c22177';
 const RECOVERY_OWNER=283054367;
-// Preserve the consumed October 28 contract and its evidence. The independently
-// approved October 30 admission belongs only to this signed immediate successor;
-// it neither resets ordinary attempts nor grants a future target/version a retry.
+// Preserve each consumed contract and its evidence. Each independently reviewed
+// admission belongs only to its signed immediate successor; it neither resets
+// ordinary attempts nor grants a future target/version a retry.
 const RECOVERY_SCOPES=Object.freeze([
  Object.freeze({target:RECOVERY_TARGET,baseSha:RECOVERY_BASE,repairBase:RECOVERY_REPAIR_BASE,files:RECOVERY_REPAIR_FILES,failures:RECOVERY_FAILED_RUNS,uiBlob:RECOVERY_UI_BLOB}),
  Object.freeze({target:'2026-10-30',baseSha:'2ba1e968e7a5401c9bb90aac967f4e57e34a7078',repairBase:'2ba1e968e7a5401c9bb90aac967f4e57e34a7078',
@@ -345,6 +345,12 @@ const RECOVERY_SCOPES=Object.freeze([
    {id:41161244083,jobId:124419094644,head:'b08f45e76ca57323dbfdea6d7c17134c45cfa19c'},
    {id:41163889615,jobId:124427211645,head:'bac02b38b9ce52376464556575df9aadb17826ab'},
   ]),uiBlob:'26096fe78ad571d7a8a43476d2fbf72f1194797d'}),
+ Object.freeze({target:'2026-11-04',baseSha:'c4effb80f56c913f4a903a4f016e6ae1cdf6cc97',repairBase:'c4effb80f56c913f4a903a4f016e6ae1cdf6cc97',
+  files:Object.freeze(['.github/workflows/fee-cloud-producer.yml','scripts/fee-report-producer.mjs','scripts/fee-report-producer.test.mjs']),
+  failures:Object.freeze([
+   {id:41945445626,jobId:126976478739,head:'5923e40afcf4fa17e91a4be8d05aedce0fe8cc28'},
+   {id:41964614855,jobId:127038682646,head:'f1d8a9e453e80cb5644749313597fe78faf171c8'},
+  ]),uiBlob:'a2c44b8e0e19b875221ccf537141d9435683f72b'}),
 ]);
 const recoveryScope=target=>RECOVERY_SCOPES.find(s=>s.target===target);
 export async function readPeriodSourceAttempts({plan,now,currentRunId=null,recoveryMain=null,actionsToken=process.env.FEE_REPORT_ACTIONS_TOKEN,fetchImpl=globalThis.fetch}={}){
@@ -352,7 +358,7 @@ export async function readPeriodSourceAttempts({plan,now,currentRunId=null,recov
   if(recoveryMain!==null&&!/^[a-f0-9]{40}$/.test(recoveryMain))fail('RECOVERY_METADATA');
   const root='https://api.github.com/repos/huanwujoy-crypto/fee-console/actions',from=new Date(sourceAttemptWindowStart(plan)).toISOString();
   const query=new URLSearchParams({branch:'main',created:from+'..'+now.toISOString(),per_page:'100'});
-  // Only the period job opts into its ephemeral actions:read token. An empty
+  // Only period and producer rechecks opt into their ephemeral actions:read token. An empty
   // configured token fails closed; unrelated public observers stay unchanged.
   if(actionsToken!==undefined&&(typeof actionsToken!=='string'||actionsToken.length<20||actionsToken.length>4096||/\s/.test(actionsToken)))throw new BoundedJsonError('AUTH_REQUIRED');
   const headers={Accept:'application/vnd.github+json',...(actionsToken===undefined?{}:{Authorization:'Bearer '+actionsToken})};
