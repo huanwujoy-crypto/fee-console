@@ -115,11 +115,78 @@ function normalizeEarlyTradeCash({reports,trades,ledger,rawCashRows,prior,baseli
   reports[n-1]=corrected;
   return proofs;
 }
+// An independently confirmed payout can be included in a freshly reread
+// previous-day cash value before its paid_on business date. Accept only an
+// exact restoration of an already authenticated full checkpoint. This is a
+// derived date projection: no transaction, source balance or old point is
+// rewritten, and no cash discrepancy is waived.
+function validateIncomeDateNormalization(p,source){
+  if(!exact(p,['schema','portfolioIdentityHash','anchor','rawAnchor','rawClosing','payout','cashLegs','proofId'])||p.schema!=='fee-console.ib-income-date-normalization.v1')fail('CASH_RECONCILIATION');
+  const a=p.anchor,b=p.rawAnchor,c=p.rawClosing,t=p.payout;
+  for(const s of [a,b,c])cashDateSnapshot(s);
+  if(!exact(t,['id','portfolioId','holdingId','paidOn','currency','grossCents','taxCents','netCents','cashId','cashRecordId','dateTime'])
+    ||![t.id,t.portfolioId,t.holdingId,t.cashId,t.cashRecordId].every(v=>Number.isSafeInteger(v)&&v>0)
+    ||![t.grossCents,t.taxCents,t.netCents].every(Number.isSafeInteger)||t.currency!=='USD'||t.grossCents<=0||t.taxCents<0||t.netCents<=0||BigInt(t.grossCents)-BigInt(t.taxCents)!==BigInt(t.netCents)
+    ||a.d!==b.d||add(a.d,1)!==c.d||t.paidOn!==c.d||t.dateTime!==c.d+'T00:00:00.000Z'
+    ||p.portfolioIdentityHash!==hash({name:NAME,id:t.portfolioId,currency:'USD'})
+    ||[a,b,c].some(s=>s.cashCurrency[t.cashId]!=='USD'||s.foreignCurrencies?.[t.holdingId]||!s.positions[t.holdingId]||BigInt(s.positions[t.holdingId])<=0n))fail('CASH_RECONCILIATION');
+  const corrected=structuredClone(b);
+  corrected.cash[t.cashId]-=t.netCents;corrected.totalCents-=t.netCents;cashDateSnapshot(corrected);
+  if(ibCanonical(corrected)!==ibCanonical(a))fail('PAST_POINT_CHANGED');
+  cashDatePassive(a,c,t.cashId);
+  if(ibCanonical(a.positions)!==ibCanonical(c.positions)||!Array.isArray(p.cashLegs)||!p.cashLegs.length||p.cashLegs.length>1000)fail('CASH_RECONCILIATION');
+  const ids=new Set(),edges=new Map();let sum=0n,payouts=0;
+  for(const l of p.cashLegs){
+    if(!exact(l,['id','cashId','tradeId','holdingId','payoutId','dateTime','type','amountCents','balanceCents'])||!Number.isSafeInteger(l.id)||l.id<=0||ids.has(l.id)||l.cashId!==t.cashId||l.tradeId!==null||![l.amountCents,l.balanceCents].every(Number.isSafeInteger))fail('CASH_RECONCILIATION');
+    ids.add(l.id);
+    if(l.type==='PAYOUT'){
+      if(++payouts!==1||l.id!==t.cashRecordId||l.payoutId!==t.id||l.holdingId!==t.holdingId||l.dateTime!==t.dateTime||l.amountCents!==t.netCents||l.balanceCents!==b.cash[t.cashId]||l.balanceCents-l.amountCents!==a.cash[t.cashId])fail('CASH_RECONCILIATION');
+    }else if(!['INTEREST_PAYMENT','INTEREST'].includes(l.type)||l.holdingId!==null||l.payoutId!==null||l.amountCents<0||nyBusinessDate(l.dateTime)!==c.d)fail('CASH_RECONCILIATION');
+    const opening=l.balanceCents-l.amountCents;if(!Number.isSafeInteger(opening))fail('CASH_RECONCILIATION');
+    if(!edges.has(opening))edges.set(opening,[]);edges.get(opening).push(l.balanceCents);sum+=BigInt(l.amountCents);
+  }
+  if(payouts!==1||BigInt(c.cash[t.cashId])-BigInt(a.cash[t.cashId])!==sum)fail('CASH_RECONCILIATION');
+  const stack=[a.cash[t.cashId]],path=[];
+  while(stack.length){const out=edges.get(stack.at(-1));if(out?.length)stack.push(out.pop());else path.push(stack.pop());}
+  if(path.length!==p.cashLegs.length+1||path[0]!==c.cash[t.cashId])fail('CASH_RECONCILIATION');
+  const {proofId,...body}=p;if(hash(body)!==proofId)fail('CASH_RECONCILIATION');
+  if(source){
+    if(source.schema!=='fee-console.ib-manager-source.v3'||p.portfolioIdentityHash!==source.portfolioIdentityHash||a.d<=source.baselineAsOf||c.d>source.sourceAsOf)fail('CASH_RECONCILIATION');
+    for(const s of [a,c]){
+      if(ibMoneyCents(source.periodReturnsInput.points.find(x=>x.d===s.d)?.tot)!==s.totalCents)fail('CASH_RECONCILIATION');
+      for(const closing of source.closingSnapshots)if(closing.d===s.d&&ibCanonical(closing)!==ibCanonical(s))fail('CASH_RECONCILIATION');
+    }
+  }
+  return corrected;
+}
+function normalizeEarlyIncomeCash({reports,trades,ledger,rawCashRows,payoutProofs,prior,baseline,coverage,portfolioId}){
+  const proofs=structuredClone(prior?.incomeDateNormalizations||[]),a=prior?.closingSnapshots?.find(s=>s.d===reports[0].d),b=reports[0],c=reports[1];
+  const cashLeg=l=>({id:l.id,cashId:l.cashId,tradeId:l.tradeId,holdingId:l.holdingId,payoutId:l.payoutId,dateTime:rawCashRows.get(l.id)?.date_time,type:l.type,amountCents:l.movement,balanceCents:l.balance});
+  for(const p of proofs){
+    for(const t of payoutProofs)if(t.id===p.payout.id&&ibCanonical(t)!==ibCanonical(p.payout))fail('PAST_POINT_CHANGED');
+    for(const l of ledger){const old=p.cashLegs.find(x=>x.id===l.id);if(old&&ibCanonical(cashLeg(l))!==ibCanonical(old))fail('PAST_POINT_CHANGED');}
+  }
+  // No frozen full checkpoint, no normalization. Ordinary source, baseline
+  // and trade-date checks below continue to reject unexplained differences.
+  if(!a||!coverage||a.d<=baseline.asOf||!c)return proofs;
+  const changed=Object.keys(a.cash).filter(k=>a.cashCurrency[k]==='USD'&&a.cash[k]!==b.cash[k]);
+  if(changed.length!==1)return proofs;
+  const cashId=Number(changed[0]),candidates=payoutProofs.filter(t=>t.cashId===cashId&&t.paidOn===c.d);
+  if(candidates.length!==1)return proofs;
+  if(trades.some(t=>t.transaction_date===c.d))fail('CASH_RECONCILIATION');
+  const legs=ledger.filter(l=>l.cashId===cashId&&l.d===c.d);
+  if(legs.some(l=>l.external))fail('CASH_RECONCILIATION');
+  const body={schema:'fee-console.ib-income-date-normalization.v1',portfolioIdentityHash:hash({name:NAME,id:portfolioId,currency:'USD'}),anchor:structuredClone(a),rawAnchor:structuredClone(b),rawClosing:structuredClone(c),payout:structuredClone(candidates[0]),
+    cashLegs:legs.map(cashLeg).sort((x,y)=>x.id-y.id)};
+  const proof={...body,proofId:hash(body)},corrected=validateIncomeDateNormalization(proof),existing=proofs.find(p=>p.payout.id===proof.payout.id);
+  if(existing){if(ibCanonical(existing)!==ibCanonical(proof))fail('PAST_POINT_CHANGED');}else proofs.push(proof);
+  reports[0]=corrected;return proofs;
+}
 export function validateIbManagerReportInput(source,expectedHash){
   if(!/^[a-f0-9]{64}$/.test(expectedHash||''))fail('BASELINE_LOCK');
   const advanced=source?.schema==='fee-console.ib-manager-source.v3',seeded=advanced||source?.schema==='fee-console.ib-manager-source.v2';
-  const normalized=Object.hasOwn(source||{},'cashDateNormalizations');
-  if(!exact(source,['schema','scope','currency','timezone','flowTiming','baselineFrom','baselineAsOf','baselineInputsHash','portfolioIdentityHash','sourceAsOf','sourceEvidenceHash','cashFlowByDate','noncashProofs','periodReturnsInput',...(seeded?['ownerBaseline']:[]),...(advanced?['bootstrapCoverage','closingSnapshots']:[]),...(normalized?['cashDateNormalizations']:[])])||!['fee-console.ib-manager-source.v1','fee-console.ib-manager-source.v2','fee-console.ib-manager-source.v3'].includes(source.schema)||source.scope!=='ib-manager'||source.currency!=='USD'||source.timezone!=='America/New_York'||source.flowTiming!=='eod'||!isCalendarDate(source.baselineFrom)||!isCalendarDate(source.baselineAsOf)||source.baselineAsOf<source.baselineFrom||source.baselineInputsHash!==expectedHash||!/^[a-f0-9]{64}$/.test(source.sourceEvidenceHash)||!/^[a-f0-9]{64}$/.test(source.portfolioIdentityHash)||!object(source.cashFlowByDate)||!Array.isArray(source.noncashProofs)||source.noncashProofs.length>1000)fail('SCHEMA');
+  const normalized=Object.hasOwn(source||{},'cashDateNormalizations'),incomeNormalized=Object.hasOwn(source||{},'incomeDateNormalizations');
+  if(!exact(source,['schema','scope','currency','timezone','flowTiming','baselineFrom','baselineAsOf','baselineInputsHash','portfolioIdentityHash','sourceAsOf','sourceEvidenceHash','cashFlowByDate','noncashProofs','periodReturnsInput',...(seeded?['ownerBaseline']:[]),...(advanced?['bootstrapCoverage','closingSnapshots']:[]),...(normalized?['cashDateNormalizations']:[]),...(incomeNormalized?['incomeDateNormalizations']:[])])||!['fee-console.ib-manager-source.v1','fee-console.ib-manager-source.v2','fee-console.ib-manager-source.v3'].includes(source.schema)||source.scope!=='ib-manager'||source.currency!=='USD'||source.timezone!=='America/New_York'||source.flowTiming!=='eod'||!isCalendarDate(source.baselineFrom)||!isCalendarDate(source.baselineAsOf)||source.baselineAsOf<source.baselineFrom||source.baselineInputsHash!==expectedHash||!/^[a-f0-9]{64}$/.test(source.sourceEvidenceHash)||!/^[a-f0-9]{64}$/.test(source.portfolioIdentityHash)||!object(source.cashFlowByDate)||!Array.isArray(source.noncashProofs)||source.noncashProofs.length>1000)fail('SCHEMA');
   const coverage=advanced?validateIbBootstrapCoverage(source.bootstrapCoverage,expectedHash,{baselineAsOf:source.baselineAsOf}):null;
   if(coverage&&source.sourceAsOf<coverage.through)fail('STATE');
   const i=source.periodReturnsInput;business(i);
@@ -162,6 +229,15 @@ export function validateIbManagerReportInput(source,expectedHash){
   if(normalized){
     if(!advanced||!Array.isArray(source.cashDateNormalizations)||!source.cashDateNormalizations.length||source.cashDateNormalizations.length>1000)fail('CASH_RECONCILIATION');
     const ids=new Set(),dates=new Set();for(const p of source.cashDateNormalizations){validateCashDateNormalization(p,source);if(ids.has(p.trade.id)||dates.has(p.rawBefore.d))fail('CASH_RECONCILIATION');ids.add(p.trade.id);dates.add(p.rawBefore.d);}
+  }
+  if(incomeNormalized){
+    if(!advanced||!Array.isArray(source.incomeDateNormalizations)||!source.incomeDateNormalizations.length||source.incomeDateNormalizations.length>1000)fail('CASH_RECONCILIATION');
+    const payouts=new Set(),cashIds=new Set((source.cashDateNormalizations||[]).map(p=>p.cashLeg.id)),dates=new Set((source.cashDateNormalizations||[]).map(p=>p.rawBefore.d));
+    for(const p of source.incomeDateNormalizations){
+      validateIncomeDateNormalization(p,source);
+      if(payouts.has(p.payout.id)||dates.has(p.anchor.d)||p.cashLegs.some(l=>cashIds.has(l.id)))fail('CASH_RECONCILIATION');
+      payouts.add(p.payout.id);dates.add(p.anchor.d);for(const l of p.cashLegs)cashIds.add(l.id);
+    }
   }
   return structuredClone(source);
 }
@@ -330,6 +406,8 @@ export class SharesightIbManagerReader{
         if(after-before!==change)fail('UNVERIFIED_TRANSFER');
       }
     }
+    const incomeDateNormalizations=normalizeEarlyIncomeCash({reports,trades,ledger,rawCashRows,payoutProofs,prior,baseline,coverage,portfolioId:this.#portfolio});
+    const incomeEvidence=incomeDateNormalizations.length?{incomeDateNormalizations}:{};
     const cashDateNormalizations=normalizeEarlyTradeCash({reports,trades,ledger,rawCashRows,prior,baseline,coverage,portfolioId:this.#portfolio});
     for(let n=1;n<reports.length;n++)for(const cashId of this.#cash){
       const current=reports[n],previous=reports[n-1];if((current.cashCurrency[cashId]||previous.cashCurrency[cashId])!=='USD'){
@@ -373,9 +451,9 @@ export class SharesightIbManagerReader{
     const last=reports.at(-1);
     if(prior&&prior.portfolioIdentityHash!==identityHash)fail('IDENTITY');
     const payoutEvidence=payoutProofs.length?{payoutDateProofs:payoutProofs.sort((a,b)=>a.id-b.id)}:{};
-    const source={schema:coverage?'fee-console.ib-manager-source.v3':frozen?'fee-console.ib-manager-source.v2':'fee-console.ib-manager-source.v1',scope:'ib-manager',currency:'USD',timezone:'America/New_York',flowTiming:'eod',baselineFrom:baseline.from,baselineAsOf:baseline.asOf,baselineInputsHash:expectedBaselineHash,portfolioIdentityHash:identityHash,sourceAsOf:targetDate,sourceEvidenceHash:hash({identityHash,last,ledger:ledger.filter(p=>p.d===targetDate).sort((a,b)=>a.id-b.id),trades:trades.filter(t=>t.transaction_date===targetDate).sort((a,b)=>a.id-b.id),...payoutEvidence}),cashFlowByDate,noncashProofs,periodReturnsInput:input,...(frozen?{ownerBaseline:frozen}:{}),...(coverage?{bootstrapCoverage:coverage,closingSnapshots:reports.slice(-2)}:{}),...(cashDateNormalizations.length?{cashDateNormalizations}:{})};
+    const source={schema:coverage?'fee-console.ib-manager-source.v3':frozen?'fee-console.ib-manager-source.v2':'fee-console.ib-manager-source.v1',scope:'ib-manager',currency:'USD',timezone:'America/New_York',flowTiming:'eod',baselineFrom:baseline.from,baselineAsOf:baseline.asOf,baselineInputsHash:expectedBaselineHash,portfolioIdentityHash:identityHash,sourceAsOf:targetDate,sourceEvidenceHash:hash({identityHash,last,ledger:ledger.filter(p=>p.d===targetDate).sort((a,b)=>a.id-b.id),trades:trades.filter(t=>t.transaction_date===targetDate).sort((a,b)=>a.id-b.id),...payoutEvidence,...incomeEvidence}),cashFlowByDate,noncashProofs,periodReturnsInput:input,...(frozen?{ownerBaseline:frozen}:{}),...(coverage?{bootstrapCoverage:coverage,closingSnapshots:reports.slice(-2)}:{}),...(cashDateNormalizations.length?{cashDateNormalizations}:{}),...incomeEvidence};
     validateIbManagerReportInput(source,expectedBaselineHash);
-    return {source,fingerprint:hash({identityHash,reports,ledger:ledger.sort((a,b)=>a.id-b.id),trades:trades.sort((a,b)=>a.id-b.id),cashList:cashList.sort((a,b)=>a.id-b.id),...payoutEvidence,...(cashDateNormalizations.length?{cashDateNormalizations}:{})})};
+    return {source,fingerprint:hash({identityHash,reports,ledger:ledger.sort((a,b)=>a.id-b.id),trades:trades.sort((a,b)=>a.id-b.id),cashList:cashList.sort((a,b)=>a.id-b.id),...payoutEvidence,...(cashDateNormalizations.length?{cashDateNormalizations}:{}),...incomeEvidence})};
   }
   async readStable({targetDate,expectedBaselineHash,baseline=IB_BASELINE_WINDOW,checkpoint=null,ownerBaseline=null,bootstrapCoverage=null}={}){
     if(!/^[a-f0-9]{64}$/.test(expectedBaselineHash||''))fail('BASELINE_LOCK');

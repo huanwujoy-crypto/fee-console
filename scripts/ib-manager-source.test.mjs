@@ -605,12 +605,12 @@ test('midnight exception requires exact carrier, trade identity, type and direct
 
 // Synthetic income amounts and IDs, retaining only native type/date shapes.
 // Payout date authority comes from its independently fetched confirmed record.
-async function incomeFixture({date='2026-11-04',dividend=true,interest=true,checkpoint=null,target=date,change=()=>{}}={}){
-  const prev=new Date(Date.parse(date+'T00:00:00Z')-86400000).toISOString().slice(0,10),base={from:prev,asOf:prev};
+async function incomeFixture({date='2026-11-04',dividend=true,interest=true,checkpoint=null,target=date,baseDate=null,change=()=>{}}={}){
+  const prev=baseDate||new Date(Date.parse(date+'T00:00:00Z')-86400000).toISOString().slice(0,10),base={from:prev,asOf:prev};
   const business={points:[{d:prev,tot:136}],openT:136,from:prev,to:prev,days:1,flowByDate:{},rate:0,cr:0,cumBefore:0,hwmBefore:0};
   const expected=ibBaselineBusinessHash(business),frozen={schema:'fee-console.ib-manager-return-input.v1',currency:'USD',timezone:'America/New_York',flowTiming:'eod',flowsComplete:true,correctionsConfirmed:true,sourceSha256:'c'.repeat(64),periodReturnsInput:business};
   const owner=await buildIbOwnerBaseline({ibManagerReturnReceipt:await buildIbManagerReturnReceipt(frozen),ibManagerDrawdownReceipt:await buildIbManagerDrawdownReceipt(frozen)},frozen,expected);
-  const coverageBody={schema:'fee-console.ib-manager-coverage.v2',authority:'reviewed-source-reconciliation',sourceProvider:'Sharesight',baselineInputsHash:expected,from:date,through:date,evidenceSha256:'e'.repeat(64),events:[],quotes:[]};
+  const coverageBody={schema:'fee-console.ib-manager-coverage.v2',authority:'reviewed-source-reconciliation',sourceProvider:'Sharesight',baselineInputsHash:expected,from:add(prev),through:target,evidenceSha256:'e'.repeat(64),events:[],quotes:[]};
   const coverage={...coverageBody,coverageId:await createIbManagerReturnConsumer().digest(coverageBody)},gain=(dividend?7:0)+(interest?3:0),captured=[];
   const w=wire({mutate:(b,c)=>{
     const d=c.q.get('end_date')||c.q.get('date');
@@ -707,6 +707,130 @@ test('independent payout evidence is bound to stable reads and the next checkpoi
   await assert.rejects(changed.run(),/UNSTABLE/);
   const conflict=structuredClone(s);conflict.closingSnapshots[1].cash[3]++;
   await assert.rejects((await incomeFixture({checkpoint:conflict,target:'2026-11-05'})).run(),/CASH_RECONCILIATION|PAST_POINT_CHANGED/);
+});
+
+async function earlyIncomeFixture({date='2026-11-04',early=true,interest=true,checkpoint=null,target=date,change=()=>{}}={}){
+  const prev=new Date(Date.parse(date+'T00:00:00Z')-86400000).toISOString().slice(0,10),baseDate=new Date(Date.parse(date+'T00:00:00Z')-2*86400000).toISOString().slice(0,10);
+  const seed=checkpoint||await(await incomeFixture({date,baseDate,target:prev})).run();
+  const f=await incomeFixture({date,baseDate,target,interest,checkpoint:seed,change:(b,c)=>{
+    const d=c.q.get('end_date')||c.q.get('date');
+    if(early&&d===prev){
+      if(b.report){b.report.cash_accounts[0].value+=7;b.report.value+=7;}
+      if(b.cash_accounts)for(const a of b.cash_accounts)a.balance=a.balance_in_portfolio_currency=57;
+    }
+    change(b,c);
+  }});
+  return {...f,seed,prev};
+}
+test('early payout cash is restored only to the authenticated full anchor; raw cash, income and endpoint remain intact',async()=>{
+  for(const date of ['2026-07-15','2026-11-04'])for(const interest of [true,false]){
+    const f=await earlyIncomeFixture({date,interest}),before=structuredClone(f.seed),s=await f.run(),normal=await(await earlyIncomeFixture({date,interest,early:false})).run();
+    assert.deepEqual(f.seed,before);assert.deepEqual(s.periodReturnsInput,normal.periodReturnsInput);assert.deepEqual(s.closingSnapshots,normal.closingSnapshots);
+    assert.deepEqual(s.ownerBaseline,before.ownerBaseline);assert.deepEqual(s.bootstrapCoverage,before.bootstrapCoverage);assert.deepEqual(s.cashFlowByDate,{});
+    assert.equal(s.incomeDateNormalizations.length,1);assert.equal(s.cashDateNormalizations,undefined);
+    const p=s.incomeDateNormalizations[0];assert.equal(p.rawAnchor.cash[3],5700);assert.equal(p.anchor.cash[3],5000);assert.equal(p.payout.netCents,700);
+    assert.deepEqual(p.anchor,before.closingSnapshots.at(-1));assert.equal(p.rawClosing.cash[3],interest?6000:5700);assert.equal(p.payout.paidOn,date);
+    assert.deepEqual(s.periodReturnsInput.points.slice(0,-1),before.periodReturnsInput.points);
+    assert.equal(f.w.calls.filter(c=>c.url.endsWith('/payouts/13.json')).length,2);
+    for(const {body:b}of f.captured){
+      if(b.report?.end_date===f.prev){assert.equal(b.report.value,143);assert.equal(b.report.cash_accounts[0].value,57);}
+      if(b.cash_account_transactions?.length)assert.equal(b.cash_account_transactions.find(r=>r.id===12).amount,7);
+    }
+    assert.deepEqual(validateIbManagerReportInput(s,f.expected),s);const bundle=await buildIbManagerReportBundle(s,f.expected);assert.equal(bundle.returnReceipt.asOf,date);assert.equal(bundle.drawdownReceipt.asOf,date);
+  }
+});
+test('income date proof continues through same-day checks and later checkpoints without adding income twice',async()=>{
+  const f=await earlyIncomeFixture(),s=await f.run();
+  const again=await(await earlyIncomeFixture({checkpoint:s})).run();assert.deepEqual(again,s);
+  const next=await earlyIncomeFixture({checkpoint:s,target:'2026-11-05'}),after=await next.run();
+  assert.deepEqual(after.incomeDateNormalizations,s.incomeDateNormalizations);assert.deepEqual(after.periodReturnsInput.points.slice(0,-1),s.periodReturnsInput.points);
+  assert.equal(after.periodReturnsInput.points.at(-1).tot,146);assert.deepEqual(after.cashFlowByDate,{});
+  assert.equal(next.w.calls.some(c=>c.url.includes('/payouts/')),false);await buildIbManagerReportBundle(after,f.expected);
+});
+test('income date projection does not waive incomplete, duplicate, ambiguous or unlinked cash records',async t=>{
+  for(const [name,change]of [
+    ['missing payout',b=>{if(b.cash_account_transactions)b.cash_account_transactions.pop();}],
+    ['missing interest',b=>{if(b.cash_account_transactions)b.cash_account_transactions.shift();}],
+    ['duplicate payout',b=>{if(b.cash_account_transactions)b.cash_account_transactions.push({...b.cash_account_transactions[1],id:19});}],
+    ['broken payout balance',b=>{if(b.cash_account_transactions)b.cash_account_transactions[1].balance++;}],
+    ['broken interest balance',b=>{if(b.cash_account_transactions)b.cash_account_transactions[0].balance++;}],
+    ['unknown income',b=>{if(b.cash_account_transactions)b.cash_account_transactions[0].cash_account_transaction_type.name='UNKNOWN';}],
+    ['external deposit instead',b=>{if(b.cash_account_transactions)Object.assign(b.cash_account_transactions[0],{cash_account_transaction_type:{name:'DEPOSIT'},description:'Owner capital contribution'});}],
+    ['unproved payout',b=>{if(b.paid_on)b.confirmed=false;}],
+    ['wrong payout amount',b=>{if(b.paid_on)b.amount++;}],
+    ['wrong payout account',b=>{if(b.paid_on)b.portfolio_id=99;}],
+    ['wrong payout date',b=>{if(b.paid_on)b.paid_on='2026-11-03';}]
+  ])await t.test(name,async()=>{const f=await earlyIncomeFixture({change});await assert.rejects(f.run(),/IB_SOURCE_/);});
+});
+test('a full checkpoint is mandatory and unrelated historical changes remain rejected, including one cent',async t=>{
+  const noCheckpoint=await incomeFixture({change:b=>{if(b.report?.end_date==='2026-11-03'){b.report.value+=7;b.report.cash_accounts[0].value+=7;}}});
+  await assert.rejects(noCheckpoint.run(),/CASH_RECONCILIATION|PAST_POINT_CHANGED/);
+  for(const [name,change]of [
+    ['cash one cent',b=>{if(b.report?.end_date==='2026-11-03'){b.report.cash_accounts[0].value+=0.01;b.report.value+=0.01;}}],
+    ['holding repricing',b=>{if(b.report?.end_date==='2026-11-03'){b.report.holdings[0].value++;b.report.value++;}}],
+    ['holding quantity',b=>{if(b.report?.end_date==='2026-11-03')b.report.holdings[0].quantity++;}],
+    ['endpoint conflict',b=>{if(b.cash_accounts)b.cash_accounts[0].balance_in_portfolio_currency++;}],
+    ['target missing cent',b=>{if(b.report?.end_date==='2026-11-04'){b.report.cash_accounts[0].value-=0.01;b.report.value-=0.01;}}],
+    ['trade mixed into income day',b=>{if(b.trades)b.trades.push({id:30,portfolio_id:1,holding_id:2,state:'confirmed',transaction_date:'2026-11-04',description_code:'BUY',value:1,quantity:1});}]
+  ])await t.test(name,async()=>{const f=await earlyIncomeFixture({change});await assert.rejects(f.run(),/IB_SOURCE_/);});
+});
+test('persisted income date proof rejects tampering even after rehashing and binds source snapshots and points',async()=>{
+  const f=await earlyIncomeFixture(),s=await f.run();
+  const rehash=async p=>{const {proofId,...body}=p;p.proofId=await createIbManagerReturnConsumer().digest(body);};
+  for(const change of [
+    p=>p.schema='untrusted',p=>p.extra=true,p=>p.anchor.d='2026-11-02',p=>p.rawClosing.d='2026-11-05',p=>p.portfolioIdentityHash='a'.repeat(64),
+    p=>p.payout.netCents++,p=>p.payout.taxCents++,p=>p.payout.portfolioId++,p=>p.payout.holdingId++,p=>p.payout.cashId++,p=>p.payout.cashRecordId++,p=>p.payout.paidOn='2026-11-03',
+    p=>p.rawAnchor.totalCents++,p=>p.rawAnchor.cash[3]++,p=>p.anchor.cash[3]++,p=>p.rawClosing.cash[3]++,
+    p=>p.cashLegs.pop(),p=>p.cashLegs.push({...p.cashLegs[0]}),p=>p.cashLegs[0].amountCents++,p=>p.cashLegs[0].balanceCents++,
+    p=>p.cashLegs[0].tradeId=99,p=>p.cashLegs[0].payoutId=99,p=>p.cashLegs[0].dateTime='2026-11-03T12:00:00.000Z'
+  ]){const bad=structuredClone(s);change(bad.incomeDateNormalizations[0]);await rehash(bad.incomeDateNormalizations[0]);assert.throws(()=>validateIbManagerReportInput(bad,f.expected),/IB_SOURCE_/);}
+  for(const change of [
+    x=>x.incomeDateNormalizations=[],x=>x.incomeDateNormalizations.push(structuredClone(x.incomeDateNormalizations[0])),
+    x=>x.closingSnapshots[0].cash[3]++,x=>x.periodReturnsInput.points.at(-2).tot++,x=>x.incomeDateNormalizations[0].proofId='a'.repeat(64)
+  ]){const bad=structuredClone(s);change(bad);assert.throws(()=>validateIbManagerReportInput(bad,f.expected),/IB_SOURCE_/);}
+});
+test('early-income proof is stable across two reads and rejects later changes to its evidence',async()=>{
+  const f=await earlyIncomeFixture({change:(b,c)=>{if(c.capture===2&&b.paid_on){b.gross_amount++;b.resident_withholding_tax++;}}});await assert.rejects(f.run(),/UNSTABLE/);
+  const seed=await(await earlyIncomeFixture()).run();
+  const changed=await earlyIncomeFixture({checkpoint:seed,change:b=>{if(b.paid_on){b.gross_amount++;b.resident_withholding_tax++;}}});await assert.rejects(changed.run(),/PAST_POINT_CHANGED/);
+});
+test('two different payouts are ambiguous for this narrow historical correction even with correct total cash',async()=>{
+  const f=await earlyIncomeFixture({change:(b,{p,q})=>{
+    if(b.report?.end_date==='2026-11-03'){b.report.value+=4;b.report.cash_accounts[0].value+=4;}
+    if(b.report?.end_date==='2026-11-04'){b.report.value+=4;b.report.cash_accounts[0].value+=4;}
+    if(b.cash_accounts&&q.get('date')==='2026-11-04')for(const c of b.cash_accounts)c.balance=c.balance_in_portfolio_currency=64;
+    if(b.cash_account_transactions){b.cash_account_transactions[0].balance=64;b.cash_account_transactions.push({...b.cash_account_transactions[1],id:22,payout_id:23,amount:4,balance:61});}
+    if(p==='/api/v2/payouts/23.json')Object.assign(b,{id:23,portfolio_id:1,holding_id:2,paid_on:'2026-11-04',currency:'USD',confirmed:true,state:'confirmed',non_taxable:false,tax_credit:0,gross_amount:5,resident_withholding_tax:1,amount:4});
+  }});
+  await assert.rejects(f.run(),/CASH_RECONCILIATION/);
+});
+test('a later separately proved payout preserves the earlier proof and cannot reuse old payout or cash IDs',async()=>{
+  const firstFixture=await earlyIncomeFixture(),first=await firstFixture.run();
+  const later=async({early=true,reuse=null}={})=>incomeFixture({date:'2026-11-05',baseDate:'2026-11-02',checkpoint:first,change:(b,{p,q})=>{
+    const d=q.get('end_date')||q.get('date');
+    if(b.report){b.report.value+=10;b.report.cash_accounts[0].value+=10;if(early&&d==='2026-11-04'){b.report.value+=7;b.report.cash_accounts[0].value+=7;}}
+    if(b.cash_accounts)for(const a of b.cash_accounts){a.balance+=10;a.balance_in_portfolio_currency+=10;if(early&&d==='2026-11-04'){a.balance+=7;a.balance_in_portfolio_currency+=7;}}
+    if(b.cash_account_transactions)for(const l of b.cash_account_transactions){l.balance+=10;l.id+=reuse==='cash'?0:10;if(l.payout_id)l.payout_id=reuse==='payout'?13:23;}
+    if(p==='/api/v2/payouts/23.json')Object.assign(b,{id:23,portfolio_id:1,holding_id:2,paid_on:'2026-11-05',currency:'USD',confirmed:true,state:'confirmed',non_taxable:false,tax_credit:0,gross_amount:10,resident_withholding_tax:3,amount:7});
+  }});
+  const f=await later(),second=await f.run();
+  assert.equal(second.incomeDateNormalizations.length,2);assert.deepEqual(second.incomeDateNormalizations[0],first.incomeDateNormalizations[0]);
+  assert.deepEqual(second.periodReturnsInput.points.map(p=>p.tot),[136,136,146,156]);assert.deepEqual(second.closingSnapshots[0],first.closingSnapshots[1]);
+  await buildIbManagerReportBundle(second,f.expected);
+  for(const early of [true,false])for(const reuse of ['cash','payout'])await assert.rejects((await later({early,reuse})).run(),/PAST_POINT_CHANGED/);
+});
+test('income normalization retains passive foreign cash and rejects an unrelated native balance change',async()=>{
+  const foreign=(b,{p,q})=>{
+    if(b.report){b.report.holdings[0].value-=20;b.report.cash_accounts.push({id:5,value:20,currency:{code:'CAD'},portfolio:{id:1,name:'IB-HK'}});}
+    if(b.cash_accounts)b.cash_accounts.push({id:5,portfolio_id:1,portfolio_currency:'USD',currency:'CAD',date:q.get('date'),balance:30,balance_in_portfolio_currency:20});
+    if(p==='/api/v2/cash_accounts/5/cash_account_transactions.json')b.cash_account_transactions=[];
+  };
+  const first=await(await incomeFixture({baseDate:'2026-11-02',target:'2026-11-03',change:foreign})).run();
+  const f=await earlyIncomeFixture({checkpoint:first,change:foreign}),s=await f.run();
+  assert.deepEqual(s.closingSnapshots.map(x=>x.nativeCash),[{'5':3000},{'5':3000}]);assert.deepEqual(s.periodReturnsInput.points.map(x=>x.tot),[136,136,146]);
+  assert.deepEqual(s.incomeDateNormalizations[0].anchor,first.closingSnapshots[1]);await buildIbManagerReportBundle(s,f.expected);
+  const bad=await earlyIncomeFixture({checkpoint:first,change:(b,c)=>{foreign(b,c);if(b.cash_accounts&&c.q.get('date')==='2026-11-04')b.cash_accounts[1].balance++;}});
+  await assert.rejects(bad.run(),/CASH_RECONCILIATION|UNSUPPORTED_CURRENCY/);
 });
 
 async function cashDateFixture({events=[{d:'2026-11-02',kind:'BUY'}],target='2026-11-02',baseDate='2026-10-30',early=true,checkpoint=null,mutate=()=>{}}={}){
