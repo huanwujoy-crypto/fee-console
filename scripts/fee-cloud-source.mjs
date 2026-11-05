@@ -148,6 +148,10 @@ export function parseSourceJson(text) {
       ['balance', 'balance_in_portfolio_currency']);
     if (object(payload)) retainRows(payload.cash_account_transactions, rawPayload.cash_account_transactions,
       ['amount', 'balance']);
+    // The native payout endpoint returns a flat record. Retain its original
+    // money tokens so a date proof cannot hide subcent differences by rounding.
+    if (object(payload) && Object.hasOwn(payload, 'paid_on')) retain(payload, rawPayload,
+      ['gross_amount', 'resident_withholding_tax', 'amount', 'tax_credit']);
     if (object(payload?.report)) {
       retain(payload.report, rawPayload.report, ['value']);
       retainRows(payload.report.holdings, rawPayload.report.holdings, ['quantity', 'value']);

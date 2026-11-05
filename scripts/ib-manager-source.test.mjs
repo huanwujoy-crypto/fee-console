@@ -97,6 +97,7 @@ function wire({mutate=()=>{},changeSecond=false}={}){
       else if(p==='/api/v3/portfolios/1/trades.json')body={trades:[]};
       else if(p==='/api/v2/cash_accounts/3/cash_account_transactions.json')body={cash_account_transactions:q.get('from')<='2026-09-01'?[{id:4,cash_account_id:3,date_time:'2026-09-01T12:00:00Z',amount:50,balance:50,cash_account_transaction_type:{name:'DEPOSIT'},description:'Owner cash contribution'}]:[]};
       else if(p==='/api/v2/cash_accounts/5/cash_account_transactions.json')body={cash_account_transactions:[]};
+      else if(/^\/api\/v2\/payouts\/[1-9]\d*\.json$/.test(p))body={};
       else assert.fail('unexpected route '+p);
     }
     mutate(body,{p,q,capture});
@@ -600,6 +601,112 @@ test('midnight exception requires exact carrier, trade identity, type and direct
     await assert.rejects(nativeMidnightFixture('2026-11-02','BUY',b=>{if(b.cash_account_transactions)change(b.cash_account_transactions[0]);}),/DATE_ALIGNMENT/);
   }
   for(const change of [rows=>rows.push({...rows[0]}),rows=>rows.length=0,rows=>rows[0].amount=-9,rows=>rows[0].balance=41])await assert.rejects(nativeMidnightFixture('2026-11-02','BUY',b=>{if(b.cash_account_transactions)change(b.cash_account_transactions);}),/IDENTITY|UNVERIFIED_TRANSFER|CASH_RECONCILIATION/);
+});
+
+// Synthetic income amounts and IDs, retaining only native type/date shapes.
+// Payout date authority comes from its independently fetched confirmed record.
+async function incomeFixture({date='2026-11-04',dividend=true,interest=true,checkpoint=null,target=date,change=()=>{}}={}){
+  const prev=new Date(Date.parse(date+'T00:00:00Z')-86400000).toISOString().slice(0,10),base={from:prev,asOf:prev};
+  const business={points:[{d:prev,tot:136}],openT:136,from:prev,to:prev,days:1,flowByDate:{},rate:0,cr:0,cumBefore:0,hwmBefore:0};
+  const expected=ibBaselineBusinessHash(business),frozen={schema:'fee-console.ib-manager-return-input.v1',currency:'USD',timezone:'America/New_York',flowTiming:'eod',flowsComplete:true,correctionsConfirmed:true,sourceSha256:'c'.repeat(64),periodReturnsInput:business};
+  const owner=await buildIbOwnerBaseline({ibManagerReturnReceipt:await buildIbManagerReturnReceipt(frozen),ibManagerDrawdownReceipt:await buildIbManagerDrawdownReceipt(frozen)},frozen,expected);
+  const coverageBody={schema:'fee-console.ib-manager-coverage.v2',authority:'reviewed-source-reconciliation',sourceProvider:'Sharesight',baselineInputsHash:expected,from:date,through:date,evidenceSha256:'e'.repeat(64),events:[],quotes:[]};
+  const coverage={...coverageBody,coverageId:await createIbManagerReturnConsumer().digest(coverageBody)},gain=(dividend?7:0)+(interest?3:0),captured=[];
+  const w=wire({mutate:(b,c)=>{
+    const d=c.q.get('end_date')||c.q.get('date');
+    if(b.report){b.report.value=136+(d>=date?gain:0);b.report.holdings[0].value=86;b.report.cash_accounts[0].value=50+(d>=date?gain:0);}
+    if(b.cash_accounts)for(const a of b.cash_accounts)a.balance=a.balance_in_portfolio_currency=50+(d>=date?gain:0);
+    if(b.cash_account_transactions){
+      const active=c.q.get('from')<=date&&c.q.get('to')>=date;
+      b.cash_account_transactions=active?[
+        ...(interest?[{id:11,cash_account_id:3,date_time:date+'T12:00:00.000Z',amount:3,balance:50+gain,cash_account_transaction_type:{name:'INTEREST_PAYMENT'},description:'Synthetic net interest; NOT external capital',trade_id:null,holding_id:null,payout_id:null}]:[]),
+        ...(dividend?[{id:12,cash_account_id:3,date_time:date+'T00:00:00.000Z',amount:7,balance:57,cash_account_transaction_type:{name:'Payout'},description:'Synthetic native income',trade_id:null,holding_id:2,payout_id:13,links:{portfolio:'https://api.sharesight.com/api/v2/portfolios/1'}}]:[])
+      ]:[];
+    }
+    if(c.p==='/api/v2/payouts/13.json')Object.assign(b,{id:13,portfolio_id:1,holding_id:2,symbol:'SYNTH',paid_on:date,currency:'USD',confirmed:true,state:'confirmed',non_taxable:false,tax_credit:0,gross_amount:10,resident_withholding_tax:3,amount:7});
+    change(b,c);captured.push({path:c.p,body:structuredClone(b)});
+  }});
+  const args={targetDate:target,expectedBaselineHash:expected,baseline:base,...(checkpoint?{checkpoint}:{ownerBaseline:owner,bootstrapCoverage:coverage})};
+  return {w,args,expected,owner,captured,run:()=>w.reader.readStable(args)};
+}
+
+test('native interest payment is income, never external capital, with no payout lookup',async()=>{
+  const f=await incomeFixture({dividend:false}),s=await f.run();
+  assert.deepEqual(s.cashFlowByDate,{});assert.deepEqual(s.periodReturnsInput.flowByDate,{});
+  assert.deepEqual(s.periodReturnsInput.points.map(p=>p.tot),[136,139]);
+  assert.equal(f.w.calls.some(c=>c.url.includes('/payouts/')),false);
+  assert.deepEqual(s.ownerBaseline,f.owner);await buildIbManagerReportBundle(s,f.expected);
+});
+test('interest alias does not admit negative income, unknown types, vague deposits or malformed money',async t=>{
+  for(const [name,mutate,reason] of [
+    ['negative payment',r=>r.amount=-3,/UNRESOLVED_FLOW/],
+    ['unknown type',r=>r.cash_account_transaction_type.name='INTEREST_PAYMENT_UNKNOWN',/UNRESOLVED_FLOW/],
+    ['whitespace type',r=>r.cash_account_transaction_type.name=' INTEREST_PAYMENT ',/UNRESOLVED_FLOW/],
+    ['generic deposit',r=>r.cash_account_transaction_type.name='DEPOSIT',/UNRESOLVED_FLOW/],
+    ['subcent amount',r=>r.amount=3.001,/AMOUNT/],
+    ['missing trade',r=>r.trade_id=999,/IDENTITY/],
+    ['wrong account',r=>r.cash_account_id=99,/IDENTITY/]
+  ])await t.test(name,async()=>{const f=await incomeFixture({dividend:false,change:b=>{if(b.cash_account_transactions)mutate(b.cash_account_transactions[0]);}});await assert.rejects(f.run(),reason);});
+});
+test('confirmed native payout proves its literal business date across DST; income reconciles without altering source rows',async()=>{
+  for(const date of ['2026-09-03','2026-11-04']){
+    const f=await incomeFixture({date}),s=await f.run();
+    assert.deepEqual(s.periodReturnsInput.points.map(p=>p.tot),[136,146]);assert.deepEqual(s.cashFlowByDate,{});
+    assert.equal(s.cashDateNormalizations,undefined);assert.deepEqual(s.ownerBaseline,f.owner);
+    assert.deepEqual(s.closingSnapshots.map(p=>p.cash[3]),[5000,6000]);
+    assert.equal(f.w.calls.filter(c=>c.url.endsWith('/payouts/13.json')).length,2);
+    assert.equal(f.w.calls.filter(c=>c.method==='POST').length,2);
+    for(const {body:b} of f.captured)if(b.cash_account_transactions?.length){assert.equal(b.cash_account_transactions[1].date_time,date+'T00:00:00.000Z');assert.equal(b.cash_account_transactions[1].amount,7);}
+    const bundle=await buildIbManagerReportBundle(s,f.expected);assert.equal(bundle.returnReceipt.asOf,date);assert.equal(bundle.drawdownReceipt.asOf,date);
+  }
+});
+test('payout proof rejects absent, pending, cross-account, wrong-date, wrong-currency and unequal cash evidence',async t=>{
+  for(const [name,mutate] of [
+    ['missing payout',p=>{for(const k of Object.keys(p))delete p[k];}],
+    ['wrong payout',p=>p.id=14],['wrong portfolio',p=>p.portfolio_id=99],['wrong holding',p=>p.holding_id=99],
+    ['pending',p=>p.state='pending'],['unconfirmed',p=>p.confirmed=false],['missing confirmation',p=>delete p.confirmed],
+    ['previous day',p=>p.paid_on='2026-11-03'],['next day',p=>p.paid_on='2026-11-05'],['invalid date',p=>p.paid_on='2026-02-30'],
+    ['other currency',p=>p.currency='CAD'],['tax credit',p=>p.tax_credit=1],['unsupported tax mode',p=>p.non_taxable=true],
+    ['net mismatch',p=>p.amount=6],['gross mismatch',p=>p.gross_amount=11],['tax mismatch',p=>p.resident_withholding_tax=4],
+    ['negative tax',p=>p.resident_withholding_tax=-3],['subcent net',p=>p.amount=7.001],
+    ['truncated',p=>p.truncated=true],['paged',p=>p.links={next:'https://example.invalid'}]
+  ])await t.test(name,async()=>{const f=await incomeFixture({change:(b,{p})=>{if(p.includes('/payouts/'))mutate(b);}});await assert.rejects(f.run(),/IB_SOURCE_(DATE_ALIGNMENT|AMOUNT|INCOMPLETE)/);});
+});
+test('payout date exception cannot be granted by a memo, another link or a near-midnight timestamp',async t=>{
+  for(const [name,mutate] of [
+    ['no payout',r=>r.payout_id=null],['no holding',r=>r.holding_id=null],['unknown holding',r=>r.holding_id=99],
+    ['trade pointer',r=>r.trade_id=8],['generic deposit',r=>r.cash_account_transaction_type.name='DEPOSIT'],
+    ['negative cash',r=>r.amount=-7],['zero cash',r=>r.amount=0],['wrong cash account',r=>r.cash_account_id=99],
+    ['millisecond shift',r=>r.date_time='2026-11-04T00:00:00.001Z'],['missing millis',r=>r.date_time='2026-11-04T00:00:00Z'],
+    ['offset spelling',r=>r.date_time='2026-11-04T00:00:00.000+00:00'],['out of window',r=>r.date_time='2026-11-03T00:00:00.000Z']
+  ])await t.test(name,async()=>{
+    const f=await incomeFixture({change:b=>{if(b.cash_account_transactions)mutate(b.cash_account_transactions[1]);}});
+    await assert.rejects(f.run(),/DATE_ALIGNMENT/);assert.equal(f.w.calls.some(c=>c.url.includes('/payouts/')),false);
+  });
+  const wrongPortfolio=await incomeFixture({change:b=>{if(b.cash_account_transactions)b.cash_account_transactions[1].links.portfolio='https://api.sharesight.com/api/v2/portfolios/99';}});
+  await assert.rejects(wrongPortfolio.run(),/IDENTITY/);assert.equal(wrongPortfolio.w.calls.some(c=>c.url.includes('/payouts/')),false);
+});
+test('native income retains duplicate guards and complete cash balance chain',async t=>{
+  for(const [name,mutate,reason] of [
+    ['duplicate record',rows=>rows.push({...rows[1]}),/IDENTITY/],
+    ['second midnight payout',rows=>rows.push({...rows[1],id:14}),/IDENTITY/],
+    ['second timed credit',rows=>rows.push({...rows[1],id:14,date_time:'2026-11-04T12:00:00.000Z'}),/IDENTITY/],
+    ['earlier timed credit',rows=>rows.unshift({...rows[1],id:14,date_time:'2026-11-04T12:00:00.000Z'}),/IDENTITY/],
+    ['missing interest',rows=>rows.shift(),/CASH_RECONCILIATION/],
+    ['missing dividend',rows=>rows.pop(),/CASH_RECONCILIATION/],
+    ['wrong intermediate balance',rows=>rows[1].balance=56,/CASH_RECONCILIATION/],
+    ['wrong final balance',rows=>rows[0].balance=61,/CASH_RECONCILIATION/]
+  ])await t.test(name,async()=>{const f=await incomeFixture({change:b=>{if(b.cash_account_transactions)mutate(b.cash_account_transactions);}});await assert.rejects(f.run(),reason);});
+});
+test('independent payout evidence is bound to stable reads and the next checkpoint, without double-counting income',async()=>{
+  const f=await incomeFixture(),s=await f.run();
+  const next=await incomeFixture({checkpoint:s,target:'2026-11-05'}),after=await next.run();
+  assert.deepEqual(after.periodReturnsInput.points.map(p=>p.tot),[136,146,146]);assert.deepEqual(after.cashFlowByDate,{});
+  assert.equal(next.w.calls.some(c=>c.url.includes('/payouts/')),false);await buildIbManagerReportBundle(after,f.expected);
+  const changed=await incomeFixture({change:(b,{p,capture})=>{if(p.includes('/payouts/')&&capture===2){b.gross_amount=11;b.resident_withholding_tax=4;}}});
+  await assert.rejects(changed.run(),/UNSTABLE/);
+  const conflict=structuredClone(s);conflict.closingSnapshots[1].cash[3]++;
+  await assert.rejects((await incomeFixture({checkpoint:conflict,target:'2026-11-05'})).run(),/CASH_RECONCILIATION|PAST_POINT_CHANGED/);
 });
 
 async function cashDateFixture({events=[{d:'2026-11-02',kind:'BUY'}],target='2026-11-02',baseDate='2026-10-30',early=true,checkpoint=null,mutate=()=>{}}={}){

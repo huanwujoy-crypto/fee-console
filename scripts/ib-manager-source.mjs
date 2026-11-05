@@ -173,15 +173,30 @@ function nyBusinessDate(text){
   if(d!==text.slice(0,10))fail('DATE_ALIGNMENT');return day(d);
 }
 
+// A native Payout's exact UTC-midnight timestamp is a date carrier only when
+// the independently read, confirmed Sharesight payout proves that same date,
+// holding, portfolio, USD currency and net cash. No memo or +/- day heuristic.
+function nativePayoutDateProof(p,row,portfolioId){
+  complete(p);
+  if(p.id!==row.payout_id||p.portfolio_id!==portfolioId||p.holding_id!==row.holding_id
+    ||p.currency!=='USD'||p.confirmed!==true||p.state!=='confirmed'
+    ||p.non_taxable!==false||p.tax_credit!==0||!isCalendarDate(p.paid_on)
+    ||row.date_time!==p.paid_on+'T00:00:00.000Z')fail('DATE_ALIGNMENT');
+  const gross=cashAmount(p,'gross_amount'),tax=cashAmount(p,'resident_withholding_tax'),net=cashAmount(p,'amount');
+  if(gross<=0||tax<0||net<=0||cashAmount(p,'tax_credit')!==0||gross-tax!==net||net!==cashAmount(row,'amount'))fail('AMOUNT');
+  return {id:p.id,portfolioId,holdingId:p.holding_id,paidOn:p.paid_on,currency:p.currency,
+    grossCents:gross,taxCents:tax,netCents:net,cashId:row.cash_account_id,cashRecordId:row.id,dateTime:row.date_time};
+}
+
 export class SharesightIbManagerReader{
-  #portfolio=null;#cash=new Set();
+  #portfolio=null;#cash=new Set();#payouts=new Set();
   constructor({clientId,clientSecret,fetchImpl=globalThis.fetch,timeoutMs=20000}={}){
     if(![clientId,clientSecret].every(v=>typeof v==='string'&&v.length>0&&v.length<=8192&&!/[\r\n\0]/.test(v))||typeof fetchImpl!=='function'||!Number.isInteger(timeoutMs)||timeoutMs<1000||timeoutMs>30000)fail('CONFIG');
     this.clientId=clientId;this.clientSecret=clientSecret;this.fetch=fetchImpl;this.timeoutMs=timeoutMs;
   }
   async #json(url,token,body){
     const p=new URL(url),base='/api/v3/portfolios/'+this.#portfolio;
-    const allowed=url===API+'/oauth2/token'||url===API+'/api/v2/portfolios.json'||p.origin===API&&this.#portfolio&&([base+'/performance',base+'/holdings',base+'/trades.json','/api/v2/portfolios/'+this.#portfolio+'/cash_accounts.json'].includes(p.pathname)||[...this.#cash].some(n=>p.pathname==='/api/v2/cash_accounts/'+n+'/cash_account_transactions.json'));
+    const allowed=url===API+'/oauth2/token'||url===API+'/api/v2/portfolios.json'||p.origin===API&&this.#portfolio&&([base+'/performance',base+'/holdings',base+'/trades.json','/api/v2/portfolios/'+this.#portfolio+'/cash_accounts.json'].includes(p.pathname)||[...this.#cash].some(n=>p.pathname==='/api/v2/cash_accounts/'+n+'/cash_account_transactions.json')||[...this.#payouts].some(n=>url===API+'/api/v2/payouts/'+n+'.json'));
     if(!allowed||body&&url!==API+'/oauth2/token')fail('SCOPE');
     try{const response=await boundedJson(this.fetch,url,{method:body?'POST':'GET',headers:{Accept:'application/json',...(body?{'Content-Type':'application/x-www-form-urlencoded'}:{Authorization:'Bearer '+token})},...(body?{body}:{})},{timeoutMs:this.timeoutMs,maxBytes:2*1024*1024,requireJsonType:true,includeBytes:true});return parseSourceJson(response.bytes.toString('utf8'));}catch{fail('NETWORK');}
   }
@@ -200,7 +215,7 @@ export class SharesightIbManagerReader{
     const auth=await this.#json(API+'/oauth2/token',null,new URLSearchParams({grant_type:'client_credentials',client_id:this.clientId,client_secret:this.clientSecret}).toString());
     if(typeof auth.access_token!=='string'||!/^[A-Za-z0-9._~+/=-]{20,16384}$/.test(auth.access_token)||String(auth.token_type).toLowerCase()!=='bearer')fail('SCOPE');
     const token=auth.access_token,listing=rows(await this.#json(API+'/api/v2/portfolios.json',token),'portfolios').filter(p=>p.name===NAME);
-    if(listing.length!==1||listing[0].currency_code!=='USD')fail('SCOPE');this.#portfolio=id(listing[0].id);this.#cash.clear();
+    if(listing.length!==1||listing[0].currency_code!=='USD')fail('SCOPE');this.#portfolio=id(listing[0].id);this.#cash.clear();this.#payouts.clear();
     const base=API+'/api/v3/portfolios/'+this.#portfolio;
     const catalog=rows(await this.#json(base+'/holdings?consolidated=false',token),'holdings');
     const holdingIds=new Set(catalog.map(h=>{if(h.portfolio?.id!==this.#portfolio||h.portfolio?.name!==NAME||h.valid_position!==true)fail('IDENTITY');return id(h.id);}));
@@ -244,7 +259,7 @@ export class SharesightIbManagerReader{
       if(foreignHoldings.has(t.holding_id))fail('UNSUPPORTED_CURRENCY');
       if(['BUY','SELL'].includes(t.description_code)&&(!Number.isFinite(t.value)||!Number.isFinite(t.quantity)||t.quantity<=0))fail('SCHEMA');
       if(t.transaction_date>baseline.asOf&&(!['BUY','SELL','SPLIT','TRANSFER_OUT'].includes(t.description_code)||(['BUY','SELL'].includes(t.description_code)&&!auditedEvent(t)&&(/transfer|in[ -]?kind|\bFOP\b|转仓/i.test(String(t.comments||''))||t.value===0))))fail('UNVERIFIED_TRANSFER');}
-    const tradeIds=new Set(trades.map(t=>t.id)),tradeById=new Map(trades.map(t=>[t.id,t])),ledger=[],seen=new Set(),flowCents={},rawCashRows=new Map();
+    const tradeIds=new Set(trades.map(t=>t.id)),tradeById=new Map(trades.map(t=>[t.id,t])),ledger=[],seen=new Set(),flowCents={},rawCashRows=new Map(),payoutProofs=[],payoutRefs=new Map();
     for(const cashId of this.#cash){
       const all=rows(await this.#json(API+'/api/v2/cash_accounts/'+cashId+'/cash_account_transactions.json?from='+from+'&to='+targetDate,token),'cash_account_transactions');
       for(const row of all){
@@ -257,7 +272,20 @@ export class SharesightIbManagerReader{
           &&linked&&row.date_time.slice(0,10)===linked.transaction_date&&row.holding_id===linked.holding_id&&row.payout_id==null
           &&(linked.description_code==='BUY'&&type==='BUY TRADE'&&movement<0||linked.description_code==='SELL'&&type==='SELL TRADE'&&movement>0)
           &&reports.find(p=>p.d===linked.transaction_date)?.cashCurrency[cashId]==='USD';
-        const d=tradeDateCarrier?day(linked.transaction_date):nyBusinessDate(row.date_time);if(d<from||d>targetDate||row.cash_account_id!==cashId||seen.has(row.id))fail('IDENTITY');seen.add(row.id);rawCashRows.set(row.id,row);
+        if(row.payout_id!=null)payoutRefs.set(id(row.payout_id),(payoutRefs.get(row.payout_id)||0)+1);
+        let payoutDate=null;
+        const rawDay=typeof row.date_time==='string'?row.date_time.slice(0,10):null;
+        if(type==='PAYOUT'&&row.date_time===rawDay+'T00:00:00.000Z'&&isCalendarDate(rawDay)
+          &&rawDay>=from&&rawDay<=targetDate&&row.trade_id==null&&row.payout_id!=null
+          &&holdingIds.has(row.holding_id)&&movement>0&&row.cash_account_id===cashId
+          &&reports.find(p=>p.d===rawDay)?.cashCurrency[cashId]==='USD'){
+          if(seen.has(row.id)||payoutRefs.get(row.payout_id)!==1
+            ||row.links?.portfolio&&row.links.portfolio!==API+'/api/v2/portfolios/'+this.#portfolio)fail('IDENTITY');
+          this.#payouts.add(row.payout_id);
+          const proof=nativePayoutDateProof(await this.#json(API+'/api/v2/payouts/'+row.payout_id+'.json',token),row,this.#portfolio);
+          payoutProofs.push(proof);payoutDate=proof.paidOn;
+        }
+        const d=tradeDateCarrier?day(linked.transaction_date):payoutDate||nyBusinessDate(row.date_time);if(d<from||d>targetDate||row.cash_account_id!==cashId||seen.has(row.id))fail('IDENTITY');seen.add(row.id);rawCashRows.set(row.id,row);
         const report=reports.find(p=>p.d===d),currency=report.cashCurrency[cashId]||cashList.find(c=>c.id===cashId)?.currency;
         cashAmount(row,'balance');
         if(currency!=='USD'){
@@ -271,6 +299,7 @@ export class SharesightIbManagerReader{
         if(row.trade_id!=null){if(!tradeIds.has(id(row.trade_id)))fail('IDENTITY');}
         else if(row.payout_id!=null||row.holding_id!=null){if(row.holding_id!=null&&!holdingIds.has(id(row.holding_id)))fail('IDENTITY');}
         else if(['DIVIDEND','INTEREST','FEE','TAX','COMMISSION'].includes(type)){}
+        else if(type==='INTEREST_PAYMENT'){if(movement<0)fail('UNRESOLVED_FLOW');}
         else if(['DEPOSIT','WITHDRAWAL'].includes(type)){
           if(movement&&(!/\bexternal\b|\bowner\b|\bcapital (?:contribution|withdrawal)\b|\bcash contribution\b/i.test(description)||/\bBUY\b|\bSELL\b|PROCEEDS|SETTLEMENT|DIVIDEND|DISTRIBUTION|COUPON|PAYOUT|INTEREST|\bFX\b|COMMISSION|AUTOMATIC|ADJUSTMENT|GENERATED/i.test(description+' '+String(row.foreign_identifier||'')))||type==='DEPOSIT'&&movement<0||type==='WITHDRAWAL'&&movement>0)fail('UNRESOLVED_FLOW');external=true;
         }else if(movement!==0)fail('UNRESOLVED_FLOW');
@@ -278,6 +307,10 @@ export class SharesightIbManagerReader{
         ledger.push({id:row.id,cashId,d,movement,balance:cashAmount(row,'balance'),tradeId:row.trade_id??null,holdingId:row.holding_id??null,payoutId:row.payout_id??null,type,description,external});
       }
     }
+    // One confirmed payout cannot prove multiple credits, including a later
+    // non-midnight row or another cash account. The cash balance chain also
+    // remains mandatory; neither proof supplies or adjusts a missing amount.
+    if(payoutProofs.some(p=>payoutRefs.get(p.id)!==1))fail('IDENTITY');
     // A new buy/sell without matching cash could be an in-kind transfer. Never
     // treat the resulting NAV change as performance merely because it has a price.
     for(const t of trades)if(t.transaction_date>baseline.asOf&&['BUY','SELL'].includes(t.description_code)&&!auditedEvent(t)){
@@ -339,9 +372,10 @@ export class SharesightIbManagerReader{
     const input={points,openT:previousInput?previousInput.openT:reports[0].totalCents/100,from:baseline.from,to:targetDate,days:inclusiveDays(baseline.from,targetDate),flowByDate:flows,rate:0,cr:0,cumBefore:0,hwmBefore:0};
     const last=reports.at(-1);
     if(prior&&prior.portfolioIdentityHash!==identityHash)fail('IDENTITY');
-    const source={schema:coverage?'fee-console.ib-manager-source.v3':frozen?'fee-console.ib-manager-source.v2':'fee-console.ib-manager-source.v1',scope:'ib-manager',currency:'USD',timezone:'America/New_York',flowTiming:'eod',baselineFrom:baseline.from,baselineAsOf:baseline.asOf,baselineInputsHash:expectedBaselineHash,portfolioIdentityHash:identityHash,sourceAsOf:targetDate,sourceEvidenceHash:hash({identityHash,last,ledger:ledger.filter(p=>p.d===targetDate).sort((a,b)=>a.id-b.id),trades:trades.filter(t=>t.transaction_date===targetDate).sort((a,b)=>a.id-b.id)}),cashFlowByDate,noncashProofs,periodReturnsInput:input,...(frozen?{ownerBaseline:frozen}:{}),...(coverage?{bootstrapCoverage:coverage,closingSnapshots:reports.slice(-2)}:{}),...(cashDateNormalizations.length?{cashDateNormalizations}:{})};
+    const payoutEvidence=payoutProofs.length?{payoutDateProofs:payoutProofs.sort((a,b)=>a.id-b.id)}:{};
+    const source={schema:coverage?'fee-console.ib-manager-source.v3':frozen?'fee-console.ib-manager-source.v2':'fee-console.ib-manager-source.v1',scope:'ib-manager',currency:'USD',timezone:'America/New_York',flowTiming:'eod',baselineFrom:baseline.from,baselineAsOf:baseline.asOf,baselineInputsHash:expectedBaselineHash,portfolioIdentityHash:identityHash,sourceAsOf:targetDate,sourceEvidenceHash:hash({identityHash,last,ledger:ledger.filter(p=>p.d===targetDate).sort((a,b)=>a.id-b.id),trades:trades.filter(t=>t.transaction_date===targetDate).sort((a,b)=>a.id-b.id),...payoutEvidence}),cashFlowByDate,noncashProofs,periodReturnsInput:input,...(frozen?{ownerBaseline:frozen}:{}),...(coverage?{bootstrapCoverage:coverage,closingSnapshots:reports.slice(-2)}:{}),...(cashDateNormalizations.length?{cashDateNormalizations}:{})};
     validateIbManagerReportInput(source,expectedBaselineHash);
-    return {source,fingerprint:hash({identityHash,reports,ledger:ledger.sort((a,b)=>a.id-b.id),trades:trades.sort((a,b)=>a.id-b.id),cashList:cashList.sort((a,b)=>a.id-b.id),...(cashDateNormalizations.length?{cashDateNormalizations}:{})})};
+    return {source,fingerprint:hash({identityHash,reports,ledger:ledger.sort((a,b)=>a.id-b.id),trades:trades.sort((a,b)=>a.id-b.id),cashList:cashList.sort((a,b)=>a.id-b.id),...payoutEvidence,...(cashDateNormalizations.length?{cashDateNormalizations}:{})})};
   }
   async readStable({targetDate,expectedBaselineHash,baseline=IB_BASELINE_WINDOW,checkpoint=null,ownerBaseline=null,bootstrapCoverage=null}={}){
     if(!/^[a-f0-9]{64}$/.test(expectedBaselineHash||''))fail('BASELINE_LOCK');
