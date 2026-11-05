@@ -1,3 +1,4 @@
+import {createAggregateReturnsCore} from './fee-ratio-aggregate-returns.mjs';
 // Pure complete-original association and normalization; no IO or authority.
 import {createFeeCompanyExposureCore} from './fee-ratio-company-exposure.mjs';
 import {createOfficialRatioSourceCore} from './fee-ratio-official-source.mjs';
@@ -16,6 +17,19 @@ const normalize=s=>String(s).replaceAll('&amp;','&');
 const esc=s=>String(s).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
 
 function verifyBrowserSourceAssociations(raw,input,{scopeHash,now=new Date()}={}){
+  if(raw?.schemaVersion==='sharesight-private-performance-v1'){
+    if(!exact(raw,['schemaVersion','accounts','allocation','performance','performanceCapturedAt'])||input?.schema!=='fee-console.ratio-sources.v3'||!exact(input,['schema','classification','exposure','book','performance'])||JSON.stringify(raw.accounts)!==JSON.stringify(raw.allocation?.accounts))fail();
+    const base={...input,schema:'fee-console.ratio-sources.v2'};delete base.performance;
+    const facts=verifyBrowserSourceAssociations(raw.allocation,base,{scopeHash,now});
+    const core=createAggregateReturnsCore(),performance=raw.performance;
+    // Native returns retain the owner's accepted small benchmark positions.
+    // Membership-derived disclosure does not change allocation exclusions.
+    core.build(performance,{expectedAccounts:raw.accounts,expectedAsOf:performance?.asOf});
+    const captured=time(raw.performanceCapturedAt),clock=now.getTime(),age=Math.floor((Date.parse(now.toISOString().slice(0,10))-Date.parse(performance.asOf))/86400000);
+    if(performance.asOf>facts.asOf||age<0||age>4||clock<captured||clock-captured>36*3600000||createOfficialRatioSourceCore().canonical(input.performance)!==createOfficialRatioSourceCore().canonical(performance))fail();
+    return {...facts,observedAt:new Date(Math.min(Date.parse(facts.observedAt),captured)).toISOString(),sourceDates:{...facts.sourceDates,performance:performance.asOf},performance:structuredClone(performance)};
+  }
+
   if(raw?.schemaVersion==='sharesight-private-full-v2'){
     const core=createOfficialRatioSourceCore();
     const built=core.build(raw,{sourceSha256:input?.book?.sourceSha256,sourceBytes:input?.book?.provenance?.fullSourceBytes,includeFundDistributions:Object.hasOwn(input?.classification||{},'fundDistributions'),includeAssetAllocation:Object.hasOwn(input?.classification||{},'assetAllocation'),excludeBenchmarkOnly:input?.classification?.basis===core.BENCHMARK_EXCLUDED_BASIS,includeFundHoldings:input?.classification?.fundDistributions?.some(f=>f.groups?.some(g=>Object.hasOwn(g,'holdings')))===true});

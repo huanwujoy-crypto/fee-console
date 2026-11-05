@@ -1,9 +1,7 @@
 import {createFeeCompanyExposureCore} from './fee-ratio-company-exposure.mjs';
-// Pure manager-only report and recipient codec. No reads, credentials, storage,
-// publication or broker adapter. Browser uses this exact factory, not a shared
-// fee-key decoder. Actual manager use/recipient registration needs approval.
+import {createAggregateReturnsCore} from './fee-ratio-aggregate-returns.mjs';
 export function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
-  const companyCore=createFeeCompanyExposureCore();
+  const companyCore=createFeeCompanyExposureCore(),returnsCore=createAggregateReturnsCore();
   const SCHEMA='fee-console.ratio-view.v1',RECIPIENT='fee-console.ratio-recipient.v1',ENVELOPE='fee-console.ratio-manager-envelope.v1';
   const DOMAIN='fee-console/ratio-management/manager-recipient/v1',MAX=2*1024*1024;
   const fail=()=>{throw Error('RATIO_MANAGER_REFUSED');};
@@ -50,14 +48,14 @@ export function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
   }
   async function validateModel(m){
     const official=m?.schema==='fee-console.ratio-view.v2';
-    if(!exact(m,['schema','source','report','exposure','book','limitations',...(Object.hasOwn(m||{},'companyExposure')?['companyExposure']:[]),...(official?['sourceDates','classificationSummary']:[])])||![SCHEMA,'fee-console.ratio-view.v2'].includes(m.schema)||m.source!=='Sharesight'||!Array.isArray(m.limitations)||m.limitations.length>50||!m.limitations.every(text))fail();
+    if(!exact(m,['schema','source','report','exposure','book','limitations',...(Object.hasOwn(m||{},'companyExposure')?['companyExposure']:[]),...(official?['sourceDates','classificationSummary']:[]),...(Object.hasOwn(m||{},'performance')?['performance']:[])])||![SCHEMA,'fee-console.ratio-view.v2'].includes(m.schema)||m.source!=='Sharesight'||!Array.isArray(m.limitations)||m.limitations.length>50||!m.limitations.every(text))fail();
     const p=m.report;if(!exact(p,['kind','targetDate','feeAccountingThrough','generatedAt'])||!['weekly','monthly','weekly-monthly','snapshot'].includes(p.kind)||!date(p.targetDate)||!(p.feeAccountingThrough===null||date(p.feeAccountingThrough))||!instant(p.generatedAt))fail();
     if(new TextEncoder().encode(canonical(m)).length>MAX)fail();
     const exp=exposureCore.buildRankedExposureView(m.exposure);
     if(!exp.retrievedAt||Date.parse(exp.retrievedAt)>Date.parse(p.generatedAt)||exp.valuationDate>p.targetDate)fail();
     if(official){
       const d=m.sourceDates,c=m.classificationSummary,labels=['PE/VC','对冲基金','常青基金','二级市场'];
-      if(!exact(d,['classification','exposure'])||![d.classification,d.exposure].every(date)||d.classification>d.exposure||d.exposure!==exp.valuationDate||p.targetDate!==d.exposure||m.book?.asOf!==d.classification||m.exposure.schema!=='xuan.sharesight-exposure-ranked.v2')fail();
+      if(!exact(d,['classification','exposure',...(Object.hasOwn(m,'performance')?['performance']:[])])||![d.classification,d.exposure].every(date)||d.classification>d.exposure||d.exposure!==exp.valuationDate||p.targetDate!==d.exposure||m.book?.asOf!==d.classification||m.exposure.schema!=='xuan.sharesight-exposure-ranked.v2')fail();
       if(!exact(c,['schema','asOf','currency','basis','totalValueUSD','classes','gold',...(Object.hasOwn(c,'fundDistributions')?['fundDistributions']:[]),...(Object.hasOwn(c,'assetAllocation')?['assetAllocation']:[])])||c.schema!=='fee-console.classification-overview.v1'||c.asOf!==d.classification||c.currency!=='USD'||!['complete-official-classification-row-sum','complete-official-classification-excluding-benchmark-only.v1'].includes(c.basis)||!Number.isFinite(c.totalValueUSD)||c.totalValueUSD<=0||!Array.isArray(c.classes)||c.classes.length!==4||c.classes.some((g,i)=>!exact(g,['name','totalValueUSD'])||g.name!==labels[i]||!Number.isFinite(g.totalValueUSD)||g.totalValueUSD<0)||Math.round(c.classes.reduce((s,g)=>s+g.totalValueUSD,0)*100)!==Math.round(c.totalValueUSD*100)||!exact(c.gold,['rule','valueUSD',...(Object.hasOwn(c.gold,'secondaryIncluded')?['secondaryIncluded']:[])])||c.gold.rule!=='physical-gold-etf.GLD.NYSE.v1'||!Number.isFinite(c.gold.valueUSD)||c.gold.valueUSD<0||c.gold.valueUSD>c.totalValueUSD||Object.hasOwn(c.gold,'secondaryIncluded')&&(typeof c.gold.secondaryIncluded!=='boolean'||c.gold.secondaryIncluded&&c.gold.valueUSD>c.classes[3].totalValueUSD))fail();
       if(Object.hasOwn(c,'assetAllocation')){
         const a=c.assetAllocation,labels=['PE/VC','对冲基金','常青基金','股票市场','现金类','主题投资'],targets=[0,15,35,40,8,2],accounts=new Set(m.exposure.summary.accounts);
@@ -92,6 +90,10 @@ export function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
         }
       }
     }else if(m.exposure.schema==='xuan.sharesight-exposure-ranked.v2'||m.book?.browserEvidence?.transport==='official-workbooks')fail();
+    if(Object.hasOwn(m,'performance')){
+      if(!official||m.performance.asOf!==m.sourceDates.performance||m.performance.asOf>m.report.targetDate)fail();
+      returnsCore.build(m.performance,{expectedAccounts:m.exposure.summary.accounts.map(x=>x.replaceAll('&amp;','&')),expectedAsOf:m.sourceDates.performance});
+    }
     const scope=await digest(m.exposure.summary.accounts.map(x=>x.replaceAll('&amp;','&')).sort());
     if(scope!==exposureCore.ALL_TOGETHER_SCOPE_SHA256)fail();
     if(m.book!==null){
@@ -188,6 +190,9 @@ export function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
   }
   function renderRatioModel(m){
     const view=exposureCore.buildRankedExposureView(m.exposure),classification=m.classificationSummary;
+    const performance=m.performance?returnsCore.build(m.performance,{expectedAccounts:m.exposure.summary.accounts.map(x=>x.replaceAll('&amp;','&')),expectedAsOf:m.sourceDates.performance}):null;
+    const returns=(name,parent=null)=>performance?returnsCore.render(returnsCore.select(performance,{type:parent?'fund-strategy':name==='All Together'?'portfolio':'classification',name,parent})):'';
+    const performanceOverview=performance?'<section class="card ratio-performance-overview"><h2>投资收益率</h2><p>收益截至 '+esc(performance.asOf)+' · Sharesight · 含已平仓</p><section><h3>总览</h3>'+returns('All Together')+'</section>'+['PE/VC','对冲基金','常青基金','二级市场'].map(name=>'<section class="ratio-performance-class"><h3>'+esc(name)+'</h3>'+returns(name)+'</section>').join('')+'</section>':'';
     const overviewView=classification?{valuationDate:classification.asOf,portfolioTotalUsd:classification.totalValueUSD,groups:classification.classes.map(g=>({category:g.name,totalUsd:g.totalValueUSD}))}:view;
     const delta=overviewView.groups.reduce((n,g)=>n+g.totalUsd,0)-overviewView.portfolioTotalUsd;
     const b=m.book,a=b?.allocation,ib=b?.ibCashCents??null,noah=b?.noahCashCents??null,pool=ib===null||noah===null?null:ib+noah;
@@ -211,7 +216,7 @@ export function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
       const weights=f.groups.map((g,i)=>{const numerator=BigInt(g.valueCents)*10000n,denominator=BigInt(f.totalCents||1);return {i,bp:f.totalCents?Number(numerator/denominator):0,remainder:f.totalCents?numerator%denominator:0n};});
       let left=f.totalCents?10000-weights.reduce((n,w)=>n+w.bp,0):0;
       for(const w of [...weights].sort((a,b)=>a.remainder===b.remainder?a.i-b.i:a.remainder>b.remainder?-1:1)){if(left--<=0)break;w.bp++;}
-      const bars=f.groups.map((g,i)=>{const pct=(weights[i].bp/100).toFixed(2);return '<div class="ratio-distribution-row"><div class="ratio-distribution-label"><span>'+esc(g.name)+'</span><strong>'+pct+'%</strong></div><div class="ratio-distribution-track" role="meter" aria-label="'+esc(g.name)+'" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+pct+'"><i style="width:'+pct+'%"></i></div></div>';}).join('');
+      const bars=f.groups.map((g,i)=>{const pct=(weights[i].bp/100).toFixed(2);return '<div class="ratio-distribution-row"><div class="ratio-distribution-label"><span>'+esc(g.name)+'</span><strong>'+pct+'%</strong></div><div class="ratio-distribution-track" role="meter" aria-label="'+esc(g.name)+'" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+pct+'"><i style="width:'+pct+'%"></i></div>'+returns(g.name,f.name)+'</div>';}).join('');
       const target=asset?.groups.find(g=>g.name===f.name)?.targetPct;
       const holdings=f.groups.map((g,i)=>{
         if(!g.holdings)return '';
@@ -235,7 +240,7 @@ export function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
     const coverage='<p>仅证明原时点开放持仓，不含闭仓／交易历史，不证明未来IB流量；Top500也不代表全ETF底层。</p><p>ETF Residual '+money(Math.round(view.residualUsd*100))+'（占总资产 '+view.residualPortfolioWeightPct.toFixed(2)+'%／占二级 '+view.residualCategoryWeightPct.toFixed(2)+'%）；残余不列作个股。</p><p>Exposure 快照日不是各私募基金的 NAV 日；未取得逐项 NAV 日期时保持未知。</p>'+[...view.limitations,...m.limitations,...(b?.browserEvidence?.limitations||[])].map(x=>'<p>'+esc(x)+'</p>').join('')+(!official&&b?.browserEvidence?.integrity==='verified-original-library-association'?'<p>分类与页面差 '+(b.browserEvidence.classificationDeltaCents/100).toFixed(2)+' USD；Exposure与页面差 '+(b.browserEvidence.exposureDeltaCents/100).toFixed(2)+' USD，保留原差异。</p>':'');
     const cash='<p>Sharesight IB-HK 账面现金：'+money(ib)+'</p><p>Sharesight NOAH-HK 账面现金：'+money(noah)+'</p><p>账面现金池：'+money(pool)+'</p><p>CALL 原额／50%预留／净规划预算：未取得；账面余额不等于实时购买力。</p><p>EXUS · EIMI · USSC：补仓金额未计算。USSC 的10%仅为原补仓预算参考，不是持仓目标。</p><p>现金类资产：'+(a?esc(a.cashLike.map(c=>c.symbol+' '+money(c.valueCents)).join(' · ')||'本次完整分类来源未见非零项'):'未取得')+'；不默认出售。</p><p>成交后投影未计算；没有完整订单证据时，内部风控保持未知。</p>';
     const status='<p class="ratio-key-status" role="status">预算／资本承诺未核实，未生成可执行补仓金额。'+(!b||b.browserEvidence&&b.browserEvidence.integrity!=='verified-original-library-association'?'完整来源尚未通过本机核验。':'')+(b?.browserEvidence?.migrationPending?'来源转仓尚未核销，保留原账面持仓。':'')+'</p><p class="ratio-key-status">'+esc(view.transferStatus)+'</p>';
-    return '<div class="ratio-report"><p>比例管理 · '+esc({weekly:'周报',monthly:'月报','weekly-monthly':'周报／月报',snapshot:'来源快照'}[m.report.kind])+' · 报告目标 '+esc(m.report.targetDate)+' · 非实时</p><p>Exposure 来源截至 '+esc(view.valuationDate)+(view.valuationDate!==m.report.targetDate?' · 来源尚未覆盖本期':'')+'</p><p>生成 '+esc(m.report.generatedAt)+(m.report.feeAccountingThrough&&m.report.feeAccountingThrough!==m.report.targetDate?' · 管理费账务截至 '+esc(m.report.feeAccountingThrough)+'，两者日期不同':'')+'</p>'+(m.sourceDates?'<p class="ratio-key-status">资产分类截至 '+esc(m.sourceDates.classification)+' · 个股穿透截至 '+esc(m.sourceDates.exposure)+'；各自使用同日来源总额，管理费保持原日期。</p>':'')+overview+allocation+distributions+status+exposure+detail('计算口径与合并规则',method)+detail('来源日期与核验记录',source)+detail('覆盖范围、残余与缺项',coverage)+detail('现金与补仓参考说明',cash)+'</div>';
+    return '<div class="ratio-report"><p>比例管理 · '+esc({weekly:'周报',monthly:'月报','weekly-monthly':'周报／月报',snapshot:'来源快照'}[m.report.kind])+' · 报告目标 '+esc(m.report.targetDate)+' · 非实时</p><p>Exposure 来源截至 '+esc(view.valuationDate)+(view.valuationDate!==m.report.targetDate?' · 来源尚未覆盖本期':'')+'</p><p>生成 '+esc(m.report.generatedAt)+(m.report.feeAccountingThrough&&m.report.feeAccountingThrough!==m.report.targetDate?' · 管理费账务截至 '+esc(m.report.feeAccountingThrough)+'，两者日期不同':'')+'</p>'+(m.sourceDates?'<p class="ratio-key-status">资产分类截至 '+esc(m.sourceDates.classification)+' · 个股穿透截至 '+esc(m.sourceDates.exposure)+'；各自使用同日来源总额，管理费保持原日期。</p>':'')+overview+performanceOverview+allocation+distributions+status+exposure+detail('计算口径与合并规则',method)+detail('来源日期与核验记录',source)+detail('覆盖范围、残余与缺项',coverage)+detail('现金与补仓参考说明',cash)+'</div>';
   }
   // Authorization is checked before and after crypto; a late async result can
   // never repopulate a locked or switched manager pane.

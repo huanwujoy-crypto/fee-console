@@ -627,6 +627,11 @@
     "scripts/fee-ratio-cloud-publish.test.mjs",
     "scripts/fee-ratio-cloud-runtime.mjs",
     "scripts/fee-ratio-cloud-runtime.test.mjs",
-    "docs/fee-ratio-cloud-local-candidate.md"
+    "docs/fee-ratio-cloud-local-candidate.md",
+    "scripts/fee-ratio-aggregate-returns.mjs",
+    "scripts/fee-ratio-aggregate-returns.test.mjs",
+    "scripts/fee-ratio-performance-integration.test.mjs",
+    "scripts/fee-ratio-aggregate-ui-fixture.mjs",
+    "scripts/fixtures/fee-ratio-aggregate-returns-ui.json"
   ]
 }

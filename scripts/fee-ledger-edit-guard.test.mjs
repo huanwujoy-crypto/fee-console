@@ -1,3 +1,4 @@
+import {priorAggregateUi} from './fee-ratio-aggregate-ui-fixture.mjs';
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -25,7 +26,7 @@ function performanceCandidate(){
   const bytes=fs.readFileSync(path.join(root,'scripts/fixtures/fee-ratio-six-allocation-ui.json'));
   assert.equal(crypto.createHash('sha256').update(bytes).digest('hex'),'21d9bbddea14fbfaa8092ac1e5cb03059481034cc4c8f30549062fb918085683');
   const fixture=JSON.parse(bytes),sha=text=>crypto.createHash('sha256').update(text).digest('hex');
-  let page=fs.readFileSync(uiFile,'utf8');
+  let page=priorAggregateUi(fs.readFileSync(uiFile,'utf8'));
   if(sha(page)===fixture.assetNotesNextSha256){for(const r of [...fixture.assetNotesRegions].reverse()){assert.equal(page.split(r.next).length,2);page=page.replace(r.next,()=>r.prior);}assert.equal(sha(page),fixture.assetNotesPriorSha256);}
   if(sha(page)===fixture.notesNextSha256){for(const r of [...fixture.notesRegions].reverse()){assert.equal(page.split(r.next).length,2);page=page.replace(r.next,()=>r.prior);}assert.equal(sha(page),fixture.notesPriorSha256);}
   if(sha(page)===fixture.releaseNextSha256){for(const r of [...fixture.releaseRegions].reverse()){assert.equal(page.split(r.next).length,2);page=page.replace(r.next,()=>r.prior);}assert.equal(sha(page),fixture.releasePriorSha256);}
@@ -1650,7 +1651,7 @@ test('stale parallel reads cannot commit after source changes and cannot extend 
 
 test('a deployed shell release reloads old windows and preserves their access fragment',async t=>{
  const fixture=JSON.parse(fs.readFileSync(path.join(root,'scripts/fixtures/fee-ratio-six-allocation-ui.json'),'utf8'));
- let page=fs.readFileSync(uiFile,'utf8'),sha=s=>crypto.createHash('sha256').update(s).digest('hex');
+ let page=priorAggregateUi(fs.readFileSync(uiFile,'utf8')),sha=s=>crypto.createHash('sha256').update(s).digest('hex');
  if(sha(page)===fixture.releasePriorSha256)for(const r of fixture.releaseRegions){assert.equal(page.split(r.prior).length,2);page=page.replace(r.prior,()=>r.next);}
  if(sha(page)===fixture.notesPriorSha256)for(const r of fixture.notesRegions){assert.equal(page.split(r.prior).length,2);page=page.replace(r.prior,()=>r.next);}
  if(sha(page)===fixture.assetNotesPriorSha256)for(const r of fixture.assetNotesRegions){assert.equal(page.split(r.prior).length,2);page=page.replace(r.prior,()=>r.next);}
