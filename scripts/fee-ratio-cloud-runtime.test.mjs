@@ -19,6 +19,8 @@ function admission(p=plan()){
 const safe=()=>({schema:'fee-console.ratio-cloud-safe-result.v1',status:'REFUSED',stage:'ADMISSION',claim:'NOT_ATTEMPTED',patchAttempts:0,bodySha256:null,contentSha256:null,cleanup:'NO_INPUTS_READ'});
 test('exact manual owner/main/attempt and closed plan; fee inputs cannot be mixed',()=>{
  assert.equal(ratioAdmission(admission().env,admission().event).mode,'verify-current');
+ const inactive=admission();Object.assign(inactive.event.inputs,{ib_diagnostic_once:'false',ib_diagnostic_main:''});assert.equal(ratioAdmission(inactive.env,inactive.event).mode,'verify-current');
+ for(const patch of [{ib_diagnostic_once:'true'},{ib_diagnostic_main:head}]){const f=admission();Object.assign(f.event.inputs,patch);assert.throws(()=>ratioAdmission(f.env,f.event),/REFUSED/);}
  for(const change of [f=>f.env.GITHUB_EVENT_NAME='schedule',f=>f.env.GITHUB_RUN_ATTEMPT='2',f=>f.env.GITHUB_REF='refs/heads/other',f=>f.env.GITHUB_ACTOR_ID='1',f=>f.event.sender.id=1,f=>f.event.inputs.ratio_main='c'.repeat(40),f=>f.event.inputs.run_reviewed_once='true',f=>f.event.inputs.manual_sync_completed_for='2026-11-02',f=>f.event.inputs.bad=canary,f=>f.env.RATIO_PLAN='{}']){const f=admission();change(f);assert.throws(()=>ratioAdmission(f.env,f.event),/REFUSED/);}
 });
 test('full read-only entry authenticates exact packet; no storage, claims, PATCH or financial API',async t=>{
@@ -73,9 +75,9 @@ test('actual final command fails admission without networking and saves before d
  const r=spawnSync(process.execPath,['scripts/fee-ratio-cloud-runtime.mjs','--preflight'],{cwd:new URL('..',import.meta.url),env:{...process.env,GITHUB_EVENT_PATH:path.join(dir,'event.json'),RUNNER_TEMP:dir,GITHUB_ACTIONS:'false'},encoding:'utf8'});assert.equal(r.status,1);assert.ok(!r.stdout.includes(canary));assert.ok(!r.stderr.includes(canary));assert.equal(JSON.parse(fs.readFileSync(path.join(dir,'fee-ratio-result.safe.json'))).stage,'ADMISSION');
 });
 test('workflow isolates all fee jobs, preserves schedule/concurrency and never exposes SS credentials to ratio',()=>{
- const wf=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8');for(const job of ['period','once-admit','produce','once-finish','source-plan-check','source-acceptance']){const body=wf.split('\n  '+job+':\n')[1].split(/\n  [a-z-]+:\n/)[0];assert.match(body,/    if: \$\{\{ !inputs\.ratio_plan && !inputs\.ratio_main && /,job);}
+ const wf=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8');for(const job of ['period','once-admit','produce','once-finish','source-plan-check','source-acceptance']){const body=wf.split('\n  '+job+':\n')[1].split(/\n  [a-z-]+:\n/)[0];assert.match(body,/    if: \$\{\{ !inputs\.ib_diagnostic_once && !inputs\.ib_diagnostic_main && !inputs\.ratio_plan && !inputs\.ratio_main && /,job);}
  assert.match(wf,/group: fee-cloud-producer\n  cancel-in-progress: false/);assert.match(wf,/cron: '0 1 \* \* \*'/);assert.deepEqual([...wf.matchAll(/- cron: '([^']+)'/g)].map(m=>m[1]),['0 1 * * *','30 3 * * *','0 6 * * *']);
- const ratio=wf.split('\n  ratio:\n')[1];assert.ok(!ratio.includes('SHARESIGHT'));assert.ok(!ratio.includes('fee-report-producer.mjs'));assert.match(ratio,/create_credentials_file: false/);assert.match(ratio,/access_token_scopes: https:\/\/www.googleapis.com\/auth\/devstorage.read_write/);assert.match(ratio,/fromJSON\(inputs.ratio_plan\).mode == 'publish'/);assert.equal((wf.match(/secrets.FEE_RATIO_MANAGER_TOKEN/g)||[]).length,1);assert.match(ratio,/path: \$\{\{ runner.temp \}\}\/fee-ratio-result.safe.json/);
+ const ratio=wf.split('\n  ratio:\n')[1].split(/\n  [a-z-]+:\n/)[0];assert.ok(!ratio.includes('SHARESIGHT'));assert.ok(!ratio.includes('fee-report-producer.mjs'));assert.match(ratio,/create_credentials_file: false/);assert.match(ratio,/access_token_scopes: https:\/\/www.googleapis.com\/auth\/devstorage.read_write/);assert.match(ratio,/fromJSON\(inputs.ratio_plan\).mode == 'publish'/);assert.equal((wf.match(/secrets.FEE_RATIO_MANAGER_TOKEN/g)||[]).length,1);assert.match(ratio,/path: \$\{\{ runner.temp \}\}\/fee-ratio-result.safe.json/);
 });
 
 test('complete publish entry: pinned storage, real crypto, durable intent, one PATCH, exact readback and cleanup',async t=>{
@@ -109,6 +111,8 @@ test('complete publish entry: pinned storage, real crypto, durable intent, one P
 test('ratio-only runs do not wake fee failure diagnosis or candidate promotion',()=>{
  const root=new URL('../.github/workflows/',import.meta.url),producer=fs.readFileSync(new URL('fee-cloud-producer.yml',root),'utf8'),supervisor=fs.readFileSync(new URL('fee-cloud-supervisor.yml',root),'utf8'),promotion=fs.readFileSync(new URL('promote-fee-data.yml',root),'utf8');
  assert.match(producer,/run-name:.*inputs.ratio_plan.*inputs.ratio_main.*Manual ratio snapshot.*github.workflow/);
- assert.match(supervisor,/if: \$\{\{ github.event.workflow_run.display_title != 'Manual ratio snapshot' \}\}/);
+ const expression=supervisor.match(/    if: \$\{\{ (.+) \}\}/)[1],eligible=Function('github','return ('+expression+')');
+ assert.equal(eligible({event:{workflow_run:{display_title:'Manual ratio snapshot'}}}),false);
+ assert.equal(eligible({event:{workflow_run:{display_title:'Fee cloud producer'}}}),true);
  assert.ok(!promotion.includes('- Fee console cloud producer'));
 });

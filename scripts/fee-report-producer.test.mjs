@@ -85,8 +85,8 @@ test('manual owner input validation rejects every scope mismatch before any cont
   f=>f.event.sender.id=1,f=>f.event.repository.full_name='other/repository',
   f=>f.event.inputs.run_reviewed_once='false',f=>f.event.inputs.report_kind='monthly',
   f=>f.event.inputs.report_target='2026-11-03',f=>f.event.inputs.report_markets='NYSE',
-  ...['manual_sync_completed_for','recovery_main','ratio_main','ratio_plan','source_from','source_target','source_main'].map(k=>f=>f.event.inputs[k]='unexpected'),
-  ...['source_plan_check_only','source_acceptance_once'].map(k=>f=>f.event.inputs[k]='true'),
+  ...['ib_diagnostic_main','manual_sync_completed_for','recovery_main','ratio_main','ratio_plan','source_from','source_target','source_main'].map(k=>f=>f.event.inputs[k]='unexpected'),
+  ...['ib_diagnostic_once','source_plan_check_only','source_acceptance_once'].map(k=>f=>f.event.inputs[k]='true'),
   f=>f.event.inputs.unrecognized='true',f=>f.event=null
  ];
  for(const mutate of mutations){const f=manualCloudOnceFixture();mutate(f);
@@ -397,13 +397,13 @@ test('automatic daily rejects wrong identity, reruns, disabled mode and old one-
  }
 });
 test('automatic daily rejects target overrides, human confirmation, mixed operations and unknown inputs',()=>{
- const changes=[{report_kind:'daily'},{report_target:'2026-11-03'},{report_markets:'NYSE'},{manual_sync_completed_for:'2026-11-03'},{recovery_main:'b'.repeat(40)},{run_reviewed_once:'true'},{source_acceptance_once:'true'},{source_plan_check_only:'true'},{source_from:'2026-11-01'},{source_target:'2026-11-03'},{source_main:'b'.repeat(40)},{ratio_plan:'private-canary'},{ratio_main:'b'.repeat(40)},{unexpected:'private-canary'}];
+ const changes=[{ib_diagnostic_once:'true'},{ib_diagnostic_main:'b'.repeat(40)},{report_kind:'daily'},{report_target:'2026-11-03'},{report_markets:'NYSE'},{manual_sync_completed_for:'2026-11-03'},{recovery_main:'b'.repeat(40)},{run_reviewed_once:'true'},{source_acceptance_once:'true'},{source_plan_check_only:'true'},{source_from:'2026-11-01'},{source_target:'2026-11-03'},{source_main:'b'.repeat(40)},{ratio_plan:'private-canary'},{ratio_main:'b'.repeat(40)},{unexpected:'private-canary'}];
  for(const change of changes){const f=automaticDailyFixture();Object.assign(f.event.inputs,change);assert.throws(()=>scheduledDailyContext({mode:'preflight'},{...f,readEvent:()=>f.event}),/^Error: FEE_REPORT_DAILY_SCOPE$/);}
  const f=automaticDailyFixture();for(const change of [{sender:{id:1}},{repository:{full_name:'other/repo'}}])assert.throws(()=>scheduledDailyContext({mode:'preflight'},{...f,readEvent:()=>({...f.event,...change})}),/DAILY_SCOPE/);
  assert.throws(()=>scheduledDailyContext({mode:'preflight'},{...f,readEvent:()=>{throw Error('private-canary');}}),/^Error: FEE_REPORT_DAILY_SCOPE$/);
 });
 test('automatic daily accepts GitHub default fields but cannot override preflight arguments',()=>{
- const f=automaticDailyFixture();Object.assign(f.event.inputs,{run_reviewed_once:'false',source_plan_check_only:'false',source_acceptance_once:'false',report_target:'',report_markets:'',manual_sync_completed_for:'',recovery_main:'',ratio_main:'',ratio_plan:'',source_from:'',source_target:'',source_main:''});
+ const f=automaticDailyFixture();Object.assign(f.event.inputs,{ib_diagnostic_once:'false',ib_diagnostic_main:'',run_reviewed_once:'false',source_plan_check_only:'false',source_acceptance_once:'false',report_target:'',report_markets:'',manual_sync_completed_for:'',recovery_main:'',ratio_main:'',ratio_plan:'',source_from:'',source_target:'',source_main:''});
  assert.equal(scheduledDailyContext({mode:'preflight'},{...f,readEvent:()=>f.event}),true);
  assert.throws(()=>scheduledDailyContext({mode:'preflight','report-target':'2026-11-03'},{...f,readEvent:()=>f.event}),/DAILY_SCOPE/);
 });
@@ -723,6 +723,13 @@ test('unresolved diagnostic survives the actual producer, period wrapper and wor
 const budgetPlan=weeklyReportPlan('2026-10-30'),budgetNow=new Date('2026-11-01T06:00:00Z');
 const budgetRun=(id=1)=>({id,path:'.github/workflows/fee-cloud-producer.yml',head_branch:'main',head_sha:'a'.repeat(40),event:'schedule',created_at:'2026-10-31T16:00:00Z'});
 const budgetJob=(run,id=10,name='Produce weekly 2026-10-30')=>({id,run_id:run.id,head_sha:run.head_sha,name,status:'completed',conclusion:'failure',started_at:'2026-10-31T16:01:00Z'});
+test('the exact read-only IB diagnostic leaves production attempts unchanged but cannot hide another source job',async()=>{
+ const name='IB diagnostic 2026-11-04',r={...budgetRun(),event:'workflow_dispatch',display_title:name,actor:{id:283054367},run_attempt:1},j=budgetJob(r,31,name);
+ assert.deepEqual(await readPeriodSourceAttempts({plan:budgetPlan,now:budgetNow,fetchImpl:budgetWire([r],[j])}),{attempts:0,inProgress:false});
+ assert.deepEqual(await readPeriodSourceAttempts({plan:budgetPlan,now:budgetNow,fetchImpl:budgetWire([r],[j,budgetJob(r)])}),{attempts:1,inProgress:false});
+ for(const change of [x=>x.event='schedule',x=>x.display_title='other',x=>x.actor.id=1,x=>x.run_attempt=2]){const bad=structuredClone(r);change(bad);await assert.rejects(readPeriodSourceAttempts({plan:budgetPlan,now:budgetNow,fetchImpl:budgetWire([bad],[j])}),/SOURCE_ATTEMPT_METADATA/);}
+ const active={...j,status:'in_progress',conclusion:null};assert.deepEqual(await readPeriodSourceAttempts({plan:budgetPlan,now:budgetNow,fetchImpl:budgetWire([r],[active])}),{attempts:0,inProgress:false});
+});
 function budgetWire(runs,jobs,mutate=()=>{}){return async(url,init)=>{assert.equal(init.method,'GET');assert.equal(init.redirect,'error');assert.equal(init.headers.Authorization,undefined);assert.ok(!url.includes('/logs'));let value;if(url.includes('/workflows/fee-cloud-producer.yml/runs?'))value={total_count:runs.length,workflow_runs:runs};else{assert.match(url,/\/runs\/\d+\/jobs\?filter=all&per_page=100$/);value={total_count:jobs.length,jobs};}value=structuredClone(value);mutate(value,url);const r=new Response(JSON.stringify(value),{headers:{'content-type':'application/json'}});Object.defineProperty(r,'url',{value:url});return r;};}
 test('source budget counts all source job attempts, ignores public and once-control jobs and other cutoff, and excludes current run',async()=>{const r=budgetRun(),p={...budgetJob(r,12,'period'),conclusion:'success'},different=budgetJob(r,13,'Produce monthly 2026-10-31'),controls=['once-admit','once-finish','ratio-preflight','ratio'].map((name,i)=>({...budgetJob(r,20+i,name),conclusion:'success'}));assert.deepEqual(await readPeriodSourceAttempts({plan:budgetPlan,now:budgetNow,fetchImpl:budgetWire([r],[p,different,...controls,budgetJob(r)])}),{attempts:1,inProgress:false});assert.deepEqual(await readPeriodSourceAttempts({plan:budgetPlan,now:budgetNow,currentRunId:1,fetchImpl:budgetWire([r],[])}),{attempts:0,inProgress:false});});
 test('a rerun with two failed source jobs consumes two attempts, and an old unlabelled source is conservatively counted',async()=>{const r=budgetRun();assert.deepEqual(await readPeriodSourceAttempts({plan:budgetPlan,now:budgetNow,fetchImpl:budgetWire([r],[budgetJob(r),budgetJob(r,11,'produce')])}),{attempts:2,inProgress:false});});

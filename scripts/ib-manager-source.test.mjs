@@ -10,6 +10,7 @@ import {SharesightIbManagerReader,IbManagerSourceError,ibBaselineBusinessHash,ib
 import {buildIbManagerReportBundle,validateIbManagerReportState,buildIbOwnerBaseline,validateIbOwnerBaselineState,buildIbManagerReturnReceipt,buildIbManagerDrawdownReceipt,createIbManagerReturnConsumer,createIbManagerDrawdownConsumer} from './ib-manager-return.mjs';
 import {prepareIbManagerReport,loadIbManagerReport,sameIbManagerData,validateIbManagerCoverage,assertIbManagerConfiguration,assertIbManagerPublication,IB_PUBLICATION_DIAGNOSTIC_PREFIX,validateIbPublicationDiagnostic} from './ib-manager-report.mjs';
 import {safeProducerFailureSummary} from './fee-cloud-producer.mjs';
+import {IB_DIAGNOSTIC_PLAN,ibDiagnosticTransport,inspectIbDiagnostic,validateIbDiagnosticEvent,verifyIbDiagnosticRun,validateIbDiagnosticBase} from './ib-manager-diagnostic.mjs';
 import {buildFeeCalculationReceipt,validateFeeCalculationReceipt} from './fee-receipt-core.mjs';
 
 // Synthetic portfolio/holding/cash IDs. No real source, credentials or NAV.
@@ -17,6 +18,65 @@ const baseline={from:'2026-08-31',asOf:'2026-09-02'};
 const input=()=>({points:[{d:'2026-08-31',tot:100},{d:'2026-09-01',tot:150},{d:'2026-09-02',tot:135}],openT:100,from:baseline.from,to:baseline.asOf,days:3,flowByDate:{'2026-09-01':50},rate:0,cr:0,cumBefore:0,hwmBefore:0});
 const lock=()=>ibBaselineBusinessHash(input());
 const add=d=>new Date(Date.parse(d+'T00:00:00Z')+86400000).toISOString().slice(0,10);
+
+test('one-off diagnostic validates real reader receipts without applying, writing or exposing the report',async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ib-readonly-test-'));fs.chmodSync(dir,0o700);t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  const b=await buildIbManagerReportBundle(await source(),lock());
+  const payload={...feeData(),ibManagerReturnReceipt:b.returnReceipt,ibManagerDrawdownReceipt:b.drawdownReceipt,ibManagerSourceState:b.sourceState,ibManagerSourceStatus:{state:'verified',targetDate:baseline.asOf}};
+  const original=structuredClone(payload),environ={IB_MANAGER_READ_ENABLED:'true',IB_MANAGER_BASELINE_SHA256:lock()};
+  const w=wire({mutate:b=>{if(b.portfolios)b.portfolios.push({id:999,name:'Other synthetic account',currency_code:'USD'});}}),transport=ibDiagnosticTransport({fetchImpl:w.fetchImpl,anchor:baseline.asOf,target:add(baseline.asOf)});
+  const boundedReader=new SharesightIbManagerReader({clientId:'synthetic-client',clientSecret:'synthetic-secret',fetchImpl:transport.fetch});
+  const result=await inspectIbDiagnostic({payload,anchorDate:baseline.asOf,targetDate:add(baseline.asOf),outputDir:dir,environ,reader:boundedReader});transport.stop();
+  assert.equal(result.status,'source-and-receipts-verified');assert.equal(result.fullReportVerified,false);assert.equal(result.publicationReady,false);assert.equal(result.temporaryInputsCleaned,true);
+  assert.equal(w.calls.filter(c=>c.method==='POST').length,2);assert.equal(w.calls.some(c=>c.url.includes('/999/')),false);assert.equal(transport.counts().oauthGrants,2);assert.deepEqual(payload,original);assert.deepEqual(fs.readdirSync(dir),[]);
+  for(const [reader,expected] of [[{async readStable(){throw new IbManagerSourceError('CASH_RECONCILIATION');}},'IB_SOURCE_CASH_RECONCILIATION'],[{async readStable(){throw Error('PRIVATE_CANARY amount=123456');}},'IB_SOURCE_NETWORK']]){
+    const r=await inspectIbDiagnostic({payload,anchorDate:baseline.asOf,targetDate:add(baseline.asOf),outputDir:dir,environ,reader});assert.equal(r.status,'incomplete');assert.equal(r.reasonCode,expected);assert.equal(r.temporaryInputsCleaned,true);assert.equal(JSON.stringify(r).includes('PRIVATE_CANARY'),false);assert.deepEqual(payload,original);
+  }
+  for(const change of [p=>delete p.ibManagerSourceState,p=>p.ibManagerSourceState.stateId='e'.repeat(64)]){
+    const p=structuredClone(payload);change(p);const r=await inspectIbDiagnostic({payload:p,anchorDate:baseline.asOf,targetDate:add(baseline.asOf),outputDir:dir,environ,reader:{readStable:()=>assert.fail('bad baseline must not read Sharesight')}});assert.equal(r.status,'incomplete');assert.equal(r.phase,'BASE_STATE');
+  }
+});
+
+test('diagnostic transport restricts exact dates, methods and budgets before external IO',async()=>{
+  let calls=0,clock=0;const transport=ibDiagnosticTransport({fetchImpl:async()=>{calls++;return {};},now:()=>clock});
+  const base='https://api.sharesight.com',get={method:'GET'};
+  for(const [url,init] of [[base+'/api/v2/portfolios.json',{method:'POST',body:'PRIVATE'}],[base+'/api/v2/portfolios.json?extra=1',get],['https://example.invalid/api/v2/portfolios.json',get],[base+'/api/v3/portfolios/1/trades.json?consolidated=false&start_date=2026-11-03&end_date=2026-11-04',get],[base+'/api/v2/portfolios/1/cash_accounts.json?date=2026-11-05',get],[base+'/api/v2/cash_accounts/3/cash_account_transactions.json?from=2026-11-03&to=2026-11-04',get]])await assert.rejects(transport.fetch(url,init),/ROUTE/);
+  assert.equal(calls,0);
+  for(let i=0;i<32;i++)await transport.fetch(base+'/api/v2/portfolios.json',get);
+  await assert.rejects(transport.fetch(base+'/api/v2/portfolios.json',get),/BUDGET/);assert.equal(calls,32);
+  for(let i=0;i<2;i++)await transport.fetch(base+'/oauth2/token',{method:'POST',body:'synthetic'});
+  await assert.rejects(transport.fetch(base+'/oauth2/token',{method:'POST'}),/BUDGET/);assert.deepEqual(transport.counts(),{sourceGets:32,oauthGrants:2});
+  transport.stop();await assert.rejects(transport.fetch(base+'/api/v2/portfolios.json',get),/ROUTE/);
+  const expired=ibDiagnosticTransport({fetchImpl:()=>assert.fail('expired transport'),now:()=>clock});clock=14*60000+1;await assert.rejects(expired.fetch(base+'/api/v2/portfolios.json',get),/ROUTE/);
+});
+
+test('diagnostic event and metadata reject mixed modes, reruns, duplicates and changed heads',async()=>{
+  const head='a'.repeat(40),now=new Date('2026-11-05T03:00:00Z'),id='50000000000';
+  const env={GITHUB_ACTIONS:'true',GITHUB_REPOSITORY:'huanwujoy-crypto/fee-console',GITHUB_REF:'refs/heads/main',GITHUB_SHA:head,GITHUB_EVENT_NAME:'workflow_dispatch',GITHUB_ACTOR_ID:'283054367',GITHUB_RUN_ATTEMPT:'1',GITHUB_RUN_ID:id,FEE_IB_DIAGNOSTIC_ACTIONS_TOKEN:'synthetic-token-not-a-secret'};
+  const event={inputs:{ib_diagnostic_once:'true',ib_diagnostic_main:head}};
+  validateIbDiagnosticEvent({env,event,expectedMain:head,now});
+  for(const [k,v] of [['GITHUB_RUN_ATTEMPT','2'],['GITHUB_EVENT_NAME','schedule'],['GITHUB_ACTOR_ID','1'],['GITHUB_REF','refs/heads/other'],['GITHUB_SHA','b'.repeat(40)]])assert.throws(()=>validateIbDiagnosticEvent({env:{...env,[k]:v},event,expectedMain:head,now}),/ENVIRONMENT/);
+  for(const [k,v] of [['ratio_plan','{}'],['run_reviewed_once','true'],['source_acceptance_once','true'],['report_target','2026-11-04'],['unknown','x']])assert.throws(()=>validateIbDiagnosticEvent({env,event:{inputs:{...event.inputs,[k]:v}},expectedMain:head,now}),/ARGUMENT/);
+  assert.throws(()=>validateIbDiagnosticEvent({env,event,expectedMain:head,now:new Date('2026-11-06T00:00:00Z')}),/EXPIRED/);
+  const current={id:Number(id),head_sha:head,head_branch:'main',path:'.github/workflows/fee-cloud-producer.yml',event:'workflow_dispatch',actor:{id:283054367},run_attempt:1,status:'in_progress',conclusion:null,display_title:IB_DIAGNOSTIC_PLAN.name,created_at:'2026-11-05T02:59:00Z'};
+  const wire=(mutate=()=>{})=>async(url,init)=>{assert.equal(init.method,'GET');assert.equal(init.redirect,'error');let value=url.endsWith('/git/ref/heads/main')?{object:{sha:head}}:url.includes('/commits/')?{sha:head,author:{id:283054367},commit:{verification:{verified:true}}}:url.includes('/actions/runs?')?{total_count:1,workflow_runs:[structuredClone(current)]}:structuredClone(current);mutate(value,url);const r=new Response(JSON.stringify(value));Object.defineProperty(r,'url',{value:url});return r;};
+  await verifyIbDiagnosticRun({env,expectedMain:head,now,fetchImpl:wire()});
+  for(const [change,reason] of [[v=>{if(v.object)v.object.sha='b'.repeat(40);},/HEAD/],[v=>{if(v.verification)v.verification.verified=false;if(v.commit)v.commit.verification.verified=false;},/HEAD/],[v=>{if(v.run_attempt)v.run_attempt=2;},/RUN/],[v=>{if(v.workflow_runs){v.workflow_runs.unshift({...current,id:Number(id)-1,status:'completed',conclusion:'failure'});v.total_count++;}},/DUPLICATE/],[v=>{if(v.workflow_runs)v.total_count++;},/METADATA/]])await assert.rejects(verifyIbDiagnosticRun({env,expectedMain:head,now,fetchImpl:wire(change)}),reason);
+  assert.throws(()=>validateIbDiagnosticBase({data:Buffer.from('{}'),health:Buffer.from('{}'),now}),/BASE_BYTES/);
+});
+
+test('diagnostic workflow excludes all production paths and receives no publication or ledger credential',()=>{
+  const text=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8');
+  const diagnostic=text.split('\n  ib-diagnostic:')[1];assert.ok(diagnostic);
+  const original=text.split('\n  ib-diagnostic:')[0];
+  for(const job of ['period','once-admit','produce','once-finish','source-plan-check','source-acceptance','ratio-preflight','ratio']){
+    const section=original.split('\n  '+job+':')[1].split(/\n  [a-z][a-z-]+:/)[0];assert.match(section,/if: \$\{\{ !inputs\.ib_diagnostic_once && !inputs\.ib_diagnostic_main &&/);
+  }
+  assert.match(diagnostic,/timeout-minutes: 15/);assert.match(diagnostic,/actions: read/);assert.doesNotMatch(diagnostic,/contents: write|actions: write|FEE_CLOUD_GITHUB_TOKEN|FEE_ECON_GIST_ID|FEE_RATIO_MANAGER_TOKEN|upload-artifact|promote|daily\.mjs/);
+  assert.ok(diagnostic.indexOf('--check-plan')<diagnostic.indexOf('google-github-actions/auth@'));
+  assert.match(diagnostic,/if: always\(\)/);assert.match(text,/group: fee-cloud-producer\n  cancel-in-progress: false/);
+  const source=fs.readFileSync(new URL('./ib-manager-diagnostic.mjs',import.meta.url),'utf8');assert.doesNotMatch(source,/\.apply\(payload|produce\(|execFileSync\('(?!git)/);
+});
 function wire({mutate=()=>{},changeSecond=false}={}){
   const calls=[];let capture=0;
   const fetchImpl=async(url,init)=>{
@@ -43,7 +103,7 @@ function wire({mutate=()=>{},changeSecond=false}={}){
     if(changeSecond&&capture===2&&body.report)body.report.unstableMarker=true;
     const response=new Response(JSON.stringify(body),{headers:{'content-type':'application/json'}});Object.defineProperty(response,'url',{value:url});return response;
   };
-  return {calls,reader:new SharesightIbManagerReader({clientId:'synthetic-client',clientSecret:'synthetic-secret',fetchImpl})};
+  return {calls,fetchImpl,reader:new SharesightIbManagerReader({clientId:'synthetic-client',clientSecret:'synthetic-secret',fetchImpl})};
 }
 const read=(w,extra={})=>w.reader.readStable({targetDate:baseline.asOf,expectedBaselineHash:lock(),baseline,...extra});
 const source=async()=>read(wire());

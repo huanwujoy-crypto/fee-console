@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from "node:test";
-import { consecutiveFailures, diagnosticBody, isValidatedProducer } from "./fee-cloud-supervisor.mjs";
+import { consecutiveFailures, diagnosticBody, isValidatedProducer, isIbReadOnlyDiagnostic } from "./fee-cloud-supervisor.mjs";
 
 const run = (conclusion, id, event = "schedule") => ({
   id, status: "completed", conclusion, event,
@@ -21,6 +21,29 @@ test("supervisor escalates only consecutive scheduled or manual producer failure
 test('outer workflow timeout counts as failure and cancellation does not manufacture one', () => {
   assert.equal(consecutiveFailures([run('timed_out',3),run('cancelled',2),run('timed_out',1)]),2);
   assert.match(diagnosticBody([run('timed_out',3),run('timed_out',1)]),/runs\/3/);
+});
+
+test('reviewed IB inspection neither escalates nor resets production failures, including historical scans', () => {
+  const diagnostic={...run('failure',9,'workflow_dispatch'),display_title:'IB diagnostic 2026-11-04',
+    head_branch:'main',head_sha:'a'.repeat(40),path:'.github/workflows/fee-cloud-producer.yml',actor:{id:283054367},run_attempt:1};
+  assert.equal(isIbReadOnlyDiagnostic(diagnostic),true);
+  const prior=[run('failure',2),run('failure',1)];
+  for(const conclusion of ['failure','timed_out','success','cancelled']){
+    const d={...diagnostic,conclusion,producerValidated:true};
+    assert.equal(consecutiveFailures([d,...prior]),2);
+    assert.doesNotMatch(diagnosticBody([d,...prior]),/runs\/9/);
+  }
+  for(const change of [d=>d.event='schedule',d=>d.head_branch='other',d=>d.path='other',
+    d=>d.actor.id=1,d=>d.run_attempt=2,d=>d.head_sha='invalid',d=>d.display_title='Produce daily 2026-11-04']){
+    const d=structuredClone(diagnostic);change(d);
+    assert.equal(isIbReadOnlyDiagnostic(d),false);assert.equal(consecutiveFailures([d,...prior]),3);
+  }
+  const workflow=fs.readFileSync(new URL('../.github/workflows/fee-cloud-supervisor.yml',import.meta.url),'utf8');
+  const expression=workflow.match(/    if: \$\{\{ (.+) \}\}/)[1];
+  const eligible=Function('github','return ('+expression+')');
+  assert.equal(eligible({event:{workflow_run:diagnostic}}),false);
+  assert.equal(eligible({event:{workflow_run:{...diagnostic,display_title:'Fee cloud producer'}}}),true);
+  assert.equal(eligible({event:{workflow_run:{...diagnostic,actor:{id:1}}}}),true);
 });
 
 function executionFixture() {

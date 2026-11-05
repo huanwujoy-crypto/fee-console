@@ -41,12 +41,12 @@ function reviewedCloudOnceManual(env,readEvent){
       ||env.GITHUB_RUN_ATTEMPT!=='1'||env.GITHUB_SHA!==env.FEE_REPORT_ONCE_MAIN)return false;
     const event=readEvent?readEvent():(()=>{const p=env.GITHUB_EVENT_PATH;if(!p||fs.statSync(p).size>256*1024)throw Error();return JSON.parse(fs.readFileSync(p,'utf8'));})();
     const i=event?.inputs,off=v=>v===undefined||v===false||v==='false',blank=v=>v===undefined||v==='';
-    const keys=['run_reviewed_once','report_kind','report_target','report_markets','manual_sync_completed_for','recovery_main','ratio_main','ratio_plan','source_plan_check_only','source_acceptance_once','source_from','source_target','source_main'];
+    const keys=['ib_diagnostic_once','ib_diagnostic_main','run_reviewed_once','report_kind','report_target','report_markets','manual_sync_completed_for','recovery_main','ratio_main','ratio_plan','source_plan_check_only','source_acceptance_once','source_from','source_target','source_main'];
     return event.sender?.id===RECOVERY_OWNER&&event.repository?.full_name===ONCE_REPO&&i&&!Array.isArray(i)
       &&Object.keys(i).every(k=>keys.includes(k))&&[true,'true'].includes(i.run_reviewed_once)
       &&i.report_kind==='daily'&&i.report_target===CLOUD_ONCE.target&&i.report_markets==='NASDAQ,NYSE'
       &&['manual_sync_completed_for','recovery_main','ratio_main','ratio_plan','source_from','source_target','source_main'].every(k=>blank(i[k]))
-      &&off(i.source_plan_check_only)&&off(i.source_acceptance_once);
+      &&off(i.source_plan_check_only)&&off(i.source_acceptance_once)&&off(i.ib_diagnostic_once)&&blank(i.ib_diagnostic_main);
   }catch{return false;}
 }
 export function cloudOnceWindow({main,head,event,attempt,reviewedManual=false,now=new Date()}={}){
@@ -388,6 +388,12 @@ export async function readPeriodSourceAttempts({plan,now,currentRunId=null,recov
           &&!scope?.failures.some(old=>old.id===r.id&&old.head===r.head_sha))evidence.reservations.push(r.id);
       if(j.conclusion==='skipped'){if(j.status!=='completed')fail('SOURCE_ATTEMPT_METADATA');continue;}
       if(evidence&&j.started_at!==null&&(!Number.isFinite(Date.parse(j.started_at))||Date.parse(j.started_at)<Date.parse(r.created_at)||Date.parse(j.started_at)>now.getTime()+300000))fail('RECOVERY_METADATA');
+      // This one reviewed diagnostic cannot call the writer or publisher. Keep
+      // its own run history, but never consume or reset a production attempt.
+      if(j.name==='IB diagnostic 2026-11-04'){
+        if(r.event!=='workflow_dispatch'||r.display_title!==j.name||r.actor?.id!==RECOVERY_OWNER||r.run_attempt!==1)fail('SOURCE_ATTEMPT_METADATA');
+        continue;
+      }
       if(['period','watch','source-plan-check','once-admit','once-finish','ratio-preflight','ratio'].includes(j.name))continue;
       if(j.name!=='produce'&&!/^Produce (daily|weekly|monthly) \d{4}-\d{2}-\d{2}$/.test(j.name)&&!/^Source acceptance \d{4}-\d{2}-\d{2}$/.test(j.name))fail('SOURCE_ATTEMPT_METADATA');
       if(evidence&&j.status!=='completed')evidence.otherSourceActive=true;
@@ -543,8 +549,8 @@ export function scheduledDailyContext(args,{env=process.env,now=new Date(),readE
       if(env.GITHUB_EVENT_NAME!=='workflow_dispatch'||env.GITHUB_ACTOR_ID!==String(RECOVERY_OWNER)||env.FEE_REPORT_ONCE_MAIN)throw Error();
       const event=readEvent?readEvent():(()=>{const p=env.GITHUB_EVENT_PATH;if(!p||fs.statSync(p).size>256*1024)throw Error();return JSON.parse(fs.readFileSync(p,'utf8'));})();
       const i=event?.inputs,off=v=>v===undefined||v===false||v==='false',blank=v=>v===undefined||v==='';
-      const bools=['run_reviewed_once','source_plan_check_only','source_acceptance_once'];
-      const strings=['report_target','report_markets','manual_sync_completed_for','recovery_main','ratio_main','ratio_plan','source_from','source_target','source_main'];
+      const bools=['ib_diagnostic_once','run_reviewed_once','source_plan_check_only','source_acceptance_once'];
+      const strings=['ib_diagnostic_main','report_target','report_markets','manual_sync_completed_for','recovery_main','ratio_main','ratio_plan','source_from','source_target','source_main'];
       if(event.sender?.id!==RECOVERY_OWNER||event.repository?.full_name!==ONCE_REPO||!i||Array.isArray(i)
           ||i.report_kind!=='automatic-daily'||Object.keys(i).some(k=>!['report_kind',...bools,...strings].includes(k))
           ||!bools.every(k=>off(i[k]))||!strings.every(k=>blank(i[k])))throw Error();
