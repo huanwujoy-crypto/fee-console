@@ -296,6 +296,7 @@ jobs:
         id: producer
         shell: bash
         env:
+          FEE_REPORT_ACTIONS_TOKEN: ${{ github.token }}
           FEE_CLOUD_SHARESIGHT_CLIENT_ID: ${{ steps.sharesight_credentials.outputs.client_id }}
           FEE_CLOUD_SHARESIGHT_CLIENT_SECRET: ${{ steps.sharesight_credentials.outputs.client_secret }}
           FEE_DATA_KEY: ${{ secrets.FEE_DATA_KEY }}
