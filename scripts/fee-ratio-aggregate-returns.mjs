@@ -157,7 +157,7 @@ export function createAggregateReturnsCore(){
  }
  function selectTop(view,target){return view?.topHoldings?.items.find(x=>same(x.target,target))||null;}
 
- function renderCompact(item,{showAmount=false}={}){
+ function renderCompact(item,{showAmount=false,amountCurrency=true}={}){
   scopeKey(item.scope);
   const amounts=showAmount&&item.scope.type==='portfolio';
   const lines=[['all','全部'],['oneYear','近一年']].map(([key,label])=>{
@@ -166,7 +166,8 @@ export function createAggregateReturnsCore(){
    const value=has?p.nativePct.toFixed(2)+'%':'—';
    const amountValue=Number.isFinite(p?.nativeAmountUSD)?'USD '+(p.nativeAmountUSD===0?0:p.nativeAmountUSD).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):'—';
    const amountReason=Number.isFinite(p?.nativeAmountUSD)?'原报表同一总计行的期间收益金额（非年化），含已平仓。':'原报表未提供或此历史快照未保存同一总计行的收益金额，不代表零。';
-   return '<span class="ratio-return-compact-line" aria-label="'+esc(label+'：'+value+'；'+reason+(amounts?'；收益 '+amountValue+'；'+amountReason:''))+'"><span>'+label+'：</span><strong title="'+esc(reason)+'">'+esc(value)+'</strong>'+(badge?'<small>'+badge+'</small>':'')+(amounts?'<span class="ratio-return-amount" title="'+esc(amountReason)+'">收益 '+esc(amountValue)+'</span>':'')+'</span>';
+   const visibleAmount=amountCurrency?amountValue:amountValue.replace(/^USD /,'');
+   return '<span class="ratio-return-compact-line" aria-label="'+esc(label+'：'+value+'；'+reason+(amounts?'；收益 '+amountValue+'；'+amountReason:''))+'"><span>'+label+'：</span><strong title="'+esc(reason)+'">'+esc(value)+'</strong>'+(badge?'<small>'+badge+'</small>':'')+(amounts?'<span class="ratio-return-amount" title="'+esc(amountReason)+'">收益 '+esc(visibleAmount)+'</span>':'')+'</span>';
   }).join('');
   return '<div class="ratio-return-compact">'+lines+'</div>';
  }
@@ -174,17 +175,35 @@ export function createAggregateReturnsCore(){
  function renderTop(item){
   if(!item)return '';
   const secondary=item.target.category==='二级市场';
-  const html=renderInline(item,secondary?'直接持仓收益率':'');
-  const note=secondary?'仅对应直接持有的实际产品；不包括 ETF 穿透公司敞口。杠杆产品采用自身原生收益，不按敞口倍数乘算。':'同名合并使用精确成员的 Sharesight 官方小计，不平均各项百分比。';
-  return html.replace('只显示组合或分类原生收益；已平仓计入历史，不用当前市值权重或穿透敞口重算。',note+' 已平仓计入历史。');
+  return renderInline(item,secondary?'直接持仓收益率':'收益率');
  }
 
  function select(v,s){const k=scopeKey(s);return v.items.find(x=>scopeKey(x.scope)===k)||{scope:structuredClone(s),periods:{}};}
  const esc=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
- function renderInline(item,label=''){
-  // The same verified values are readable without opening the evidence panel.
-  // Dates, account scope and native-unit caveats remain in its disclosure.
-  return '<div class="ratio-returns-inline">'+(label?'<p class="ratio-return-inline-label">'+esc(label)+'</p>':'')+renderCompact(item)+renderAggregate(item).replace('<summary>收益率</summary>','<summary>收益说明</summary>')+'</div>';
+ function renderInline(item,label='收益率'){
+  // Show each native value once. Shared calculation rules belong to the
+  // page's common disclosure; this folded panel retains only scope facts.
+  return '<div class="ratio-returns-inline">'+(label?'<p class="ratio-return-inline-label">'+esc(label)+'</p>':'')+renderCompact(item)+renderFacts(item)+'</div>';
+ }
+ function renderFacts(item){
+  scopeKey(item.scope);
+  const periods=[['all','全部'],['oneYear','近一年']],facts=new Map();
+  const add=(label,value)=>{if(!value)return;const labels=facts.get(value)||[];labels.push(label);facts.set(value,labels);};
+  const reasons={'benchmark-members-included':'含模拟基准，暂未提供剔除后的匹配官方合计。','native-aggregate-not-provided':'暂未提供匹配范围的官方合并收益率。','cash-scope-unverified':'现金收益覆盖尚未得到来源核实。','source-unavailable':'Sharesight 暂未提供此范围的收益率。'};
+  const dates=periods.map(([key,label])=>{
+   const p=item.periods[key];
+   add(label,p?reasons[p.status]:'暂未提供匹配范围的官方合并收益率。');
+   // An unknown unit remains unknown in the compact value's accessible text
+   // and the common explanation. Never infer annualisation from its dates.
+   if(p?.termEvidence?.type==='sharesight-average-years-invested')add(label,'官方资金加权平均投资时间：'+p.termEvidence.years+' 年。');
+   if(p?.accounts?.length)add(label,'账户：'+p.accounts.join(' · ')+'。');
+   if(!stockScope(item.scope))add(label,{included:'现金收益沿用原报表启用设置；不表示每个现金账户均有收益值。',excluded:'原报表未含现金账户收益。',mixed:'现金收益覆盖沿用本期原报表的混合设置。',unknown:'现金账户收益覆盖未获来源确认。'}[p?.cashPerformance]);
+   if(p?.benchmarkMemberCount>0)add(label,'含 '+p.benchmarkMemberCount+' 项模拟基准，收益未剔除其影响；配置比例仍排除。');
+   return '<p class="ratio-return-date-fact"><strong>'+label+'：</strong>'+esc(p?.startDate&&p?.endDate?p.startDate+' 至 '+p.endDate:'来源日期未提供')+'</p>';
+  }).join('');
+  const notes=[...facts].map(([value,labels])=>'<p class="ratio-return-scope-fact">'+(labels.length===2?'':esc(labels.join('／'))+'：')+esc(value)+'</p>').join('');
+  const scopeNote=item.target?.category==='二级市场'?'仅对应直接持有的实际产品；不包括 ETF 穿透公司敞口，杠杆产品收益不乘敞口倍数。':stockScope(item.scope)?'仅四个股票分类的历史成员，不含现金账户、防御资产或主题投资。':'';
+  return '<details class="ratio-returns ratio-return-facts"><summary>详情</summary>'+dates+notes+(scopeNote?'<p class="ratio-return-scope-fact">'+scopeNote+'</p>':'')+'</details>';
  }
  function renderAggregate(item){
   scopeKey(item.scope);
