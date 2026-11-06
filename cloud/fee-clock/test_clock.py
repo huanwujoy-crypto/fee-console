@@ -6,11 +6,16 @@ import threading
 import unittest
 import urllib.error
 from clock import ClockError, REPO, WORKFLOW, WORKFLOW_ID, target_date, plan, run_clock
-from runtime import Github, Http, Store
+from runtime import Github, Http, Store, parse_args
 
 
 NOW = datetime(2026, 10, 14, 1, 0, tzinfo=timezone.utc)
 CHECK = NOW + timedelta(minutes=5)
+EARLY = datetime(2026, 10, 13, 23, 30, tzinfo=timezone.utc)
+
+
+def confirmation(target='2026-10-13', at='2026-10-13T23:29:00Z', request_id='synthetic-confirmation-1'):
+    return {'targetDate': target, 'confirmedAt': at, 'requestId': request_id, 'expectedMain': 'a' * 40}
 
 
 def run_row(run_id=11, status='queued', event='workflow_dispatch', created='2026-10-14T01:00:00Z'):
@@ -32,13 +37,15 @@ class FakeGithub:
         self.after_claim = None
         self.incomplete = False
         self.state = 'active'
+        self.main_sha = 'a' * 40
+        self.confirmed = []
 
     def workflow(self):
         self.read_count += 1
         return {'id': WORKFLOW_ID, 'path': '.github/workflows/' + WORKFLOW, 'state': self.state}
 
     def main(self):
-        return {'object': {'sha': 'a' * 40}}
+        return {'object': {'sha': self.main_sha}}
 
     def runs(self, created=None, status=None):
         with self.lock:
@@ -59,6 +66,10 @@ class FakeGithub:
             raise ClockError(self.post_error)
         return self.result
 
+    def dispatch_confirmed(self, request):
+        self.confirmed.append(copy.deepcopy(request))
+        return self.dispatch()
+
 
 class FakeStore:
     def __init__(self):
@@ -67,6 +78,7 @@ class FakeStore:
         self.lock = threading.Lock()
         self.error = None
         self.after_claim = None
+        self.result_error = False
 
     def claim(self, value):
         with self.lock:
@@ -83,6 +95,8 @@ class FakeStore:
         return copy.deepcopy(self.intents.get(target))
 
     def result(self, value):
+        if self.result_error:
+            raise ClockError('NETWORK_OR_RESPONSE')
         self.results[value['targetDate']] = copy.deepcopy(value)
 
 
@@ -285,6 +299,218 @@ class ClockTests(unittest.TestCase):
             with self.subTest(mode=mode, now=now): self.error('OUTSIDE_WINDOW', mode=mode, now=now)
 
 
+class ConfirmedClockTests(unittest.TestCase):
+    def setUp(self):
+        self.github, self.store = FakeGithub(), FakeStore()
+        self.request = confirmation()
+
+    def go(self, now=EARLY, **kwargs):
+        return run_clock('launch-confirmed', now, self.github, self.store,
+                         enabled=True, confirmation=self.request, **kwargs)
+
+    def error(self, code, **kwargs):
+        with self.assertRaisesRegex(ClockError, '^FEE_CLOCK_' + code + '$'):
+            self.go(**kwargs)
+
+    def test_confirmed_arguments_claim_receipt_and_nine_am_share_one_intent(self):
+        args = ['launch-confirmed', self.request['targetDate'], self.request['confirmedAt'],
+                self.request['requestId'], self.request['expectedMain']]
+        mode, request = parse_args(args)
+        result = run_clock(mode, EARLY, self.github, self.store, enabled=True, confirmation=request)
+        self.assertEqual(result['outcome'], 'dispatch-accepted')
+        self.assertEqual(result['requestId'], self.request['requestId'])
+        self.assertEqual(result['confirmedAt'], self.request['confirmedAt'])
+        self.assertFalse(result['publicationVerified'])
+        intent = self.store.intents[self.request['targetDate']]
+        self.assertEqual(set(intent), {'schema', 'repository', 'workflow', 'ref', 'slotDate', 'targetDate', 'createdAt', 'mainSha'})
+        self.assertEqual(intent['schema'], 'fee-console.clock-intent.v1')
+        self.assertEqual(intent['mainSha'], self.request['expectedMain'])
+        self.assertEqual(self.store.results[self.request['targetDate']]['runId'], 41)
+        self.assertEqual(self.github.confirmed, [self.request])
+        # Even if the accepted GitHub request is not yet visible, the normal
+        # clock reads the identical durable target claim and cannot resend.
+        self.assertEqual(run_clock('launch', NOW, self.github, self.store, enabled=True)['outcome'], 'intent-already-exists')
+        self.request['requestId'] = 'synthetic-duplicate-message'
+        self.assertEqual(self.go()['outcome'], 'intent-already-exists')
+        self.assertEqual(self.github.post_count, 1)
+
+    def test_confirmation_is_not_approval_and_cannot_add_extra_scope(self):
+        for change in ({'approved': True}, {'recoveryMain': 'b' * 40}, {'ref': 'candidate'},
+                       {'expectedMain': 'BAD'}, {'requestId': ''}, {'requestId': 'secret\nvalue'},
+                       {'targetDate': '2026-02-30'}, {'confirmedAt': 'not-a-date'}):
+            with self.subTest(change=change):
+                self.request = {**confirmation(), **change}
+                self.error('CONFIRMATION_INVALID')
+        self.assertEqual(self.github.read_count, 0)
+        self.assertFalse(self.store.intents)
+
+    def test_future_old_day_or_wrong_target_confirmation_reads_nothing(self):
+        for change, code in (({'confirmedAt': '2026-10-13T23:31:00Z'}, 'CONFIRMATION_STALE'),
+                             ({'confirmedAt': '2026-10-13T15:59:59Z'}, 'CONFIRMATION_STALE'),
+                             ({'targetDate': '2026-10-12'}, 'CONFIRMATION_TARGET'),
+                             ({'targetDate': '2026-10-14'}, 'CONFIRMATION_TARGET')):
+            with self.subTest(change=change):
+                self.request = {**confirmation(), **change}
+                self.error(code)
+        self.assertEqual(self.github.read_count, 0)
+
+    def test_market_close_and_confirmation_use_actual_dst_boundary(self):
+        for day, target, close in (('2026-10-14', '2026-10-13', '04:15:00'),
+                                   ('2026-11-06', '2026-11-05', '05:15:00')):
+            at = datetime.fromisoformat(day + 'T' + close + '+08:00')
+            before = at - timedelta(seconds=1)
+            self.request = confirmation(target, before.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))
+            self.error('SOURCE_DAY_NOT_CLOSED', now=at)
+            self.request = confirmation(target, at.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))
+            self.assertTrue(plan('launch-confirmed', at, self.request)['action'])
+            with self.assertRaisesRegex(ClockError, 'CONFIRMATION_STALE'):
+                plan('launch-confirmed', before, self.request)
+        self.assertEqual(self.github.read_count, 0)
+
+    def test_month_end_waits_actual_new_york_midnight_in_summer_and_winter(self):
+        for day, target, market, midnight in (('2026-10-01', '2026-09-30', '04:15:00', '12:00:00'),
+                                             ('2026-12-01', '2026-11-30', '05:15:00', '13:00:00')):
+            close = datetime.fromisoformat(day + 'T' + market + '+08:00')
+            done = datetime.fromisoformat(day + 'T' + midnight + '+08:00')
+            self.request = confirmation(target, close.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))
+            self.error('ACCOUNTING_DAY_NOT_COMPLETE', now=done - timedelta(seconds=1))
+            self.assertTrue(plan('launch-confirmed', done, self.request)['action'])
+        self.assertEqual(self.github.read_count, 0)
+
+    def test_weekend_does_not_replay_friday_and_prior_month_does_not_delay_daily_target(self):
+        self.request = confirmation('2026-10-16', '2026-10-17T23:29:00Z')
+        self.error('CONFIRMATION_TARGET', now=datetime.fromisoformat('2026-10-18T07:30:00+08:00'))
+        request = confirmation('2026-11-02', '2026-11-02T23:29:00Z')
+        self.assertTrue(plan('launch-confirmed', datetime.fromisoformat('2026-11-03T07:30:00+08:00'), request)['action'])
+
+    def test_main_is_checked_before_claim_and_again_before_post(self):
+        self.github.main_sha = 'b' * 40
+        self.error('CONFIRMATION_MAIN_CHANGED')
+        self.assertFalse(self.store.intents)
+        self.github.main_sha = 'a' * 40
+        self.store.after_claim = lambda: setattr(self.github, 'main_sha', 'b' * 40)
+        self.error('CONFIRMATION_MAIN_CHANGED')
+        self.assertTrue(self.store.intents)
+        self.assertEqual(self.github.post_count, 0)
+        self.request['expectedMain'] = 'b' * 40
+        self.assertEqual(self.go()['outcome'], 'intent-already-exists')
+
+    def test_request_cannot_mutate_during_adapter_calls(self):
+        original = copy.deepcopy(self.request)
+        self.store.after_claim = lambda: self.request.update(requestId='changed-message', expectedMain='b' * 40)
+        result = self.go()
+        self.assertEqual(self.github.confirmed, [original])
+        self.assertEqual(result['requestId'], original['requestId'])
+        self.assertEqual(self.store.intents[original['targetDate']]['mainSha'], original['expectedMain'])
+
+    def test_confirmation_cannot_cross_hong_kong_day_during_io(self):
+        next_day = datetime.fromisoformat('2026-10-15T00:00:00+08:00')
+        current = [EARLY]
+        self.store.after_claim = lambda: current.__setitem__(0, next_day)
+        self.error('CONFIRMATION_STALE', current_time=lambda: current[0])
+        self.assertTrue(self.store.intents)
+        self.assertEqual(self.github.post_count, 0)
+
+    def test_concurrent_confirmations_share_atomic_claim(self):
+        results, errors = [], []
+        def call():
+            try:
+                results.append(self.go()['outcome'])
+            except Exception as error:
+                errors.append(str(error))
+        threads = [threading.Thread(target=call) for _ in range(5)]
+        for thread in threads: thread.start()
+        for thread in threads: thread.join()
+        self.assertEqual(errors, [])
+        self.assertEqual(results.count('dispatch-accepted'), 1)
+        self.assertEqual(self.github.post_count, 1)
+
+    def test_existing_normal_intent_is_not_replaced_by_confirmation(self):
+        run_clock('launch', NOW, self.github, self.store, enabled=True)
+        self.request['confirmedAt'] = '2026-10-14T01:01:00Z'
+        self.assertEqual(self.go(now=NOW + timedelta(minutes=2))['outcome'], 'intent-already-exists')
+        self.assertEqual(self.github.post_count, 1)
+        self.assertFalse(self.github.confirmed)
+
+    def test_confirmed_and_scheduled_calls_race_for_the_same_target(self):
+        results, errors = [], []
+        def call(mode):
+            try:
+                result = run_clock(mode, NOW, self.github, self.store, enabled=True,
+                                   confirmation=self.request if mode == 'launch-confirmed' else None)
+                results.append(result['outcome'])
+            except Exception as error:
+                errors.append(str(error))
+        threads = [threading.Thread(target=call, args=(mode,)) for mode in ('launch-confirmed', 'launch')]
+        for thread in threads: thread.start()
+        for thread in threads: thread.join()
+        self.assertEqual(errors, [])
+        self.assertCountEqual(results, ['dispatch-accepted', 'intent-already-exists'])
+        self.assertEqual(len(self.store.intents), 1)
+        self.assertEqual(self.github.post_count, 1)
+
+    def test_malformed_existing_intent_is_not_deleted_or_replaced(self):
+        self.go()
+        self.store.intents[self.request['targetDate']]['approved'] = True
+        self.error('INTENT_INVALID')
+        self.assertTrue(self.store.intents[self.request['targetDate']]['approved'])
+        self.assertEqual(self.github.post_count, 1)
+
+    def test_normal_start_check_observes_early_job_but_does_not_claim_publication(self):
+        self.go()
+        self.github.day = [run_row(status='completed', created='2026-10-13T23:30:00Z')]
+        self.github.job[11] = [{'id': 21, 'run_id': 11, 'name': 'Produce daily 2026-10-13',
+                               'status': 'completed', 'conclusion': 'success',
+                               'started_at': '2026-10-13T23:31:00Z'}]
+        result = run_clock('check-start', CHECK, self.github, self.store, enabled=True)
+        self.assertEqual(result['outcome'], 'started')
+        self.assertFalse(result['publicationVerified'])
+        self.assertEqual(self.github.post_count, 1)
+
+    def test_unknown_post_and_failed_receipt_keep_claim_and_never_resend(self):
+        for post_error, result_error in (('DISPATCH_UNCERTAIN', False), ('DISPATCH_HTTP_403', False), (None, True)):
+            with self.subTest(post_error=post_error, result_error=result_error):
+                self.setUp()
+                self.github.post_error, self.store.result_error = post_error, result_error
+                self.error(post_error or 'NETWORK_OR_RESPONSE')
+                self.assertEqual(self.go()['outcome'], 'intent-already-exists')
+                self.assertEqual(run_clock('launch', NOW, self.github, self.store, enabled=True)['outcome'], 'intent-already-exists')
+                self.assertEqual(self.github.post_count, 1)
+
+    def test_failed_or_inflight_existing_run_blocks_early_dispatch(self):
+        for status in ('queued', 'in_progress', 'completed'):
+            with self.subTest(status=status):
+                self.setUp()
+                self.github.day = [run_row(status=status, created='2026-10-13T23:00:00Z')]
+                self.github.job[11] = [
+                    {'id': 21, 'run_id': 11, 'name': 'period', 'status': 'completed', 'conclusion': 'success'},
+                    {'id': 22, 'run_id': 11, 'name': 'Produce daily 2026-10-13',
+                     'status': status, 'conclusion': 'failure' if status == 'completed' else None}]
+                self.assertEqual(self.go()['outcome'], 'already-requested')
+                self.assertEqual(self.github.post_count, 0)
+                self.assertFalse(self.store.intents)
+
+    def test_natural_race_after_confirmed_claim_blocks_post_and_keeps_shared_intent(self):
+        self.github.after_claim = [run_row(event='schedule', created='2026-10-13T23:30:00Z')]
+        self.assertEqual(self.go()['outcome'], 'natural-request-visible')
+        self.assertTrue(self.store.intents)
+        self.assertEqual(self.github.post_count, 0)
+
+    def test_unknown_metadata_or_claim_error_never_dispatches(self):
+        self.github.incomplete = True
+        self.error('LIST_INCOMPLETE')
+        self.github.incomplete = False
+        self.store.error = 'NETWORK_OR_RESPONSE'
+        self.error('NETWORK_OR_RESPONSE')
+        self.assertEqual(self.github.post_count, 0)
+
+    def test_confirmed_payload_is_forbidden_on_normal_slots(self):
+        for mode in ('launch', 'check-start'):
+            with self.assertRaisesRegex(ClockError, 'CONFIRMATION_INVALID'):
+                run_clock(mode, NOW, self.github, self.store, enabled=True, confirmation=self.request)
+        self.assertEqual(self.github.read_count, 0)
+
+
 class FakeHttp:
     def __init__(self, responses):
         self.responses, self.calls = list(responses), []
@@ -295,6 +521,33 @@ class FakeHttp:
 
 
 class AdapterTests(unittest.TestCase):
+    def test_confirmed_dispatch_uses_only_existing_reviewed_daily_inputs(self):
+        http = FakeHttp([(204, None)])
+        Github(http, lambda: 'synthetic-not-a-real-credential').dispatch_confirmed(confirmation())
+        url, call = http.calls[0]
+        self.assertEqual(url, 'https://api.github.com/repos/' + REPO + '/actions/workflows/fee-cloud-producer.yml/dispatches')
+        self.assertEqual(call['body'], {'ref': 'main', 'inputs': {'run_reviewed_once': 'true',
+                         'report_kind': 'daily', 'report_target': '2026-10-13',
+                         'manual_sync_completed_for': '2026-10-13', 'confirmed_main': 'a' * 40}})
+        self.assertTrue(call['uncertain'])
+        self.assertEqual(len(http.calls), 1)
+
+    def test_invalid_confirmed_adapter_input_does_not_read_secret_or_post(self):
+        http = FakeHttp([])
+        for edit in ({'approved': True}, {'targetDate': '2026-02-30'}, {'requestId': '../secret'}, {'expectedMain': ''}):
+            with self.assertRaisesRegex(ClockError, 'CONFIRMATION_INVALID'):
+                Github(http, lambda: self.fail('secret read')).dispatch_confirmed({**confirmation(), **edit})
+        self.assertEqual(http.calls, [])
+
+    def test_cli_has_only_fixed_modes_and_complete_confirmation_arguments(self):
+        for mode in ('launch', 'check-start'):
+            self.assertEqual(parse_args([mode]), (mode, None))
+        for args in ([], ['launch-confirmed'], ['launch', 'unexpected'], ['dispatch'],
+                     ['launch-confirmed', '2026-10-13', '2026-10-13T23:29:00Z', 'message'],
+                     ['launch-confirmed', '2026-10-13', '2026-10-13T23:29:00Z', 'message', 'a' * 40, 'extra']):
+            with self.assertRaisesRegex(ClockError, 'FEE_CLOCK_MODE'):
+                parse_args(args)
+
     def test_dispatch_exact_target_and_automatic_mode_without_human_confirmation(self):
         http = FakeHttp([(204, None)])
         Github(http, lambda: 'synthetic-not-a-real-credential').dispatch()

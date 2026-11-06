@@ -19,8 +19,8 @@ function admission(p=plan()){
 const safe=()=>({schema:'fee-console.ratio-cloud-safe-result.v1',status:'REFUSED',stage:'ADMISSION',claim:'NOT_ATTEMPTED',patchAttempts:0,bodySha256:null,contentSha256:null,cleanup:'NO_INPUTS_READ'});
 test('exact manual owner/main/attempt and closed plan; fee inputs cannot be mixed',()=>{
  assert.equal(ratioAdmission(admission().env,admission().event).mode,'verify-current');
- const inactive=admission();Object.assign(inactive.event.inputs,{ib_diagnostic_once:'false',ib_diagnostic_main:''});assert.equal(ratioAdmission(inactive.env,inactive.event).mode,'verify-current');
- for(const patch of [{ib_diagnostic_once:'true'},{ib_diagnostic_main:head}]){const f=admission();Object.assign(f.event.inputs,patch);assert.throws(()=>ratioAdmission(f.env,f.event),/REFUSED/);}
+ const inactive=admission();Object.assign(inactive.event.inputs,{ib_diagnostic_once:'false',ib_diagnostic_main:'',confirmed_main:''});assert.equal(ratioAdmission(inactive.env,inactive.event).mode,'verify-current');
+ for(const patch of [{ib_diagnostic_once:'true'},{ib_diagnostic_main:head},...['a'.repeat(40),null,false,0].map(confirmed_main=>({confirmed_main}))]){const f=admission();Object.assign(f.event.inputs,patch);assert.throws(()=>ratioAdmission(f.env,f.event),/REFUSED/);}
  for(const change of [f=>f.env.GITHUB_EVENT_NAME='schedule',f=>f.env.GITHUB_RUN_ATTEMPT='2',f=>f.env.GITHUB_REF='refs/heads/other',f=>f.env.GITHUB_ACTOR_ID='1',f=>f.event.sender.id=1,f=>f.event.inputs.ratio_main='c'.repeat(40),f=>f.event.inputs.run_reviewed_once='true',f=>f.event.inputs.manual_sync_completed_for='2026-11-02',f=>f.event.inputs.bad=canary,f=>f.env.RATIO_PLAN='{}']){const f=admission();change(f);assert.throws(()=>ratioAdmission(f.env,f.event),/REFUSED/);}
 });
 test('full read-only entry authenticates exact packet; no storage, claims, PATCH or financial API',async t=>{

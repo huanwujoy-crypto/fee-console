@@ -15,6 +15,7 @@ import {SourceFetchError} from './fee-economic-source.mjs';
 import {dailyReportPlan,weeklyReportPlan,monthlyReportPlan,reportAddDays} from './fee-report-period.mjs';
 import {HEALTH_SCHEMA,validateHealth} from './fee-data-health.mjs';
 import {CLOUD_ONCE,cloudOnceWindow,cloudOnceRequest,admitCloudOnce,confirmCloudOnce,recordCloudOnceCandidate,cloudOnceStatus,pauseCloudOnce,cloudOnceControl,scheduledDailyContext} from './fee-report-producer.mjs';
+import {reviewedMainConfirmation,confirmReviewedMainBeforeSource} from './fee-report-producer.mjs';
 
 function cloudOnceFixture(){
  const main='a'.repeat(40),candidate='b'.repeat(40),runId=1001,now=new Date('2026-11-03T02:00:10Z');
@@ -85,7 +86,7 @@ test('manual owner input validation rejects every scope mismatch before any cont
   f=>f.event.sender.id=1,f=>f.event.repository.full_name='other/repository',
   f=>f.event.inputs.run_reviewed_once='false',f=>f.event.inputs.report_kind='monthly',
   f=>f.event.inputs.report_target='2026-11-03',f=>f.event.inputs.report_markets='NYSE',
-  ...['ib_diagnostic_main','manual_sync_completed_for','recovery_main','ratio_main','ratio_plan','source_from','source_target','source_main'].map(k=>f=>f.event.inputs[k]='unexpected'),
+  ...['ib_diagnostic_main','manual_sync_completed_for','confirmed_main','recovery_main','ratio_main','ratio_plan','source_from','source_target','source_main'].map(k=>f=>f.event.inputs[k]='unexpected'),
   ...['ib_diagnostic_once','source_plan_check_only','source_acceptance_once'].map(k=>f=>f.event.inputs[k]='true'),
   f=>f.event.inputs.unrecognized='true',f=>f.event=null
  ];
@@ -403,7 +404,7 @@ test('automatic daily rejects target overrides, human confirmation, mixed operat
  assert.throws(()=>scheduledDailyContext({mode:'preflight'},{...f,readEvent:()=>{throw Error('private-canary');}}),/^Error: FEE_REPORT_DAILY_SCOPE$/);
 });
 test('automatic daily accepts GitHub default fields but cannot override preflight arguments',()=>{
- const f=automaticDailyFixture();Object.assign(f.event.inputs,{ib_diagnostic_once:'false',ib_diagnostic_main:'',run_reviewed_once:'false',source_plan_check_only:'false',source_acceptance_once:'false',report_target:'',report_markets:'',manual_sync_completed_for:'',recovery_main:'',ratio_main:'',ratio_plan:'',source_from:'',source_target:'',source_main:''});
+ const f=automaticDailyFixture();Object.assign(f.event.inputs,{ib_diagnostic_once:'false',ib_diagnostic_main:'',run_reviewed_once:'false',source_plan_check_only:'false',source_acceptance_once:'false',report_target:'',report_markets:'',manual_sync_completed_for:'',confirmed_main:'',recovery_main:'',ratio_main:'',ratio_plan:'',source_from:'',source_target:'',source_main:''});
  assert.equal(scheduledDailyContext({mode:'preflight'},{...f,readEvent:()=>f.event}),true);
  assert.throws(()=>scheduledDailyContext({mode:'preflight','report-target':'2026-11-03'},{...f,readEvent:()=>f.event}),/DAILY_SCOPE/);
 });
@@ -819,6 +820,105 @@ test('manual sync flag binds existing reviewed dispatch, main, first attempt and
    const r=spawnSync(process.execPath,[new URL('./fee-report-producer.mjs',import.meta.url).pathname,...cli,'--manual-sync-completed-for='+target],{encoding:'utf8',env:{PATH:process.env.PATH}});
    assert.equal(r.status,1);assert.match(r.stderr,/MANUAL_SYNC_CONFIRMATION/);assert.equal(r.stdout,'');
  }
+});
+
+function confirmedDailyFixture(){
+ const target='2026-11-03',head='a'.repeat(40);
+ const args={mode:'preflight','report-kind':'daily','report-target':target,'manual-sync-completed-for':target,'confirmed-main':head};
+ const env={GITHUB_ACTIONS:'true',GITHUB_EVENT_NAME:'workflow_dispatch',GITHUB_RUN_ATTEMPT:'1',GITHUB_REF:'refs/heads/main',GITHUB_SHA:head,GITHUB_REPOSITORY:'huanwujoy-crypto/fee-console',GITHUB_ACTOR_ID:'283054367',GITHUB_RUN_ID:'1001',PLANNED_MAIN:head};
+ const event={sender:{id:283054367},repository:{full_name:env.GITHUB_REPOSITORY},inputs:{run_reviewed_once:'true',report_kind:'daily',report_target:target,manual_sync_completed_for:target,confirmed_main:head}};
+ return {target,head,args,env,event};
+}
+test('confirmed main binds the real event, dispatch head, owner, target and first attempt',()=>{
+ const f=confirmedDailyFixture(),check=x=>reviewedMainConfirmation(x.args,{env:x.env,readEvent:()=>x.event});
+ assert.equal(check(f),f.head);assert.equal(check({...f,args:{...f.args,mode:'produce'}}),f.head);
+ for(const mutate of [x=>delete x.args['confirmed-main'],x=>x.args['confirmed-main']='b'.repeat(40),x=>x.args['confirmed-main']='A'.repeat(40),
+  x=>x.args['report-target']='2026-02-30',x=>x.args['manual-sync-completed-for']='2026-11-02',x=>x.args['report-kind']='weekly',x=>x.args.mode='watch',
+  x=>x.env.GITHUB_SHA='b'.repeat(40),x=>x.env.GITHUB_RUN_ATTEMPT='2',x=>x.env.GITHUB_EVENT_NAME='schedule',x=>x.env.GITHUB_REF='refs/heads/topic',
+  x=>x.env.GITHUB_ACTIONS='false',x=>x.env.GITHUB_REPOSITORY='other/repo',x=>x.env.GITHUB_ACTOR_ID='1',x=>x.env.GITHUB_RUN_ID='0',
+  x=>x.env.FEE_REPORT_ONCE_MAIN=f.head,x=>x.env.FEE_AUTOMATIC_DAILY_REQUEST='true',x=>x.event.sender.id=1,x=>x.event.repository.full_name='other/repo',
+  x=>x.event.inputs.confirmed_main='b'.repeat(40),x=>delete x.event.inputs.confirmed_main,x=>x.event.inputs.report_target='2026-11-02',
+  x=>x.event.inputs.manual_sync_completed_for='2026-11-02',x=>x.event.inputs.run_reviewed_once='false',x=>x.event.inputs.report_kind='automatic-daily',
+  x=>x.event.inputs.approved=true,x=>{x.args.mode='produce';x.env.PLANNED_MAIN='b'.repeat(40);}]){
+  const x=structuredClone(f);mutate(x);assert.throws(()=>check(x),/^Error: FEE_REPORT_CONFIRMED_MAIN_SCOPE$/);
+ }
+ for(const name of ['ib_diagnostic_once','source_plan_check_only','source_acceptance_once','ib_diagnostic_main','report_markets','recovery_main','ratio_main','ratio_plan','source_from','source_target','source_main']){
+  const x=structuredClone(f);x.event.inputs[name]='nonempty';assert.throws(()=>check(x),/CONFIRMED_MAIN_SCOPE/);
+ }
+ for(const name of ['recovery-main','report-markets'])assert.throws(()=>check({...f,args:{...f.args,[name]:'nonempty'}}),/CONFIRMED_MAIN_SCOPE/);
+});
+test('cloud confirmed payload reaches the same reviewed head-bound admission and retains the used-source refusal',async()=>{
+ const result=spawnSync('python3',['-c',"import json; from runtime import Github\nclass H:\n def request(self,url,**kw):\n  print(json.dumps(kw['body'])); return 204,None\nGithub(http=H(),read_token=lambda:'synthetic-only').dispatch_confirmed({'targetDate':'2026-11-03','confirmedAt':'2026-11-03T23:00:00Z','requestId':'synthetic-only','expectedMain':'a'*40})"],{cwd:new URL('../cloud/fee-clock/',import.meta.url),encoding:'utf8',env:{PATH:process.env.PATH,PYTHONDONTWRITEBYTECODE:'1'}});
+ assert.equal(result.status,0,result.stderr);const body=JSON.parse(result.stdout),f=confirmedDailyFixture();assert.equal(body.ref,'main');f.event.inputs=body.inputs;
+ assert.deepEqual(body.inputs,{run_reviewed_once:'true',report_kind:'daily',report_target:f.target,manual_sync_completed_for:f.target,confirmed_main:f.head});
+ assert.equal(reviewedMainConfirmation(f.args,{env:f.env,readEvent:()=>f.event}),f.head);
+ assert.equal(reviewedSyncConfirmation(f.args,{env:f.env,readEvent:()=>f.event}),f.target);
+ const prior=state(dailyReportPlan('2026-11-02',['NYSE','NASDAQ']),'2026-11-03T01:00:00Z');
+ const outcome=await dailyPublicationPreflight({targetDate:f.target,reviewedSyncDate:f.target,confirmedMain:f.head,now:new Date('2026-11-04T07:00:00+08:00'),markets:['NYSE','NASDAQ'],ibEnabled:false,runAttempt:'1',readState:async()=>prior,readSourceAttempts:async()=>({attempts:1,inProgress:false})});
+ assert.equal(outcome.reasonCode,'REPORT_DAILY_SOURCE_ALREADY_ATTEMPTED');
+});
+test('empty confirmed main preserves ordinary, reviewed, automatic and one-off compatibility',async()=>{
+ const f=confirmedDailyFixture();delete f.args['confirmed-main'];f.event.inputs.confirmed_main='';
+ assert.equal(reviewedMainConfirmation(f.args,{env:f.env,readEvent:()=>f.event}),null);
+ assert.equal(reviewedSyncConfirmation(f.args,{env:f.env,readEvent:()=>f.event}),f.target);
+ assert.equal(reviewedMainConfirmation({mode:'preflight'},{env:{GITHUB_EVENT_NAME:'schedule'}}),null);
+ const a=automaticDailyFixture();a.event.inputs.confirmed_main='';
+ assert.equal(scheduledDailyContext({mode:'preflight'},{...a,readEvent:()=>a.event}),true);
+ a.event.inputs.confirmed_main=f.head;assert.throws(()=>scheduledDailyContext({mode:'preflight'},{...a,readEvent:()=>a.event}),/DAILY_SCOPE/);
+ const once=manualCloudOnceFixture();once.event.inputs.confirmed_main='';assert.equal((await once.control('once-scope')).state,'active');
+});
+test('confirmed preflight rejects changed public main before querying source attempts',async()=>{
+ const f=confirmedDailyFixture(),old=state(dailyReportPlan('2026-11-02',['NYSE','NASDAQ']),'2026-11-03T01:00:00Z');let attempts=0;
+ const args={targetDate:f.target,reviewedSyncDate:f.target,confirmedMain:f.head,now:new Date('2026-11-04T07:00:00+08:00'),markets:['NYSE','NASDAQ'],ibEnabled:false,runAttempt:'1',readState:async()=>old,readSourceAttempts:async()=>{attempts++;return {attempts:0,inProgress:false};}};
+ assert.equal((await dailyPublicationPreflight(args)).outcome,'produce');assert.equal(attempts,1);
+ for(const changed of [{mainSha:'b'.repeat(40)},{finalMainSha:'b'.repeat(40)},{mainSha:'b'.repeat(40),finalMainSha:'b'.repeat(40)}]){
+  attempts=0;await assert.rejects(dailyPublicationPreflight({...args,readState:async()=>({...old,...changed})}),/CONFIRMED_MAIN_CHANGED/);assert.equal(attempts,0);
+ }
+ attempts=0;await assert.rejects(nativeReportPreflight({...args,plan:dailyReportPlan(f.target,args.markets,{reviewedSyncDate:f.target}),readState:async()=>({...old,mainSha:'b'.repeat(40)})}),/CONFIRMED_MAIN_CHANGED/);assert.equal(attempts,0);
+ for(const changed of [{recoveryMain:f.head},{reviewedSyncDate:null},{confirmedMain:'bad'},{scheduledDaily:true}])await assert.rejects(dailyPublicationPreflight({...args,...changed,readState:()=>assert.fail('invalid scope must not read public state')}),/CONFIRMED_MAIN_SCOPE|DAILY_SCOPE/);
+});
+test('confirmed source recheck requires frozen checkout and current main before any financial step',async()=>{
+ const f=confirmedDailyFixture(),args={...f.args,mode:'produce'};let reads=0;
+ const fetchImpl=async(url,init)=>{reads++;assert.equal(url,'https://api.github.com/repos/huanwujoy-crypto/fee-console/git/ref/heads/main');assert.equal(init.method,'GET');assert.equal(init.redirect,'error');assert.equal(init.headers.Authorization,undefined);const r=new Response(JSON.stringify({ref:'refs/heads/main',object:{type:'commit',sha:f.head}}));Object.defineProperty(r,'url',{value:url});return r;};
+ const options={env:f.env,readEvent:()=>f.event,checkedOutMain:f.head,fetchImpl};
+ assert.equal(await confirmReviewedMainBeforeSource(args,options),f.head);assert.equal(reads,1);
+ await assert.rejects(confirmReviewedMainBeforeSource(args,{...options,checkedOutMain:'b'.repeat(40),fetchImpl:()=>assert.fail('wrong checkout must stop before metadata')}),/CONFIRMED_MAIN_CHANGED/);
+ await assert.rejects(confirmReviewedMainBeforeSource(args,{...options,env:{...f.env,PLANNED_MAIN:'b'.repeat(40)},fetchImpl:()=>assert.fail('wrong frozen main must stop before metadata')}),/CONFIRMED_MAIN_SCOPE/);
+ for(const value of [{ref:'refs/heads/main',object:{type:'commit',sha:'b'.repeat(40)}},{ref:'refs/heads/topic',object:{type:'commit',sha:f.head}},{ref:'refs/heads/main',object:{type:'tag',sha:f.head}}])await assert.rejects(confirmReviewedMainBeforeSource(args,{...options,fetchImpl:async url=>{const r=new Response(JSON.stringify(value));Object.defineProperty(r,'url',{value:url});return r;}}),/CONFIRMED_MAIN_CHANGED/);
+ await assert.rejects(confirmReviewedMainBeforeSource(args,{...options,fetchImpl:async()=>{throw Error('private-canary');}}),/^Error: FEE_REPORT_CONFIRMED_MAIN_METADATA$/);
+});
+test('confirmed workflow wiring blocks mixed jobs and checks the immutable head before secrets',()=>{
+ const wf=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8'),f=confirmedDailyFixture();
+ const condition=(name,inputs)=>{const block=wf.split('\n  '+name+':\n')[1].split(/\n  [a-z-]+:\n/)[0],expression=/(?:^|\n)    if: \$\{\{ (.+) \}\}/.exec(block)[1];return Boolean(vm.runInNewContext(expression,{inputs,github:{event_name:'workflow_dispatch',actor_id:'283054367',ref:'refs/heads/main',run_attempt:1,sha:f.head},vars:{FEE_REPORT_ONCE_MAIN:'',FEE_CLOUD_MODE:'publish',FEE_REPORT_DAILY_ENABLED:'true',FEE_REPORT_PERIODS_ENABLED:'true'}}));};
+ const inputs={...f.event.inputs,run_reviewed_once:true};assert.equal(condition('period',inputs),true);
+ for(const change of [{report_kind:'automatic-daily'},{recovery_main:f.head},{report_markets:'NYSE'},{ib_diagnostic_once:true},{ratio_plan:'nonempty'},{source_acceptance_once:true}])assert.equal(condition('period',{...inputs,...change}),false);
+ for(const job of ['once-admit','once-finish','source-plan-check','source-acceptance','ratio-preflight','ratio','ib-diagnostic'])assert.equal(condition(job,{...inputs,source_plan_check_only:true,source_acceptance_once:true,ratio_plan:'nonempty',ratio_main:f.head,ib_diagnostic_once:true,ib_diagnostic_main:f.head}),false);
+ const period=wf.split('\n  period:\n')[1].split('\n  once-admit:\n')[0],produce=wf.split('\n  produce:\n')[1].split('\n  once-finish:\n')[0];
+ assert.match(period,/ref: \$\{\{ inputs.confirmed_main && github.sha \|\| 'main' \}\}/);
+ assert(produce.indexOf('await confirmReviewedMainBeforeSource')<produce.indexOf('google-github-actions/auth@'));
+ assert(produce.indexOf('await confirmReviewedMainBeforeSource')<produce.indexOf('get-secretmanager-secrets@'));
+ assert.equal((wf.match(/args\+=\("--confirmed-main=\$CONFIRMED_MAIN"\)/g)||[]).length,2);
+});
+test('confirmed CLI rejects a stale dispatch head without public or financial IO',t=>{
+ const f=confirmedDailyFixture(),dir=fs.mkdtempSync(path.join(os.tmpdir(),'fee-confirmed-head-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+ const event=path.join(dir,'event.json'),trace=path.join(dir,'network-used'),preload=path.join(dir,'mock-only.mjs');fs.writeFileSync(event,JSON.stringify(f.event));
+ fs.writeFileSync(preload,`import fs from 'node:fs';globalThis.fetch=async()=>{fs.writeFileSync(${JSON.stringify(trace)},'unexpected');throw Error('private-canary');};`);
+ const args=Object.entries(f.args).map(([key,value])=>'--'+key+'='+value),env={PATH:process.env.PATH,...f.env,GITHUB_SHA:'b'.repeat(40),GITHUB_EVENT_PATH:event};
+ const result=spawnSync(process.execPath,['--import',preload,new URL('./fee-report-producer.mjs',import.meta.url).pathname,...args],{encoding:'utf8',env,timeout:10000});
+ assert.equal(result.status,1);assert.equal(result.stderr.trim(),'FEE_REPORT_CONFIRMED_MAIN_SCOPE');assert.equal(result.stdout,'');assert.equal(fs.existsSync(trace),false);
+});
+
+test('confirmed failures expose only the three fixed safe codes, never arbitrary prefixed details',()=>{
+ for(const suffix of ['SCOPE','CHANGED','METADATA']){
+  const code='FEE_REPORT_CONFIRMED_MAIN_'+suffix;
+  assert.deepEqual(safeProducerFailureSummary(code+'\n'),{code,diagnostic:null});
+  for(const text of [code+'_PRIVATE_CANARY',code+' PRIVATE_CANARY',code+'=PRIVATE_CANARY']){
+   const result=safeProducerFailureSummary(text+'\n');
+   assert.deepEqual(result,{code:'FEE_CLOUD_FAILED',diagnostic:null});
+   assert.equal(JSON.stringify(result).includes('PRIVATE_CANARY'),false);
+  }
+ }
+ assert.deepEqual(safeProducerFailureSummary('FEE_REPORT_CONFIRMED_MAIN_UNKNOWN\n'),{code:'FEE_CLOUD_FAILED',diagnostic:null});
 });
 
 test('early published coverage deduplicates the later normal cycle without resetting attempts or freshness',async()=>{

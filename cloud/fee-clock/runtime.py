@@ -7,7 +7,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from clock import ClockError, REPO, WORKFLOW, fail, run_clock
+from clock import ClockError, REPO, WORKFLOW, confirmed_request, fail, run_clock
 
 API = 'https://api.github.com/repos/' + REPO
 BUCKET = 'family-portfolio-gateway-fee-clock'
@@ -98,8 +98,18 @@ class Github:
         return self._get(f'/actions/runs/{run_id}/jobs?filter=latest&per_page=100')
 
     def dispatch(self):
+        return self._dispatch({'report_kind': 'automatic-daily'})
+
+    def dispatch_confirmed(self, confirmation):
+        confirmed_request(confirmation)
+        target = confirmation['targetDate']
+        return self._dispatch({'run_reviewed_once': 'true', 'report_kind': 'daily',
+                               'report_target': target, 'manual_sync_completed_for': target,
+                               'confirmed_main': confirmation['expectedMain']})
+
+    def _dispatch(self, inputs):
         status, value = self.http.request(API + '/actions/workflows/' + WORKFLOW + '/dispatches', method='POST',
-            body={'ref': 'main', 'inputs': {'report_kind': 'automatic-daily'}}, uncertain=True,
+            body={'ref': 'main', 'inputs': inputs}, uncertain=True,
             headers={'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json',
                      'User-Agent': 'fee-console-independent-clock', 'X-GitHub-Api-Version': '2026-03-10',
                      'Authorization': 'Bearer ' + self.read_token()})
@@ -164,13 +174,22 @@ class Store:
             fail('RESULT_ALREADY_EXISTS')
 
 
+def parse_args(args):
+    if len(args) == 1 and args[0] in ('launch', 'check-start'):
+        return args[0], None
+    if len(args) == 5 and args[0] == 'launch-confirmed':
+        confirmation = dict(zip(('targetDate', 'confirmedAt', 'requestId', 'expectedMain'), args[1:]))
+        confirmed_request(confirmation)
+        return args[0], confirmation
+    fail('MODE')
+
+
 def main():
     try:
-        if len(sys.argv) != 2:
-            fail('MODE')
-        value = run_clock(sys.argv[1], datetime.now(timezone.utc), Github(), Store(),
+        mode, confirmation = parse_args(sys.argv[1:])
+        value = run_clock(mode, datetime.now(timezone.utc), Github(), Store(),
                           enabled=os.environ.get('FEE_CLOCK_ENABLED') == 'true',
-                          current_time=lambda: datetime.now(timezone.utc))
+                          current_time=lambda: datetime.now(timezone.utc), confirmation=confirmation)
         print(json.dumps(value, separators=(',', ':')))
         return 0
     except Exception as error:
