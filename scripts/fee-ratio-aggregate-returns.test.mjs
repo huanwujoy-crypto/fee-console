@@ -203,3 +203,74 @@ test('compact overview preserves each proven return basis without inventing inve
  }
  const absent=c.renderCompact({scope:scope(),periods:{}});assert.equal((absent.match(/>—<\/strong>/g)||[]).length,2);
 });
+
+function amountFixture(){
+ const s=fixture();for(const [i,r]of s.reports.entries()){
+  r.additionalSources=[ref(i+4)];r.rows[0].scope=scope('All Together');
+  r.rows[0].sourceFileId=r.additionalSources[0].libraryFileId;
+  r.rows[0].returnAmountUSD=i?-2345.67:1234567.89;
+ }return s;
+}
+test('portfolio period amounts preserve the exact native total row and supplemental workbook',()=>{
+ const s=amountFixture(),before=structuredClone(s),item=c.select(build(s),scope('All Together'));
+ assert.deepEqual(s,before);
+ for(const [i,key]of ['all','oneYear'].entries()){
+  const r=s.reports[i],p=item.periods[key];
+  assert.equal(p.nativeAmountUSD,r.rows[0].returnAmountUSD);
+  assert.deepEqual(p.amountSource,{...r.additionalSources[0],locator:'Synthetic grouping!N9'});
+  assert.deepEqual(p.source,{...r.additionalSources[0],locator:'Synthetic grouping!O9'});
+  assert.equal(p.startDate,r.startDate);assert.equal(p.endDate,r.endDate);assert.equal(p.includeClosed,true);
+  assert.deepEqual(p.accounts,['Account A']);assert.equal(p.memberCount,1);assert.equal(p.cashPerformance,'excluded');
+ }
+ const h=c.renderCompact(item,{showAmount:true});
+ assert.match(h,/收益 USD 1,234,567\.89/);assert.match(h,/收益 USD -2,345\.67/);
+ assert.match(h,/期间收益金额（非年化），含已平仓/);assert.match(h,/12\.50%/);assert.match(h,/-1\.25%/);
+});
+test('legacy sources keep the identical view shape and never manufacture a zero amount',()=>{
+ const s=amountFixture();for(const r of s.reports)delete r.rows[0].returnAmountUSD;
+ const before=structuredClone(s),item=c.select(build(s),scope('All Together'));
+ for(const p of Object.values(item.periods)){assert.equal(Object.hasOwn(p,'nativeAmountUSD'),false);assert.equal(Object.hasOwn(p,'amountSource'),false);}
+ assert.deepEqual(s,before);assert.doesNotMatch(c.renderCompact(item),/收益 USD|ratio-return-amount/);
+ const h=c.renderCompact(item,{showAmount:true});assert.equal((h.match(/>收益 —<\/span>/g)||[]).length,2);assert.match(h,/不代表零/);assert.doesNotMatch(h,/收益 USD 0/);
+});
+test('zero, negative, null and missing portfolio amounts remain distinct from percentage availability',()=>{
+ const s=amountFixture();s.reports[0].rows[0].returnAmountUSD=0;s.reports[1].rows[0].returnAmountUSD=null;
+ s.reports[0].rows[0].returnPct=null;s.reports[0].rows[0].unit='unavailable';
+ const item=c.select(build(s),scope('All Together')),h=c.renderCompact(item,{showAmount:true});
+ assert.equal(item.periods.all.nativeAmountUSD,0);assert.equal(item.periods.oneYear.nativeAmountUSD,null);
+ assert.match(h,/收益 USD 0\.00/);assert.match(h,/收益 —/);assert.match(h,/>—<\/strong>/);assert.match(h,/-1\.25%/);
+});
+test('amounts are portfolio-only and cannot introduce independent currency, date, members or source coordinates',()=>{
+ for(const edit of [
+  row=>row.scope=scope(),row=>row.scope=scope('Synthetic strategy','常青基金'),
+  row=>row.returnAmountUSD='12.34',row=>row.returnAmountUSD=undefined,row=>row.returnAmountUSD=NaN,
+  row=>row.returnAmountUSD=Infinity,row=>row.returnAmountUSD=-Infinity,row=>row.returnAmountUSD=1e12+1,
+  row=>row.returnAmountUSD=0.001,row=>row.returnAmountUSD={value:12.34,currency:'USD'},
+  row=>row.amountSource=ref(8),row=>row.amountCurrency='HKD',row=>row.amountDate=end,
+  row=>row.amountMembers=[member('Account B')],row=>row.amountSourceRow=10,
+ ]){const s=amountFixture();edit(s.reports[0].rows[0]);assert.throws(()=>build(s),/REFUSED/);}
+ for(const edit of [r=>r.currency='HKD',r=>r.includeClosed=false,r=>r.endDate='2026-11-03',r=>r.rows[0].sourceFileId=ref(9).libraryFileId,r=>r.rows[0].members[0].account='Outside']){
+  const s=amountFixture();edit(s.reports[0]);assert.throws(()=>build(s),/REFUSED/);
+ }
+ const stock=stockFixture();stock.reports[0].rows.at(-1).returnAmountUSD=100;assert.throws(()=>build(stock),/REFUSED/);
+ const top=topFixture();top.topHoldings.reports[0].rows[0].returnAmountUSD=100;assert.throws(()=>topBuild(top),/REFUSED/);
+});
+test('amount display is opt-in for the portfolio and independent of rate magnitude or annualisation',()=>{
+ const s=amountFixture();s.reports[0].rows[0].unit='p.a.';
+ const item=c.select(build(s),scope('All Together')),h=c.renderCompact(item,{showAmount:true});
+ assert.match(h,/<small>年化<\/small>/);assert.match(h,/收益 USD 1,234,567\.89/);assert.match(h,/期间收益金额（非年化）/);
+ assert.doesNotMatch(c.renderCompact(item),/ratio-return-amount/);
+ const classification={...structuredClone(item),scope:scope()};assert.doesNotMatch(c.renderCompact(classification,{showAmount:true}),/ratio-return-amount/);
+ s.reports[0].rows[0].returnPct=98765.43;
+ assert.equal(c.select(build(s),scope('All Together')).periods.all.nativeAmountUSD,1234567.89);
+});
+test('native amount formatting preserves cents, large values and negative zero without NaN or Infinity',()=>{
+ for(const [value,shown]of [[0.29,'0.29'],[-0.29,'-0.29'],[123456789012.34,'123,456,789,012.34'],[1e12,'1,000,000,000,000.00'],[-0,'0.00']]){
+  const s=amountFixture();s.reports[0].rows[0].returnAmountUSD=value;
+  const h=c.renderCompact(c.select(build(s),scope('All Together')),{showAmount:true});assert.ok(h.includes('收益 USD '+shown));assert.doesNotMatch(h,/NaN|Infinity|USD -0\.00/);
+ }
+ for(const value of [NaN,Infinity,-Infinity,undefined,null]){
+  const h=c.renderCompact({scope:scope('All Together'),periods:{all:{nativePct:1,nativeAmountUSD:value}}},{showAmount:true});
+  assert.match(h,/收益 —/);assert.doesNotMatch(h,/NaN|Infinity|收益 USD/);
+ }
+});

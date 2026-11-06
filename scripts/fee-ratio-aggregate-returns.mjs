@@ -38,12 +38,17 @@ export function createAggregateReturnsCore(){
    const put=(scope,p)=>{const k=scopeKey(scope);if(scopes.has(k))fail();scopes.add(k);const item=items.get(k)||{scope:structuredClone(scope),periods:{}};item.periods[r.period]=p;items.set(k,item);};
    for(const row of r.rows){
     const rowKeys=['scope','members','sourceSheet','sourceRow','returnPct','unit','termEvidence'];
-    if(!(exact(row,rowKeys)||exact(row,[...rowKeys,'sourceFileId']))||!text(row.sourceSheet)||!Number.isSafeInteger(row.sourceRow)||row.sourceRow<1||!['p.a.','period','unknown','unavailable'].includes(row.unit)||!Array.isArray(row.members)||!row.members.length)fail();
+    if(!exact(row,[...rowKeys,...['sourceFileId','returnAmountUSD'].filter(key=>Object.hasOwn(row||{},key))])||!text(row.sourceSheet)||!Number.isSafeInteger(row.sourceRow)||row.sourceRow<1||!['p.a.','period','unknown','unavailable'].includes(row.unit)||!Array.isArray(row.members)||!row.members.length)fail();
     const rowSource=sources.get('sourceFileId' in row?row.sourceFileId:r.source.libraryFileId);if(!rowSource)fail();
     // The third workbook may supply only the exact stock subtotal. Its
     // unrelated totals and holdings cannot silently replace earlier evidence.
     if(stockSource&&rowSource.libraryFileId===stockSource.libraryFileId){if(!stockScope(row.scope)||stockRow)fail();stockRow=row;}
     const k=scopeKey(row.scope),loc=canon([rowSource.libraryFileId,row.sourceSheet,row.sourceRow]);if(locations.has(loc))fail();locations.add(loc);
+    // Amount and rate belong to the same official total row (N and O).
+    // Inherit its exact workbook, dates, USD, members and closed-position scope;
+    // never derive an amount from a rate or accept a separate amount source.
+    const hasAmount=Object.hasOwn(row,'returnAmountUSD'),amount=row.returnAmountUSD;
+    if(hasAmount&&(row.scope.type!=='portfolio'||amount!==null&&(typeof amount!=='number'||!Number.isFinite(amount)||Math.abs(amount)>1e12||!/^[-]?\d+(?:\.\d{1,2})?$/.test(String(amount))||!Number.isSafeInteger(Math.round(amount*100)))))fail();
     if(row.unit==='unavailable'?row.returnPct!==null:typeof row.returnPct!=='number'||!Number.isFinite(row.returnPct)||Math.abs(row.returnPct)>1e9)fail();
     const members=row.members.map(m=>{const k=member(m);if(!accounts.includes(m.account)||excluded.has(k))fail();return {...m};});if(new Set(members.map(memberKey)).size!==members.length)fail();
     const e=row.termEvidence;let short=false;
@@ -55,7 +60,7 @@ export function createAggregateReturnsCore(){
     const status=row.unit==='unavailable'?'source-unavailable':short?'under-one-year':row.unit==='p.a.'?'annualised':row.unit==='period'?'period-return':'source-unit-unspecified';
     // Closed holdings can differ between windows. Stable category scope does
     // not require dropping holdings sold before the trailing-year start.
-    put(row.scope,{status,nativePct:row.returnPct,startDate:r.startDate,endDate:r.endDate,includeClosed:true,cashPerformance:stockSource&&rowSource.libraryFileId===stockSource.libraryFileId?'unknown':r.cashPerformance,accounts:[...new Set(members.map(m=>m.account))].sort(),memberCount:members.length,benchmarkMemberCount:members.filter(m=>benchmarks.has(memberKey(m))).length,source:{...structuredClone(rowSource),locator:row.sourceSheet+'!O'+row.sourceRow},termEvidence:structuredClone(e)});
+    put(row.scope,{status,nativePct:row.returnPct,...(hasAmount?{nativeAmountUSD:amount,amountSource:{...structuredClone(rowSource),locator:row.sourceSheet+'!N'+row.sourceRow}}:{}),startDate:r.startDate,endDate:r.endDate,includeClosed:true,cashPerformance:stockSource&&rowSource.libraryFileId===stockSource.libraryFileId?'unknown':r.cashPerformance,accounts:[...new Set(members.map(m=>m.account))].sort(),memberCount:members.length,benchmarkMemberCount:members.filter(m=>benchmarks.has(memberKey(m))).length,source:{...structuredClone(rowSource),locator:row.sourceSheet+'!O'+row.sourceRow},termEvidence:structuredClone(e)});
    }
    if(stockSource){
     if(!stockRow)fail();
@@ -152,13 +157,16 @@ export function createAggregateReturnsCore(){
  }
  function selectTop(view,target){return view?.topHoldings?.items.find(x=>same(x.target,target))||null;}
 
- function renderCompact(item){
+ function renderCompact(item,{showAmount=false}={}){
   scopeKey(item.scope);
+  const amounts=showAmount&&item.scope.type==='portfolio';
   const lines=[['all','全部'],['oneYear','近一年']].map(([key,label])=>{
    const p=item.periods[key],has=Number.isFinite(p?.nativePct),badge={annualised:'年化','under-one-year':'未满一年','period-return':'期间收益'}[p?.status]||'';
    const reason=has?(badge||'原报表未注明是否年化'):p?.status==='benchmark-members-included'?'含虚拟持仓，尚无匹配小计':p?.status==='cash-scope-unverified'?'现金收益范围待核实':p?.status==='source-unavailable'?'Sharesight 未提供此范围的收益率':'尚无此范围的官方合并收益率';
    const value=has?p.nativePct.toFixed(2)+'%':'—';
-   return '<span class="ratio-return-compact-line" aria-label="'+esc(label+'：'+value+'；'+reason)+'"><span>'+label+'：</span><strong title="'+esc(reason)+'">'+esc(value)+'</strong>'+(badge?'<small>'+badge+'</small>':'')+'</span>';
+   const amountValue=Number.isFinite(p?.nativeAmountUSD)?'USD '+(p.nativeAmountUSD===0?0:p.nativeAmountUSD).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):'—';
+   const amountReason=Number.isFinite(p?.nativeAmountUSD)?'原报表同一总计行的期间收益金额（非年化），含已平仓。':'原报表未提供或此历史快照未保存同一总计行的收益金额，不代表零。';
+   return '<span class="ratio-return-compact-line" aria-label="'+esc(label+'：'+value+'；'+reason+(amounts?'；收益 '+amountValue+'；'+amountReason:''))+'"><span>'+label+'：</span><strong title="'+esc(reason)+'">'+esc(value)+'</strong>'+(badge?'<small>'+badge+'</small>':'')+(amounts?'<span class="ratio-return-amount" title="'+esc(amountReason)+'">收益 '+esc(amountValue)+'</span>':'')+'</span>';
   }).join('');
   return '<div class="ratio-return-compact">'+lines+'</div>';
  }

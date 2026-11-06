@@ -118,6 +118,50 @@ test('shared controls reserve touch space while open text keeps full width; comp
  assert.match(page,/\.ratio-returns-inline \.ratio-return-compact-line\{overflow-wrap:anywhere\}/);
  assert.doesNotMatch(page,/\.ratio-overview-disclosures>details\{[^}]*(?:width:50%|position:absolute)/,'open details stay normal flow at full container width');
 });
+test('fund amounts precede percentages and stock allocation uses its own source date',async t=>{
+ const f=await fixture(t),m=structuredClone(f.model);
+ m.book.asOf='2026-10-29';
+ const before=structuredClone(m),html=f.ratio.render(m);
+ const stock=html.split('<section class="card ratio-stock-allocation">')[1].split('</section>')[0];
+ assert.match(stock,/<p class="ratio-stock-asof">数据截至 2026-10-29<\/p>/);
+ assert.doesNotMatch(stock,/数据截至 2026-10-30/,'exposure and performance dates cannot replace the allocation source date');
+ for(const fund of m.classificationSummary.fundDistributions){
+  for(const group of fund.groups){
+   const amount='USD '+(group.valueCents/100).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+   assert.ok(html.includes('<span class="ratio-distribution-values"><span class="ratio-distribution-amount">'+amount+'</span><strong>'));
+  }
+ }
+ const noBook=structuredClone(m);noBook.book=null;
+ const absent=f.ratio.render(noBook).split('<section class="card ratio-stock-allocation">')[1].split('</section>')[0];
+ assert.match(absent,/数据截至 未取得/);assert.match(absent,/完整分类持仓未取得/);
+ assert.deepEqual(m,before,'displaying source amounts and dates cannot change the model');
+});
+test('only total assets show same-row official period amounts and authenticated changes fail closed',async t=>{
+ const f=await fixture(t,raw=>{for(const [i,r] of raw.performance.reports.entries()){
+  r.unavailable=r.unavailable.filter(x=>x.scope.name!=='All Together');
+  r.rows.push({...structuredClone(r.rows[0]),scope:scope('All Together'),sourceRow:20,returnPct:i?4.5:6.75,returnAmountUSD:i?0:-12345.67});
+ }}),before=structuredClone(f.model),html=f.ratio.render(f.model);
+ const total=html.split('<tfoot>')[1].split('</tfoot>')[0];
+ assert.match(total,/收益 USD -12,345\.67/);assert.match(total,/收益 USD 0\.00/);
+ assert.equal((html.match(/class="ratio-return-amount"/g)||[]).length,2);
+ assert.match(html,/美元期间收益，不是年化金额/);assert.deepEqual(f.model,before);
+ const changed=structuredClone(f.model);changed.performance.reports[0].rows.at(-1).returnAmountUSD++;
+ await assert.rejects(f.snapshot.verifyOriginal({...f.args,model:changed}));
+ const legacy=await fixture(t),oldHtml=legacy.ratio.render(legacy.model);
+ assert.equal((oldHtml.match(/class="ratio-return-amount"[^>]*>收益 —/g)||[]).length,2,'old snapshots show absent amounts, never invented zero');
+});
+test('fund and top-five periods share two flexible columns without changing overview or source disclosure layout',()=>{
+ const actual=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8'),page=hash(actual)===aggregateUiFixture.nextSha256?actual:aggregateUiStage(actual);
+ assert.match(page,/\.ratio-fund-distribution \.ratio-returns-inline>\.ratio-return-compact,\.ratio-holding-row \.ratio-returns-inline>\.ratio-return-compact\{display:grid;grid-template-columns:repeat\(2,minmax\(0,1fr\)\);column-gap:12px/);
+ assert.match(page,/\.ratio-fund-distribution \.ratio-return-compact-line,\.ratio-holding-row \.ratio-return-compact-line\{min-width:0;overflow-wrap:anywhere\}/);
+ assert.match(page,/\.ratio-distribution-values\{display:flex;flex:none;align-items:baseline;gap:10px\}/);
+ assert.match(page,/\.ratio-return-amount\{display:block;[^}]*overflow-wrap:anywhere/);
+ assert.doesNotMatch(page,/\.ratio-return-amount\{[^}]*(?:text-overflow:ellipsis|overflow:hidden)/);
+ // At a 390px viewport, both periods share the content width; long Chinese
+ // labels, signed rates and the existing under-one-year badge may wrap inside
+ // their own column, rather than hiding evidence or moving a period below it.
+ assert.match(page,/\.ratio-return-compact-line small\{display:inline;[^}]*font-size:10px/);
+});
 test('prior performance date cannot disappear through a later signed legacy snapshot',async t=>{
  const f=await fixture(t),oldProof=await f.snapshot.verifyOriginal(f.args);
  const legacy=f.signed,older=legacy.body.source,raw=structuredClone(f.raw.allocation),original=bytes(raw),base=createOfficialRatioSourceCore().build(raw,{sourceSha256:hash(original),sourceBytes:original.length}).input;
