@@ -101,9 +101,10 @@ export function reportPlanReadiness(plan,now=new Date()){
   if(isReviewedDailyPlan(plan)){
     if(localDate(now,'Asia/Hong_Kong')<=plan.accountingThrough||expectedTargetDate(now)<plan.accountingThrough)
       return {state:'waiting',reasonCode:'SOURCE_DAY_NOT_CLOSED'};
-    return {state:'due',reasonCode:null};
+    // A sync confirmation advances daily entry, not the natural month end.
+    // Reviewed daily-monthly plans must pass the same cutoff below.
   }
-  // Daily references use the validated next-day schedule; this does not
+  // Ordinary daily references use the validated next-day schedule; this does not
   // attest synchronization or sources. Finalize only completed natural months.
   if(plan.schema==='fee-console.report-plan.v2'&&plan.kind==='daily')return {state:'due',reasonCode:null};
   // A final monthly cutoff includes all natural days. HKT midnight can still

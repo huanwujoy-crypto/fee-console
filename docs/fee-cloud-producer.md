@@ -18,7 +18,7 @@ before the original producer only after the accepted Jenny native checkpoint
 and `IB_MANAGER_BASELINE_SHA256` are in place. The old benchmark stays disabled.
 Do not activate merely because this code or the frozen display attachment exists.
 
-Qualified sessions begin at HKT09:00; the original11:30 and14:00 slots are fallbacks
+Scheduled sessions begin at HKT09:00; the original11:30 and14:00 slots are fallbacks
 for a target that has not entered financial processing. The target is the prior
 Hong Kong calendar date, with the existing market calendar, actual accounting
 cutoffs and month-end completion checks. No completed-sync assertion is invented.
@@ -40,6 +40,43 @@ GitHub schedule delivery can be delayed or omitted. Local tests cannot guarantee
 the actual run, signed/promoted candidate, report/health byte binding and normal
 page showing all three accounts at the real target. Until approved bootstrap and
 activation complete, producer/promotion remain paused and tomorrow is not ready.
+
+## Start a daily report after explicit completed-sync confirmation
+
+The existing reviewed daily entry can start before09:00 after the owner confirms
+that all three accounts are synchronized for the same exact accounting target.
+Use the existing main workflow with `run_reviewed_once=true`, `report_kind=daily`,
+and equal `report_target` / `manual_sync_completed_for` dates. This is an explicit
+per-target request; do not invent confirmation, infer a target only from the word
+"today", use an old confirmation for a new date, or impersonate it through
+`automatic-daily`. No new workflow, mode, credential, identity or schedule is added.
+
+The confirmation is not source evidence. Before entering finance, preserve the
+actual market-close cutoff, exact target/calendar, live main, publication state,
+pending candidate, concurrency and complete source-attempt metadata checks.
+The original reader still verifies dates, identities and two stable reads of
+Sharesight data; Jenny must reach the same target. No source date, amount or cash
+entry is changed to make the report ready. A monthly cutoff must have completed
+its New York natural day even through this reviewed early entry. A prior month
+already closed may be included without waiting for the later daily target's
+New York midnight. Historical early month-end receipts cannot be rejuvenated.
+
+An already published target returns `already-published`, including when Jenny
+is enabled; it never silently enters the legacy same-period IB recheck. Any
+previous financial source attempt stops this completed-sync entry just as it
+stops the automatic daily fallback. Failure, cancellation, timeout and unknown
+state do not authorize a second attempt. The original two-attempt history and
+independently approved, exact-release recovery path remain intact; do not clear
+records, rerun an old job, or omit the confirmation flag to evade these guards.
+
+The09:00 clock,09:05 start check and11:30/14:00 scheduled fallbacks are unchanged.
+They use the same target, source-attempt history and serialized producer, so an
+early manual request does not create a second report. A requested run, admitted
+source, validated candidate and protected published report are distinct states.
+Supervise the actual run through signed candidate validation, promotion, Pages
+readback and all-three-account target verification; report failure without
+automatic retry. This code change does not dispatch a report or grant approval
+for a new source recovery, and local tests are not live production acceptance.
 
 ## Bounded November 2 cloud acceptance (not yet activated)
 
@@ -332,8 +369,10 @@ Webull. It has no mutation route.
 
 ## Daily behavior
 
-The current daily plan uses the market calendar and HKT09:00 readiness contract
-in `fee-report-periods.md`. It fixes accounting and price cutoffs before source
+The scheduled daily plan uses the market calendar and HKT09:00 readiness contract
+in `fee-report-periods.md`; explicit completed-sync confirmation can enter the
+same reviewed daily path earlier, subject to its source-day and month-end gates.
+It fixes accounting and price cutoffs before source
 access. The Sharesight step above fills the cache for that price cutoff inside
 the same budgeted source job. Old or future cache rows cannot choose the report
 date. Reviewed recovery dates retain their separate existing writer gates.

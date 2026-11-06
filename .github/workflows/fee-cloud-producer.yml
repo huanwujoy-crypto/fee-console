@@ -56,12 +56,12 @@ on:
         required: false
         default: ''
       run_reviewed_once:
-        description: Run one separately reviewed weekly/monthly report
+        description: Run one reviewed daily/weekly/monthly report; completed-sync daily may start before09
         type: boolean
         required: false
         default: false
       manual_sync_completed_for:
-        description: For a separately reviewed daily one-off only, explicitly confirm all accounts were synchronized for this exact YYYY-MM-DD target
+        description: For reviewed daily only, confirm all three accounts synchronized for this exact YYYY-MM-DD; source and month-end gates still apply
         type: string
         required: false
         default: ''

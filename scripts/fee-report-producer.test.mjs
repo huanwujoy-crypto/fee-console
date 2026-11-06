@@ -755,6 +755,44 @@ test('reviewed daily entry requires exact completed-sync target and preserves so
  await assert.rejects(captureReportRange({dates:[target],cache:{v:1,benchmarks:{spy:{symbol:'SPY',currency:'USD',exchange:'NYSEArca',series:[{d:target,p:100}]},qqq:{symbol:'QQQ',currency:'USD',exchange:'NasdaqGS',series:[{d:target,p:200}]}}},readOnce:async()=>broken}),/PERFORMANCE_IDENTITY/);
 });
 
+test('completed-sync start admits the exact target before09 and leaves the scheduled fallback unchanged',async()=>{
+ const target='2026-11-05',markets=['NYSE','NASDAQ'],now=new Date('2026-11-06T07:30:00+08:00');
+ const prior=state(dailyReportPlan('2026-11-04',markets),'2026-11-05T05:45:00Z');
+ const args={targetDate:target,reviewedSyncDate:target,markets,now,ibEnabled:true,runAttempt:'1',readState:async()=>prior,readSourceAttempts:async()=>({attempts:0,inProgress:false})};
+ const first=await dailyPublicationPreflight(args);assert.equal(first.outcome,'produce');assert.equal(first.plan.accountingThrough,target);assert.equal(first.plan.scheduledAt,'2026-11-06T00:00:00+08:00');
+ assert.equal((await dailyPublicationPreflight({...args,reviewedSyncDate:null,readState:()=>assert.fail('ordinary clock still waits for09')})).reasonCode,'REPORT_NOT_DUE');
+ assert.equal((await dailyPublicationPreflight({...args,now:new Date('2026-11-06T05:14:59+08:00'),readState:()=>assert.fail('sync declaration cannot close the market')})).reasonCode,'SOURCE_DAY_NOT_CLOSED');
+ await assert.rejects(dailyPublicationPreflight({...args,reviewedSyncDate:'2026-11-04',readState:()=>assert.fail('confirmation must match target')}),/MANUAL_SYNC_CONFIRMATION/);
+});
+test('repeat completed-sync confirmation never rechecks an already published three-account report',async()=>{
+ const target='2026-11-05',markets=['NYSE','NASDAQ'],now=new Date('2026-11-06T08:00:00+08:00');
+ const plan=dailyReportPlan(target,markets,{reviewedSyncDate:target}),published=state(plan,'2026-11-05T23:45:00Z');let legacyReads=0;
+ const args={targetDate:target,reviewedSyncDate:target,markets,now,ibEnabled:true,runAttempt:'1',readState:async()=>published,readRetryRuns:async()=>{legacyReads++;return [];},readSourceAttempts:()=>assert.fail('published target must not consume another source attempt')};
+ for(let confirmation=0;confirmation<2;confirmation++)assert.equal((await dailyPublicationPreflight(args)).outcome,'already-published');
+ assert.equal(legacyReads,0,'completed-sync must not enter legacy IB retry metadata');
+ for(const time of ['09:00:00','11:30:00','14:00:00'])assert.equal((await dailyPublicationPreflight({...args,targetDate:null,reviewedSyncDate:null,scheduledDaily:true,now:new Date('2026-11-06T'+time+'+08:00')})).outcome,'already-published');
+});
+test('completed-sync start and clock share attempts; failure, cancellation or unknown state never authorize a retry',async()=>{
+ const target='2026-11-05',markets=['NYSE','NASDAQ'],now=new Date('2026-11-06T08:00:00+08:00');
+ const prior=state(dailyReportPlan('2026-11-04',markets),'2026-11-05T05:45:00Z');
+ const args={targetDate:target,reviewedSyncDate:target,markets,now,ibEnabled:true,runAttempt:'1',readState:async()=>prior};
+ for(const [budget,reason] of [[{attempts:1,inProgress:false},'REPORT_DAILY_SOURCE_ALREADY_ATTEMPTED'],[{attempts:2,inProgress:false},'REPORT_SOURCE_ATTEMPT_BUDGET_EXHAUSTED'],[{attempts:0,inProgress:true},'REPORT_SOURCE_RUN_IN_PROGRESS']]){
+  assert.equal((await dailyPublicationPreflight({...args,readSourceAttempts:async()=>budget})).reasonCode,reason);
+  assert.equal((await dailyPublicationPreflight({...args,targetDate:null,reviewedSyncDate:null,scheduledDaily:true,now:new Date('2026-11-06T09:00:00+08:00'),readSourceAttempts:async()=>budget})).reasonCode,reason);
+ }
+ assert.equal((await dailyPublicationPreflight({...args,readSourceAttempts:async()=>{throw Error('synthetic unavailable');}})).reasonCode,'REPORT_SOURCE_ATTEMPT_METADATA_UNVERIFIED');
+ assert.equal((await dailyPublicationPreflight({...args,readState:async()=>({...prior,pending:true}),readSourceAttempts:()=>assert.fail('pending candidate reserves target')})).outcome,'candidate-pending');
+ assert.equal((await dailyPublicationPreflight({...args,runAttempt:'2',readSourceAttempts:()=>assert.fail('rerun is not a new confirmation')})).reasonCode,'REPORT_SOURCE_RERUN_NOT_ALLOWED');
+ const summary=reportPreflightSummary(await dailyPublicationPreflight({...args,readSourceAttempts:async()=>({attempts:1,inProgress:false})}));assert.match(summary,/REPORT_DAILY_SOURCE_ALREADY_ATTEMPTED/);assert.doesNotMatch(summary,/UNKNOWN/);
+});
+test('completed-sync month-end waits for actual New York midnight before publication or source metadata',async()=>{
+ const target='2026-11-30',markets=['NYSE','NASDAQ'];let reads=0,attemptReads=0;
+ const prior=state(dailyReportPlan('2026-11-27',markets),'2026-11-28T02:30:00Z');
+ const args={targetDate:target,reviewedSyncDate:target,markets,ibEnabled:false,runAttempt:'1',readState:async()=>{reads++;return prior;},readSourceAttempts:async()=>{attemptReads++;return {attempts:0,inProgress:false};}};
+ const early=await dailyPublicationPreflight({...args,now:new Date('2026-12-01T08:00:00+08:00')});assert.equal(early.outcome,'waiting');assert.equal(early.reasonCode,'ACCOUNTING_DAY_NOT_COMPLETE');assert.equal(reads,0);assert.equal(attemptReads,0);
+ const due=await dailyPublicationPreflight({...args,now:new Date('2026-12-01T13:00:00+08:00')});assert.equal(due.outcome,'produce');assert.deepEqual(due.plan.monthlyCutoffs,[target]);assert.equal(reads,1);assert.equal(attemptReads,1);
+});
+
 test('manual sync flag binds existing reviewed dispatch, main, first attempt and the real event input',()=>{
  const target='2026-10-28',args={mode:'preflight','report-kind':'daily','report-target':target,'manual-sync-completed-for':target};
  const env={GITHUB_ACTIONS:'true',GITHUB_EVENT_NAME:'workflow_dispatch',GITHUB_RUN_ATTEMPT:'1',GITHUB_REF:'refs/heads/main'};

@@ -357,8 +357,9 @@ A combined daily/month-end report checks New York completion against its actual
 monthly cutoff, not the later daily target. The October 31 archive is already
 complete at November 3 10:00 even though the November 2 NY natural day is not.
 If the daily target itself is month-end, its genuine natural-day completion
-check still waits for NY midnight. v1 weekly/monthly and reviewed manual-entry
-rules remain unchanged. No completed month lock or financial formula is relaxed.
+check still waits for NY midnight. v1 weekly/monthly rules remain unchanged.
+Reviewed daily entry follows the same genuine monthly-cutoff check described
+below. No completed month lock or financial formula is relaxed.
 
 Calendar readiness alone does not confirm manual synchronization or source
 completeness. Source dates, benchmark coverage, candidate/concurrency checks,
@@ -385,3 +386,21 @@ that monthly cutoff's NY midnight; source dates, closed/unknown market handling,
 financial validation, same-target claims, attempt budgets and rerun refusal stay
 unchanged. Calendar readiness is not evidence of source availability or a grant
 to run. No paused workflow or continuous daily production is enabled here.
+
+## Daily entry after explicit synchronization confirmation
+
+The existing reviewed daily entry can start before the scheduled 09:00 check
+when the user confirms all three accounts synchronized for the exact target
+date. Its existing actual New York market-close check still applies; a report
+with a month-end archive also waits for that archive's New York natural day to
+finish. A confirmation does not establish source completeness or permission to
+finalize an unfinished accounting month.
+
+The reviewed entry and scheduled fallbacks share the same target, pending
+candidate checks, publication coverage and attempt history. A published target
+does not enter the legacy same-period IB recheck, and an ordinary confirmation
+cannot retry a target after financial entry. Only a separately authorized
+exact-release recovery may use its own existing exception. No consumed record,
+schedule, source date or report identifier is reset. See
+[the producer operating contract](fee-cloud-producer.md#start-a-daily-report-after-explicit-completed-sync-confirmation)
+for dispatch and publication verification boundaries.

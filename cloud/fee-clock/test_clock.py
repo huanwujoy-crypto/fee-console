@@ -172,6 +172,21 @@ class ClockTests(unittest.TestCase):
         self.assertFalse(self.store.intents)
         self.assertEqual(self.github.post_count, 0)
 
+    def test_early_reviewed_daily_prevents_nine_am_fallback_dispatch(self):
+        for status in ('queued', 'in_progress', 'completed'):
+            with self.subTest(status=status):
+                self.setUp()
+                self.github.day = [run_row(status=status, event='workflow_dispatch',
+                                          created='2026-10-13T23:30:00Z')]
+                self.github.job[11] = [
+                    {'id': 21, 'run_id': 11, 'name': 'period',
+                     'status': 'completed', 'conclusion': 'success'},
+                    {'id': 22, 'run_id': 11, 'name': 'Produce',
+                     'status': status, 'conclusion': 'success' if status == 'completed' else None}]
+                self.assertEqual(self.go()['outcome'], 'already-requested')
+                self.assertFalse(self.store.intents)
+                self.assertEqual(self.github.post_count, 0)
+
     def test_natural_run_appearing_after_claim_prevents_post(self):
         self.github.after_claim = [run_row(event='schedule')]
         self.assertEqual(self.go()['outcome'], 'natural-request-visible')

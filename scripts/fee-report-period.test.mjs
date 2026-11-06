@@ -95,9 +95,55 @@ test('reviewed synchronized daily entry uses the same v2 shape and waits for the
   const winter=dailyReportPlan('2026-11-23',markets,{reviewedSyncDate:'2026-11-23'});
   assert.equal(reportPlanReadiness(winter,new Date('2026-11-24T05:14:59+08:00')).reasonCode,'SOURCE_DAY_NOT_CLOSED');
   assert.equal(reportPlanReadiness(winter,new Date('2026-11-24T05:15:00+08:00')).state,'due');
+  const winterOrdinary=dailyReportPlan('2026-11-23',markets);
+  assert.equal(reportPlanReadiness(winterOrdinary,new Date('2026-11-24T08:59:59+08:00')).reasonCode,'REPORT_NOT_DUE');
+  assert.equal(reportPlanReadiness(winterOrdinary,new Date('2026-11-24T09:00:00+08:00')).state,'due');
   for(const reviewedSyncDate of ['',true,'2026-10-27','invalid'])assert.throws(()=>dailyReportPlan(target,markets,{reviewedSyncDate}));
   for(const change of [{scheduledAt:'2026-10-29T01:00:00+08:00'},{syncCompleted:true},{priceThrough:'2026-10-27'}])assert.equal(validateReportPlan({...reviewed,...change}),false);
   assert.throws(()=>dailyReportPlan('2026-11-01',markets,{reviewedSyncDate:'2026-11-01'}),/CALENDAR_SCOPE_UNVERIFIED/);
+});
+
+test('reviewed month-end waits for the actual New York midnight in summer and winter',()=>{
+  for(const [target,day,marketClose,monthClose]of [
+    ['2026-09-30','2026-10-01','04:15:00','12:00:00'],
+    ['2026-11-30','2026-12-01','05:15:00','13:00:00'],
+  ]){
+    const plan=dailyReportPlan(target,['NYSE','NASDAQ'],{reviewedSyncDate:target});
+    assert.equal(plan.kind,'daily-monthly');assert.deepEqual(plan.monthlyCutoffs,[target]);
+    const anchor=Date.parse(plan.scheduledAt),sourceClosed=Date.parse(day+'T'+marketClose+'+08:00'),monthClosed=Date.parse(day+'T'+monthClose+'+08:00');
+    assert.equal(reportPlanReadiness(plan,new Date(anchor-1)).reasonCode,'REPORT_NOT_DUE');
+    for(const at of [anchor,sourceClosed-1])assert.equal(reportPlanReadiness(plan,new Date(at)).reasonCode,'SOURCE_DAY_NOT_CLOSED');
+    for(const at of [sourceClosed,monthClosed-1])assert.equal(reportPlanReadiness(plan,new Date(at)).reasonCode,'ACCOUNTING_DAY_NOT_COMPLETE');
+    for(const at of [monthClosed,monthClosed+1])assert.equal(reportPlanReadiness(plan,new Date(at)).state,'due');
+    // Stored plans remain schema-valid, but an old receipt's own pre-close
+    // timestamp cannot become ready merely because it is checked later.
+    const storedPlan=JSON.parse(JSON.stringify(plan));
+    assert.equal(validateReportPlan(storedPlan),true);
+    assert.equal(reportPlanReadiness(storedPlan,new Date(sourceClosed)).reasonCode,'ACCOUNTING_DAY_NOT_COMPLETE');
+    const ordinary=dailyReportPlan(target,['NYSE','NASDAQ']);
+    assert.equal(reportPlanReadiness(ordinary,new Date(ordinary.scheduledAt)).reasonCode,'ACCOUNTING_DAY_NOT_COMPLETE');
+    assert.equal(reportPlanReadiness(ordinary,new Date(monthClosed)).state,'due');
+  }
+});
+
+test('reviewed cross-month catch-up closes the archived month, not the later daily target',()=>{
+  for(const [target,periodFrom,cutoff,day,marketClose]of [
+    ['2026-10-01','2026-09-30','2026-09-30','2026-10-02','04:15:00'],
+    ['2026-11-02','2026-10-31','2026-10-31','2026-11-03','05:15:00'],
+  ]){
+    const plan=dailyReportPlan(target,['NYSE','NASDAQ'],{periodFrom,reviewedSyncDate:target});
+    assert.equal(validateReportPlan(plan),true);assert.equal(plan.kind,'daily-monthly');
+    assert.equal(plan.accountingThrough,target);assert.equal(plan.priceThrough,target);assert.deepEqual(plan.monthlyCutoffs,[cutoff]);
+    const sourceClosed=Date.parse(day+'T'+marketClose+'+08:00');
+    assert.equal(reportPlanReadiness(plan,new Date(sourceClosed-1)).reasonCode,'SOURCE_DAY_NOT_CLOSED');
+    // The target is still the current NY natural day. Its completed market
+    // session is enough because the archived month ended on an earlier day.
+    assert.equal(reportPlanReadiness(plan,new Date(sourceClosed)).state,'due');
+    assert.equal(reportPlanReadiness(plan,new Date(day+'T08:40:00+08:00')).state,'due');
+    const ordinary=dailyReportPlan(target,['NYSE','NASDAQ'],{periodFrom});
+    assert.equal(reportPlanReadiness(ordinary,new Date(day+'T08:40:00+08:00')).reasonCode,'REPORT_NOT_DUE');
+    assert.equal(reportPlanReadiness(ordinary,new Date(ordinary.scheduledAt)).state,'due');
+  }
 });
 
 test('ordinary daily readiness keeps next-day timing and exact plan validation',()=>{
