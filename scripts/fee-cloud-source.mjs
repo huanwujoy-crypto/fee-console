@@ -9,7 +9,7 @@ import {managedTransferCandidates,buildManagedTransferProof,consumeManagedTransf
 import {validateManagementRegistry} from './fee-management-exemption.mjs';
 import {SHARESIGHT_REFERENCE_SCHEMA,normalizeSharesightReference,classifyFlow} from './daily-core.mjs';
 
-import {isSharesightDeclaredTradeCash} from './fee-trade-cash-evidence.mjs';
+import {isSharesightDeclaredTradeCash,resolveFundRecordsTradeCashEvidence} from './fee-trade-cash-evidence.mjs';
 export {isControlledWebullNetProceeds} from './fee-trade-cash-evidence.mjs';
 
 const API = "https://api.sharesight.com";
@@ -143,15 +143,18 @@ export function parseSourceJson(text) {
   };
   const retainPayload = (payload, rawPayload) => {
     retainRows(object(payload) ? payload.trades : payload, object(rawPayload) ? rawPayload.trades : rawPayload,
-      ['quantity', 'price', 'value', 'balance', 'balance_in_portfolio_currency']);
+      ['quantity', 'price', 'value', 'brokerage', 'balance', 'balance_in_portfolio_currency']);
     if (object(payload)) retainRows(payload.cash_accounts, rawPayload.cash_accounts,
       ['balance', 'balance_in_portfolio_currency']);
     if (object(payload)) retainRows(payload.cash_account_transactions, rawPayload.cash_account_transactions,
       ['amount', 'balance']);
     // The native payout endpoint returns a flat record. Retain its original
     // money tokens so a date proof cannot hide subcent differences by rounding.
-    if (object(payload) && Object.hasOwn(payload, 'paid_on')) retain(payload, rawPayload,
-      ['gross_amount', 'resident_withholding_tax', 'amount', 'tax_credit']);
+    if (object(payload) && Object.hasOwn(payload, 'paid_on')) {
+      retain(payload, rawPayload,['gross_amount','resident_withholding_tax','amount','tax_credit',
+        'id','portfolio_id','holding_id','company_event_id']);
+      if(object(payload.company_event))retain(payload.company_event,rawPayload.company_event,['id']);
+    }
     if (object(payload?.report)) {
       retain(payload.report, rawPayload.report, ['value']);
       retainRows(payload.report.holdings, rawPayload.report.holdings, ['quantity', 'value']);
@@ -188,6 +191,12 @@ export function cashCents(row, key) {
   const value = BigInt(match[2]) * 10n ** BigInt(exponent + 2) * (match[1] ? -1n : 1n);
   if (value < -100000000000000n || value > 100000000000000n) fail('AMOUNT');
   return value;
+}
+
+function originalPositiveInteger(row,key){
+  const value=id(row[key]),text=exactNumberText(row,key,'IDENTITY');
+  const match=/^(\d+)e(-?\d+)$/.exec(text),exponent=Number(match?.[2]);
+  if(!match||exponent<0||exponent>15||BigInt(match[1])*10n**BigInt(exponent)!==BigInt(value))fail('IDENTITY');
 }
 
 function datedCashList(payload, expected, targetDate,reference=false) {
@@ -345,7 +354,7 @@ export function catalogScopeEvidence(listing, report, historyPayload, targetTrad
       .sort((a, b) => a.holdingId - b.holdingId)} : {}) };
 }
 
-import { dividendCashKey, legacyDividendCashKey, resolveDividendCashEvidence, resolveSharesightReferenceIncomeEvidence, validateSharesightReferenceIncomeEvidence } from './fee-income-evidence.mjs';
+import { dividendCashKey, legacyDividendCashKey, fundRecordsDividendCashKey, resolveDividendCashEvidence, resolveSharesightReferenceIncomeEvidence, validateSharesightReferenceIncomeEvidence } from './fee-income-evidence.mjs';
 import { notificationIncomeAudits } from './fee-income-date-policy.mjs';
 
 function verifyBenchmarkIdentity(cache) {
@@ -559,6 +568,17 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
   }
   let incomeEvidence;
   try {
+    if(reference)for(const row of Object.values(cashTransactions).flatMap(p=>rows(p,'cash_account_transactions'))){
+      const selected=fundRecordsDividendCashKey(row.description);
+      if(!selected)continue;
+      cashCents(row,'amount');
+      const payout=incomePayouts[selected.payoutId];
+      if(payout){
+        for(const key of ['gross_amount','resident_withholding_tax','amount','tax_credit'])cashCents(payout,key);
+        for(const key of ['id','portfolio_id','holding_id','company_event_id'])originalPositiveInteger(payout,key);
+        if(payout.company_event!=null)originalPositiveInteger(payout.company_event,'id');
+      }
+    }
     if(account==='webull')for(const audit of notificationIncomeAudits(incomeDateEvidence,targetDate)) {
       const cashId=audit.proof.scope.cashAccountId,listed=listedCash.filter(row=>id(row.id)===cashId);
       const reported=rows(report.cash_accounts||[],'cash_accounts').filter(row=>id(row.id)===cashId);
@@ -581,6 +601,23 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
   const trades = rows(tradesPayload, "trades");
   if (trades.some(row => id(row.portfolio_id) !== expected.portfolioId || row.transaction_date !== targetDate
       || row.state !== 'confirmed')) fail('TRADE_IDENTITY');
+  // The compact Fund Records key alone is not trade evidence. Resolve it
+  // against the complete same-read trade/cash sets before assigning a role.
+  const fundRecordsTradeEvidence=reference?resolveFundRecordsTradeCashEvidence({
+    account,portfolioId:expected.portfolioId,targetDate,trades,
+    cashRows:Object.values(cashTransactions).flatMap(p=>rows(p,'cash_account_transactions')),
+    cashCurrencies:Object.fromEntries(listedCash.map(c=>[id(c.id),c.currency]))
+  }):new Map();
+  for(const row of Object.values(cashTransactions).flatMap(p=>rows(p,'cash_account_transactions'))){
+    if(!fundRecordsTradeEvidence.has(row.id))continue;
+    cashCents(row,'amount');
+    const pointer=/\bTrade([1-9]\d{0,14});/.exec(row.description)?.[1];
+    const trade=trades.find(t=>String(t.id)===pointer);
+    for(const key of ['value','brokerage'])cashCents(trade,key);
+    // Number-based matching may not erase precision from the original JSON.
+    const canonical=parseSourceJson(JSON.stringify({trades:[{id:trade.id,quantity:trade.quantity,price:trade.price}]})).trades[0];
+    for(const key of ['quantity','price'])if(exactNumberText(trade,key)!==exactNumberText(canonical,key))fail('CASH_PRECISION');
+  }
   const flows = [];
   const seenTransactions = new Set();
   let movementTotal = 0;
@@ -615,6 +652,7 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
         holdingId: row.holding_id == null ? null : id(row.holding_id),
         foreignIdentifier,
         ...(legacyControlledWebullPrincipal || isSharesightDeclaredTradeCash({account,portfolioId:expected.portfolioId,row,targetDate}) ? { evidence: "internal_trade" } : {}),
+        ...(fundRecordsTradeEvidence.get(row.id) || {}),
         ...(incomeEvidence.get(row.id) || {}),
       };
       if(reference&&cashAccount.currency!=='USD'&&classifyFlow(flow,{reference:true}).kind!=='internal')fail('NON_USD_EXTERNAL_FLOW');
@@ -783,7 +821,7 @@ class FixedHttp {
     try {
       const path = new URL(url).pathname;
       const isPrecisionSource = path.endsWith('/trades.json') || path.endsWith('/performance') || path.endsWith('/cash_accounts.json')
-        || path.endsWith('/cash_account_transactions.json');
+        || path.endsWith('/cash_account_transactions.json') || /^\/api\/v2\/payouts\/[1-9]\d{0,14}\.json$/.test(path);
       const includeBytes=isPrecisionSource||this.onSourceResponse&&url!==TOKEN_URL;
       const response = await boundedJson(this.fetchImpl, url, init, {
         timeoutMs: this.timeoutMs, maxBytes: MAX_BODY, requireJsonType: true, includeBytes: !!includeBytes,
@@ -863,7 +901,8 @@ export class SharesightCloudReader {
         const cashRecords=Object.values(cashTransactions).flatMap(p=>rows(p,'cash_account_transactions'));
         const keys=cashRecords.map(row=>{
           const legacy=this.sourceMode==='sharesight-reference'&&row.cash_account_transaction_type?.name==='DEPOSIT'?legacyDividendCashKey(row.description):null;
-          return dividendCashKey(row.description)||(legacy?.role==='gross'?legacy:null);
+          const fundRecords=this.sourceMode==='sharesight-reference'?fundRecordsDividendCashKey(row.description):null;
+          return dividendCashKey(row.description)||(legacy?.role==='gross'?legacy:null)||fundRecords;
         }).filter(Boolean);
         let audits;
         try { audits=notificationIncomeAudits(this.incomeDateEvidence,targetDate); } catch { fail('INCOME_EVIDENCE'); }

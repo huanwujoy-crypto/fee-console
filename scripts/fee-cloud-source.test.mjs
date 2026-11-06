@@ -20,7 +20,7 @@ import { reportFailureCode } from './fee-report-producer.mjs';
 import { CLOUD_ACCOUNTS, parseSourceJson, cashCents } from './fee-cloud-source.mjs';
 import { reportAddDays } from './fee-report-period.mjs';
 import { IB_PUBLICATION_DIAGNOSTIC_PREFIX, validateIbPublicationDiagnostic } from './ib-manager-report.mjs';
-import { isSharesightDeclaredTradeCash, sharesightCashRelations, resolveTradeCashEvidence } from './fee-trade-cash-evidence.mjs';
+import { isSharesightDeclaredTradeCash, sharesightCashRelations, resolveTradeCashEvidence, resolveFundRecordsTradeCashEvidence } from './fee-trade-cash-evidence.mjs';
 
 test('native payout retains exact money tokens without changing source values or serialized fields',()=>{
   const text='{"id":13,"paid_on":"2026-11-04","gross_amount":1e1,"resident_withholding_tax":3.00,"amount":7.0,"tax_credit":0}';
@@ -62,6 +62,171 @@ test('IB diagnostic summary rejects unknown fields, arbitrary reasons, duplicate
 });
 
 const D = "2026-09-23";
+function fundRecordsTradeFixture(side='BUY',targetDate=D){
+ const buy=side==='BUY',quantity=buy?2:3,price=10.005,gross=buy?'20.01':'30.02',cash=buy?'20.03':'30.00';
+ const ticker=buy?'SYNTH':'SYNTHL',tradeId=buy?222:223,gmail=buy?'abcdef0123456789':'fedcba9876543210';
+ const zone=targetDate==='2026-11-06'?'EST':'EDT';
+ const trade={id:tradeId,portfolio_id:1350094,holding_id:4,transaction_date:targetDate,state:'confirmed',
+  description_code:side,instrument:{id:1004,code:ticker,market_code:'NYSE',currency_code:'USD'},
+  quantity,price,price_currency_code:null,brokerage:0.02,brokerage_currency_code:'USD',value:buy?20.03:-30,
+  comments:`synthetic confirmed trade. key=webull.manual|10205226|${gmail}|${side}|${ticker}|${quantity}|${price}`};
+ const row={id:buy?777:778,cash_account_id:90250,date_time:targetDate+(zone==='EST'?'T05:00:00.000Z':'T04:00:00.000Z'),
+  amount:buy?-20.03:30,trade_id:null,holding_id:null,payout_id:null,foreign_identifier:null,
+  cash_account_transaction_type:{name:buy?'WITHDRAWAL':'DEPOSIT'},
+  description:`Webull ${ticker} ${buy?`buy debit USD${cash}, fee0.02`:`sale net USD${cash}, gross${gross} fee0.02`}; NOT external funding. Trade${tradeId}; Fund Records, ${targetDate} ${zone}. key=webull.manual|10205226|${gmail}|cash`};
+ return {account:'webull',portfolioId:1350094,targetDate,cashRows:[row],trades:[trade],cashCurrencies:{90250:'USD'}};
+}
+function fundRecordsSourceFixture(){
+ const source=raw(),buy=fundRecordsTradeFixture(),sell=fundRecordsTradeFixture('SELL');
+ source.webull.trades.trades=[buy.trades[0],sell.trades[0]];
+ const common={cash_account_id:90250,date_time:D+'T04:00:00.000Z',trade_id:null,holding_id:null,payout_id:null,foreign_identifier:null};
+ source.webull.cashTransactions[90250].cash_account_transactions=[buy.cashRows[0],sell.cashRows[0],
+  {...common,id:8801,amount:70,cash_account_transaction_type:{name:'DEPOSIT'},
+   description:`Webull SGOV after-WHT payout USD70.00, NOT external funding. Gross100.00, WHT30.00, separate fee0.25. Fund Records ${D} 18:04:20 HKT; payout920. key=webull.manual|10205226|9000|net`},
+  {...common,id:8802,amount:-0.25,cash_account_transaction_type:{name:'FEE'},
+   description:`Webull SGOV dividend processing fee USD0.25, Fund Records ${D} 18:04:20 HKT; payout920. key=webull.manual|10205226|9000|fee`}];
+ source.webull.incomePayouts={920:{id:920,portfolio_id:1350094,holding_id:3,symbol:'SGOV',paid_on:previousCalendarDate(D),
+  currency:'USD',confirmed:true,state:'confirmed',non_taxable:false,tax_credit:0,company_event_id:9000,
+  gross_amount:100,resident_withholding_tax:30,amount:70}};
+ return source;
+}
+test('Fund Records cash requires complete unique trades, exact money and matching NY season',()=>{
+ for(const side of ['BUY','SELL'])for(const day of [D,'2026-11-06']){
+  const f=fundRecordsTradeFixture(side,day),before=JSON.stringify(f);
+  assert.deepEqual([...resolveFundRecordsTradeCashEvidence(f).values()],[{evidence:'internal_trade'}]);
+  assert.equal(JSON.stringify(f),before);
+ }
+ const changes=[f=>f.cashRows[0].amount+=0.01,f=>f.cashRows[0].amount+=0.001,
+  f=>f.cashRows[0].cash_account_transaction_type.name='DEPOSIT',f=>f.cashRows[0].payout_id=920,
+  f=>f.cashRows[0].trade_id=223,f=>f.cashRows[0].holding_id=99,f=>f.cashRows[0].foreign_identifier='unrelated',
+  f=>f.cashRows[0].date_time='2026-09-22T04:00:00Z',f=>f.cashCurrencies[90250]='CAD',
+  f=>f.trades[0].state='pending',f=>f.trades[0].instrument.code='SYNTHL',f=>f.trades[0].description_code='SELL',
+  f=>f.trades[0].portfolio_id=936249,f=>f.trades[0].transaction_date='2026-09-22',
+  f=>f.trades[0].brokerage=0.03,f=>f.trades[0].value+=0.01,f=>f.trades[0].quantity=3,
+  f=>f.trades[0].comments='',f=>f.trades[0].brokerage_currency_code='HKD',
+  f=>f.cashRows[0].description=f.cashRows[0].description.replace('EDT','EST'),
+  f=>f.cashRows[0].description=f.cashRows[0].description.replace('abcdef0123456789','fedcba9876543210'),
+  f=>f.cashRows.push({...f.cashRows[0],id:779}),f=>f.trades.push({...f.trades[0]})];
+ for(const change of changes){const f=fundRecordsTradeFixture();change(f);assert.throws(()=>resolveFundRecordsTradeCashEvidence(f),undefined,change.toString());}
+ for(const change of [f=>f.account='schwab',f=>f.portfolioId=936249]){const f=fundRecordsTradeFixture();change(f);assert.equal(resolveFundRecordsTradeCashEvidence(f).size,0);}
+});
+test('Fund Records source classifies trades and the two-leg income while preserving source values and dates',()=>{
+ const source=fundRecordsSourceFixture(),before=JSON.stringify(source),benchmark=selectBenchmark(benchmarkCache,D);
+ const baseline=normalizeRead(raw(),D,benchmark,{sourceMode:'sharesight-reference'});
+ const input=normalizeRead(source,D,benchmark,{sourceMode:'sharesight-reference'});
+ for(const key of ['accounts','splits','acctCash','prevAcctCash','benchmark','sourceReference'])assert.deepEqual(input[key],baseline[key],key);
+ const rows=input.flows.filter(f=>f.acct==='webull');assert.equal(rows.length,4);
+ assert.equal(rows.filter(f=>f.evidence==='internal_trade').length,2);
+ assert.deepEqual(rows.filter(f=>f.incomeRole).map(f=>[f.evidence,f.incomeDateVerified,f.cashPostingDate]),
+  [['internal_income_pending_date',false,D],['internal_income_pending_date',false,D]]);
+ const result=reconcileFlows([],[],input.flows,{reference:true});
+ assert.deepEqual(result.auto,[]);assert.deepEqual(result.unresolved,[]);assert.deepEqual(result.errors,[]);
+ assert.equal(JSON.stringify(source),before);assert.equal(source.webull.incomePayouts[920].paid_on,previousCalendarDate(D));
+});
+test('Fund Records source keeps unknown rows and rejects missing or contradictory income and trade evidence',()=>{
+ const mutations=[s=>s.webull.cashTransactions[90250].cash_account_transactions[0].amount+=0.01,
+  s=>delete s.webull.incomePayouts[920],s=>delete s.webull.incomePayouts[920].company_event_id,
+  s=>s.webull.incomePayouts[920].company_event_id=9001,
+  s=>s.webull.cashTransactions[90250].cash_account_transactions.pop(),
+  s=>s.webull.cashTransactions[90250].cash_account_transactions[3].amount=-0.26];
+ for(const mutate of mutations){const source=fundRecordsSourceFixture();mutate(source);const before=JSON.stringify(source);
+  assert.throws(()=>normalizeRead(source,D,selectBenchmark(benchmarkCache,D),{sourceMode:'sharesight-reference'}));assert.equal(JSON.stringify(source),before);}
+ const source=fundRecordsSourceFixture();source.webull.cashTransactions[90250].cash_account_transactions.push({
+  id:8803,cash_account_id:90250,date_time:D+'T04:00:00Z',amount:1,description:'unknown source',cash_account_transaction_type:{name:'DEPOSIT'}});
+ const input=normalizeRead(source,D,selectBenchmark(benchmarkCache,D),{sourceMode:'sharesight-reference'});
+ assert.equal(reconcileFlows([],[],input.flows,{reference:true}).unresolved.length,1);
+});
+test('Fund Records cash, fee, quantity, price and payout original JSON precision cannot be erased by Number',()=>{
+ for(const [kind,key,token] of [['cash','amount','-20.030000000000000001'],['trade','value','20.030000000000000001'],
+  ['trade','brokerage','0.02000000000000000001'],['trade','quantity','2.0000000000000000001'],['trade','price','10.00500000000000000001'],
+  ['income','gross_amount','100.000000000000000001'],['income','resident_withholding_tax','30.000000000000000001'],
+  ['income','amount','70.000000000000000001'],['income','tax_credit','1e-999']]){
+  const source=wireInput(fundRecordsSourceFixture()),p=source.webull;
+  const row=kind==='cash'?p.cashTransactions[90250].cash_account_transactions[0]:kind==='trade'?p.trades.trades[0]:p.incomePayouts[920];
+  const text=JSON.stringify(row).replace(new RegExp('"'+key+'":-?[0-9.e+-]+'),'"'+key+'":'+token);
+  if(kind==='cash')p.cashTransactions[90250].cash_account_transactions[0]=parseSourceJson('{"cash_account_transactions":['+text+']}').cash_account_transactions[0];
+  else if(kind==='trade')p.trades.trades[0]=parseSourceJson('{"trades":['+text+']}').trades[0];
+  else p.incomePayouts[920]=parseSourceJson(text);
+  assert.throws(()=>normalizeCloudRead(source,D,selectBenchmark(benchmarkCache,D),{sourceMode:'sharesight-reference'}),undefined,kind+':'+key);
+ }
+});
+test('Fund Records reader selects the personal payout once per stable read and preserves native event binding',async()=>{
+ const source=fundRecordsSourceFixture(),calls=[];
+ const fetchImpl=async(url,init)=>{
+  const u=new URL(url);calls.push({path:u.pathname,method:init.method});
+  if(u.pathname==='/oauth2/token')return jsonResponse(url,{access_token:'s'.repeat(30),token_type:'bearer'});
+  assert.equal(init.method,'GET');
+  if(u.pathname==='/api/v2/portfolios.json')return jsonResponse(url,{portfolios:Object.values(CLOUD_ACCOUNTS).map(x=>({id:x.portfolioId,name:x.name,currency_code:'USD'}))});
+  if(u.pathname==='/api/v2/payouts/920.json')return jsonResponse(url,source.webull.incomePayouts[920]);
+  const account=u.pathname.includes('/936249/')||u.pathname.includes('/142251/')?'schwab':'webull',p=source[account];
+  if(u.pathname.endsWith('/performance'))return jsonResponse(url,p.performance);
+  if(u.pathname.endsWith('/holdings'))return jsonResponse(url,p.holdings);
+  if(u.pathname.endsWith('/cash_accounts.json'))return jsonResponse(url,p.cashAccounts);
+  if(u.pathname.endsWith('/cash_account_transactions.json'))return jsonResponse(url,p.cashTransactions[u.pathname.split('/')[4]]);
+  if(u.pathname.endsWith('/trades.json'))return jsonResponse(url,p.trades);
+  assert.fail('unapproved synthetic endpoint');
+ };
+ const reader=new SharesightCloudReader({clientId:'synthetic',clientSecret:'synthetic',fetchImpl,sourceMode:'sharesight-reference'});
+ const result=await reader.readStable(D,selectBenchmark(benchmarkCache,D));
+ assert.equal(calls.filter(c=>c.path==='/api/v2/payouts/920.json').length,2);
+ assert.equal(calls.some(c=>c.path.includes('/payouts/9000')),false,'company event ID is never used as a personal payout ID');
+ assert.equal(result.flows.filter(f=>f.incomeRole).length,2);
+ assert.equal(result.flows.some(f=>f.incomeDateVerified===true),false);
+ const before=JSON.stringify(source);delete source.webull.incomePayouts[920].company_event_id;
+ await assert.rejects(reader.readStable(D,selectBenchmark(benchmarkCache,D)),/INCOME_EVIDENCE/);
+ assert.notEqual(JSON.stringify(source),before);
+});
+test('Fund Records native payout identities cannot acquire an integer by hidden JSON rounding',()=>{
+ for(const key of ['id','portfolio_id','holding_id','company_event_id']){
+  const source=wireInput(fundRecordsSourceFixture()),payout=source.webull.incomePayouts[920];
+  const text=JSON.stringify(payout).replace(new RegExp('"'+key+'":'+payout[key]+'(?=[,}])'),'"'+key+'":'+payout[key]+'.000000000000000001');
+  source.webull.incomePayouts[920]=parseSourceJson(text);
+  assert.equal(source.webull.incomePayouts[920][key],payout[key],'synthetic token reproduces Number rounding');
+  assert.throws(()=>normalizeCloudRead(source,D,selectBenchmark(benchmarkCache,D),{sourceMode:'sharesight-reference'}),/INCOME_EVIDENCE/);
+ }
+ const source=wireInput(fundRecordsSourceFixture()),text=JSON.stringify(source.webull.incomePayouts[920]).replace(/}$/,',"company_event":{"id":9000.000000000000000001}}');
+ source.webull.incomePayouts[920]=parseSourceJson(text);
+ assert.throws(()=>normalizeCloudRead(source,D,selectBenchmark(benchmarkCache,D),{sourceMode:'sharesight-reference'}),/INCOME_EVIDENCE/);
+});
+test('Fund Records complete offline writer creates a valid fee receipt while unknown history still preserves original bytes',async t=>{
+ const {dailyReportPlan}=await import('./fee-report-period.mjs');
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'fee-fund-records-writer-'));fs.chmodSync(dir,0o700);
+ t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+ const key=randomBytes(32),seal=(value,v=3)=>{const iv=randomBytes(12),c=createCipheriv('aes-256-gcm',key,iv);return JSON.stringify({enc:true,v,data:Buffer.concat([iv,c.update(JSON.stringify(value)),c.final(),c.getAuthTag()]).toString('base64')});};
+ const unseal=text=>{const b=Buffer.from(JSON.parse(text).data,'base64'),c=createDecipheriv('aes-256-gcm',key,b.subarray(0,12));c.setAuthTag(b.subarray(-16));return JSON.parse(Buffer.concat([c.update(b.subarray(12,-16)),c.final()]));};
+ const economic={v:4,settings:{start:previousCalendarDate(D),mgmt:2,carry:20},accounts:[{id:'schwab',opening:1000},{id:'webull',opening:1000}],months:[],fees:[]};
+ const base={daily:[{d:previousCalendarDate(D),schwab:1000,webull:1000,cash:800,stock:1050,other:150,acctCash:{schwab:400,webull:400},spy:700,qqq:600,bd:previousCalendarDate(D),bstate:'session'}],flowsAuto:[],flowsUnresolved:[],status:{asOf:previousCalendarDate(D),provisional:false,calibrated:false,unresolvedCount:0,notes:[],splitDelta:0}};
+ base.feeCalculationReceipt=buildFeeCalculationReceipt({data:base,economicInput:economic});
+ const econ=path.join(dir,'economic.json'),clock=path.join(dir,'clock.mjs'),economicBytes=seal(economic,4);
+ fs.writeFileSync(econ,economicBytes,{mode:0o600});
+ fs.writeFileSync(clock,"const D=Date,n=D.parse('2026-09-24T06:00:00Z');globalThis.Date=class extends D{constructor(...a){super(...(a.length?a:[n]));}static now(){return n;}};globalThis.fetch=()=>{throw Error('NETWORK_FORBIDDEN');};");
+ let controlReceipt;
+ for(const kind of ['control','fund-records','unknown-history']){
+  const source=kind==='control'?raw():fundRecordsSourceFixture(),payload=structuredClone(base);
+  if(kind==='unknown-history')payload.flowsUnresolved.push({id:'synthetic-unresolved-history',date:previousCalendarDate(D),acct:'webull',amount:1,type:'DEPOSIT',desc:'unknown original source',effective:false});
+  const input=normalizeRead(source,D,selectBenchmark(benchmarkCache,D),{sourceMode:'sharesight-reference'});
+  const file=path.join(dir,kind+'.json'),before=seal(payload);fs.writeFileSync(file,before,{mode:0o600});
+  const args=['--date='+D,'--file='+file,'--source-fetched-at=2026-09-24T05:59:00Z','--source-fingerprint='+input.sourceFingerprint,
+   '--sharesight-reference='+JSON.stringify(input.sourceReference),'--flows='+JSON.stringify(input.flows),
+   '--report-plan='+JSON.stringify(dailyReportPlan(D,['NYSE','NASDAQ'])),'--src-bench='+D,'--bench-state=session','--spy=701','--qqq=602'];
+  for(const a of ['schwab','webull'])args.push(`--${a}=${input.accounts[a]}`,`--src-${a}=${D}`,`--acct-cash-${a}=${input.acctCash[a]}`);
+  for(const s of ['cash','stock','other'])args.push(`--${s}=${input.splits[s]}`);
+  const run=spawnSync(process.execPath,['--import',clock,new URL('./daily.mjs',import.meta.url).pathname,...args],
+   {cwd:dir,encoding:'utf8',env:{PATH:process.env.PATH,FEE_DATA_KEY:key.toString('base64url'),FEE_ECON_FILE:econ}});
+  if(kind==='unknown-history'){
+   assert.equal(run.status,1,run.stderr);assert.match(run.stderr,/FEE_REPORT_RECEIPT_UNRESOLVED_FLOW — nothing written/);
+   assert.equal(fs.readFileSync(file,'utf8'),before);
+  }else{
+   assert.equal(run.status,0,run.stderr);const data=unseal(fs.readFileSync(file,'utf8'));
+   assert.equal(data.feeCalculationReceipt.asOf,D);assert.deepEqual(data.flowsAuto,[]);assert.deepEqual(data.flowsUnresolved,[]);
+   assert.equal(data.feeReportPublication.feeReceiptId,data.feeCalculationReceipt.receiptId);
+   assert.deepEqual(data.daily[0],base.daily[0]);
+   if(kind==='control')controlReceipt=data.feeCalculationReceipt;
+   else assert.deepEqual(data.feeCalculationReceipt,controlReceipt,'internal security cash and income cannot create investor principal or alter the fee result');
+  }
+  assert.equal(fs.readFileSync(econ,'utf8'),economicBytes);
+ }
+});
 function quotedPrincipalFixture(){
  const key='webull.manual|10205226|abcdef0123456789|BUY|TEST|2|10|cash';
  return {account:'webull',portfolioId:1350094,targetDate:D,row:{
@@ -206,6 +371,7 @@ const wireInput = input => Object.fromEntries(Object.entries(input).map(([accoun
   }
   copy.cashTransactions = Object.fromEntries(Object.entries(p.cashTransactions).map(([key, value]) =>
     [key, parseTradeJson(JSON.stringify(value))]));
+  if(p.incomePayouts)copy.incomePayouts=Object.fromEntries(Object.entries(p.incomePayouts).map(([key,value])=>[key,parseSourceJson(JSON.stringify(value))]));
   copy.cashLedgerHistory = p.cashLedgerHistory === null ? null : Object.fromEntries(
     (Object.hasOwn(p, 'cashLedgerHistory') ? Object.entries(p.cashLedgerHistory || {})
       : (p.cashAccounts?.cash_accounts || []).filter(row => row.currency === 'USD').map(row => [row.id, fixtureCashHistory(p, row.id)]))
