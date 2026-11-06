@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="管理费">
 <meta name="theme-color" content="#fcfcfb">
-<meta name="fee-console-build" content="4.9.43">
+<meta name="fee-console-build" content="4.9.45">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -247,6 +247,7 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
 
 .ratio-return-pair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.ratio-return-period{display:flex;flex-direction:column;gap:5px;min-width:0}.ratio-return-period small{font-size:12px;line-height:1.4;overflow-wrap:anywhere}.ratio-return-badge{display:inline-block;color:var(--muted,#555)}.ratio-returns{margin:6px 0 10px}.ratio-returns p{font-size:12px;line-height:1.4;overflow-wrap:anywhere}.ratio-performance-class{margin:12px 0}@media(max-width:420px){.ratio-return-pair{grid-template-columns:1fr}}
 
+.ratio-overview-disclosures{position:relative;padding-top:44px;margin-top:8px;min-width:0}#p-ratio .ratio-overview-disclosures>details{margin-top:0}#p-ratio .ratio-overview-disclosures>details>summary{position:absolute;top:0;left:0;box-sizing:border-box;width:calc(50% - 6px);min-height:44px;white-space:nowrap}#p-ratio .ratio-overview-disclosures>.ratio-asset-notes>summary{left:calc(50% + 6px)}#p-ratio .ratio-overview-disclosures>details:only-child>summary{left:0}.ratio-overview-disclosures>details[open]{padding-bottom:8px}.ratio-return-note-list{margin:6px 0;padding-left:22px}.ratio-return-note-list li{margin:6px 0;overflow-wrap:anywhere}.ratio-returns-inline{margin:8px 0;min-width:0}.ratio-return-inline-label{font-size:11px;color:var(--ink-2);margin:0 0 4px}.ratio-returns-inline .ratio-return-compact{font-variant-numeric:tabular-nums}.ratio-returns-inline .ratio-return-compact-line{overflow-wrap:anywhere}.ratio-returns-inline>.ratio-returns{margin-bottom:0}
 .ratio-overview-table{width:100%;table-layout:fixed}.ratio-overview-table th:first-child{width:24%}.ratio-overview-table th:nth-child(2){width:39%}.ratio-overview-table th:nth-child(3){width:37%}.ratio-overview-table td,.ratio-overview-table th{padding:7px 4px;vertical-align:top}.ratio-overview-weights{display:block;font-size:10px;color:var(--ink-2);white-space:nowrap}.ratio-overview-units{font-size:11px;line-height:1.4;color:var(--ink-2)}.ratio-money-precise{font-size:12px;line-height:1.4;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.ratio-return-compact{display:flex;flex-direction:column;gap:4px;font-size:11px;line-height:1.4}.ratio-return-compact-line{display:block}.ratio-return-compact-line small{display:inline;margin-left:3px;font-size:10px;color:var(--ink-2)}.ratio-overview-return-notes{font-size:11px;line-height:1.5;margin-top:8px}.ratio-overview-return-notes p{margin:7px 0}.ratio-overview-table tfoot th,.ratio-overview-table tfoot td{border-top:1px solid var(--line,#ddd)}
 </style>
 </head>
@@ -1107,7 +1108,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.9.43";
+const UI_VERSION_LABEL=" · v4.9.45";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -2420,13 +2421,18 @@ function createAggregateReturnsCore(){
  function renderTop(item){
   if(!item)return '';
   const secondary=item.target.category==='二级市场';
-  const html=renderAggregate(item).replace('<summary>收益率</summary>','<summary>'+(secondary?'直接持仓收益率':'收益率')+'</summary>');
+  const html=renderInline(item,secondary?'直接持仓收益率':'');
   const note=secondary?'仅对应直接持有的实际产品；不包括 ETF 穿透公司敞口。杠杆产品采用自身原生收益，不按敞口倍数乘算。':'同名合并使用精确成员的 Sharesight 官方小计，不平均各项百分比。';
   return html.replace('只显示组合或分类原生收益；已平仓计入历史，不用当前市值权重或穿透敞口重算。',note+' 已平仓计入历史。');
  }
 
  function select(v,s){const k=scopeKey(s);return v.items.find(x=>scopeKey(x.scope)===k)||{scope:structuredClone(s),periods:{}};}
  const esc=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+ function renderInline(item,label=''){
+  // The same verified values are readable without opening the evidence panel.
+  // Dates, account scope and native-unit caveats remain in its disclosure.
+  return '<div class="ratio-returns-inline">'+(label?'<p class="ratio-return-inline-label">'+esc(label)+'</p>':'')+renderCompact(item)+renderAggregate(item).replace('<summary>收益率</summary>','<summary>收益说明</summary>')+'</div>';
+ }
  function renderAggregate(item){
   scopeKey(item.scope);
   const reasons={'benchmark-members-included':'原报表范围包含仅作基准的虚拟持仓，尚无剔除后的官方合并收益率。','native-aggregate-not-provided':'尚无这个分类范围的 Sharesight 官方合并收益率。','cash-scope-unverified':'该组合的现金收益覆盖尚未得到来源核实。','source-unavailable':'Sharesight 未提供此范围的收益率。'};
@@ -2441,7 +2447,7 @@ function createAggregateReturnsCore(){
   const note=cash.includes('unknown')?'现金账户收益覆盖未获来源确认。':cash.includes('mixed')||cash.length>1?'现金收益覆盖分别保留各期原报表设置。':cash[0]==='included'?'含现金账户收益。':cash[0]==='excluded'?'未含现金账户收益。':'';
   return '<details class="ratio-returns"><summary>收益率</summary><div class="ratio-return-pair">'+rows+'</div><p class="ratio-return-scope">'+esc(accounts.join(' · '))+' · USD · Sharesight 原生口径</p><p>只显示组合或分类原生收益；已平仓计入历史，不用当前市值权重或穿透敞口重算。'+note+'</p></details>';
  }
- return {SCHEMA,build,select,render:renderAggregate,scopeKey,oneYearBefore,topTargets,buildTop,selectTop,renderTop,renderCompact};
+ return {SCHEMA,build,select,render:renderAggregate,scopeKey,oneYearBefore,topTargets,buildTop,selectTop,renderTop,renderCompact,renderInline};
 }
 
 function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
@@ -2644,7 +2650,7 @@ function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
     const performance=m.performance?returnsCore.build(m.performance,{expectedAccounts:m.exposure.summary.accounts.map(x=>x.replaceAll('&amp;','&')),expectedAsOf:m.sourceDates.performance}):null;
     if(performance?.topHoldings)returnsCore.buildTop(m.performance.topHoldings,m.performance,returnsCore.topTargets(m.exposure,m.companyExposure?companyCore.validate(m.companyExposure,m.exposure,m.book?.sourceSha256).top:null));
     const topReturns=(category,name)=>returnsCore.renderTop(returnsCore.selectTop(performance,{category,name}));
-    const returns=(name,parent=null)=>performance?returnsCore.render(returnsCore.select(performance,{type:parent?'fund-strategy':name==='All Together'?'portfolio':'classification',name,parent})):'';
+    const returns=(name,parent=null)=>performance?returnsCore.renderInline(returnsCore.select(performance,{type:parent?'fund-strategy':name==='All Together'?'portfolio':'classification',name,parent})):'';
     const compactReturns=name=>performance?returnsCore.renderCompact(returnsCore.select(performance,{type:name==='All Together'?'portfolio':'classification',name,parent:null})):'';
     const benchmarkCount=performance?Math.max(0,...Object.values(returnsCore.select(performance,{type:'portfolio',name:'All Together',parent:null}).periods).map(p=>p.benchmarkMemberCount||0)):0;
     const overviewView=classification?{valuationDate:classification.asOf,portfolioTotalUsd:classification.totalValueUSD,groups:classification.classes.map(g=>({category:g.name,totalUsd:g.totalValueUSD}))}:view;
@@ -2657,7 +2663,7 @@ function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
     const asset=classification?.assetAllocation,benchmarkExcluded=classification?.basis==='complete-official-classification-excluding-benchmark-only.v1';
     const assetRows=asset?.groups.map(g=>'<tr><td>'+esc(g.name)+'<small class="ratio-overview-weights">'+(g.valueCents/asset.totalCents*100).toFixed(2)+'%／'+g.targetPct+'%</small></td><td>'+preciseUsd(g.valueCents)+'</td><td>'+compactReturns(g.name)+'</td></tr>').join('');
     const assetAccounts=asset?.groups.map(g=>'<section><h3>'+esc(g.name)+'</h3><ul>'+g.accounts.map(r=>'<li><span>'+esc(r.name)+'</span><span>'+money(r.valueCents)+'</span></li>').join('')+'</ul>'+(g.accounts.length?'':'<p>本类暂无持仓。</p>')+'</section>').join('');
-    const overview=asset?'<section class="card ratio-asset-overview ratio-six-allocation"><h2>资产配置总览</h2><p>All Together · 10账户 · USD · 资产分类截至 '+esc(classification.asOf)+'</p><p class="ratio-overview-units">分类下方为当前占比／参考目标。</p><table class="ratio-overview-table"><thead><tr><th>分类</th><th>市值（USD）</th><th>收益率</th></tr></thead><tbody>'+assetRows+'</tbody><tfoot><tr><th>总资产</th><td>'+preciseUsd(asset.totalCents)+'</td><td>'+compactReturns('All Together')+'</td></tr></tfoot></table>'+(performance?'<details class="ratio-overview-return-notes"><summary>收益说明</summary><p>全部及近一年均沿用 Sharesight 对应范围的原生收益，含已平仓；不按当前市值加权，也不重算年化。</p><p>仅有官方依据时标注年化、期间收益或未满一年。没有这些标记的数值，原报表未注明是否年化。</p><p>— 表示缺少匹配的官方小计、来源未提供收益或现金范围尚待核实，不代表0%。</p></details>':'')+'<details class="ratio-asset-notes"><summary>分类、账户与参考目标</summary><p>六类互斥，按同日直接资产市值归类。股票市场仅含美国底仓、美国科技、非美发达、新兴市场；现金类为 Cash Accounts 加全部防御资产，主题投资单列。穿透和杠杆敞口不另加总。</p>'+(benchmarkExcluded?'<p>Citi-HK &amp; 地产四期中的 QQQ／SPY 仅作基准取值，已从投资资产、占比分母及穿透中排除；其他账户的真实持仓保留。</p>':'')+'<p>参考目标合计100%，仅作配置比较；PE/VC目标0%不改变实际持仓，不代表卖出指令。</p><p>黄金（GLD）：'+money(Math.round(classification.gold.valueUSD*100))+'；已计入所属分类，不另加总。</p>'+assetAccounts+(performance?'<section class="ratio-secondary-return-supplement"><h3>二级市场整体收益</h3><p>此范围含股票、防御和主题投资，不等于上方股票市场子集；现金收益沿用原报表设置。</p>'+returns('二级市场')+'</section><p class="ratio-return-date">收益截至 '+esc(performance.asOf)+'；全部及近一年含已平仓。未满一年和年化标识仅按官方证据；原报表口径表示未推算年化。总资产收益沿用官方合计。'+(benchmarkCount?'含 '+benchmarkCount+' 项用于程序取值的模拟基准，未剔除其影响；配置比例仍排除它们。':'')+'</p>':'')+'</details></section>':legacyOverview;
+    const overview=asset?'<section class="card ratio-asset-overview ratio-six-allocation"><h2>资产配置总览</h2><p>All Together · 10账户 · USD · 资产分类截至 '+esc(classification.asOf)+'</p><p class="ratio-overview-units">分类下方为当前占比／参考目标。</p><table class="ratio-overview-table"><thead><tr><th>分类</th><th>市值（USD）</th><th>收益率</th></tr></thead><tbody>'+assetRows+'</tbody><tfoot><tr><th>总资产</th><td>'+preciseUsd(asset.totalCents)+'</td><td>'+compactReturns('All Together')+'</td></tr></tfoot></table><div class="ratio-overview-disclosures">'+(performance?'<details class="ratio-overview-return-notes"><summary>收益说明</summary><ol class="ratio-return-note-list"><li>全部及近一年均沿用 Sharesight 对应范围的原生收益，含已平仓；不按当前市值加权，也不重算年化。</li><li>仅有官方依据时标注年化、期间收益或未满一年。没有这些标记的数值，原报表未注明是否年化。</li><li>— 表示缺少匹配的官方小计、来源未提供收益或现金范围尚待核实，不代表0%。</li></ol></details>':'')+'<details class="ratio-asset-notes"><summary>分类、账户与参考目标</summary><p>六类互斥，按同日直接资产市值归类。股票市场仅含美国底仓、美国科技、非美发达、新兴市场；现金类为 Cash Accounts 加全部防御资产，主题投资单列。穿透和杠杆敞口不另加总。</p>'+(benchmarkExcluded?'<p>Citi-HK &amp; 地产四期中的 QQQ／SPY 仅作基准取值，已从投资资产、占比分母及穿透中排除；其他账户的真实持仓保留。</p>':'')+'<p>参考目标合计100%，仅作配置比较；PE/VC目标0%不改变实际持仓，不代表卖出指令。</p><p>黄金（GLD）：'+money(Math.round(classification.gold.valueUSD*100))+'；已计入所属分类，不另加总。</p>'+assetAccounts+(performance?'<section class="ratio-secondary-return-supplement"><h3>二级市场整体收益</h3><p>此范围含股票、防御和主题投资，不等于上方股票市场子集；现金收益沿用原报表设置。</p>'+returns('二级市场')+'</section><p class="ratio-return-date">收益截至 '+esc(performance.asOf)+'；全部及近一年含已平仓。未满一年和年化标识仅按官方证据；原报表口径表示未推算年化。总资产收益沿用官方合计。'+(benchmarkCount?'含 '+benchmarkCount+' 项用于程序取值的模拟基准，未剔除其影响；配置比例仍排除它们。':'')+'</p>':'')+'</details></div></section>':legacyOverview;
     const table=(rows,category)=>'<table><thead><tr><th>名称</th><th>USD金额</th><th>占总资产／占本类资产</th></tr></thead><tbody>'+rows.map((r,i)=>'<tr><td data-security-code="'+esc(r.securityCode||'')+'">'+(i+1)+'. '+esc(r.name)+(r.accounts?.length?'<span class="ratio-holding-accounts">'+esc(r.accounts.join(' · '))+'</span>':'')+(r.sourceHoldings?.length>1?'<details><summary>合并持仓 · '+r.sourceHoldings.length+'笔</summary><ul>'+r.sourceHoldings.map(h=>'<li>'+esc(h.securityCode)+' · '+money(Math.round(h.valueUSD*100))+'<span class="ratio-holding-accounts">'+esc(h.account)+'</span></li>').join('')+'</ul></details>':'')+topReturns(category,r.name)+'</td><td>'+money(Math.round(r.valueUsd*100))+'</td><td>'+r.portfolioWeightPct.toFixed(2)+'%／'+r.categoryWeightPct.toFixed(2)+'%</td></tr>').join('')+'</tbody></table>';
     const groups=view.groups.map((g,i)=>'<section><h3>'+esc(g.category)+(i===3?(company?.top?' · 公司经济敞口前五':' · 原证券口径前五'):' · 直接持仓前五')+'</h3><p>Exposure截至 '+esc(view.valuationDate)+' · 本类资产 '+money(Math.round(g.totalUsd*100))+'</p>'+(i===3&&company?.top?companyCore.render(m.companyExposure,m.exposure,b?.sourceSha256,r=>topReturns('二级市场',r.name)):table(g.top,g.category))+'</section>').join('');
     const companyStatus=company?.top?'<p class="ratio-key-status">公司经济敞口含显式杠杆，比例可能超过100%；不改变总资产、类别资产及管理费。</p>':company?companyCore.render(m.companyExposure,m.exposure,b?.sourceSha256):'<p class="ratio-key-status">旧快照仅有证券前五，未由同份完整原件重算公司排名；不猜测合并后的前五。</p>';
@@ -2979,7 +2985,7 @@ function styleRatioReport(root){
   for(const status of direct(report,'P'))if(status.classList.contains('ratio-key-status')&&cashNote)cashNote.insertBefore(status,cashNote.children[1]||null);
   for(const status of direct(exposure,'P'))if(methodNote&&status.textContent.includes('公司经济敞口含显式杠杆'))methodNote.append(status);
   const assets=make('div','ratio-asset-grid');
-  for(const item of direct(overview,'DIV')){
+  for(const item of direct(overview,'DIV').filter(n=>!n.classList.contains('ratio-overview-disclosures'))){
     item.classList.add('kpi');
     const label=item.querySelector('strong'),value=label?.nextSibling;
     if(label)label.classList.add('lab');
@@ -3005,7 +3011,7 @@ function styleRatioReport(root){
       const holdings=make('div','ratio-holding-list');
       for(const [index,row] of rows.entries()){
         const [nameCell,amountCell,weightCell]=Array.from(row.cells);
-        const disclosures=direct(nameCell,'DETAILS'),details=disclosures.find(n=>!n.classList.contains('ratio-returns'));
+        const disclosures=Array.from(nameCell.children).filter(n=>n.tagName==='DETAILS'||n.classList.contains('ratio-returns-inline')),details=disclosures.find(n=>n.tagName==='DETAILS'&&!n.classList.contains('ratio-returns'));
         const original=Array.from(nameCell.childNodes).filter(n=>n.nodeType===3).map(n=>n.textContent).join('').trim();
         const ranked=original.match(/^(\d+\.\s*)([\s\S]*)$/),sourceName=ranked?ranked[2]:original;
         const card=make('article','ratio-holding-row'),head=make('div','ratio-holding-head'),name=make('span','ratio-holding-name'),amount=make('span','ratio-holding-amount');
