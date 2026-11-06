@@ -9,6 +9,30 @@ export const dividendCashKey = description => {
 };
 const cents = n => typeof n === 'number' && Number.isFinite(n) ? Math.round(n*100) : null;
 
+// Fund Records uses a company-event key and a separate personal payout pointer.
+// This selector supplies neither economic evidence nor broker-date authority.
+const FUND_RECORDS_NET = /^Webull ([A-Z0-9][A-Z0-9./^-]{0,31}) after-WHT payout USD(\d+(?:\.\d{1,2})?), NOT external funding\. Gross(\d+(?:\.\d{1,2})?), WHT(\d+(?:\.\d{1,2})?), separate fee(\d+(?:\.\d{1,2})?)\. Fund Records (\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}) HKT; payout([1-9]\d{0,14})\. key=(webull\.manual\|10205226\|([1-9]\d{0,14}))\|net$/;
+const FUND_RECORDS_FEE = /^Webull ([A-Z0-9][A-Z0-9./^-]{0,31}) dividend processing fee USD(\d+(?:\.\d{1,2})?), Fund Records (\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}) HKT; payout([1-9]\d{0,14})\. key=(webull\.manual\|10205226\|([1-9]\d{0,14}))\|fee$/;
+export function fundRecordsDividendCashKey(description){
+  if(typeof description!=='string'||description.length>600||/[\r\n]/.test(description))return null;
+  const net=FUND_RECORDS_NET.exec(description),fee=net?null:FUND_RECORDS_FEE.exec(description);
+  if(!net&&!fee)return null;
+  const ticker=(net||fee)[1],cashDate=net?net[6]:fee[3],cashTime=net?net[7]:fee[4];
+  const payoutId=Number(net?net[8]:fee[5]),companyEventId=Number(net?net[10]:fee[7]);
+  if(!isCalendarDate(cashDate)||!/^([01]\d|2[0-3]):[0-5]\d:[0-5]\d$/.test(cashTime)
+    ||!Number.isSafeInteger(payoutId)||!Number.isSafeInteger(companyEventId))return null;
+  return {key:net?net[9]:fee[6],accountReference:'10205226',ticker,cashDate,cashTime,payoutId,companyEventId,
+    role:net?'net':'fee',...(net?{net:Number(net[2]),gross:Number(net[3]),withholding:Number(net[4]),fee:Number(net[5])}:{fee:Number(fee[2])})};
+}
+const exactIncomeCents=n=>{
+  if(typeof n!=='number'||!Number.isFinite(n)||Math.abs(n)>1e12)return null;
+  const m=/^(-?)(\d+)(?:\.(\d{1,2}))?$/.exec(String(n));
+  if(!m)return null;
+  const c=BigInt(m[2])*100n+BigInt((m[3]||'').padEnd(2,'0'));
+  const signed=(m[1]?-1n:1n)*c;
+  return signed<=BigInt(Number.MAX_SAFE_INTEGER)&&signed>=BigInt(Number.MIN_SAFE_INTEGER)?Number(signed):null;
+};
+
 // The already audited legacy gross/tax/collection-fee import has an explicit
 // account/event/cash-date key. A generic "not external" note is not this key.
 // This parser selects an existing Sharesight payout; it grants no income role
@@ -57,10 +81,11 @@ function referenceCreditClaims(cashRows,evidence=new Map()){
   const claims=new Map(),recordCounts=new Map();
   for(const row of cashRows)recordCounts.set(row.id,(recordCounts.get(row.id)||0)+1);
   for(const row of cashRows){
-    const selected=new Set(),modern=dividendCashKey(row.description),legacy=legacyDividendCashKey(row.description),tag=evidence.get(row.id);
+    const selected=new Set(),modern=dividendCashKey(row.description),legacy=legacyDividendCashKey(row.description),fundRecords=fundRecordsDividendCashKey(row.description),tag=evidence.get(row.id);
     if(row.cash_account_transaction_type?.name==='DEPOSIT'&&typeof row.amount==='number'&&Number.isFinite(row.amount)&&row.amount>0&&positiveId(row.payout_id))selected.add(row.payout_id);
     if(modern?.role==='net')selected.add(modern.payoutId);
     if(legacy?.role==='gross')selected.add(legacy.payoutId);
+    if(fundRecords?.role==='net')selected.add(fundRecords.payoutId);
     if(tag&&row.cash_account_transaction_type?.name==='DEPOSIT'&&row.amount>0&&positiveId(tag.sourcePayoutId))selected.add(tag.sourcePayoutId);
     for(const payoutId of selected){const group=claims.get(payoutId)||[];group.push({row,selected});claims.set(payoutId,group);}
   }
@@ -119,10 +144,11 @@ export function validateSharesightReferenceIncomeEvidence({account,portfolioId,t
   return result;
 }
 
-// Reference mode recognizes only the controlled complete legacy three-leg
-// representation here. Its actual Sharesight date does not verify broker date.
+// Reference mode recognizes only controlled complete source groups here.
+// Their actual Sharesight cash date does not verify a broker posting date.
 export function resolveSharesightReferenceIncomeEvidence({account,portfolioId,targetDate,cashRows,payouts={},cashCurrencies={}}){
   const result=new Map();if(account!=='webull'||portfolioId!==1350094)return result;
+  if(!isCalendarDate(targetDate)||!Array.isArray(cashRows))referenceIncomeFailure();
   const assertCredit=referenceCreditClaims(cashRows);
   const tag=(r,p)=>({evidence:'internal_income_pending_date',sourcePortfolioId:portfolioId,sourceHoldingId:p.holding_id,
     sourcePayoutId:p.id,sourceCashRecordId:r.id,sourceCashAccountId:r.cash_account_id,incomeRole:'dividend',
@@ -144,6 +170,40 @@ export function resolveSharesightReferenceIncomeEvidence({account,portfolioId,ta
       ||[tax.source.basis,fee.source.basis].some(n=>!Number.isFinite(n)||cents(n)!==cents(p.gross_amount)))referenceIncomeFailure();
     result.set(gross.row.id,tag(gross.row,p));
   }
+  const fundGroups=new Map();
+  for(const row of cashRows){const source=fundRecordsDividendCashKey(row.description);if(source){const group=fundGroups.get(source.key)||[];group.push({row,source});fundGroups.set(source.key,group);}}
+  for(const group of fundGroups.values()){
+    if(group.length!==2||new Set(group.map(x=>x.row.id)).size!==2
+      ||group.filter(x=>x.source.role==='net').length!==1||group.filter(x=>x.source.role==='fee').length!==1)referenceIncomeFailure();
+    const net=group.find(x=>x.source.role==='net'),fee=group.find(x=>x.source.role==='fee'),p=payouts[net.source.payoutId];
+    assertCredit(net.source.payoutId,net.row.id);
+    const linked=cashRows.filter(row=>row.payout_id===net.source.payoutId
+      ||dividendCashKey(row.description)?.payoutId===net.source.payoutId
+      ||legacyDividendCashKey(row.description)?.payoutId===net.source.payoutId
+      ||fundRecordsDividendCashKey(row.description)?.payoutId===net.source.payoutId);
+    // Do not use a comment or a copied event key as the event-to-payout link.
+    // Personal payout responses must provide the original company_event_id.
+    // Missing/native conflicting mapping fails closed, including a conflicting
+    // nested mapping should a source include both representations.
+    if(!validReferencePayout(p,portfolioId)||Object.values(payouts).filter(x=>x?.id===p.id).length!==1
+      ||linked.length!==2||linked.some(row=>row!==net.row&&row!==fee.row)
+      ||!positiveId(p.company_event_id)||p.company_event_id!==net.source.companyEventId
+      ||p.company_event!=null&&(!positiveId(p.company_event.id)||p.company_event.id!==p.company_event_id)
+      ||p.paid_on>targetDate||p.symbol!==net.source.ticker
+      ||group.some(x=>x.source.payoutId!==p.id||x.source.companyEventId!==p.company_event_id||x.source.ticker!==p.symbol
+        ||x.source.cashDate!==targetDate||x.source.cashTime!==net.source.cashTime
+        ||!referenceRowScope(x.row,p,targetDate,cashCurrencies)||x.row.cash_account_id!==net.row.cash_account_id
+        ||cashRows.filter(r=>r.id===x.row.id).length!==1
+        ||x.row.foreign_identifier!=null&&x.row.foreign_identifier!==''&&x.row.foreign_identifier!==x.source.key+'|'+x.source.role)
+      ||net.row.cash_account_transaction_type?.name!=='DEPOSIT'||net.row.amount<=0
+      ||fee.row.cash_account_transaction_type?.name!=='FEE'||fee.row.amount>=0)referenceIncomeFailure();
+    const gross=exactIncomeCents(p.gross_amount),tax=exactIncomeCents(p.resident_withholding_tax),afterTax=exactIncomeCents(p.amount),charge=exactIncomeCents(fee.source.fee);
+    if(gross===null||tax===null||afterTax===null||charge===null||gross<=0||tax<0||afterTax<=0||charge<=0
+      ||gross-tax!==afterTax||gross!==exactIncomeCents(net.source.gross)||tax!==exactIncomeCents(net.source.withholding)
+      ||afterTax!==exactIncomeCents(net.source.net)||afterTax!==exactIncomeCents(net.row.amount)
+      ||charge!==exactIncomeCents(net.source.fee)||-charge!==exactIncomeCents(fee.row.amount))referenceIncomeFailure();
+    for(const {row,source}of group)result.set(row.id,{...tag(row,p),incomeRole:source.role==='net'?'dividend':'collection_fee'});
+  }
   return result;
 }
 
@@ -157,7 +217,8 @@ export function resolveDividendCashEvidence({account, portfolioId, targetDate, c
   for(const audit of notificationIncomeAudits(dateEvidence,targetDate)) {
     const {scope:s,amounts:a}=audit.proof,payout=payouts[s.payoutId];
     const matches=cashRows.filter(row=>row.id===s.cashRecordIds[0]),net=matches[0];
-    const linked=cashRows.filter(row=>row.payout_id===s.payoutId||dividendCashKey(row.description)?.payoutId===s.payoutId);
+    const linked=cashRows.filter(row=>row.payout_id===s.payoutId||dividendCashKey(row.description)?.payoutId===s.payoutId
+      ||fundRecordsDividendCashKey(row.description)?.payoutId===s.payoutId);
     const sourceMatches=Object.values(payouts).filter(row=>row?.id===s.payoutId);
     if(s.portfolioId!==portfolioId||matches.length!==1||sourceMatches.length!==1||!payout
       ||payout.id!==s.payoutId||payout.portfolio_id!==portfolioId||payout.holding_id!==s.holdingId||payout.symbol!==s.ticker

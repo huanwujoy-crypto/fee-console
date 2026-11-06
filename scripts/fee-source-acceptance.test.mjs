@@ -1,6 +1,6 @@
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
 import {CLOUD_ACCOUNTS,parseSourceJson,SharesightCloudReader,normalizeRead} from './fee-cloud-source.mjs';
-import {resolveTradeCashEvidence,isControlledWebullPrincipal} from './fee-trade-cash-evidence.mjs';
+import {resolveTradeCashEvidence,isControlledWebullPrincipal,resolveFundRecordsTradeCashEvidence,sharesightCashRelations} from './fee-trade-cash-evidence.mjs';
 import {resolveManagementExemptions} from './fee-management-exemption.mjs';
 import {buildManagedTransferProof,consumeManagedTransferProof} from './fee-sharesight-transfers.mjs';
 import {captureSourceAcceptance,acceptanceTransport,verifySourceAcceptanceMain} from './fee-source-acceptance.mjs';
@@ -180,6 +180,88 @@ function fixture(side='BUY',kind='short',fee=1){
 }
 const resolve=f=>resolveTradeCashEvidence({account:f.account,portfolioId:f.portfolio.id,targetDate:f.targetDate,
  trades:f.raw.trades.trades,cashRows:Object.values(f.raw.cashTransactions).flatMap(p=>p.cash_account_transactions),cashAccounts:f.raw.performance.report.cash_accounts});
+function fundFixture(side='BUY',day=D){
+ const f=fixture(side),t=f.raw.trades.trades[0],r=f.raw.cashTransactions[8].cash_account_transactions[0];
+ f.targetDate=day;t.transaction_date=day;r.date_time=day+'T00:00:00Z';
+ const zone=day==='2026-11-06'?'EST':'EDT';
+ r.description=`Webull SYNTH ${side==='BUY'?'buy debit USD21.00, fee1.00':'sale net USD19.00, gross20.00 fee1.00'}; NOT external funding. Trade222; Fund Records, ${day} ${zone}. key=webull.manual|10205226|aaaaaaaaaaaaaaaa|cash`;
+ return f;
+}
+const fundArgs=f=>({account:f.account,portfolioId:f.portfolio.id,targetDate:f.targetDate,
+ trades:f.raw.trades.trades,cashRows:Object.values(f.raw.cashTransactions).flatMap(p=>p.cash_account_transactions),cashCurrencies:{8:'USD'}});
+test('Fund Records BUY/SELL prove complete canonical source identities and both NY seasons without mutating inputs',()=>{
+ for(const side of ['BUY','SELL'])for(const day of [D,'2026-11-06']){
+  const f=fundFixture(side,day),before=JSON.stringify(f),e=resolveFundRecordsTradeCashEvidence(fundArgs(f));
+  assert.deepEqual([...e],[[333,{evidence:'internal_trade'}]]);assert.equal(resolve(f).cashForTrade.get(222),333);
+  const flow={date:day,acct:'webull',amount:f.raw.cashTransactions[8].cash_account_transactions[0].amount,
+   type:side==='BUY'?'WITHDRAWAL':'DEPOSIT',...e.get(333)};
+  assert.deepEqual(reconcileFlows([],[],[flow],{reference:true}).unresolved,[]);assert.equal(JSON.stringify(f),before);
+ }
+});
+test('Fund Records rejects each cash/trade/scope/key/date/currency/cent/zone contradiction',()=>{
+ const edits=[
+  f=>f.portfolio.id++,f=>f.raw.trades.trades[0].portfolio_id++,f=>f.raw.trades.trades[0].transaction_date=P,
+  f=>f.raw.trades.trades[0].state='pending',f=>f.raw.trades.trades[0].description_code='OTHER',
+  f=>f.raw.trades.trades[0].instrument.code='OTHER',f=>f.raw.trades.trades[0].instrument.currency_code='HKD',
+  f=>f.raw.trades.trades[0].price_currency_code='HKD',f=>f.raw.trades.trades[0].brokerage_currency_code='HKD',
+  f=>f.raw.trades.trades[0].holding_id=0,f=>f.raw.trades.trades[0].quantity++,f=>f.raw.trades.trades[0].price++,
+  f=>f.raw.trades.trades[0].brokerage+=0.01,f=>f.raw.trades.trades[0].value+=0.01,
+  f=>f.raw.trades.trades[0].value=-f.raw.trades.trades[0].value,f=>f.raw.trades.trades[0].brokerage=NaN,
+  f=>f.raw.trades.trades[0].comments+=' key=webull.manual|10205226|bbbbbbbbbbbbbbbb|BUY|SYNTH|2|10.',
+  f=>f.raw.trades.trades[0].comments=f.raw.trades.trades[0].comments.replace('aaaaaaaaaaaaaaaa','bbbbbbbbbbbbbbbb'),
+  f=>f.raw.trades.trades[0].comments=f.raw.trades.trades[0].comments.replace('|2|10','|2.00000000000000000001|10'),
+  f=>f.raw.trades.trades[0].comments=f.raw.trades.trades[0].comments.replace('|2|10','|2|10.00000000000000000001'),
+  f=>f.raw.trades.trades[0].comments='unlinked source',
+  f=>f.raw.cashTransactions[8].cash_account_transactions[0].amount+=0.01,
+  f=>f.raw.cashTransactions[8].cash_account_transactions[0].amount+=0.0000001,
+  f=>f.raw.cashTransactions[8].cash_account_transactions[0].amount=String(f.raw.cashTransactions[8].cash_account_transactions[0].amount),
+  f=>f.raw.cashTransactions[8].cash_account_transactions[0].date_time=P+'T00:00:00Z',
+  f=>f.raw.cashTransactions[8].cash_account_transactions[0].cash_account_id++,
+  f=>f.raw.cashTransactions[8].cash_account_transactions[0].cash_account_transaction_type.name='FEE',
+  f=>f.raw.cashTransactions[8].cash_account_transactions[0].payout_id=1,
+  f=>f.raw.cashTransactions[8].cash_account_transactions[0].holding_id=99,
+  f=>f.raw.cashTransactions[8].cash_account_transactions[0].trade_id=999,
+  f=>f.raw.cashTransactions[8].cash_account_transactions[0].foreign_identifier='unrelated',
+  f=>f.raw.cashTransactions[8].cash_account_transactions[0].description=f.raw.cashTransactions[8].cash_account_transactions[0].description.replace('Trade222','Trade999'),
+  f=>f.raw.cashTransactions[8].cash_account_transactions[0].description=f.raw.cashTransactions[8].cash_account_transactions[0].description.replace('fee1.00','fee0.00'),
+  f=>f.raw.cashTransactions[8].cash_account_transactions[0].description=f.raw.cashTransactions[8].cash_account_transactions[0].description.replace('10205226','99999999'),
+  f=>f.raw.cashTransactions[8].cash_account_transactions[0].description=f.raw.cashTransactions[8].cash_account_transactions[0].description.replace('EDT','EST'),
+  f=>f.raw.cashTransactions[8].cash_account_transactions[0].description+='\n',
+ ];
+ for(const side of ['BUY','SELL'])for(const edit of edits){
+  const f=fundFixture(side);edit(f);let rejected=false;
+  try{rejected=resolveFundRecordsTradeCashEvidence(fundArgs(f)).size===0;}catch(error){assert.match(error.message,/^FEE_(?:NONCASH_TRADE_CASH_UNVERIFIED|CLOUD_IDENTITY)$/);rejected=true;}
+  assert.ok(rejected,side+': '+edit.toString());
+ }
+ const f=fundFixture();assert.throws(()=>resolveFundRecordsTradeCashEvidence({...fundArgs(f),cashCurrencies:{8:'HKD'}}));
+ assert.equal(resolveFundRecordsTradeCashEvidence({...fundArgs(f),account:'schwab'}).size,0);
+});
+test('Fund Records half-cent gross follows the existing half-up cent boundary with actual separate fees',()=>{
+ for(const side of ['BUY','SELL']){
+  const f=fundFixture(side),t=f.raw.trades.trades[0],r=f.raw.cashTransactions[8].cash_account_transactions[0];
+  t.quantity=3;t.price=10.005;t.value=side==='BUY'?31.02:-29.02;r.amount=-t.value;
+  t.comments=`Synthetic source; key=webull.manual|10205226|aaaaaaaaaaaaaaaa|${side}|SYNTH|3|10.005.`;
+  r.description=r.description.replace('USD21.00','USD31.02').replace('USD19.00','USD29.02').replace('gross20.00','gross30.02');
+  assert.equal(resolveFundRecordsTradeCashEvidence(fundArgs(f)).size,1);
+  r.description=r.description.replace('USD31.02','USD31.01').replace('USD29.02','USD29.01');
+  assert.throws(()=>resolveFundRecordsTradeCashEvidence(fundArgs(f)));
+ }
+});
+test('Fund Records incomplete, duplicate and conflicting associations never become paid or zero-cash evidence',()=>{
+ for(const edit of [f=>f.raw.trades.trades=[],f=>f.raw.trades.trades.push({...f.raw.trades.trades[0]}),
+  f=>f.raw.trades.trades.push({...f.raw.trades.trades[0],id:223}),
+  f=>f.raw.cashTransactions[8].cash_account_transactions.push({...f.raw.cashTransactions[8].cash_account_transactions[0]}),
+  f=>f.raw.cashTransactions[8].cash_account_transactions.push({...f.raw.cashTransactions[8].cash_account_transactions[0],id:334})]){
+  const f=fundFixture();edit(f);assert.throws(()=>resolveFundRecordsTradeCashEvidence(fundArgs(f)));
+ }
+ for(const edit of [()=>{},f=>f.raw.cashTransactions[8].cash_account_transactions[0].amount-=1,
+  f=>f.raw.cashTransactions[8].cash_account_transactions[0].description=f.raw.cashTransactions[8].cash_account_transactions[0].description.replace('10205226','99999999')]){
+  const f=selectedFixture(),r=f.raw.cashTransactions[8].cash_account_transactions[0];
+  r.description=`Webull SYNTH buy debit USD20.00, fee0.00; NOT external funding. Trade222; Fund Records, ${D} EDT. key=webull.manual|10205226|aaaaaaaaaaaaaaaa|cash`;
+  edit(f);assert.deepEqual(sharesightCashRelations(fundArgs(f)).relatedCash.get(222),[333]);
+  assert.throws(()=>buildManagedTransferProof(f),/CASH_LEG|TRADE_CASH_UNVERIFIED/);
+ }
+});
 function assertNotMatched(f,message){
  try{assert.equal(resolve(f).cashForTrade.size,0,message);}catch(error){
   if(error.message!=='FEE_NONCASH_TRADE_CASH_UNVERIFIED')throw error;

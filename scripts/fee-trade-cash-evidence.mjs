@@ -103,6 +103,79 @@ function canonicalTrade(t){
    ||!textEquals(q,t,'quantity')||!textEquals(p,t,'price'))return null;
  return {key:keys[0][1],gmail};
 }
+
+// Fund Records cash keys intentionally omit side/security/quantity/price.
+// They select no authority without the unique real trade's complete source key.
+const fundRecordsPrefix=row=>/^Webull [A-Z0-9][A-Z0-9./^-]{0,31} (?:buy debit|sale net) USD/.test(String(row?.description||''));
+const FUND_BUY=/^Webull ([A-Z0-9][A-Z0-9./^-]{0,31}) buy debit USD(\d+(?:\.\d{1,2})?), fee(\d+(?:\.\d{1,2})?); NOT external funding\. Trade([1-9]\d{0,14}); Fund Records, (\d{4}-\d{2}-\d{2}) (EST|EDT)\. key=webull\.manual\|10205226\|([a-f0-9]{16})\|cash$/;
+const FUND_SELL=/^Webull ([A-Z0-9][A-Z0-9./^-]{0,31}) sale net USD(\d+(?:\.\d{1,2})?), gross(\d+(?:\.\d{1,2})?) fee(\d+(?:\.\d{1,2})?); NOT external funding\. Trade([1-9]\d{0,14}); Fund Records, (\d{4}-\d{2}-\d{2}) (EST|EDT)\. key=webull\.manual\|10205226\|([a-f0-9]{16})\|cash$/;
+const fundRefused=()=>{throw Error('FEE_NONCASH_TRADE_CASH_UNVERIFIED');};
+function fundPointers(row){
+ if(!fundRecordsPrefix(row))return [];
+ const pointers=[...String(row.description).matchAll(/\bTrade([^;\s]+);/g)];
+ if(pointers.length!==1)fundRefused();
+ try{return [id(pointers[0][1])];}catch{fundRefused();}
+}
+function fundMoney(value){
+ const v=rational(String(value));
+ if(!v||v.n*100n%v.d!==0n||abs(v.n*100n/v.d)>100000000000000n)return null;
+ return v.n*100n/v.d;
+}
+function fundRecordPair(row,trade,targetDate,canonical){
+ const text=typeof row.description==='string'?row.description:'';
+ if(text.length>2000||/[\r\n]/.test(text))return false;
+ const buy=FUND_BUY.exec(text),sell=FUND_SELL.exec(text);if(!buy&&!sell)return false;
+ const ticker=(buy||sell)[1],side=buy?'BUY':'SELL',cashText=(buy||sell)[2];
+ const [feeText,pointer,day,zone,gmail]=buy?buy.slice(3):sell.slice(4);
+ if(day!==targetDate||!/^\d{4}-\d{2}-\d{2}$/.test(day)||!Number.isFinite(Date.parse(day+'T17:00:00Z'))
+  ||new Date(day+'T17:00:00Z').toISOString().slice(0,10)!==day)return false;
+ const nyZone=new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',timeZoneName:'short'})
+  .formatToParts(new Date(day+'T17:00:00Z')).find(p=>p.type==='timeZoneName')?.value;
+ if(zone!==nyZone||!canonical||canonical.gmail!==gmail||!sameId(pointer,trade.id)
+  ||trade.portfolio_id!==CLOUD_ACCOUNTS.webull.portfolioId||trade.transaction_date!==targetDate
+  ||trade.state!=='confirmed'||trade.description_code!==side||trade.instrument?.code!==ticker
+  ||trade.instrument?.currency_code!=='USD'||trade.brokerage_currency_code!=='USD'
+  ||!(trade.price_currency_code==='USD'||trade.price_currency_code==null&&trade.instrument.currency_code==='USD')
+  ||!Number.isSafeInteger(trade.holding_id)||trade.holding_id<=0
+  ||!finite(trade.quantity)||trade.quantity<=0||!finite(trade.price)||trade.price<=0
+  ||!finite(trade.brokerage)||trade.brokerage<0||!finite(trade.value)||!finite(row.amount)
+  ||row.payout_id!=null||row.trade_id!=null&&!sameId(row.trade_id,trade.id)
+  ||row.holding_id!=null&&!sameId(row.holding_id,trade.holding_id)
+  ||row.foreign_identifier!=null&&row.foreign_identifier!==''&&row.foreign_identifier!==`webull.manual|10205226|${gmail}|cash`
+  ||row.cash_account_transaction_type?.name!==(buy?'WITHDRAWAL':'DEPOSIT'))return false;
+ const q=rational(String(trade.quantity)),p=rational(String(trade.price));
+ const canonicalParts=canonical.key.split('|');
+ if(!eq(q,rational(canonicalParts[5]))||!eq(p,rational(canonicalParts[6])))return false;
+ const fee=fundMoney(trade.brokerage),value=fundMoney(trade.value),cash=fundMoney(row.amount),declared=fundMoney(cashText);
+ if(!q||!p||[fee,value,cash,declared].some(x=>x===null)||fee!==fundMoney(feeText))return false;
+ // Match the existing cent boundary for declared half-cent gross values.
+ const numerator=q.n*p.n*100n,denominator=q.d*p.d,gross=(2n*numerator+denominator)/(2n*denominator);
+ const net=buy?gross+fee:gross-fee;
+ return net>0n&&declared===net&&cash===(buy?-net:net)&&value===(buy?net:-net)
+  &&(buy||fundMoney(sell[3])===gross);
+}
+
+export function resolveFundRecordsTradeCashEvidence({account,portfolioId,targetDate,cashRows,trades,cashCurrencies}){
+ const out=new Map();if(account!=='webull'||portfolioId!==CLOUD_ACCOUNTS.webull.portfolioId)return out;
+ if(!Array.isArray(cashRows)||!Array.isArray(trades))fundRefused();
+ const selected=cashRows.filter(fundRecordsPrefix);if(!selected.length)return out;
+ if(!cashCurrencies||typeof cashCurrencies!=='object'||new Set(cashRows.map(r=>id(r.id))).size!==cashRows.length
+  ||new Set(trades.map(t=>id(t.id))).size!==trades.length)fundRefused();
+ const relations=sharesightCashRelations({account,portfolioId,targetDate,trades,cashRows}).relatedCash;
+ const canonical=trades.map(canonicalTrade),counts=new Map();
+ for(const key of canonical)if(key)counts.set(key.key,(counts.get(key.key)||0)+1);
+ for(const row of selected){
+  const pointer=fundPointers(row)[0],matches=trades.filter(t=>sameId(t.id,pointer));
+  if(matches.length!==1||!Number.isSafeInteger(row.id)||row.id<=0||!Number.isSafeInteger(row.cash_account_id)||row.cash_account_id<=0
+   ||cashCurrencies[row.cash_account_id]!=='USD'||typeof row.date_time!=='string'
+   ||!Number.isFinite(Date.parse(row.date_time))||row.date_time.slice(0,10)!==targetDate
+   ||relations.get(pointer)?.length!==1)fundRefused();
+  const t=matches[0],key=canonical[trades.indexOf(t)];
+  if(!key||counts.get(key.key)!==1||!fundRecordPair(row,t,targetDate,key))fundRefused();
+  out.set(row.id,{evidence:'internal_trade'});
+ }
+ return out;
+}
 function manualPair({account,row,trade,targetDate,canonical,uniqueCanonical}){
  if(account!=='webull'||trade.portfolio_id!==CLOUD_ACCOUNTS.webull.portfolioId)return false;
  if(!canonical||!uniqueCanonical)return false;
@@ -229,6 +302,8 @@ export function sharesightCashRelations({account,portfolioId,targetDate,trades,c
   const pointers=new Set();
   if(row.trade_id!=null)pointers.add(id(row.trade_id));
   if(account==='webull'){
+   for(const pointer of fundPointers(row))pointers.add(pointer);
+   if(fundRecordsPrefix(row)&&(pointers.size!==1||[...pointers].some(n=>!trades.some(t=>sameId(t.id,n)))))fundRefused();
    // A recognisable identity remains related even if the rest of the record
    // cannot grant the principal role. Invalid money/key text must never turn
    // a selected transfer's real cash leg into an assertion of zero cash.
@@ -252,6 +327,9 @@ export function resolveTradeCashEvidence({account,portfolioId,targetDate,trades,
  if(!Array.isArray(trades)||!Array.isArray(cashRows)||!Array.isArray(cashAccounts)
    ||new Set(trades.map(t=>id(t.id))).size!==trades.length
    ||new Set(cashRows.map(r=>id(r.id))).size!==cashRows.length)throw Error('FEE_NONCASH_TRADE_CASH_UNVERIFIED');
+ const cashCurrencies=Object.fromEntries(cashAccounts.filter(a=>(a.portfolio_id==null||sameId(a.portfolio_id,portfolioId))
+  &&(a.portfolio?.id==null||sameId(a.portfolio.id,portfolioId))).map(a=>[a.id,a.currency?.code||a.currency]));
+ const fundRecords=resolveFundRecordsTradeCashEvidence({account,portfolioId,targetDate,trades,cashRows,cashCurrencies});
  const canonicalById=new Map(),keyCounts=new Map();
  for(const t of trades){const key=canonicalTrade(t);canonicalById.set(id(t.id),key);if(key)keyCounts.set(key.key,(keyCounts.get(key.key)||0)+1);}
  for(const row of cashRows){
@@ -271,6 +349,7 @@ export function resolveTradeCashEvidence({account,portfolioId,targetDate,trades,
   for(const n of legacyIds)pointerIds.add(n);
   if(row.trade_id!=null){try{pointerIds.add(id(row.trade_id));}catch{pointerIds.add(-1);}}
   if(account==='webull'){
+   for(const pointer of fundPointers(row))pointerIds.add(pointer);
    const description=typeof row.description==='string'?row.description:'';
    if(/^Webull [A-Z0-9][A-Z0-9./^-]{0,31} (BUY|SELL) /.test(description)||DECLARED_QUOTED_BUY_POINTER_RE.test(description)||DECLARED_COMPACT_POINTER_RE.test(description))
     for(const match of description.matchAll(/(?:\bTrade|\bSharesight trade )([^;\s]+);/g)){
@@ -284,7 +363,7 @@ export function resolveTradeCashEvidence({account,portfolioId,targetDate,trades,
    throw Error('FEE_NONCASH_TRADE_CASH_UNVERIFIED');
   for(const t of trades){
    const desc=typeof row.description==='string'?row.description:'';
-   const explicit=account==='webull'&&(/^Webull [A-Z0-9][A-Z0-9./^-]{0,31} (BUY|SELL) /.test(desc)||DECLARED_COMPACT_POINTER_RE.test(desc))
+   const explicit=account==='webull'&&(/^Webull [A-Z0-9][A-Z0-9./^-]{0,31} (BUY|SELL) /.test(desc)||DECLARED_COMPACT_POINTER_RE.test(desc)||fundRecordsPrefix(row))
       &&new RegExp('(?:Trade|Sharesight trade )'+id(t.id)+';').test(desc);
    const old=legacyIds.has(id(t.id));
    const related=sameId(row.trade_id,t.id)||explicit||principalIds.has(id(t.id))||old;
@@ -307,7 +386,7 @@ export function resolveTradeCashEvidence({account,portfolioId,targetDate,trades,
      &&(t.description_code==='BUY'?cash<0n:cash>0n);
    const canonical=canonicalById.get(id(t.id));
    const manual=manualPair({account,row,trade:t,targetDate,canonical,uniqueCanonical:canonical&&keyCounts.get(canonical.key)===1});
-   if(native||old||manual){
+   if(native||old||manual||fundRecords.has(row.id)){
     if(!byTrade.has(id(t.id)))byTrade.set(id(t.id),[]);byTrade.get(id(t.id)).push(id(row.id));
     if(!byCash.has(id(row.id)))byCash.set(id(row.id),[]);byCash.get(id(row.id)).push(id(t.id));
    }
