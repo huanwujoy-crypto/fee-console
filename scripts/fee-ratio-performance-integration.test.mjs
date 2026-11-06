@@ -80,6 +80,26 @@ test('compact overview retains exact dollars, native returns and distinct six-cl
  assert.equal((overview.match(/class="ratio-money-precise"/g)||[]).length,7);assert.equal((overview.match(/class="ratio-return-compact-line"/g)||[]).length,14);
  assert.doesNotMatch(overview,/<small>原报表口径|<small>暂无官方小计/);assert.match(exact,/没有这些标记的数值，原报表未注明是否年化/);assert.match(exact,/不代表0%/);
 });
+test('overview numbers its evidence and shares one control row without adding IB-only or detail holding rates',async t=>{
+ const f=await fixture(t,addTopReturns),before=structuredClone(f.model),html=f.ratio.render(f.model);
+ const numbered=html.match(/<ol class="ratio-return-note-list">([^]*?)<\/ol>/);assert.ok(numbered);assert.equal((numbered[1].match(/<li>/g)||[]).length,3);
+ assert.match(html,/<div class="ratio-overview-disclosures"><details class="ratio-overview-return-notes">/);
+ const start=html.indexOf('class="ratio-overview-disclosures"'),end=html.indexOf("<section class=\"card sharesight-exposure\"",start),overview=html.slice(start,end);
+ assert.match(overview,/<details class="ratio-asset-notes">/);assert.doesNotMatch(overview,/<details[^>]*open/);
+ const top=html.split('<section class="card sharesight-exposure">')[1].split('<section class="card ratio-stock-allocation">')[0];assert.equal((top.match(/class="ratio-returns-inline"/g)||[]).length,20);assert.equal((top.match(/class="ratio-return-compact-line"/g)||[]).length,40);
+ const stock=html.split('<section class="card ratio-stock-allocation">')[1].split('</section>')[0];assert.match(stock,/仅IB-HK/);assert.doesNotMatch(stock,/ratio-return|收益率/);
+ const funds=html.match(/<li class="ratio-fund-holding"[^]*?<\/li>/g)||[];assert.ok(funds.length>0);assert.ok(funds.every(s=>!s.includes('ratio-return')));
+ const bars=html.match(/<div class="ratio-distribution-row">[^]*?<div class="ratio-returns-inline">/g)||[];assert.ok(bars.length>=2,'each existing strategy receives its own inline native scope');assert.deepEqual(f.model,before);
+});
+test('shared controls reserve touch space while open text keeps full width; compact rates may wrap',()=>{
+ const actual=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8'),page=hash(actual)===aggregateUiFixture.nextSha256?actual:aggregateUiStage(actual);
+ assert.match(page,/\.ratio-overview-disclosures\{position:relative;padding-top:44px;[^}]*min-width:0/);
+ assert.match(page,/\.ratio-overview-disclosures>details>summary\{position:absolute;top:0;left:0;[^}]*width:calc\(50% - 6px\);min-height:44px/);
+ assert.match(page,/\.ratio-overview-disclosures>\.ratio-asset-notes>summary\{left:calc\(50% \+ 6px\)\}/);
+ assert.match(page,/\.ratio-overview-disclosures>details:only-child>summary\{left:0\}/);
+ assert.match(page,/\.ratio-returns-inline \.ratio-return-compact-line\{overflow-wrap:anywhere\}/);
+ assert.doesNotMatch(page,/\.ratio-overview-disclosures>details\{[^}]*(?:width:50%|position:absolute)/,'open details stay normal flow at full container width');
+});
 test('prior performance date cannot disappear through a later signed legacy snapshot',async t=>{
  const f=await fixture(t),oldProof=await f.snapshot.verifyOriginal(f.args);
  const legacy=f.signed,older=legacy.body.source,raw=structuredClone(f.raw.allocation),original=bytes(raw),base=createOfficialRatioSourceCore().build(raw,{sourceSha256:hash(original),sourceBytes:original.length}).input;
@@ -151,10 +171,11 @@ class PresentationNode {
  get rows(){return this.children.filter(n=>n.tagName==='TR');}
  get cells(){return this.children.filter(n=>['TH','TD'].includes(n.tagName));}
 }
-function presentationFixture({returns=true,reverse=false,extra=false}={}){
+function presentationFixture({returns=true,reverse=false,extra=false,inline=true}={}){
  const el=(tag,cls='',text='')=>{const n=new PresentationNode(tag);n.className=cls;n.textContent=text;return n;};
  const root=el('div'),report=el('div','ratio-report'),overview=el('section','ratio-asset-overview'),exposure=el('section','sharesight-exposure'),originals=[];
  root.append(report);report.append(overview,exposure);overview.append(el('h2','','Synthetic overview'));exposure.append(el('h2','','Synthetic top twenty'));
+ const overviewNotes=el('div','ratio-overview-disclosures');overviewNotes.append(el('details','ratio-overview-return-notes','Synthetic return explanation'),el('details','ratio-asset-notes','Synthetic account detail'));overview.append(overviewNotes);
  for(const [category,group]of ['PE/VC','对冲基金','常青基金','二级市场'].entries()){
   const section=el('section'),table=el('table'),head=el('thead'),hrow=el('tr'),body=el('tbody');
   section.append(el('h3','',group),table);table.append(head,body);head.append(hrow);hrow.append(el('th','','名称'),el('th','','金额'),el('th','','占总资产／占本类资产'));exposure.append(section);
@@ -163,28 +184,31 @@ function presentationFixture({returns=true,reverse=false,extra=false}={}){
    name.dataset.securityCode='SYNTH-'+category+'-'+i;name.append(new PresentationNode(null,(i+1)+'. Synthetic product '+category+'-'+i),account);row.append(name,amount,weight);body.append(row);
    let composition=null,rate=null;
    if(category===3||category===2&&i<3){composition=el('details');const list=el('ul');list.append(el('li','','Synthetic member A'),el('li','','Synthetic member B'));composition.append(el('summary','',category===3?'持仓与穿透明细':'合并持仓 · 2笔'),list);disclosures.push(composition);}
-   if(returns){rate=el('details','ratio-returns');rate.append(el('summary','',category===3?'直接持仓收益率':'收益率'));const pair=el('div','ratio-return-pair');pair.append(el('div','ratio-return-period','All '+(7.5+category+i)+'% 原报表口径'),el('div','ratio-return-period','近12个月 '+(-2.5+i)+'% 未满一年'));rate.append(pair);disclosures.push(rate);}
+   if(returns){const evidence=el('details','ratio-returns');evidence.append(el('summary','',inline?'收益说明':category===3?'直接持仓收益率':'收益率'));const pair=el('div','ratio-return-pair');pair.append(el('div','ratio-return-period','All '+(7.5+category+i)+'% 原报表口径'),el('div','ratio-return-period','近12个月 '+(-2.5+i)+'% 未满一年'));evidence.append(pair);rate=evidence;
+    if(inline){rate=el('div','ratio-returns-inline');const compact=el('div','ratio-return-compact');compact.append(el('span','ratio-return-compact-line','全部：'+(7.5+category+i)+'%'),el('span','ratio-return-compact-line','近一年：'+(-2.5+i)+'% 未满一年'));if(category===3)rate.append(el('p','ratio-return-inline-label','直接持仓收益率'));rate.append(compact,evidence);}disclosures.push(rate);}
    if(reverse)disclosures.reverse();if(extra){const note=el('details','synthetic-note');note.append(el('summary','','Extra preserved note'),el('p','','Synthetic note body'));disclosures.push(note);}
    name.append(...disclosures);originals.push({section,account,composition,rate,disclosures,amount:amount.textContent,weights:weight.textContent,rateText:rate?.textContent,category});
   }
  }
- return {root,report,exposure,originals,document:{createElement:tag=>el(tag)}};
+ return {root,report,overview,overviewNotes,exposure,originals,document:{createElement:tag=>el(tag)}};
 }
 function actualPresentation(f){
  const actual=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8'),page=hash(actual)===aggregateUiFixture.nextSha256?actual:aggregateUiStage(actual);
  const start=page.indexOf('function styleRatioReport('),end=page.indexOf('\n/* ratio-presentation:v1:end */',start);assert.ok(start>=0&&end>start);
  return new Function('document','ratioHoldingDisplayName','foldRatioFundNotes',page.slice(start,end)+'\nreturn styleRatioReport;')(f.document,s=>s,()=>{});
 }
-for(const mode of [{returns:true},{returns:true,reverse:true,extra:true},{returns:false}])test('card styling preserves all direct disclosures and native values '+JSON.stringify(mode),()=>{
+for(const mode of [{returns:true,inline:true},{returns:true,inline:true,reverse:true,extra:true},{returns:true,inline:false},{returns:false}])test('card styling preserves direct returns, disclosures and native values '+JSON.stringify(mode),()=>{
  const f=presentationFixture(mode),style=actualPresentation(f);style(f.root);
  const cards=f.exposure.querySelectorAll('.ratio-holding-row');assert.equal(cards.length,20);
  assert.equal(f.exposure.querySelectorAll('.ratio-returns').length,mode.returns?20:0);
  assert.equal(f.exposure.querySelectorAll('.ratio-return-period').length,mode.returns?40:0);
+ assert.equal(f.exposure.querySelectorAll('.ratio-return-compact-line').length,mode.returns&&mode.inline?40:0);
+ assert.equal(f.overviewNotes.parentNode,f.overview);assert.equal(f.overviewNotes.classList.contains('kpi'),false,'the shared disclosure row must not be moved into legacy asset cards');
  for(const [i,card]of cards.entries()){
   const o=f.originals[i];assert.equal(card.querySelector('.ratio-holding-amount').textContent,o.amount);assert.equal(card.querySelector('.ratio-holding-accounts'),o.account);
   assert.deepEqual(card.querySelectorAll('dd').map(n=>n.textContent),o.weights.split('／'));
-  assert.deepEqual(card.children.filter(n=>n.tagName==='DETAILS'),o.disclosures,'preserve source order and node identity');
-  if(o.rate){assert.equal(o.rate.textContent,o.rateText);assert.equal(o.rate.classList.contains('ratio-composition'),false);assert.equal(o.rate.querySelector('summary').textContent,o.category===3?'直接持仓收益率':'收益率');}
+  assert.deepEqual(card.children.filter(n=>n.tagName==='DETAILS'||n.classList.contains('ratio-returns-inline')),o.disclosures,'preserve source order and node identity');
+  if(o.rate){assert.equal(o.rate.textContent,o.rateText);assert.equal(o.rate.classList.contains('ratio-composition'),false);assert.equal(o.rate.querySelector('summary').textContent,mode.inline?'收益说明':o.category===3?'直接持仓收益率':'收益率');if(mode.inline)assert.equal(o.rate.querySelector('.ratio-return-compact').parentNode,o.rate,'values stay outside the closed evidence panel');}
   if(o.composition){assert.equal(o.composition.classList.contains('ratio-composition'),true);assert.match(o.composition.querySelector('summary').textContent,/^明细 [1-5] · /);assert.equal(o.composition.querySelectorAll('li').length,2);}
  }
  const before=f.root.textContent;style(f.root);assert.equal(f.root.textContent,before);assert.equal(f.exposure.querySelectorAll('.ratio-holding-row').length,20,'second styling is inert');

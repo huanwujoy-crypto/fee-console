@@ -56,6 +56,22 @@ test('duplicate scopes, locations, members and periods rejected',()=>{for(const 
 test('source identities, dates, scope and native units strictly validated',()=>{for(const edit of [s=>s.accounts=['Account A'],s=>s.reports[1].startDate='2025-11-05',s=>s.reports[0].source.sha256='bad',s=>s.reports[0].rows[0].unit='estimated',s=>s.reports[0].includeClosed=false,s=>s.reports[0].rows[0].returnPct=NaN]){const s=fixture();edit(s);assert.throws(()=>build(s),/REFUSED/);}});
 test('different sheets may use same total row number',()=>{const s=fixture();for(const r of s.reports)r.rows.push({...structuredClone(r.rows[0]),scope:scope('Other category'),sourceSheet:'Other sheet'});assert.equal(build(s).items.length,2);});
 test('HTML escapes account text and starts folded',()=>{const s=fixture();s.accounts[0]='<img src=x>';for(const r of s.reports)r.rows[0].members[0].account=s.accounts[0];const h=c.render(c.select(c.build(s,{...opts,expectedAccounts:s.accounts}),scope()));assert.match(h,/&lt;img/);assert.doesNotMatch(h,/<img|<details[^>]*open/);});
+test('inline native returns are readable before the closed evidence panel without changing the source',()=>{
+ const s=fixture(),before=structuredClone(s),item=c.select(build(s),scope()),h=c.renderInline(item),visible=h.slice(0,h.indexOf('<details'));
+ assert.deepEqual(s,before);assert.match(visible,/全部：/);assert.match(visible,/近一年：/);assert.match(visible,/12.50%/);assert.match(visible,/-1.25%/);
+ assert.doesNotMatch(visible,/未满一年|p\.a\.|<small>原报表口径/);assert.match(visible,/原报表未注明是否年化/);
+ assert.match(h,/<details class="ratio-returns"><summary>收益说明<\/summary>/);assert.doesNotMatch(h,/<details[^>]*open/);
+ assert.match(h,/2020-01-02 至 2026-11-04/);assert.match(h,/Account A/);assert.match(h,/含已平仓/);
+});
+test('inline zero, missing and evidenced short or annualised returns retain distinct meanings',()=>{
+ const s=fixture();s.reports[0].rows[0].returnPct=0;s.reports[0].rows[0].termEvidence=term(s.reports[0],0.5);s.reports[1].rows[0].returnPct=null;s.reports[1].rows[0].unit='unavailable';
+ let h=c.renderInline(c.select(build(s),scope())).split('<details')[0];assert.match(h,/0.00%/);assert.match(h,/未满一年/);assert.match(h,/近一年：[^]*?—/);assert.doesNotMatch(h,/年化<\/small>/);
+ s.reports[0].rows[0].termEvidence=term(s.reports[0],2);s.reports[0].rows[0].unit='p.a.';h=c.renderInline(c.select(build(s),scope())).split('<details')[0];assert.match(h,/<small>年化<\/small>/);assert.doesNotMatch(h,/未满一年/);
+});
+test('inline absent scope never inherits another classification value and escapes its optional label',()=>{
+ const h=c.renderInline(c.select(build(fixture()),scope('Missing')),'<img src=x>'),visible=h.split('<details')[0];
+ assert.equal((visible.match(/<strong[^>]*>—<\/strong>/g)||[]).length,2);assert.doesNotMatch(visible,/12.50%|<img/);assert.match(h,/&lt;img src=x&gt;/);
+});
 test('calendar-year boundary handles leap dates',()=>{assert.equal(c.oneYearBefore('2024-02-29'),'2023-02-28');assert.equal(c.oneYearBefore('2025-02-28'),'2024-02-28');});
 test('supplemental native rows retain the correct workbook identity and hash',()=>{
  const s=fixture();s.reports[0].additionalSources=[ref(4)];s.reports[0].rows[0].sourceFileId=ref(4).libraryFileId;

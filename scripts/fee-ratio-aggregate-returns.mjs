@@ -140,13 +140,18 @@ export function createAggregateReturnsCore(){
  function renderTop(item){
   if(!item)return '';
   const secondary=item.target.category==='二级市场';
-  const html=renderAggregate(item).replace('<summary>收益率</summary>','<summary>'+(secondary?'直接持仓收益率':'收益率')+'</summary>');
+  const html=renderInline(item,secondary?'直接持仓收益率':'');
   const note=secondary?'仅对应直接持有的实际产品；不包括 ETF 穿透公司敞口。杠杆产品采用自身原生收益，不按敞口倍数乘算。':'同名合并使用精确成员的 Sharesight 官方小计，不平均各项百分比。';
   return html.replace('只显示组合或分类原生收益；已平仓计入历史，不用当前市值权重或穿透敞口重算。',note+' 已平仓计入历史。');
  }
 
  function select(v,s){const k=scopeKey(s);return v.items.find(x=>scopeKey(x.scope)===k)||{scope:structuredClone(s),periods:{}};}
  const esc=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+ function renderInline(item,label=''){
+  // The same verified values are readable without opening the evidence panel.
+  // Dates, account scope and native-unit caveats remain in its disclosure.
+  return '<div class="ratio-returns-inline">'+(label?'<p class="ratio-return-inline-label">'+esc(label)+'</p>':'')+renderCompact(item)+renderAggregate(item).replace('<summary>收益率</summary>','<summary>收益说明</summary>')+'</div>';
+ }
  function renderAggregate(item){
   scopeKey(item.scope);
   const reasons={'benchmark-members-included':'原报表范围包含仅作基准的虚拟持仓，尚无剔除后的官方合并收益率。','native-aggregate-not-provided':'尚无这个分类范围的 Sharesight 官方合并收益率。','cash-scope-unverified':'该组合的现金收益覆盖尚未得到来源核实。','source-unavailable':'Sharesight 未提供此范围的收益率。'};
@@ -161,5 +166,5 @@ export function createAggregateReturnsCore(){
   const note=cash.includes('unknown')?'现金账户收益覆盖未获来源确认。':cash.includes('mixed')||cash.length>1?'现金收益覆盖分别保留各期原报表设置。':cash[0]==='included'?'含现金账户收益。':cash[0]==='excluded'?'未含现金账户收益。':'';
   return '<details class="ratio-returns"><summary>收益率</summary><div class="ratio-return-pair">'+rows+'</div><p class="ratio-return-scope">'+esc(accounts.join(' · '))+' · USD · Sharesight 原生口径</p><p>只显示组合或分类原生收益；已平仓计入历史，不用当前市值权重或穿透敞口重算。'+note+'</p></details>';
  }
- return {SCHEMA,build,select,render:renderAggregate,scopeKey,oneYearBefore,topTargets,buildTop,selectTop,renderTop,renderCompact};
+ return {SCHEMA,build,select,render:renderAggregate,scopeKey,oneYearBefore,topTargets,buildTop,selectTop,renderTop,renderCompact,renderInline};
 }
