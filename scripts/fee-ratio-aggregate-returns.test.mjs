@@ -60,8 +60,10 @@ test('inline native returns are readable before the closed evidence panel withou
  const s=fixture(),before=structuredClone(s),item=c.select(build(s),scope()),h=c.renderInline(item),visible=h.slice(0,h.indexOf('<details'));
  assert.deepEqual(s,before);assert.match(visible,/全部：/);assert.match(visible,/近一年：/);assert.match(visible,/12.50%/);assert.match(visible,/-1.25%/);
  assert.doesNotMatch(visible,/未满一年|p\.a\.|<small>原报表口径/);assert.match(visible,/原报表未注明是否年化/);
- assert.match(h,/<details class="ratio-returns"><summary>收益说明<\/summary>/);assert.doesNotMatch(h,/<details[^>]*open/);
- assert.match(h,/2020-01-02 至 2026-11-04/);assert.match(h,/Account A/);assert.match(h,/含已平仓/);
+ assert.match(visible,/<p class="ratio-return-inline-label">收益率<\/p>/);
+ assert.match(h,/<details class="ratio-returns ratio-return-facts"><summary>详情<\/summary>/);assert.doesNotMatch(h,/<details[^>]*open/);
+ assert.match(h,/2020-01-02 至 2026-11-04/);assert.match(h,/Account A/);
+ assert.doesNotMatch(h.slice(h.indexOf('<details')),/12.50%|-1.25%|只显示组合或分类原生收益|原报表口径/);
 });
 test('inline zero, missing and evidenced short or annualised returns retain distinct meanings',()=>{
  const s=fixture();s.reports[0].rows[0].returnPct=0;s.reports[0].rows[0].termEvidence=term(s.reports[0],0.5);s.reports[1].rows[0].returnPct=null;s.reports[1].rows[0].unit='unavailable';
@@ -71,6 +73,36 @@ test('inline zero, missing and evidenced short or annualised returns retain dist
 test('inline absent scope never inherits another classification value and escapes its optional label',()=>{
  const h=c.renderInline(c.select(build(fixture()),scope('Missing')),'<img src=x>'),visible=h.split('<details')[0];
  assert.equal((visible.match(/<strong[^>]*>—<\/strong>/g)||[]).length,2);assert.doesNotMatch(visible,/12.50%|<img/);assert.match(h,/&lt;img src=x&gt;/);
+});
+test('compact facts deduplicate equal account and cash scope while retaining each actual date',()=>{
+ const item=c.select(build(fixture()),scope()),before=structuredClone(item),h=c.renderInline(item),facts=h.slice(h.indexOf('<details'));
+ assert.equal((facts.match(/Account A/g)||[]).length,1);assert.equal((facts.match(/原报表未含现金账户收益/g)||[]).length,1);
+ assert.match(facts,/全部：<\/strong>2020-01-02 至 2026-11-04/);assert.match(facts,/近一年：<\/strong>2025-11-04 至 2026-11-04/);
+ assert.deepEqual(item,before);assert.doesNotMatch(facts,/%|只显示组合或分类原生收益|不按当前市值/);
+});
+test('compact facts preserve differing historical accounts, cash coverage and benchmark counts by period',()=>{
+ const s=fixture(),benchmark=member('Account B','SYNTHETIC-BENCHMARK');s.reports[0].rows[0].members.push(benchmark);s.reports[0].cashPerformance='included';s.reports[1].cashPerformance='unknown';
+ const item=c.select(c.build(s,{...opts,benchmarkMembers:[benchmark]}),scope()),h=c.renderInline(item),facts=h.slice(h.indexOf('<details'));
+ assert.match(facts,/全部：账户：Account A · Account B/);assert.match(facts,/近一年：账户：Account A/);
+ assert.match(facts,/全部：现金收益沿用原报表启用设置；不表示每个现金账户均有收益值/);
+ assert.match(facts,/近一年：现金账户收益覆盖未获来源确认/);
+ assert.match(facts,/全部：含 1 项模拟基准，收益未剔除其影响；配置比例仍排除/);assert.equal((facts.match(/模拟基准/g)||[]).length,1);
+});
+test('compact facts retain short-investment evidence and missing reasons without duplicate return values',()=>{
+ const s=fixture();s.reports[0].rows[0].termEvidence=term(s.reports[0],0.75);s.reports[1].rows[0].returnPct=null;s.reports[1].rows[0].unit='unavailable';
+ const h=c.renderInline(c.select(build(s),scope())),facts=h.slice(h.indexOf('<details'));
+ assert.match(h,/12.50%/);assert.match(h,/<small>未满一年<\/small>/);assert.match(facts,/全部：官方资金加权平均投资时间：0.75 年/);
+ assert.match(facts,/近一年：Sharesight 暂未提供此范围的收益率/);assert.doesNotMatch(facts,/%/);
+ for(const reason of ['benchmark-members-included','native-aggregate-not-provided','cash-scope-unverified']){
+  const unavailable=fixture();unavailable.reports[0].rows=[];unavailable.reports[0].unavailable=[{scope:scope(),reason}];
+  const rendered=c.renderInline(c.select(build(unavailable),scope()));assert.match(rendered,/全部：<\/strong>2020-01-02 至 2026-11-04/);assert.match(rendered,/全部：[含暂现]/);
+ }
+});
+test('compact facts escape account and injected display text without exposing source identifiers',()=>{
+ const s=fixture();s.accounts[0]='<img src=x onerror=alert(1)>';for(const r of s.reports)r.rows[0].members[0].account=s.accounts[0];
+ const item=c.select(c.build(s,{...opts,expectedAccounts:s.accounts}),scope()),h=c.renderInline(item,'<svg onload=alert(1)>');
+ assert.match(h,/&lt;img src=x onerror=alert\(1\)&gt;/);assert.match(h,/&lt;svg onload=alert\(1\)&gt;/);
+ assert.doesNotMatch(h,/<img|<svg|libfile_|SYNTHETIC-A|Synthetic grouping/);
 });
 test('calendar-year boundary handles leap dates',()=>{assert.equal(c.oneYearBefore('2024-02-29'),'2023-02-28');assert.equal(c.oneYearBefore('2025-02-28'),'2024-02-28');});
 test('supplemental native rows retain the correct workbook identity and hash',()=>{
@@ -273,4 +305,12 @@ test('native amount formatting preserves cents, large values and negative zero w
   const h=c.renderCompact({scope:scope('All Together'),periods:{all:{nativePct:1,nativeAmountUSD:value}}},{showAmount:true});
   assert.match(h,/收益 —/);assert.doesNotMatch(h,/NaN|Infinity|收益 USD/);
  }
+});
+test('portfolio amount currency is optional visually but remains explicit to assistive technology',()=>{
+ const item=c.select(build(amountFixture()),scope('All Together')),before=structuredClone(item),h=c.renderCompact(item,{showAmount:true,amountCurrency:false});
+ assert.match(h,/>收益 1,234,567\.89<\/span>/);assert.match(h,/>收益 -2,345\.67<\/span>/);assert.doesNotMatch(h,/>收益 USD/);
+ assert.match(h,/aria-label="全部：12\.50%；[^\"]+；收益 USD 1,234,567\.89/);
+ assert.match(h,/aria-label="近一年：-1\.25%；[^\"]+；收益 USD -2,345\.67/);assert.deepEqual(item,before);
+ assert.match(c.renderCompact(item,{showAmount:true}),/>收益 USD 1,234,567\.89<\/span>/);
+ const missing={scope:scope('All Together'),periods:{}};assert.equal((c.renderCompact(missing,{showAmount:true,amountCurrency:false}).match(/>收益 —<\/span>/g)||[]).length,2);
 });
