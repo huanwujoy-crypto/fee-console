@@ -492,7 +492,9 @@ export async function reportPublicationPreflight({now=new Date(),plan=null,revie
   const pending=plans.filter(p=>p.accountingThrough>=state.health.targetDate&&!publishedReportMatches(state,p,now));
   if(!pending.length){
     const covered={schema:'fee-console.report-preflight.v1',outcome:'already-published',plan:latest,mainSha:state.mainSha};
-    if(recoveryMain!==null||scheduledDaily)return covered;
+    // A completed-sync confirmation starts the same daily report once. It is
+    // not consent to repeat the legacy same-period IB-only source check.
+    if(recoveryMain!==null||scheduledDaily||reviewedSyncDate!==null)return covered;
     // Between reports coverage remains valid; this bounded IB retry never
     // rejuvenates stale health, changes target windows or retries every day.
     if(runAttempt!==undefined&&String(runAttempt)!=='1'||!ibEnabled||state.health.targetDate!==latest.accountingThrough||!freshTarget(latest,now)||validateHealth(state.health,{now}).length||now.getTime()-Date.parse(state.health.checkedAt)>12*3600000)return covered;
@@ -522,10 +524,10 @@ export async function reportPublicationPreflight({now=new Date(),plan=null,revie
     const budget=await readSourceAttempts({plan:next,now,currentRunId});
     if(!budget||!Number.isSafeInteger(budget.attempts)||budget.attempts<0||typeof budget.inProgress!=='boolean')throw Error();
     if(budget.inProgress||budget.attempts>=2)return {schema:'fee-console.report-preflight.v1',outcome:'waiting',reasonCode:budget.inProgress?'REPORT_SOURCE_RUN_IN_PROGRESS':'REPORT_SOURCE_ATTEMPT_BUDGET_EXHAUSTED',plan:next,mainSha:state.mainSha};
-    // The later daily clock is a fallback for an unstarted target, not an
-    // automatic retry after financial entry. Keep the ordinary 2-attempt
-    // accounting intact; a separate reviewed recovery must authorize reuse.
-    if(scheduledDaily&&budget.attempts!==0)return {schema:'fee-console.report-preflight.v1',outcome:'waiting',reasonCode:'REPORT_DAILY_SOURCE_ALREADY_ATTEMPTED',plan:next,mainSha:state.mainSha};
+    // Repeated sync confirmations and later clocks are fallbacks for an
+    // unstarted target, not permission to retry after financial entry. Keep
+    // the ordinary 2-attempt accounting; explicit recovery is checked above.
+    if((scheduledDaily||reviewedSyncDate!==null)&&budget.attempts!==0)return {schema:'fee-console.report-preflight.v1',outcome:'waiting',reasonCode:'REPORT_DAILY_SOURCE_ALREADY_ATTEMPTED',plan:next,mainSha:state.mainSha};
   }catch(error){return {schema:'fee-console.report-preflight.v1',outcome:'waiting',reasonCode:'REPORT_SOURCE_ATTEMPT_METADATA_UNVERIFIED',metadataCode:periodMetadataError(error),plan:next,mainSha:state.mainSha};}
   return {schema:'fee-console.report-preflight.v1',outcome:'produce',plan:next,mainSha:state.mainSha};
 }
