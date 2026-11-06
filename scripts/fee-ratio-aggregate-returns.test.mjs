@@ -81,6 +81,43 @@ test('supplemental rows cannot cite an unregistered or malformed source',()=>{
  for(const edit of [s=>s.reports[0].rows[0].sourceFileId=ref(4).libraryFileId,s=>{s.reports[0].additionalSources=[{...ref(4),sha256:'bad'}]},s=>s.reports[0].additionalSources=[ref(1)],s=>s.reports[0].additionalSources=[],s=>s.reports[0].additionalSources=[ref(3),ref(4)]]){const s=fixture();edit(s);assert.throws(()=>build(s),/REFUSED/);}
 });
 test('supplemental source identities cannot be reused for a different period',()=>{const s=fixture();for(const r of s.reports)r.additionalSources=[ref(4)];assert.throws(()=>build(s),/REFUSED/);});
+function stockFixture(){
+ const s=fixture();
+ for(const [i,r]of s.reports.entries()){
+  r.additionalSources=[ref(i+4),ref(i+6)];
+  r.rows=['美国底仓','美国科技','非美发达','新兴市场'].map((name,j)=>({...structuredClone(r.rows[0]),scope:scope(name),members:[member(j%2?'Account B':'Account A','STOCK-'+j)],sourceRow:10+j,returnPct:10+j}));
+  r.rows.push({...structuredClone(r.rows[0]),scope:scope('Synthetic strategy','常青基金'),members:[member('Account A','FUND')],sourceFileId:r.additionalSources[0].libraryFileId,sourceRow:30,returnPct:99});
+  r.rows.push({...structuredClone(r.rows[0]),scope:scope('股票市场'),members:structuredClone(r.rows.slice(0,4).flatMap(row=>row.members)),sourceFileId:r.additionalSources[1].libraryFileId,sourceRow:60,returnPct:i?-2.43:17.23});
+ }return s;
+}
+test('third official workbook is bound only to the exact four-category historical stock subtotal',()=>{
+ const s=stockFixture(),before=structuredClone(s),v=build(s),stock=c.select(v,scope('股票市场'));
+ assert.deepEqual(s,before);assert.equal(stock.periods.all.nativePct,17.23);assert.equal(stock.periods.oneYear.nativePct,-2.43);
+ assert.equal(stock.periods.all.memberCount,4);assert.equal(stock.periods.all.status,'source-unit-unspecified');assert.equal(stock.periods.all.source.libraryFileId,ref(6).libraryFileId);
+ const old=structuredClone(s);for(const r of old.reports){r.additionalSources.pop();r.rows.pop();r.unavailable=[{scope:scope('股票市场'),reason:'native-aggregate-not-provided'}];}
+ const oldView=build(old);for(const item of oldView.items.filter(x=>x.scope.name!=='股票市场'))assert.deepEqual(c.select(v,item.scope),item);
+ assert.doesNotMatch(c.render(stock),/17.23% p.a.|未满一年/);
+ assert.equal(stock.periods.all.cashPerformance,'unknown');
+ assert.match(c.render(stock),/四个股票分类/);assert.doesNotMatch(c.render(stock),/未含现金账户收益|现金账户收益覆盖未获来源确认/);
+});
+test('stock supplement rejects missing original categories, wrong members and classification overlap',()=>{
+ for(const edit of [r=>r.rows.splice(2,1),r=>r.rows[0].scope.parent='常青基金',r=>r.rows[0].sourceFileId=r.additionalSources[0].libraryFileId,r=>r.rows.at(-1).members.pop(),r=>r.rows.at(-1).members.push(member('Account A','DEFENSIVE')),r=>r.rows[1].members=structuredClone(r.rows[0].members),r=>r.rows.at(-1).members[0].account='Account B']){
+  const s=stockFixture();edit(s.reports[0]);assert.throws(()=>build(s),/REFUSED/);
+ }
+});
+test('stock supplement cannot replace the total, other categories or evidence and cannot remain unused',()=>{
+ for(const edit of [r=>r.rows.at(-1).scope=scope('All Together'),r=>r.rows.at(-1).scope=scope('防御资产'),r=>r.rows[0].sourceFileId=r.additionalSources[1].libraryFileId,r=>r.rows.at(-1).sourceFileId=r.source.libraryFileId,r=>r.rows.pop(),r=>r.additionalSources.push(ref(9)),r=>{r.rows[0].termEvidence={type:'sharesight-average-years-invested',years:2,scope:r.rows[0].scope,period:r.period,endDate:r.endDate,source:r.additionalSources[1]};}]){
+  const s=stockFixture();edit(s.reports[0]);assert.throws(()=>build(s),/REFUSED/);
+ }
+ const cross=stockFixture();cross.reports[1].rows.at(-1).sourceFileId=cross.reports[0].additionalSources[1].libraryFileId;assert.throws(()=>build(cross),/REFUSED/);
+});
+test('stock subtotal refuses cash and instruments assigned to a non-stock category in any account',()=>{
+ for(const market of ['CASH','cash',' CASH ']){const s=stockFixture(),r=s.reports[0];r.rows[0].members[0].market=market;r.rows.at(-1).members[0].market=market;assert.throws(()=>build(s),/REFUSED/);}
+ for(const name of ['防御资产','主题投资','Cash Accounts','常青基金','未分类'])for(const account of accounts){
+  const s=stockFixture(),r=s.reports[0];r.rows.push({...structuredClone(r.rows[0]),scope:scope(name),members:[{...r.rows[0].members[0],account}],sourceRow:99});assert.throws(()=>build(s),/REFUSED/);
+ }
+ const s=stockFixture();for(const r of s.reports)r.rows.push({...structuredClone(r.rows.at(-1)),scope:scope('二级市场'),sourceFileId:r.additionalSources[0].libraryFileId,sourceRow:100});assert.doesNotThrow(()=>build(s));
+});
 test('same sheet and total coordinate in different original workbooks stay distinct',()=>{
  const s=fixture(),r=s.reports[0];r.additionalSources=[ref(4)];r.rows.push({...structuredClone(r.rows[0]),scope:scope('Second native scope'),sourceFileId:ref(4).libraryFileId,returnPct:3.25});
  const v=build(s);assert.equal(v.items.length,2);assert.equal(v.items[1].periods.all.nativePct,3.25);assert.equal(v.items[0].periods.all.source.libraryFileId,ref(1).libraryFileId);
@@ -93,6 +130,13 @@ function topFixture(){
  s.topHoldings={schema:'fee-console.ratio-top5-source.v1',targets,reports:s.reports.map(r=>({...structuredClone(r),additionalSources:[],rows:targets.map((t,i)=>({target:{category:t.category,name:t.name},memberEvidence:t.members.map(m=>({...m,name:t.name,category:t.category,sourceRow:i+30})),sourceSheet:'Combined',sourceRow:i+30,returnPct:i+0.25,unit:'unknown',termEvidence:{type:'unknown'}})),unavailable:[]}))};return s;
 }
 const topBuild=s=>c.build(s,{...opts,topTargets:s.topHoldings.targets});
+test('stock-only supplemental source cannot be reused by top-five or its annualisation evidence',()=>{
+ const make=()=>{const s=stockFixture();s.topHoldings=topFixture().topHoldings;return s;};
+ const baseline=make();assert.equal(topBuild(baseline).topHoldings.items.length,20);
+ for(const edit of [(r,stock)=>r.source=stock,(r,stock)=>r.additionalSources=[stock],(r,stock)=>r.rows[0].sourceFileId=stock.libraryFileId,(r,stock)=>r.rows[0].termEvidence={type:'sharesight-average-years-invested',years:2,scope:r.rows[0].target,period:r.period,endDate:r.endDate,source:stock}]){
+  for(const period of [0,1]){const s=make();edit(s.topHoldings.reports[0],s.reports[period].additionalSources[1]);assert.throws(()=>topBuild(s),/REFUSED/);}
+ }
+});
 test('top-five has exactly twenty selected scopes and two native periods, no percent arithmetic',()=>{
  const s=topFixture(),before=structuredClone(s),v=topBuild(s);assert.deepEqual(s,before);assert.equal(v.topHoldings.items.length,20);
  const last=v.topHoldings.items.at(-1),h=c.renderTop(last);assert.match(h,/直接持仓收益率/);assert.match(h,/19.25%/);assert.match(h,/不包括 ETF 穿透/);assert.doesNotMatch(h,/38.50%|57.75%|未满一年|未确认/);

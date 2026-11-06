@@ -59,6 +59,24 @@ function addTopReturns(raw,f){
  const targets=core.topTargets(f.model.exposure,companies);
  raw.performance.topHoldings={schema:'fee-console.ratio-top5-source.v1',targets,reports:raw.performance.reports.map(r=>({...structuredClone(r),additionalSources:[],rows:targets.filter(t=>t.members.length).map((t,i)=>({target:{category:t.category,name:t.name},memberEvidence:t.members.map((m,n)=>({...m,name:t.name,category:t.category,sourceRow:100+i*10+n})),sourceSheet:'Synthetic official subtotal '+i,sourceRow:100+i*10,returnPct:7.62+i,unit:'unknown',termEvidence:{type:'unknown'}})),unavailable:targets.filter(t=>!t.members.length).map(t=>({target:{category:t.category,name:t.name},reason:'no-direct-holding'}))}))};
 }
+function addStockReturns(raw){
+ for(const [i,r]of raw.performance.reports.entries()){
+  const ref=n=>({libraryFileId:'libfile_'+n.repeat(32),version:0,sha256:n.repeat(64),locator:'Synthetic native grouping'});
+  r.additionalSources=[ref(String(i+6)),ref(String(i+8))];
+  r.rows[0].sourceFileId=r.additionalSources[0].libraryFileId;
+  const rows=['美国底仓','美国科技','非美发达','新兴市场'].map((name,j)=>({scope:scope(name),members:[{account:raw.accounts[j],market:'SYNTHETIC',securityCode:'STOCK-'+j}],sourceSheet:'Synthetic original stock category',sourceRow:20+j,returnPct:10+j,unit:'unknown',termEvidence:{type:'unknown'}}));
+  r.rows.push(...rows,{scope:scope('股票市场'),members:structuredClone(rows.flatMap(row=>row.members)),sourceFileId:r.additionalSources[1].libraryFileId,sourceSheet:'Synthetic native stock subtotal',sourceRow:90,returnPct:i?-2.43:17.23,unit:'unknown',termEvidence:{type:'unknown'}});
+ }
+}
+test('official stock subtotal authenticates and renders without replacing allocation or top-five evidence',async t=>{
+ const f=await fixture(t,(raw,f)=>{addTopReturns(raw,f);addStockReturns(raw);}),reopened=await f.snapshot.verify(f.performanceSigned,f.manager,{now:f.now}),html=f.ratio.render(reopened.model);
+ assert.deepEqual(reopened.model.performance,f.raw.performance);assert.deepEqual(reopened.model.performance.topHoldings,f.raw.performance.topHoldings);
+ assert.deepEqual(reopened.model.classificationSummary,f.built.input.classification);assert.deepEqual(reopened.model.book.holdings,f.model.book.holdings);assert.deepEqual(reopened.model.companyExposure,f.model.companyExposure);
+ const overview=html.slice(html.indexOf('<table class="ratio-overview-table">'),html.indexOf('</table>',html.indexOf('<table class="ratio-overview-table">')));
+ assert.match(overview,/17.23%/);assert.match(overview,/-2.43%/);assert.doesNotMatch(overview,/17.23% p.a.|未满一年/);
+ assert.match(html,/7.62%/);assert.match(html,/8.25%/);
+ for(const change of [m=>m.performance.reports[0].rows.at(-1).returnPct++,m=>m.performance.reports[0].additionalSources[1].sha256='a'.repeat(64),m=>m.performance.reports[0].rows.at(-1).members.pop()]){const bad=structuredClone(f.model);change(bad);await assert.rejects(f.snapshot.verifyOriginal({...f.args,model:bad}));}
+});
 test('top-five actual selected scopes survive original proof, encryption, authentication and reopen',async t=>{
  const f=await fixture(t,addTopReturns),reopened=await f.snapshot.verify(f.performanceSigned,f.manager,{now:f.now}),html=f.ratio.render(reopened.model);
  assert.deepEqual(reopened.model.performance.topHoldings,f.raw.performance.topHoldings);
