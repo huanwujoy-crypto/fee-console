@@ -48,13 +48,52 @@ def target_date(now):
     return day.isoformat()
 
 
-def plan(mode, now):
-    if mode not in ('launch', 'check-start'):
+def confirmed_request(value):
+    # This binds an operator-supplied request; it does not authenticate chat or
+    # turn a caller's JSON into owner approval. The caller must verify consent.
+    keys = {'targetDate', 'confirmedAt', 'requestId', 'expectedMain'}
+    if (not isinstance(value, dict) or set(value) != keys
+            or not isinstance(value.get('targetDate'), str)
+            or not re.fullmatch(r'\d{4}-\d{2}-\d{2}', value['targetDate'])
+            or not isinstance(value.get('requestId'), str)
+            or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,127}', value['requestId'])
+            or not isinstance(value.get('expectedMain'), str)
+            or not re.fullmatch(r'[0-9a-f]{40}', value['expectedMain'])):
+        fail('CONFIRMATION_INVALID')
+    try:
+        if datetime.strptime(value['targetDate'], '%Y-%m-%d').date().isoformat() != value['targetDate']:
+            fail('CONFIRMATION_INVALID')
+        confirmed = timestamp(value['confirmedAt'])
+    except (ValueError, ClockError):
+        fail('CONFIRMATION_INVALID')
+    return confirmed
+
+
+def plan(mode, now, confirmation=None):
+    if mode not in ('launch', 'check-start', 'launch-confirmed'):
         fail('MODE')
     if not isinstance(now, datetime) or now.tzinfo is None:
         fail('CLOCK')
+    if mode != 'launch-confirmed' and confirmation is not None:
+        fail('CONFIRMATION_INVALID')
     hk = now.astimezone(ZoneInfo('Asia/Hong_Kong'))
     result = {'slotDate': hk.date().isoformat(), 'targetDate': target_date(now)}
+    if mode == 'launch-confirmed':
+        confirmed = confirmed_request(confirmation)
+        if confirmed > now or confirmed.astimezone(ZoneInfo('Asia/Hong_Kong')).date() != hk.date():
+            fail('CONFIRMATION_STALE')
+        target = (hk.date() - timedelta(days=1)).isoformat()
+        if confirmation['targetDate'] != target or hk.weekday() not in (1, 2, 3, 4, 5):
+            fail('CONFIRMATION_TARGET')
+        if target_date(confirmed) != target or target_date(now) != target:
+            fail('SOURCE_DAY_NOT_CLOSED')
+        target_day = datetime.strptime(target, '%Y-%m-%d').date()
+        if ((target_day + timedelta(days=1)).month != target_day.month
+                and now.astimezone(ZoneInfo('America/New_York')).date() <= target_day):
+            fail('ACCOUNTING_DAY_NOT_COMPLETE')
+        midnight = hk.replace(hour=0, minute=0, second=0, microsecond=0)
+        return {**result, 'action': True, 'from': stamp(midnight),
+                'to': stamp(midnight + timedelta(days=1) - timedelta(seconds=1))}
     if hk.weekday() not in (1, 2, 3, 4, 5):
         return {**result, 'action': False}
     minute = hk.hour * 60 + hk.minute
@@ -177,10 +216,14 @@ def started_job(payload, run, selected, now):
             'conclusion': row.get('conclusion')}
 
 
-def run_clock(mode, now, github, store, enabled=False, current_time=None):
+def run_clock(mode, now, github, store, enabled=False, current_time=None, confirmation=None):
     if enabled is not True:
         return {'event': 'FEE_CLOCK', 'outcome': 'disabled'}
-    selected = plan(mode, now)
+    # Freeze the four scalar parameters before any external adapter can run.
+    # Rechecking time/main must not silently accept a changed request object.
+    if isinstance(confirmation, dict):
+        confirmation = dict(confirmation)
+    selected = plan(mode, now, confirmation)
     current_time = current_time or (lambda: now)
     safe = {key: selected[key] for key in ('slotDate', 'targetDate')}
     if not selected['action']:
@@ -214,8 +257,10 @@ def run_clock(mode, now, github, store, enabled=False, current_time=None):
     main = github.main()
     if not re.fullmatch(r'[0-9a-f]{40}', main.get('object', {}).get('sha', '')):
         fail('METADATA_INVALID')
+    if mode == 'launch-confirmed' and main['object']['sha'] != confirmation['expectedMain']:
+        fail('CONFIRMATION_MAIN_CHANGED')
     def still_in_slot():
-        latest = plan(mode, current_time())
+        latest = plan(mode, current_time(), confirmation)
         if not latest['action'] or any(latest[key] != selected[key] for key in ('slotDate', 'targetDate')):
             fail('OUTSIDE_WINDOW')
     still_in_slot()
@@ -234,7 +279,18 @@ def run_clock(mode, now, github, store, enabled=False, current_time=None):
         store.result({**intent, 'outcome': 'natural-request-visible'})
         return {'event': 'FEE_CLOCK', 'outcome': 'natural-request-visible', **safe}
     still_in_slot()
-    dispatched = github.dispatch()  # Fixed main, automatic daily mode; no retry.
-    store.result({**intent, 'outcome': 'dispatch-accepted', 'runId': dispatched})
+    context = {}
+    if mode == 'launch-confirmed':
+        # Retain the claim if main changes or POST/result becomes uncertain.
+        # Existing automatic slots still consume exactly this same v1 intent.
+        if github.main().get('object', {}).get('sha') != confirmation['expectedMain']:
+            fail('CONFIRMATION_MAIN_CHANGED')
+        still_in_slot()
+        dispatched = github.dispatch_confirmed(confirmation)
+        context = {'entry': mode, 'requestId': confirmation['requestId'],
+                   'confirmedAt': confirmation['confirmedAt']}
+    else:
+        dispatched = github.dispatch()  # Fixed main, automatic daily mode; no retry.
+    store.result({**intent, **context, 'outcome': 'dispatch-accepted', 'runId': dispatched})
     return {'event': 'FEE_CLOCK', 'outcome': 'dispatch-accepted', **safe, 'runId': dispatched,
-            'publicationVerified': False}
+            **context, 'publicationVerified': False}

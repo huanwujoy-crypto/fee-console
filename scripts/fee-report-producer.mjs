@@ -41,11 +41,11 @@ function reviewedCloudOnceManual(env,readEvent){
       ||env.GITHUB_RUN_ATTEMPT!=='1'||env.GITHUB_SHA!==env.FEE_REPORT_ONCE_MAIN)return false;
     const event=readEvent?readEvent():(()=>{const p=env.GITHUB_EVENT_PATH;if(!p||fs.statSync(p).size>256*1024)throw Error();return JSON.parse(fs.readFileSync(p,'utf8'));})();
     const i=event?.inputs,off=v=>v===undefined||v===false||v==='false',blank=v=>v===undefined||v==='';
-    const keys=['ib_diagnostic_once','ib_diagnostic_main','run_reviewed_once','report_kind','report_target','report_markets','manual_sync_completed_for','recovery_main','ratio_main','ratio_plan','source_plan_check_only','source_acceptance_once','source_from','source_target','source_main'];
+    const keys=['ib_diagnostic_once','ib_diagnostic_main','run_reviewed_once','report_kind','report_target','report_markets','manual_sync_completed_for','confirmed_main','recovery_main','ratio_main','ratio_plan','source_plan_check_only','source_acceptance_once','source_from','source_target','source_main'];
     return event.sender?.id===RECOVERY_OWNER&&event.repository?.full_name===ONCE_REPO&&i&&!Array.isArray(i)
       &&Object.keys(i).every(k=>keys.includes(k))&&[true,'true'].includes(i.run_reviewed_once)
       &&i.report_kind==='daily'&&i.report_target===CLOUD_ONCE.target&&i.report_markets==='NASDAQ,NYSE'
-      &&['manual_sync_completed_for','recovery_main','ratio_main','ratio_plan','source_from','source_target','source_main'].every(k=>blank(i[k]))
+      &&['manual_sync_completed_for','confirmed_main','recovery_main','ratio_main','ratio_plan','source_from','source_target','source_main'].every(k=>blank(i[k]))
       &&off(i.source_plan_check_only)&&off(i.source_acceptance_once)&&off(i.ib_diagnostic_once)&&blank(i.ib_diagnostic_main);
   }catch{return false;}
 }
@@ -476,17 +476,19 @@ export function reportPreflightSummary(result){
   const metadata=result.reasonCode==='REPORT_SOURCE_ATTEMPT_METADATA_UNVERIFIED'&&METADATA_ERRORS.has(result.metadataCode)?result.metadataCode:null;
   return `## Fee report period\n\n- Decision: ${result.outcome}\n- Reason: ${reason}\n- Accounting cutoff: ${date(result.plan?.accountingThrough)}\n- Price cutoff: ${date(result.plan?.priceThrough)}\n${metadata?'- Metadata stage: SOURCE_ATTEMPTS\n- Metadata result: '+metadata+'\n':''}\nNo financial source or encrypted economic book is read by this gate.\n`;
 }
-export async function reportPublicationPreflight({now=new Date(),plan=null,reviewedSyncDate=null,recoveryMain=null,scheduledDaily=false,ibEnabled=process.env.IB_MANAGER_READ_ENABLED==='true',currentRunId=process.env.GITHUB_RUN_ID,runAttempt=process.env.GITHUB_RUN_ATTEMPT,readRetryRuns=readPeriodRetryRuns,readSourceAttempts=readPeriodSourceAttempts,readRecoveryRelease=readReportRecoveryRelease,readState}={}){
+export async function reportPublicationPreflight({now=new Date(),plan=null,reviewedSyncDate=null,confirmedMain=null,recoveryMain=null,scheduledDaily=false,ibEnabled=process.env.IB_MANAGER_READ_ENABLED==='true',currentRunId=process.env.GITHUB_RUN_ID,runAttempt=process.env.GITHUB_RUN_ATTEMPT,readRetryRuns=readPeriodRetryRuns,readSourceAttempts=readPeriodSourceAttempts,readRecoveryRelease=readReportRecoveryRelease,readState}={}){
   readState||=((target,start)=>readPublicationState(target,start,undefined,{requireIb:ibEnabled}));
   const plans=plan?[plan]:reportPlansAround(now);
   if(!plans.length)return {schema:'fee-console.report-preflight.v1',outcome:'not-due',plan:null};
   if(plans.some(p=>!validateReportPlan(p)))fail('PLAN');
+  if(confirmedMain!==null&&(!ONCE_SHA.test(confirmedMain)||!plan||!isReviewedDailyPlan(plan)||reviewedSyncDate!==plan.accountingThrough||recoveryMain!==null||scheduledDaily))fail('CONFIRMED_MAIN_SCOPE');
   if(scheduledDaily&&(reviewedSyncDate!==null||recoveryMain!==null||!plan||!plan.kind.startsWith('daily')||isReviewedDailyPlan(plan)))fail('DAILY_SCOPE');
   if(recoveryMain!==null&&(!plan||!isReviewedDailyPlan(plan)||!recoveryScope(plan.accountingThrough)))fail('RECOVERY_SCOPE');
   if(plans.some(p=>isReviewedDailyPlan(p)&&reviewedSyncDate!==p.accountingThrough)
       ||reviewedSyncDate!==null&&(!plan||!isReviewedDailyPlan(plan)||reviewedSyncDate!==plan.accountingThrough))fail('MANUAL_SYNC_CONFIRMATION');
   const latest=plans.at(-1),startedAt=now.toISOString();
   let state=await readState(latest.accountingThrough,startedAt);
+  if(confirmedMain!==null&&(state.mainSha!==confirmedMain||state.finalMainSha!==confirmedMain))fail('CONFIRMED_MAIN_CHANGED');
   if(state.mainSha!==state.finalMainSha||validateHealth(state.health,{now:new Date(state.health?.checkedAt)}).length||Date.parse(state.health?.checkedAt)>now.getTime()+300000||state.health?.dataSha256!==hash(state.data))fail('PUBLICATION_READ');
   if(plan&&state.health.targetDate>plan.accountingThrough)fail('HISTORY_AHEAD_OF_TARGET');
   const pending=plans.filter(p=>p.accountingThrough>=state.health.targetDate&&!publishedReportMatches(state,p,now));
@@ -509,6 +511,7 @@ export async function reportPublicationPreflight({now=new Date(),plan=null,revie
   if(readiness.state!=='due')return {schema:'fee-console.report-preflight.v1',outcome:'waiting',reasonCode:readiness.reasonCode,plan:next,mainSha:state.mainSha};
   if(!freshTarget(next,now))return {schema:'fee-console.report-preflight.v1',outcome:'recovery-required',reasonCode:'REPORT_TARGET_OUTSIDE_PROMOTION_WINDOW',plan:next,mainSha:state.mainSha};
   if(next.accountingThrough!==latest.accountingThrough)state=await readState(next.accountingThrough,startedAt);
+  if(confirmedMain!==null&&(state.mainSha!==confirmedMain||state.finalMainSha!==confirmedMain))fail('CONFIRMED_MAIN_CHANGED');
   if(state.mainSha!==state.finalMainSha||validateHealth(state.health,{now:new Date(state.health?.checkedAt)}).length||state.health?.dataSha256!==hash(state.data)||state.health.targetDate>next.accountingThrough)fail('PUBLICATION_READ');
   if(publishedReportMatches(state,next,now))return {schema:'fee-console.report-preflight.v1',outcome:'already-published',plan:next,mainSha:state.mainSha};
   if(state.pending)return {schema:'fee-console.report-preflight.v1',outcome:'candidate-pending',plan:next,mainSha:state.mainSha};
@@ -532,7 +535,8 @@ export async function reportPublicationPreflight({now=new Date(),plan=null,revie
   return {schema:'fee-console.report-preflight.v1',outcome:'produce',plan:next,mainSha:state.mainSha};
 }
 export async function dailyPublicationPreflight({now=new Date(),targetDate=null,reviewedSyncDate=null,markets=String(process.env.FEE_REPORT_MARKETS||'').split(',').filter(Boolean),readState,...options}={}){
-  if(options.scheduledDaily&&(targetDate!==null||reviewedSyncDate!==null||options.recoveryMain!=null))fail('DAILY_SCOPE');
+  if(options.scheduledDaily&&(targetDate!==null||reviewedSyncDate!==null||options.confirmedMain!=null||options.recoveryMain!=null))fail('DAILY_SCOPE');
+  if(options.confirmedMain!=null&&(!ONCE_SHA.test(options.confirmedMain)||!targetDate||reviewedSyncDate!==targetDate||options.recoveryMain!=null))fail('CONFIRMED_MAIN_SCOPE');
   const localDate=(zone)=>new Intl.DateTimeFormat('en-CA',{timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit'}).format(now);
   const target=targetDate||reportAddDays(localDate('Asia/Hong_Kong'),-1),base={schema:'fee-console.report-preflight.v1',plan:null};reportDate(target);
   if(reviewedSyncDate!==null&&(!targetDate||reportDate(reviewedSyncDate)!==target))fail('MANUAL_SYNC_CONFIRMATION');
@@ -543,6 +547,7 @@ export async function dailyPublicationPreflight({now=new Date(),targetDate=null,
   if(reviewedSyncDate!==null&&readiness.state!=='due'||reviewedSyncDate===null&&now.getTime()<Date.parse(initial.scheduledAt))return {...base,outcome:'waiting',reasonCode:readiness.reasonCode};
   readState||=((target,start)=>readPublicationState(target,start,undefined,{requireIb:options.ibEnabled??process.env.IB_MANAGER_READ_ENABLED==='true'}));
   const state=await readState(target,now.toISOString());
+  if(options.confirmedMain!=null&&(state.mainSha!==options.confirmedMain||state.finalMainSha!==options.confirmedMain))fail('CONFIRMED_MAIN_CHANGED');
   if(!state.health||state.health.targetDate>target)fail('HISTORY_AHEAD_OF_TARGET');
   let plan;try{plan=dailyReportPlan(target,markets,{periodFrom:state.health.targetDate===target?target:reportAddDays(state.health.targetDate,1),reviewedSyncDate});}catch{return {...base,outcome:'recovery-required',reasonCode:'REPORT_SOURCE_RANGE_UNVERIFIED'};}
   return reportPublicationPreflight({...options,now,plan,reviewedSyncDate,readState:async()=>state});
@@ -558,7 +563,7 @@ export function scheduledDailyContext(args,{env=process.env,now=new Date(),readE
       const event=readEvent?readEvent():(()=>{const p=env.GITHUB_EVENT_PATH;if(!p||fs.statSync(p).size>256*1024)throw Error();return JSON.parse(fs.readFileSync(p,'utf8'));})();
       const i=event?.inputs,off=v=>v===undefined||v===false||v==='false',blank=v=>v===undefined||v==='';
       const bools=['ib_diagnostic_once','run_reviewed_once','source_plan_check_only','source_acceptance_once'];
-      const strings=['ib_diagnostic_main','report_target','report_markets','manual_sync_completed_for','recovery_main','ratio_main','ratio_plan','source_from','source_target','source_main'];
+      const strings=['ib_diagnostic_main','report_target','report_markets','manual_sync_completed_for','confirmed_main','recovery_main','ratio_main','ratio_plan','source_from','source_target','source_main'];
       if(event.sender?.id!==RECOVERY_OWNER||event.repository?.full_name!==ONCE_REPO||!i||Array.isArray(i)
           ||i.report_kind!=='automatic-daily'||Object.keys(i).some(k=>!['report_kind',...bools,...strings].includes(k))
           ||!bools.every(k=>off(i[k]))||!strings.every(k=>blank(i[k])))throw Error();
@@ -573,7 +578,7 @@ export function scheduledDailyContext(args,{env=process.env,now=new Date(),readE
   }else{
     const day=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Hong_Kong',year:'numeric',month:'2-digit',day:'2-digit'}).format(now);
     if(args['report-kind']!=='daily'||args['report-target']!==reportAddDays(day,-1)
-        ||args['manual-sync-completed-for']||args['recovery-main']||env.PLANNED_MAIN!==env.GITHUB_SHA)fail('DAILY_SCOPE');
+        ||args['manual-sync-completed-for']||args['confirmed-main']||args['recovery-main']||env.PLANNED_MAIN!==env.GITHUB_SHA)fail('DAILY_SCOPE');
   }
   return true;
 }
@@ -676,7 +681,7 @@ async function produceReportPeriodRun({plan,reviewedSyncDate=null,outputDir,benc
 }
 function cliArgs(argv){
   const out={};for(const arg of argv){const m=/^--([a-z-]+)=([\s\S]+)$/.exec(arg);if(!m||out[m[1]]!==undefined)fail('ARGUMENT');out[m[1]]=m[2];}
-  if(Object.keys(out).some(k=>!['mode','report-kind','report-target','report-markets','report-plan','benchmark-file','out-dir','main-sha','manual-sync-completed-for','recovery-main'].includes(k)))fail('ARGUMENT');
+  if(Object.keys(out).some(k=>!['mode','report-kind','report-target','report-markets','report-plan','benchmark-file','out-dir','main-sha','manual-sync-completed-for','confirmed-main','recovery-main'].includes(k)))fail('ARGUMENT');
   if(out['report-markets']&&(out.mode!=='preflight'||out['report-kind']!=='daily'||!out['report-target']))fail('ARGUMENT');
   if((out['report-kind']===undefined)!==(out['report-target']===undefined))fail('ARGUMENT');return out;
 }
@@ -704,6 +709,44 @@ export function reviewedRecoveryConfirmation(args,{env=process.env,readEvent}={}
     return value;
   }catch{fail('RECOVERY_CONFIRMATION');}
 }
+// This binds a caller-reviewed request to the real Actions head. Parameters and
+// event metadata do not establish human consent; the existing caller owns it.
+export function reviewedMainConfirmation(args,{env=process.env,readEvent}={}){
+  const value=args['confirmed-main'];
+  if(value===undefined&&env.GITHUB_EVENT_NAME!=='workflow_dispatch')return null;
+  try{
+    const event=readEvent?readEvent():(()=>{const p=env.GITHUB_EVENT_PATH;if(!p||fs.statSync(p).size>256*1024)throw Error();return JSON.parse(fs.readFileSync(p,'utf8'));})();
+    const i=event?.inputs,off=v=>v===undefined||v===false||v==='false',blank=v=>v===undefined||v==='';
+    if(value===undefined&&blank(i?.confirmed_main))return null;
+    const bools=['ib_diagnostic_once','source_plan_check_only','source_acceptance_once'];
+    const strings=['ib_diagnostic_main','report_markets','recovery_main','ratio_main','ratio_plan','source_from','source_target','source_main'];
+    if(typeof value!=='string'||!ONCE_SHA.test(value)||env.GITHUB_SHA!==value
+        ||env.GITHUB_ACTIONS!=='true'||env.GITHUB_EVENT_NAME!=='workflow_dispatch'||env.GITHUB_REF!=='refs/heads/main'
+        ||env.GITHUB_REPOSITORY!==ONCE_REPO||env.GITHUB_ACTOR_ID!==String(RECOVERY_OWNER)||env.GITHUB_RUN_ATTEMPT!=='1'
+        ||!Number.isSafeInteger(Number(env.GITHUB_RUN_ID))||Number(env.GITHUB_RUN_ID)<=0||!/^\d+$/.test(env.GITHUB_RUN_ID||'')
+        ||env.FEE_REPORT_ONCE_MAIN||env.FEE_AUTOMATIC_DAILY_REQUEST==='true'||!['preflight','produce'].includes(args.mode)
+        ||args['report-kind']!=='daily'||args['report-markets']!==undefined||args['recovery-main']!==undefined
+        ||reportDate(args['report-target'])!==args['manual-sync-completed-for']
+        ||!i||Array.isArray(i)||event.sender?.id!==RECOVERY_OWNER||event.repository?.full_name!==ONCE_REPO
+        ||Object.keys(i).some(k=>!['run_reviewed_once','report_kind','report_target','manual_sync_completed_for','confirmed_main',...bools,...strings].includes(k))
+        ||![true,'true'].includes(i.run_reviewed_once)||i.report_kind!=='daily'||i.report_target!==args['report-target']
+        ||i.manual_sync_completed_for!==args['report-target']||i.confirmed_main!==value
+        ||!bools.every(k=>off(i[k]))||!strings.every(k=>blank(i[k]))
+        ||args.mode==='produce'&&env.PLANNED_MAIN!==value)throw Error();
+    return value;
+  }catch{fail('CONFIRMED_MAIN_SCOPE');}
+}
+export async function confirmReviewedMainBeforeSource(args,{env=process.env,readEvent,checkedOutMain,fetchImpl=globalThis.fetch}={}){
+  const value=reviewedMainConfirmation(args,{env,readEvent});
+  if(value===null)return null;
+  if(args.mode!=='produce'||checkedOutMain!==undefined&&checkedOutMain!==value)fail('CONFIRMED_MAIN_CHANGED');
+  let ref;
+  try{ref=await boundedJson(fetchImpl,'https://api.github.com/repos/'+ONCE_REPO+'/git/ref/heads/main',
+    {method:'GET',headers:{Accept:'application/vnd.github+json'}},{timeoutMs:5000,maxBytes:64*1024});}
+  catch{fail('CONFIRMED_MAIN_METADATA');}
+  if(ref?.ref!=='refs/heads/main'||ref.object?.type!=='commit'||ref.object?.sha!==value)fail('CONFIRMED_MAIN_CHANGED');
+  return value;
+}
 async function main(){
   const args=cliArgs(process.argv.slice(2));let plan=null;
   if(args.mode?.startsWith('once-')){
@@ -715,6 +758,7 @@ async function main(){
   if(args['report-plan']){try{plan=JSON.parse(args['report-plan']);}catch{fail('PLAN');}if(!validateReportPlan(plan)||args['report-target']!==plan.accountingThrough||args['report-kind']!==(plan.kind.startsWith('daily')?'daily':plan.kind==='monthly'?'monthly':'weekly'))fail('PLAN');}
   else if(args['report-target']&&args['report-kind']!=='daily')plan=explicitReportPlan(args['report-kind'],args['report-target']);
   const reviewedSyncDate=reviewedSyncConfirmation(args);
+  const confirmedMain=reviewedMainConfirmation(args);
   const recoveryMain=reviewedRecoveryConfirmation(args);
   if(plan&&isReviewedDailyPlan(plan)&&reviewedSyncDate!==plan.accountingThrough)fail('MANUAL_SYNC_CONFIRMATION');
   if(args.mode==='watch'){
@@ -728,11 +772,12 @@ async function main(){
   const scheduledDaily=scheduledDailyContext(args);
   if(args.mode==='preflight'){
     if(args['out-dir']||args['benchmark-file']||args['report-plan'])fail('ARGUMENT');
-    const result=await(!args['report-kind']||args['report-kind']==='daily'?dailyPublicationPreflight({targetDate:args['report-target']||null,reviewedSyncDate,recoveryMain,scheduledDaily,...(args['report-markets']?{markets:args['report-markets'].split(',')}:{} )}):reportPublicationPreflight({plan}));
+    const result=await(!args['report-kind']||args['report-kind']==='daily'?dailyPublicationPreflight({targetDate:args['report-target']||null,reviewedSyncDate,confirmedMain,recoveryMain,scheduledDaily,...(args['report-markets']?{markets:args['report-markets'].split(',')}:{} )}):reportPublicationPreflight({plan}));
     if(scheduledDaily&&result.outcome==='produce'&&result.mainSha!==process.env.GITHUB_SHA)fail('DAILY_SCOPE');
     console.log(JSON.stringify(result));return;
   }
   if(args.mode!=='produce'||!plan)fail('ARGUMENT');
+  if(confirmedMain!==null)await confirmReviewedMainBeforeSource(args);
   // Recheck admission before economic/source IO, including the same-run owner,
   // signed release, prior failures and absence of any earlier recovery admission.
   if(recoveryMain!==null)await authorizeReportRecovery({plan,expectedMain:recoveryMain});

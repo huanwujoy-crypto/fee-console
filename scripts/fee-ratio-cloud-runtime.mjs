@@ -24,7 +24,7 @@ export function ratioAdmission(env,event){
   if(env.GITHUB_ACTIONS!=='true'||env.GITHUB_EVENT_NAME!=='workflow_dispatch'||env.GITHUB_RUN_ATTEMPT!=='1'||env.GITHUB_REF!=='refs/heads/main'||env.GITHUB_REPOSITORY!==REPO||env.GITHUB_ACTOR_ID!==String(RATIO_OWNER)||!/^[a-f0-9]{40}$/.test(env.GITHUB_SHA||'')||event?.sender?.id!==RATIO_OWNER||event?.repository?.full_name!==REPO)fail();
   const i=event.inputs;
   if(!i||i.ratio_main!==env.GITHUB_SHA||typeof i.ratio_plan!=='string'||i.ratio_plan.length>8192||env.RATIO_PLAN!==i.ratio_plan)fail();
-  const defaults={ib_diagnostic_once:'false',ib_diagnostic_main:'',source_plan_check_only:'false',source_acceptance_once:'false',run_reviewed_once:'false',source_from:'',source_target:'',source_main:'',manual_sync_completed_for:'',recovery_main:'',report_kind:'',report_target:'',report_markets:''};
+  const defaults={ib_diagnostic_once:'false',ib_diagnostic_main:'',source_plan_check_only:'false',source_acceptance_once:'false',run_reviewed_once:'false',source_from:'',source_target:'',source_main:'',manual_sync_completed_for:'',confirmed_main:'',recovery_main:'',report_kind:'',report_target:'',report_markets:''};
   if(Object.keys(i).some(k=>!Object.hasOwn(defaults,k)&&!['ratio_main','ratio_plan'].includes(k))||Object.entries(defaults).some(([k,v])=>Object.hasOwn(i,k)&&i[k]!==v))fail();
   const plan=parse(Buffer.from(i.ratio_plan));validateRatioCloudPlan(plan);return plan;
 }

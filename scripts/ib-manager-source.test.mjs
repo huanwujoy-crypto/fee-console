@@ -55,6 +55,8 @@ test('diagnostic event and metadata reject mixed modes, reruns, duplicates and c
   const env={GITHUB_ACTIONS:'true',GITHUB_REPOSITORY:'huanwujoy-crypto/fee-console',GITHUB_REF:'refs/heads/main',GITHUB_SHA:head,GITHUB_EVENT_NAME:'workflow_dispatch',GITHUB_ACTOR_ID:'283054367',GITHUB_RUN_ATTEMPT:'1',GITHUB_RUN_ID:id,FEE_IB_DIAGNOSTIC_ACTIONS_TOKEN:'synthetic-token-not-a-secret'};
   const event={inputs:{ib_diagnostic_once:'true',ib_diagnostic_main:head}};
   validateIbDiagnosticEvent({env,event,expectedMain:head,now});
+  validateIbDiagnosticEvent({env,event:{inputs:{...event.inputs,confirmed_main:''}},expectedMain:head,now});
+  for(const confirmed_main of [head,null,false,0])assert.throws(()=>validateIbDiagnosticEvent({env,event:{inputs:{...event.inputs,confirmed_main}},expectedMain:head,now}),/ARGUMENT/);
   for(const [k,v] of [['GITHUB_RUN_ATTEMPT','2'],['GITHUB_EVENT_NAME','schedule'],['GITHUB_ACTOR_ID','1'],['GITHUB_REF','refs/heads/other'],['GITHUB_SHA','b'.repeat(40)]])assert.throws(()=>validateIbDiagnosticEvent({env:{...env,[k]:v},event,expectedMain:head,now}),/ENVIRONMENT/);
   for(const [k,v] of [['ratio_plan','{}'],['run_reviewed_once','true'],['source_acceptance_once','true'],['report_target','2026-11-04'],['unknown','x']])assert.throws(()=>validateIbDiagnosticEvent({env,event:{inputs:{...event.inputs,[k]:v}},expectedMain:head,now}),/ARGUMENT/);
   assert.throws(()=>validateIbDiagnosticEvent({env,event,expectedMain:head,now:new Date('2026-11-06T00:00:00Z')}),/EXPIRED/);

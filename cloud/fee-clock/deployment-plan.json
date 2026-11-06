@@ -329,5 +329,30 @@
   "updateExistingOnly": true,
   "newResourcesAllowed": false,
   "permissionChangesAllowed": false,
-  "liveResourceReadbackRequired": true
+  "liveResourceReadbackRequired": true,
+  "confirmedStartProposal": {
+    "status": "local-code-only-not-deployed-or-executed",
+    "job": "projects/family-portfolio-gateway/locations/asia-east2/jobs/fee-clock-launch",
+    "containerArgs": ["launch-confirmed", "TARGET_DATE", "CONFIRMED_AT_UTC", "REQUEST_ID", "EXPECTED_MAIN_SHA"],
+    "normalJobArgsUnchanged": true,
+    "schedulerJobsUnchanged": true,
+    "newIdentityOrCredential": false,
+    "newIamBindings": [],
+    "existingCallerPermissionVerificationRequired": ["run.jobs.run", "run.jobs.runWithOverrides"],
+    "callerAccessStatus": "not-proven-by-this-local-plan; stop rather than add permissions if existing authorized access is insufficient",
+    "authorizationBoundary": "An authorized operator binds a real current owner chat confirmation to the exact target, UTC confirmation time, opaque message request ID and protected main. Parameters and JSON are not owner approval; this is not an automatic chat listener.",
+    "dispatchInputs": {
+      "run_reviewed_once": "true",
+      "report_kind": "daily",
+      "report_target": "TARGET_DATE",
+      "manual_sync_completed_for": "TARGET_DATE",
+      "confirmed_main": "EXPECTED_MAIN_SHA"
+    },
+    "sharedIntent": "Existing fee-console.clock-intent.v1 and v1/intent/<target>.json; exact original create-only schema and no reset/delete/expiry takeover. Request IDs do not create another target allowance.",
+    "preflight": "Before invocation, independently read actual publication/candidate/source-attempt status through an allowed existing surface. The original workflow remains the final same-target financial/source/month-end gate; a cloud intent alone proves none of those facts.",
+    "releaseRequirement": "Protected exact-head approval plus verified image digest; update only the existing launch image after actual metadata/permissions readback. Keep default launch args, Scheduler settings, runtime identity, secret version and all claims unchanged.",
+    "executionRequirement": "This proposal does not lift the current no-immediate-run restriction. A live trial requires explicit permission for one exact target after lawful current-state readback; uncertain or failed requests are not retried.",
+    "supervision": "Follow the actual run, source gate, signed candidate, validation, promotion, Pages bytes and all three account dates. Dispatch acceptance or check-start is never publication acceptance.",
+    "costBoundary": "An early invocation adds one execution of the existing job and its normal metadata/secret/storage calls; no new service or ongoing IAM grant is configured here. Existing cost limits still apply."
+  }
 }

@@ -49,7 +49,7 @@ Use the existing main workflow with `run_reviewed_once=true`, `report_kind=daily
 and equal `report_target` / `manual_sync_completed_for` dates. This is an explicit
 per-target request; do not invent confirmation, infer a target only from the word
 "today", use an old confirmation for a new date, or impersonate it through
-`automatic-daily`. No new workflow, mode, credential, identity or schedule is added.
+`automatic-daily`. No new GitHub workflow, credential, identity or schedule is added.
 
 The confirmation is not source evidence. Before entering finance, preserve the
 actual market-close cutoff, exact target/calendar, live main, publication state,
@@ -77,6 +77,49 @@ Supervise the actual run through signed candidate validation, promotion, Pages
 readback and all-three-account target verification; report failure without
 automatic retry. This code change does not dispatch a report or grant approval
 for a new source recovery, and local tests are not live production acceptance.
+
+The local cloud-clock continuation adds only the `launch-confirmed` entry to the
+existing launch Job. Its fixed positional arguments are target date, UTC
+confirmation timestamp, an opaque bounded request ID and expected protected-main
+SHA. A trusted operator must bind those values to the actual current owner
+message. They are audit parameters, not independently authenticated approval;
+there is no chat listener or claim of unattended chat-to-publication operation.
+Never submit an agent-authored `approved` field as authorization.
+
+The confirmation must be from the same Hong Kong day, nonfuture and after that
+target's actual New York 16:15 close. The target is exactly the prior Hong Kong
+date on the original qualifying weekdays. A genuine month-end still waits for
+New York midnight; the workflow's market calendar and any earlier monthly archive
+remain its own final readiness checks. Unknown or closed source dates do not
+become eligible merely because a confirmation exists.
+
+Confirmed and scheduled cloud launches share the original create-only
+`v1/intent/<target>.json` and its unchanged v1 schema. The request ID never creates
+a new allowance. The existing main is checked before claiming and again before
+the sole dispatch; `confirmed_main` additionally binds the dispatched workflow
+event, run SHA, public preflight and source-job pre-secret checks to that same
+expected release, including a main movement after the clock's last read. The
+original global producer concurrency and candidate/source gates remain in force.
+Any existing intent, unknown POST, result-receipt failure, changed main or stale
+confirmation after claim leaves the record intact and cannot cause resending.
+The 09:00 fallback uses that same claim even before GitHub exposes the early run.
+
+Before calling the Job, the operator must use an allowed current readback of the
+actual target, main, existing production runs, pending candidate, published
+receipt and consumed source attempts. Reuse an in-flight run for supervision,
+return an already-published report, and stop after a prior financial failure.
+Unreadable or denied metadata is a blocker, not evidence that nothing ran; do
+not switch paths to bypass a denial. The clock's intent does not establish
+publication state or source completeness. The original workflow preflight is
+still the final barrier before any financial credential or source use.
+
+Deployment remains a local proposal until the exact code and image are approved
+and the existing invocation identity's parameter-override permissions are
+verified. Do not grant new roles, create a service, change the normal Job args,
+or move the 09:00/09:05/11:30/14:00 schedules. A real trial additionally requires
+explicitly lifting this round's no-immediate-run restriction for one exact
+target. After acceptance, supervise the actual existing run and publication
+chain, rather than start another task or infer success from a Job acknowledgment.
 
 ## Bounded November 2 cloud acceptance (not yet activated)
 

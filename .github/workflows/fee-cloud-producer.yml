@@ -65,6 +65,11 @@ on:
         type: string
         required: false
         default: ''
+      confirmed_main:
+        description: Optional exact main binding for a caller-reviewed completed-sync daily request; not human approval
+        type: string
+        required: false
+        default: ''
       recovery_main:
         description: Separately approved single-use recovery for a code-pinned target; exact signed immediate-successor main SHA, never resets ordinary budgets
         type: string
@@ -97,7 +102,7 @@ concurrency:
 jobs:
   period:
     # The clock has an explicit automatic-daily mode; it never asserts human review.
-    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && !inputs.ratio_plan && !inputs.ratio_main && !inputs.source_plan_check_only && !inputs.source_acceptance_once && ((github.event_name == 'schedule' && vars.FEE_REPORT_PERIODS_ENABLED == 'true' && (vars.FEE_REPORT_ONCE_MAIN != '' || (vars.FEE_REPORT_DAILY_ENABLED == 'true' && vars.FEE_CLOUD_MODE == 'publish'))) || (github.event_name == 'workflow_dispatch' && ((inputs.run_reviewed_once && inputs.report_kind != 'automatic-daily') || (!inputs.run_reviewed_once && inputs.report_kind == 'automatic-daily' && vars.FEE_REPORT_ONCE_MAIN == '' && vars.FEE_REPORT_DAILY_ENABLED == 'true' && vars.FEE_REPORT_PERIODS_ENABLED == 'true' && vars.FEE_CLOUD_MODE == 'publish' && github.actor_id == '283054367' && github.ref == 'refs/heads/main' && github.run_attempt == 1)))) && (vars.FEE_CLOUD_MODE == 'shadow' || vars.FEE_CLOUD_MODE == 'publish') }}
+    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && !inputs.ratio_plan && !inputs.ratio_main && (!inputs.confirmed_main || (inputs.run_reviewed_once && inputs.report_kind == 'daily' && inputs.manual_sync_completed_for == inputs.report_target && !inputs.recovery_main && !inputs.report_markets && vars.FEE_REPORT_ONCE_MAIN == '')) && !inputs.source_plan_check_only && !inputs.source_acceptance_once && ((github.event_name == 'schedule' && vars.FEE_REPORT_PERIODS_ENABLED == 'true' && (vars.FEE_REPORT_ONCE_MAIN != '' || (vars.FEE_REPORT_DAILY_ENABLED == 'true' && vars.FEE_CLOUD_MODE == 'publish'))) || (github.event_name == 'workflow_dispatch' && ((inputs.run_reviewed_once && inputs.report_kind != 'automatic-daily') || (!inputs.run_reviewed_once && inputs.report_kind == 'automatic-daily' && vars.FEE_REPORT_ONCE_MAIN == '' && vars.FEE_REPORT_DAILY_ENABLED == 'true' && vars.FEE_REPORT_PERIODS_ENABLED == 'true' && vars.FEE_CLOUD_MODE == 'publish' && github.actor_id == '283054367' && github.ref == 'refs/heads/main' && github.run_attempt == 1)))) && (vars.FEE_CLOUD_MODE == 'shadow' || vars.FEE_CLOUD_MODE == 'publish') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -113,7 +118,7 @@ jobs:
       - name: Check out trusted main for public period gate
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: main
+          ref: ${{ inputs.confirmed_main && github.sha || 'main' }}
           persist-credentials: false
       - name: Plan daily coverage and month-end archive without financial credentials
         id: plan
@@ -132,6 +137,7 @@ jobs:
           REVIEWED_TARGET: ${{ github.event_name == 'workflow_dispatch' && inputs.run_reviewed_once && inputs.report_target || '' }}
           REVIEWED_MARKETS: ${{ github.event_name == 'workflow_dispatch' && inputs.run_reviewed_once && inputs.report_markets || '' }}
           REVIEWED_SYNC_DATE: ${{ github.event_name == 'workflow_dispatch' && inputs.run_reviewed_once && inputs.manual_sync_completed_for || '' }}
+          CONFIRMED_MAIN: ${{ inputs.confirmed_main }}
           REVIEWED_RECOVERY_MAIN: ${{ github.event_name == 'workflow_dispatch' && inputs.run_reviewed_once && inputs.recovery_main || '' }}
         run: |
           set -euo pipefail
@@ -151,6 +157,9 @@ jobs:
           fi
           if [[ -n "$REVIEWED_SYNC_DATE" ]]; then
             args+=("--manual-sync-completed-for=$REVIEWED_SYNC_DATE")
+          fi
+          if [[ -n "$CONFIRMED_MAIN" ]]; then
+            args+=("--confirmed-main=$CONFIRMED_MAIN")
           fi
           if [[ -n "$REVIEWED_RECOVERY_MAIN" ]]; then
             args+=("--recovery-main=$REVIEWED_RECOVERY_MAIN")
@@ -173,7 +182,7 @@ jobs:
 
   once-admit:
     needs: period
-    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && !inputs.ratio_plan && !inputs.ratio_main && vars.FEE_REPORT_ONCE_MAIN != '' && needs.period.outputs.outcome == 'produce' }}
+    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && !inputs.ratio_plan && !inputs.ratio_main && !inputs.confirmed_main && vars.FEE_REPORT_ONCE_MAIN != '' && needs.period.outputs.outcome == 'produce' }}
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
@@ -256,9 +265,21 @@ jobs:
         shell: bash
         env:
           PLANNED_MAIN: ${{ needs.period.outputs.main }}
+          CONFIRMED_MAIN: ${{ inputs.confirmed_main }}
+          REPORT_KIND: ${{ needs.period.outputs.kind }}
+          REPORT_TARGET: ${{ needs.period.outputs.target }}
+          REVIEWED_SYNC_DATE: ${{ inputs.manual_sync_completed_for }}
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$PLANNED_MAIN"
+          export CHECKED_OUT_MAIN="$(git rev-parse HEAD)"
+          test "$CHECKED_OUT_MAIN" = "$PLANNED_MAIN"
+          node --input-type=module <<'NODE'
+          import {confirmReviewedMainBeforeSource} from './scripts/fee-report-producer.mjs';
+          const args={mode:'produce','report-kind':process.env.REPORT_KIND,'report-target':process.env.REPORT_TARGET};
+          if(process.env.CONFIRMED_MAIN)args['confirmed-main']=process.env.CONFIRMED_MAIN;
+          if(process.env.REVIEWED_SYNC_DATE)args['manual-sync-completed-for']=process.env.REVIEWED_SYNC_DATE;
+          await confirmReviewedMainBeforeSource(args,{checkedOutMain:process.env.CHECKED_OUT_MAIN});
+          NODE
 
       - name: Exchange the trusted workflow identity for short-lived Google credentials
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
@@ -313,6 +334,7 @@ jobs:
           REPORT_TARGET: ${{ needs.period.outputs.target }}
           REPORT_PLAN: ${{ needs.period.outputs.plan }}
           REVIEWED_SYNC_DATE: ${{ github.event_name == 'workflow_dispatch' && inputs.run_reviewed_once && inputs.manual_sync_completed_for || '' }}
+          CONFIRMED_MAIN: ${{ inputs.confirmed_main }}
           REVIEWED_RECOVERY_MAIN: ${{ github.event_name == 'workflow_dispatch' && inputs.run_reviewed_once && inputs.recovery_main || '' }}
         run: |
           set -euo pipefail
@@ -322,6 +344,9 @@ jobs:
             "--out-dir=$RUNNER_TEMP/fee-cloud-private")
           if [[ -n "$REVIEWED_SYNC_DATE" ]]; then
             args+=("--manual-sync-completed-for=$REVIEWED_SYNC_DATE")
+          fi
+          if [[ -n "$CONFIRMED_MAIN" ]]; then
+            args+=("--confirmed-main=$CONFIRMED_MAIN")
           fi
           if [[ -n "$REVIEWED_RECOVERY_MAIN" ]]; then
             args+=("--recovery-main=$REVIEWED_RECOVERY_MAIN")
@@ -398,7 +423,7 @@ jobs:
 
   once-finish:
     needs: [period, once-admit, produce]
-    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && !inputs.ratio_plan && !inputs.ratio_main && always() && vars.FEE_REPORT_ONCE_MAIN != '' }}
+    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && !inputs.ratio_plan && !inputs.ratio_main && !inputs.confirmed_main && always() && vars.FEE_REPORT_ONCE_MAIN != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
@@ -420,7 +445,7 @@ jobs:
 
   source-plan-check:
     name: Public source plan check ${{ inputs.source_target }}
-    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && !inputs.ratio_plan && !inputs.ratio_main && github.event_name == 'workflow_dispatch' && github.run_attempt == 1 && inputs.report_kind != 'automatic-daily' && inputs.source_plan_check_only && !inputs.source_acceptance_once && !inputs.run_reviewed_once }}
+    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && !inputs.ratio_plan && !inputs.ratio_main && !inputs.confirmed_main && github.event_name == 'workflow_dispatch' && github.run_attempt == 1 && inputs.report_kind != 'automatic-daily' && inputs.source_plan_check_only && !inputs.source_acceptance_once && !inputs.run_reviewed_once }}
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
@@ -443,7 +468,7 @@ jobs:
 
   source-acceptance:
     name: Source acceptance ${{ inputs.source_target }}
-    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && !inputs.ratio_plan && !inputs.ratio_main && vars.FEE_REPORT_ONCE_MAIN == '' && github.event_name == 'workflow_dispatch' && github.run_attempt == 1 && inputs.report_kind != 'automatic-daily' && !inputs.source_plan_check_only && inputs.source_acceptance_once && !inputs.run_reviewed_once }}
+    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && !inputs.ratio_plan && !inputs.ratio_main && !inputs.confirmed_main && vars.FEE_REPORT_ONCE_MAIN == '' && github.event_name == 'workflow_dispatch' && github.run_attempt == 1 && inputs.report_kind != 'automatic-daily' && !inputs.source_plan_check_only && inputs.source_acceptance_once && !inputs.run_reviewed_once }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: fee-cloud-producer
@@ -497,7 +522,7 @@ jobs:
           fi
 
   ratio-preflight:
-    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor_id == '283054367' && github.run_attempt == 1 && inputs.report_kind != 'automatic-daily' && inputs.ratio_plan != '' && inputs.ratio_main == github.sha && !inputs.run_reviewed_once && !inputs.source_plan_check_only && !inputs.source_acceptance_once }}
+    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && !inputs.confirmed_main && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor_id == '283054367' && github.run_attempt == 1 && inputs.report_kind != 'automatic-daily' && inputs.ratio_plan != '' && inputs.ratio_main == github.sha && !inputs.run_reviewed_once && !inputs.source_plan_check_only && !inputs.source_acceptance_once }}
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
@@ -515,7 +540,7 @@ jobs:
 
   ratio:
     needs: ratio-preflight
-    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && needs.ratio-preflight.result == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && inputs.ratio_main == github.sha }}
+    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && !inputs.confirmed_main && needs.ratio-preflight.result == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && inputs.ratio_main == github.sha }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: fee-cloud-producer
@@ -559,7 +584,7 @@ jobs:
 
   ib-diagnostic:
     name: IB diagnostic 2026-11-04
-    if: ${{ inputs.ib_diagnostic_once && inputs.ib_diagnostic_main == github.sha && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor_id == '283054367' && github.run_attempt == 1 }}
+    if: ${{ !inputs.confirmed_main && inputs.ib_diagnostic_once && inputs.ib_diagnostic_main == github.sha && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor_id == '283054367' && github.run_attempt == 1 }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: fee-cloud-producer

@@ -56,6 +56,28 @@ class DeploymentTests(unittest.TestCase):
         self.assertEqual(copies, ['COPY clock.py runtime.py /app/'])
         self.assertIn('FEE_CLOCK_ENABLED=false', text)
 
+    def test_confirmed_entry_is_a_local_existing_job_proposal_without_iam_or_schedule_changes(self):
+        value = self.plan['confirmedStartProposal']
+        self.assertEqual(value['status'], 'local-code-only-not-deployed-or-executed')
+        self.assertEqual(value['job'], 'projects/family-portfolio-gateway/locations/asia-east2/jobs/fee-clock-launch')
+        self.assertEqual(value['containerArgs'], ['launch-confirmed', 'TARGET_DATE', 'CONFIRMED_AT_UTC', 'REQUEST_ID', 'EXPECTED_MAIN_SHA'])
+        self.assertTrue(value['normalJobArgsUnchanged']); self.assertTrue(value['schedulerJobsUnchanged'])
+        self.assertFalse(value['newIdentityOrCredential']); self.assertEqual(value['newIamBindings'], [])
+        self.assertFalse(self.plan['newResourcesAllowed']); self.assertFalse(self.plan['permissionChangesAllowed'])
+        self.assertEqual([r['body']['template']['template']['containers'][0]['args'] for r in self.plan['runJobs']], [['launch'], ['check-start']])
+        self.assertEqual(value['existingCallerPermissionVerificationRequired'], ['run.jobs.run', 'run.jobs.runWithOverrides'])
+
+    def test_confirmed_proposal_pins_original_workflow_and_does_not_claim_authority(self):
+        value = self.plan['confirmedStartProposal']
+        self.assertEqual(value['dispatchInputs'], {'run_reviewed_once': 'true', 'report_kind': 'daily',
+                         'report_target': 'TARGET_DATE', 'manual_sync_completed_for': 'TARGET_DATE',
+                         'confirmed_main': 'EXPECTED_MAIN_SHA'})
+        self.assertIn('not owner approval', value['authorizationBoundary'])
+        self.assertIn('not an automatic chat listener', value['authorizationBoundary'])
+        self.assertIn('no-immediate-run restriction', value['executionRequirement'])
+        self.assertIn('workflow remains the final', value['preflight'])
+        self.assertIn('never publication acceptance', value['supervision'])
+
 
 if __name__ == '__main__':
     unittest.main()
