@@ -1779,10 +1779,12 @@ const economicDiagnosticContract='ib-source-revision-20261106-diagnostic-v2';
 const economicDiagnosticBase='22174f04cae8ac18a071930f491598b327e315c5';
 const cashDiagnosticContract='ib-source-revision-20261106-diagnostic-v3';
 const cashDiagnosticBase='f1d4454d25849e1908ba508f8c7f140389e425bb';
+const incomeBoundaryDiagnosticContract='ib-source-revision-20261106-diagnostic-v4';
+const incomeBoundaryDiagnosticBase='e30015d7260e43622f8ad63a119b0efbef35acb4';
 function diagnosticRevisionFixture(contractId=diagnosticRevisionContract){
- const cash=contractId===cashDiagnosticContract,economic=contractId===economicDiagnosticContract,base=cash?cashDiagnosticBase:economic?economicDiagnosticBase:diagnosticRevisionBase;
+ const boundary=contractId===incomeBoundaryDiagnosticContract,cash=contractId===cashDiagnosticContract,economic=contractId===economicDiagnosticContract,base=boundary?incomeBoundaryDiagnosticBase:cash?cashDiagnosticBase:economic?economicDiagnosticBase:diagnosticRevisionBase;
  const f=syncRevisionFixture(),manifest=reportHistoricalRecoveryManifest({contractId});
- f.commit.parents=[{sha:base}];f.supportCommit.sha=base;f.supportCommit.parents=[{sha:cash?economicDiagnosticBase:economic?wireRevisionBase:syncRevisionBase}];
+ f.commit.parents=[{sha:base}];f.supportCommit.sha=base;f.supportCommit.parents=[{sha:boundary?cashDiagnosticBase:cash?economicDiagnosticBase:economic?wireRevisionBase:syncRevisionBase}];
  f.comparison.base_commit.sha=f.comparison.merge_base_commit.sha=base;
  f.comparison.files=manifest.map(m=>({filename:m.path,status:m.status,sha:'b'.repeat(40)}));
  f.tree.tree=[f.tree.tree[0],...manifest.map(m=>({path:m.path,type:'blob',mode:'100644',sha:'b'.repeat(40)}))];
@@ -1876,7 +1878,7 @@ test('cash diagnostic cannot relabel old bases, manifests or capabilities as the
   readRecoveryRelease:async(...args)=>({...await real(...args),contractId}),readCurrentRun:()=>assert.fail('copied release cannot acquire admission')}),/RECOVERY_SCOPE/);
 });
 
-for(const contractId of [diagnosticRevisionContract,economicDiagnosticContract,cashDiagnosticContract]){
+for(const contractId of [diagnosticRevisionContract,economicDiagnosticContract,cashDiagnosticContract,incomeBoundaryDiagnosticContract]){
 test(contractId+' diagnostic admission is authentic, read-only, execution-bound and never a production admission',async()=>{
  const f=diagnosticRevisionFixture(contractId),before=JSON.stringify(f),trace=[],readers=syncRevisionReaders(f,trace),admission=await diagnosticAdmission(f,readers);
  assert.equal(isHistoricalRevisionDiagnosticAdmission(admission),true);assert.equal(isHistoricalRevisionAdmission(admission),false);
@@ -1884,7 +1886,7 @@ test(contractId+' diagnostic admission is authentic, read-only, execution-bound 
  assert.throws(()=>readHistoricalRevisionAdmission(admission),/RECOVERY_SCOPE/);
  const binding=readHistoricalRevisionDiagnosticAdmission(admission);assert.equal(binding.contractId,contractId);
  assert.equal(binding.purpose,'read-only-diagnostic');assert.equal(binding.admissionModel,'sync-cycle-v1');assert.equal(binding.mainSha,recoveryHead);
- assert.equal(binding.repairBaseSha,contractId===cashDiagnosticContract?cashDiagnosticBase:contractId===economicDiagnosticContract?economicDiagnosticBase:diagnosticRevisionBase);assert.equal(binding.targetDate,'2026-11-06');assert.equal(binding.currentRunId,recoveryId);
+ assert.equal(binding.repairBaseSha,contractId===incomeBoundaryDiagnosticContract?incomeBoundaryDiagnosticBase:contractId===cashDiagnosticContract?cashDiagnosticBase:contractId===economicDiagnosticContract?economicDiagnosticBase:diagnosticRevisionBase);assert.equal(binding.targetDate,'2026-11-06');assert.equal(binding.currentRunId,recoveryId);
  assert.equal(binding.approvedHead,revisionReviewedHead);assert.match(binding.executionSha256,/^[a-f0-9]{64}$/);assert.equal(Object.hasOwn(binding,'consumptionSha256'),false);
  assert(Object.isFrozen(binding));assert.deepEqual(await admission.checkCurrent(),binding);assert.equal(JSON.stringify(f),before);
  assert.equal(trace.filter(x=>x==='actions/runs/'+recoveryId).length,2);
@@ -1998,4 +2000,42 @@ test('wire recovery cannot substitute old or diagnostic release trees, approvals
  await assert.rejects(diagnosticAdmission(f),/RECOVERY_SCOPE/);
  await assert.rejects(syncAdmission(f,{...readers,readRecoveryRelease:async()=>({...release,contractId:syncRevisionContract})}),/RECOVERY_SCOPE/);
  const diagnostic=diagnosticRevisionFixture();await assert.rejects(syncAdmission(diagnostic),/RECOVERY_SCOPE/);
+});
+
+
+test('income-boundary diagnostic binds the exact ten-file successor without changing prior manifests',()=>{
+ const expected=['scripts/fee-report-producer.mjs','scripts/fee-report-producer.test.mjs',
+  'scripts/fee-source-revision-runtime.mjs','scripts/fee-source-revision-runtime.test.mjs',
+  'scripts/fee-sync-revision-artifacts.mjs','scripts/fee-sync-revision-artifacts.test.mjs',
+  'scripts/ib-manager-source.mjs','scripts/ib-manager-source.test.mjs',
+  'scripts/ib-manager-source-revision.mjs','scripts/ib-manager-source-revision.test.mjs'];
+ const manifest=reportHistoricalRecoveryManifest({contractId:incomeBoundaryDiagnosticContract});
+ assert.deepEqual(manifest,expected.map(path=>({path,status:'modified'})));
+ assert.equal(manifest.length,10);assert(Object.isFrozen(manifest));assert(manifest.every(Object.isFrozen));
+ for(const [contractId,count] of [[cashDiagnosticContract,11],[economicDiagnosticContract,13],[diagnosticRevisionContract,15],
+  [wireRevisionContract,10],[syncRevisionContract,14]])assert.equal(reportHistoricalRecoveryManifest({contractId}).length,count);
+ assert.equal(reportHistoricalRecoveryManifest().length,17);
+ assert(!manifest.some(x=>/^(?:data\.json|fee-data-health\.json|index\.html|security\/|cloud\/|\.github\/)/.test(x.path)));
+});
+
+test('income-boundary diagnostic rejects old release bindings and a four-file-only manifest before any run read',async()=>{
+ const originalFour=['scripts/ib-manager-source.mjs','scripts/ib-manager-source.test.mjs',
+  'scripts/ib-manager-source-revision.mjs','scripts/ib-manager-source-revision.test.mjs'];
+ const mutations=[
+  f=>f.comparison.files=f.comparison.files.filter(x=>originalFour.includes(x.filename)),
+  f=>f.commit.parents[0].sha=cashDiagnosticBase,
+  f=>f.supportCommit.parents[0].sha=economicDiagnosticBase,
+  f=>f.reviewedCommit.parents[0].sha=cashDiagnosticBase,
+  f=>f.comments[0].body='/approve-xuan-ib-maintenance '+cashDiagnosticBase,
+  ...[cashDiagnosticContract,economicDiagnosticContract,diagnosticRevisionContract,wireRevisionContract].map(contractId=>
+    f=>{f.comparison.files=reportHistoricalRecoveryManifest({contractId}).map(x=>({filename:x.path,status:x.status,sha:'b'.repeat(40)}));}),
+ ];
+ for(const mutate of mutations){const f=diagnosticRevisionFixture(incomeBoundaryDiagnosticContract);mutate(f);
+  await assert.rejects(diagnosticAdmission(f,{...syncRevisionReaders(f),
+   readCurrentRun:()=>assert.fail('wrong final release stops before run or private reads')}),/RECOVERY_/);
+ }
+ const f=diagnosticRevisionFixture(incomeBoundaryDiagnosticContract),readers=syncRevisionReaders(f),real=readers.readRecoveryRelease;
+ for(const contractId of [cashDiagnosticContract,economicDiagnosticContract,diagnosticRevisionContract])
+  await assert.rejects(diagnosticAdmission(f,{...readers,readRecoveryRelease:async(...args)=>({...await real(...args),contractId}),
+   readCurrentRun:()=>assert.fail('old contract cannot replace the new authentic release')}),/RECOVERY_SCOPE/);
 });

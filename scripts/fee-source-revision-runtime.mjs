@@ -18,8 +18,9 @@ const CONTRACTS=Object.freeze({
   'ib-source-revision-20261106-diagnostic-v1':'fee-console.ib-source-revision-plan.v2',
   'ib-source-revision-20261106-diagnostic-v2':'fee-console.ib-source-revision-plan.v2',
   'ib-source-revision-20261106-diagnostic-v3':'fee-console.ib-source-revision-plan.v2',
+  'ib-source-revision-20261106-diagnostic-v4':'fee-console.ib-source-revision-plan.v2',
 }),TARGET='2026-11-06',ANCHOR='2026-11-04',PREVIOUS='2026-11-05';
-const DIAGNOSTIC_CONTRACTS=Object.freeze(['ib-source-revision-20261106-diagnostic-v1','ib-source-revision-20261106-diagnostic-v2','ib-source-revision-20261106-diagnostic-v3']);
+const DIAGNOSTIC_CONTRACTS=Object.freeze(['ib-source-revision-20261106-diagnostic-v1','ib-source-revision-20261106-diagnostic-v2','ib-source-revision-20261106-diagnostic-v3','ib-source-revision-20261106-diagnostic-v4']);
 const SHA=/^[a-f0-9]{64}$/,MAX_BYTES=2*1024*1024;
 const sha=bytes=>crypto.createHash('sha256').update(bytes).digest('hex');
 function failure(code){const e=new Error(PREFIX+code);errors.set(e,code);return e;}

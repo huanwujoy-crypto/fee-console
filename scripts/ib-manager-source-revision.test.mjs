@@ -215,8 +215,8 @@ test('serialized private handoff validation rebuilds the business result but gra
     await assert.rejects(validateIbSourceRevisionCandidate(bad,{...args,...options}));
   }
 });
-async function privateRevisionFixture(t,{target=T}={}){
-  const f=await fixture({target}),candidate=await f.run();
+async function privateRevisionFixture(t,{target=T,transport={}}={}){
+  const f=await fixture({target,transport}),candidate=await f.run();
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ib-revision-writer-synthetic-'));fs.chmodSync(dir,0o700);t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
   const file=path.join(dir,'ib-manager-input.json'),environ={IB_MANAGER_READ_ENABLED:'true',IB_MANAGER_BASELINE_SHA256:f.plan.baselineSha256};
   const request={schema:'fee-console.ib-manager-report-request.v2',targetDate:target,state:'verified',source:candidate.replacement.sourceState.source,
@@ -238,6 +238,18 @@ test('private writer rebuilds and binds the superseded state, changes only the n
   for(const key of Object.keys(before).filter(k=>!['ibManagerReturnReceipt','ibManagerDrawdownReceipt','ibManagerSourceState'].includes(k)))assert.deepEqual(out[key],before[key]);
   assert.equal(sameIbManagerData(out,{...out,ibManagerSourceRevision:undefined}),false);
   assert.deepEqual(out.feeCalculationReceipt,before.feeCalculationReceipt);assert.deepEqual(out.consumedOperations,before.consumedOperations);
+});
+test('v2 boundary proof survives the private JSON writer handoff while fees, original history and consumption remain intact',async t=>{
+  const f=await privateRevisionFixture(t,{transport:{early:true}}),before=structuredClone(f.data),previous=structuredClone(f.previous);
+  assert.equal(f.request.source.incomeDateNormalizations[0].schema,'fee-console.ib-income-date-normalization.v2');
+  const loaded=await loadIbManagerReport(f.file,f.options),out=loaded.apply(f.data,T);
+  assert.deepEqual(out.ibManagerSourceRevision.candidate.replacement.sourceState.source.incomeDateNormalizations,f.request.source.incomeDateNormalizations);
+  assert.deepEqual(out.ibManagerSourceRevision.candidate.acceptedAnchor,f.candidate.acceptedAnchor);
+  assert.deepEqual(out.ibManagerSourceRevision.candidate.superseded.sourceState,previous.ibManagerSourceState);
+  assert.equal(out.ibManagerReturnReceipt.grossTwrPpm,7000);
+  assert.deepEqual(out.feeCalculationReceipt,before.feeCalculationReceipt);
+  assert.deepEqual(out.consumedOperations,before.consumedOperations);
+  assert.deepEqual(f.data,before);assert.deepEqual(f.previous,previous);
 });
 test('revision loader refuses altered or missing previous state, same-cutoff mode, expiry, coverage and tampered private input',async t=>{
   for(const [name,change]of [
@@ -321,8 +333,64 @@ test('missing, duplicated, unknown and misdated source events retain original re
     ['payout amount',b=>{if(b.paid_on)b.amount=8;}]
   ])await t.test(name,async()=>{const f=await fixture({transport:{change}});await assert.rejects(f.run(),/^Error: IB_REVISION_SOURCE_REFUSED:IB_SOURCE_[A-Z_]+$/);assert.equal(f.counts().reads,1);});
 });
-test('changed U and unsupported earlier-valued income are not repaired by deleting a historical check',async()=>{
-  const f=await fixture({transport:{early:true}});await assert.rejects(f.run(),/IB_REVISION_SOURCE_REFUSED/);assert.equal(f.counts().reads,1);
+// Early-valued payout at the accepted anchor U with an owner deposit on U+1.
+// The source read proves the correction (v2 income proof with the same-capture
+// owner-flow record); the revision admits exactly that U -> U+1 boundary proof.
+const rehash=async p=>{const {proofId,...body}=p;p.proofId=await core.digest(body);};
+test('earlier-valued income restored to the exact accepted anchor with an owner deposit on U+1 is a narrow boundary revision',async()=>{
+  const f=await fixture({transport:{early:true}}),old=structuredClone(f.currentPayload),anchor=structuredClone(f.anchorPayload),r=await f.run();
+  assert.equal(f.counts().reads,1);assert.deepEqual(r.changedHistoricalDates,[P]);assert.equal(r.mode,'extend-cutoff');
+  const source=r.replacement.sourceState.source,proof=source.incomeDateNormalizations[0],accepted=anchor.ibManagerSourceState.source;
+  assert.equal(source.incomeDateNormalizations.length,1);assert.equal(proof.schema,'fee-console.ib-income-date-normalization.v2');
+  assert.equal(proof.anchor.d,U);assert.equal(proof.rawClosing.d,P);assert.deepEqual(proof.anchor,accepted.closingSnapshots.find(x=>x.d===U));
+  assert.equal(proof.rawAnchor.cash[3],10700);assert.equal(proof.payout.netCents,700);assert.deepEqual(proof.ownerFlows,{3:{depositCents:30000,withdrawalCents:0,rowIds:[14]}});
+  // U and before are byte-identical to the accepted anchor; the owner deposit is a U+1 flow, not performance.
+  assert.deepEqual(source.periodReturnsInput.points.filter(x=>x.d<=U),accepted.periodReturnsInput.points);
+  assert.deepEqual(Object.keys(source.periodReturnsInput.flowByDate),[P]);assert.deepEqual(source.cashFlowByDate,{[P]:300});
+  assert.equal(source.periodReturnsInput.points.find(x=>x.d===P).tot,1307);assert.equal(r.replacement.returnReceipt.grossTwrPpm,7000);
+  assert.deepEqual(r.acceptedAnchor.sourceState,anchor.ibManagerSourceState);assert.deepEqual(r.superseded.sourceState,old.ibManagerSourceState);
+  assert.deepEqual(f.currentPayload,old);assert.deepEqual(f.anchorPayload,anchor);assert.equal(r.publicationReady,false);assert.equal(r.executionAuthorized,false);
+  // The proof and the capture commitment stay inside the audited candidate and survive serialized validation.
+  assert.match(source.sourceEvidenceHash,/^[a-f0-9]{64}$/);
+  assert.deepEqual(await validateIbSourceRevisionCandidate(structuredClone(r),{currentPayload:f.currentPayload,targetDate:T,baselineSha256:f.plan.baselineSha256,now:clock()}),r);
+  const serialized=JSON.parse(JSON.stringify(r)),args={currentPayload:f.currentPayload,targetDate:T,baselineSha256:f.plan.baselineSha256,now:clock()};
+  assert.deepEqual(await validateIbSourceRevisionCandidate(serialized,args),r);
+  assert.equal(isIbSourceRevisionCandidate(serialized),false);
+  await assert.rejects(consumeIbSourceRevisionCandidate(serialized,args),/CANDIDATE_IDENTITY/);
+  assert.deepEqual(await consumeIbSourceRevisionCandidate(r,args),r);
+  await assert.rejects(consumeIbSourceRevisionCandidate(r,args),/CANDIDATE_IDENTITY/);
+  assert.ok(IB_SOURCE_REVISION_FAILURE_CODES.includes('IB_REVISION_CROSS_ANCHOR_PROOF'));
+});
+test('boundary proofs are refused when the anchor really moved, when the restored snapshot is not the accepted one, or when reused',async t=>{
+  await t.test('anchor U also moved by capital',async()=>{
+    const f=await fixture({transport:{early:true,change:(b,{q})=>{const d=q.get('end_date')||q.get('date');if(d===U){if(b.report){b.report.value+=50;b.report.cash_accounts[0].value+=50;}if(b.cash_accounts)for(const a of b.cash_accounts){a.balance+=50;a.balance_in_portfolio_currency+=50;}}}}});
+    await assert.rejects(f.run(),e=>ibSourceRevisionFailureCode(e)==='IB_REVISION_SOURCE_REFUSED_IB_SOURCE_PAST_POINT_CHANGED');assert.equal(f.counts().reads,1);
+  });
+  const captured=async()=>{const g=await fixture({transport:{early:true}});return g.w.reader.readStable({targetDate:T,expectedBaselineHash:g.plan.baselineSha256,baseline:{from:B,asOf:B},checkpoint:structuredClone(g.anchorPayload.ibManagerSourceState.source)});};
+  await t.test('restored snapshot differs from the accepted anchor',async()=>{
+    // A self-consistent proof shifted by one cent everywhere: it validates on its own,
+    // but its `anchor` is no longer the accepted anchor's snapshot, so it cannot cross U.
+    const revised=structuredClone(await captured()),proof=revised.incomeDateNormalizations[0];
+    for(const snapshot of [proof.anchor,proof.rawAnchor,proof.rawClosing,...revised.closingSnapshots]){snapshot.cash[3]+=1;snapshot.totalCents+=1;}
+    for(const leg of proof.cashLegs)leg.balanceCents+=1;
+    for(const point of revised.periodReturnsInput.points)if(point.d>=U)point.tot=Math.round(point.tot*100+1)/100;
+    await rehash(proof);
+    const f=await fixture({read:()=>structuredClone(revised)});
+    await assert.rejects(f.run(),/IB_REVISION_CROSS_ANCHOR_PROOF/);assert.equal(f.counts().reads,1);
+  });
+  await t.test('older prefix point changed without any proof',async()=>{
+    const revised=structuredClone(await(await fixture()).w.reader.readStable({targetDate:T,expectedBaselineHash:(await fixture()).plan.baselineSha256,baseline:{from:B,asOf:B},checkpoint:structuredClone((await fixture()).anchorPayload.ibManagerSourceState.source)}));
+    revised.periodReturnsInput.points.find(x=>x.d===U).tot+=0.01;
+    const f=await fixture({read:()=>structuredClone(revised)});await assert.rejects(f.run(),/IB_REVISION_REVISED_SCOPE/);
+  });
+  await t.test('boundary proof duplicated',async()=>{
+    const revised=structuredClone(await captured());revised.incomeDateNormalizations.push(structuredClone(revised.incomeDateNormalizations[0]));
+    const f=await fixture({read:()=>structuredClone(revised)});await assert.rejects(f.run(),/IB_REVISION_REFUSED/);
+  });
+  await t.test('boundary proof whose owner record disagrees with the portfolio flow',async()=>{
+    const revised=structuredClone(await captured());revised.cashFlowByDate[P]=299;revised.periodReturnsInput.flowByDate[P]=299;
+    const f=await fixture({read:()=>structuredClone(revised)});await assert.rejects(f.run(),/IB_REVISION_REFUSED/);
+  });
 });
 test('unstable independent source captures still fail closed',async()=>{
   const f=await fixture({transport:{unstable:true}});await assert.rejects(f.run(),/IB_REVISION_SOURCE_REFUSED/);

@@ -99,8 +99,10 @@ test('historical income proof failures carry only a proof role and keep original
   ])await t.test(name,()=>{const bad=structuredClone(valid);change(bad.incomeDateNormalizations[0]);assert.throws(()=>validateIbManagerReportInput(bad,f.expected),cashFailure(site,'PROOF'));});
   assert.deepEqual(validateIbManagerReportInput(valid,f.expected),valid);
   assert.equal(JSON.stringify(valid).includes('cashSite'),false);assert.equal(JSON.stringify(valid).includes('cashDateRole'),false);
-  const external=await earlyIncomeFixture({change:b=>{if(b.cash_account_transactions?.length)Object.assign(b.cash_account_transactions[0],{cash_account_transaction_type:{name:'DEPOSIT'},description:'Owner capital contribution'});}});
-  await assert.rejects(external.run(),cashFailure('INCOME_NORMALIZATION_EXTERNAL','PROOF'));
+  // A DEPOSIT row that still carries a holding link is neither an owner flow nor income: the
+  // ledger does not classify it external, so the proof stays v1 and refuses the leg type.
+  const linked=await earlyIncomeFixture({change:b=>{if(b.cash_account_transactions?.length)Object.assign(b.cash_account_transactions[0],{cash_account_transaction_type:{name:'DEPOSIT'},description:'Owner capital contribution',holding_id:2});}});
+  await assert.rejects(linked.run(),cashFailure('INCOME_PROOF_OTHER_LEG','PROOF'));
 });
 test('historical trade proof failures preserve strict identities, boundaries and cent checks',async t=>{
   const f=await cashDateFixture(),valid=await f.run();
@@ -1098,7 +1100,10 @@ test('income date projection does not waive incomplete, duplicate, ambiguous or 
     ['broken payout balance',b=>{if(b.cash_account_transactions)b.cash_account_transactions[1].balance++;}],
     ['broken interest balance',b=>{if(b.cash_account_transactions)b.cash_account_transactions[0].balance++;}],
     ['unknown income',b=>{if(b.cash_account_transactions)b.cash_account_transactions[0].cash_account_transaction_type.name='UNKNOWN';}],
-    ['external deposit instead',b=>{if(b.cash_account_transactions)Object.assign(b.cash_account_transactions[0],{cash_account_transaction_type:{name:'DEPOSIT'},description:'Owner capital contribution'});}],
+    ['unlabelled deposit instead',b=>{if(b.cash_account_transactions)Object.assign(b.cash_account_transactions[0],{cash_account_transaction_type:{name:'DEPOSIT'},description:'Synthetic deposit'});}],
+    ['holding-linked deposit instead',b=>{if(b.cash_account_transactions)Object.assign(b.cash_account_transactions[0],{cash_account_transaction_type:{name:'DEPOSIT'},description:'Owner capital contribution',holding_id:2});}],
+    ['payout-linked deposit instead',b=>{if(b.cash_account_transactions)Object.assign(b.cash_account_transactions[0],{cash_account_transaction_type:{name:'DEPOSIT'},description:'Owner capital contribution',payout_id:13});}],
+    ['owner withdrawal disguised as payout',b=>{if(b.cash_account_transactions)Object.assign(b.cash_account_transactions[1],{cash_account_transaction_type:{name:'WITHDRAWAL'},description:'Owner capital withdrawal'});}],
     ['unproved payout',b=>{if(b.paid_on)b.confirmed=false;}],
     ['wrong payout amount',b=>{if(b.paid_on)b.amount++;}],
     ['wrong payout account',b=>{if(b.paid_on)b.portfolio_id=99;}],
@@ -1136,6 +1141,217 @@ test('early-income proof is stable across two reads and rejects later changes to
   const f=await earlyIncomeFixture({change:(b,c)=>{if(c.capture===2&&b.paid_on){b.gross_amount++;b.resident_withholding_tax++;}}});await assert.rejects(f.run(),/UNSTABLE/);
   const seed=await(await earlyIncomeFixture()).run();
   const changed=await earlyIncomeFixture({checkpoint:seed,change:b=>{if(b.paid_on){b.gross_amount++;b.resident_withholding_tax++;}}});await assert.rejects(changed.run(),/PAST_POINT_CHANGED/);
+});
+// Owner flows on the payout business date. All amounts are synthetic dollars
+// on one USD cash account (id 3): old anchor 50, early reread 57 (net payout 7).
+// `rows` lists the day's ledger in balance order; `end` is the day's closing cash.
+async function ownerFlowFixture({rows,end,anchorExtra=0,checkpoint=null,other=null,change=()=>{}}={}){
+  const date='2026-11-04',gain=end-50,otherEnd=other?other.reduce((v,[,,amount])=>v+amount,0):0;
+  const dayRows=rows.map(([id,type,amount,balance,extra={}])=>({id,cash_account_id:3,date_time:date+(type==='Payout'?'T00:00:00.000Z':'T12:00:00.000Z'),amount,balance,
+    cash_account_transaction_type:{name:type},description:type==='Payout'?'Synthetic native income':type==='INTEREST_PAYMENT'?'Synthetic net interest; NOT external capital':type==='DEPOSIT'?'Owner capital contribution':'Owner capital withdrawal',
+    trade_id:null,holding_id:type==='Payout'?2:null,payout_id:type==='Payout'?13:null,...(type==='Payout'?{links:{portfolio:'https://api.sharesight.com/api/v2/portfolios/1'}}:{}),...extra}));
+  const otherChange=(b,c)=>{
+    const d=c.q.get('end_date')||c.q.get('date');
+    if(other){
+      const otherValue=d>=date?otherEnd:0;
+      if(b.report){b.report.cash_accounts=b.report.cash_accounts.filter(a=>a.id!==5).concat([{id:5,value:otherValue,currency:{code:'USD'},portfolio:{id:1,name:'IB-HK'}}]);b.report.value+=otherValue;}
+      if(b.cash_accounts)b.cash_accounts=b.cash_accounts.filter(a=>a.id!==5).concat([{id:5,portfolio_id:1,portfolio_currency:'USD',currency:'USD',date:d,balance:otherValue,balance_in_portfolio_currency:otherValue}]);
+      if(b.cash_account_transactions&&c.p.includes('/cash_accounts/5/')&&c.q.get('from')<=date&&c.q.get('to')>=date)b.cash_account_transactions=other.map(([id,type,amount,balance])=>({id,cash_account_id:5,date_time:date+'T13:00:00.000Z',amount,balance,cash_account_transaction_type:{name:type},description:type==='DEPOSIT'?'Owner capital contribution':'Owner capital withdrawal',trade_id:null,holding_id:null,payout_id:null}));
+    }
+  };
+  const baseDate=new Date(Date.parse(date+'T00:00:00Z')-2*86400000).toISOString().slice(0,10),prev=new Date(Date.parse(date+'T00:00:00Z')-86400000).toISOString().slice(0,10);
+  const seed=checkpoint||await(await incomeFixture({date,baseDate,target:prev,change:otherChange})).run();
+  return earlyIncomeFixture({date,checkpoint:seed,change:(b,c)=>{
+    const d=c.q.get('end_date')||c.q.get('date');
+    if(d>=date){
+      if(b.report){b.report.value=136+gain;b.report.cash_accounts[0].value=50+gain;}
+      if(b.cash_accounts)for(const a of b.cash_accounts)a.balance=a.balance_in_portfolio_currency=50+gain;
+    }
+    if(b.cash_account_transactions&&!c.p.includes('/cash_accounts/5/')&&c.q.get('from')<=date&&c.q.get('to')>=date)b.cash_account_transactions=dayRows.map(r=>structuredClone(r));
+    otherChange(b,c);
+    if(anchorExtra&&d==='2026-11-03'){
+      if(b.report){b.report.cash_accounts[0].value+=anchorExtra;b.report.value+=anchorExtra;}
+      if(b.cash_accounts)for(const a of b.cash_accounts)a.balance=a.balance_in_portfolio_currency=57+anchorExtra;
+    }
+    change(b,c);
+  }});
+}
+const ownerLegs=p=>p.cashLegs.filter(l=>['DEPOSIT','WITHDRAWAL'].includes(l.type));
+test('early payout correction coexists with a proved owner deposit on the payout date without counting it as income',async()=>{
+  // ①: payout +7 first (57), owner deposit +25 (82), interest +3 (85).
+  const f=await ownerFlowFixture({rows:[[12,'Payout',7,57],[14,'DEPOSIT',25,82],[11,'INTEREST_PAYMENT',3,85]],end:85}),before=structuredClone(f.seed),s=await f.run();
+  assert.deepEqual(f.seed,before);
+  const p=s.incomeDateNormalizations[0];assert.equal(s.incomeDateNormalizations.length,1);
+  assert.equal(p.schema,'fee-console.ib-income-date-normalization.v2');assert.deepEqual(p.ownerFlows,{3:{depositCents:2500,withdrawalCents:0,rowIds:[14]}});
+  assert.equal(p.anchor.cash[3],5000);assert.equal(p.rawAnchor.cash[3],5700);assert.equal(p.rawClosing.cash[3],8500);assert.equal(p.payout.netCents,700);
+  assert.deepEqual(p.cashLegs.map(l=>[l.id,l.type,l.amountCents,l.balanceCents,l.holdingId,l.payoutId,l.tradeId]),[[11,'INTEREST_PAYMENT',300,8500,null,null,null],[12,'PAYOUT',700,5700,2,13,null],[14,'DEPOSIT',2500,8200,null,null,null]]);
+  // The corrected anchor is the old full checkpoint; the owner flow is an external flow of the payout date, not performance.
+  assert.equal(s.closingSnapshots.find(x=>x.d==='2026-11-03').cash[3],5000);assert.equal(s.closingSnapshots.find(x=>x.d==='2026-11-04').cash[3],8500);
+  assert.deepEqual(s.cashFlowByDate,{'2026-11-04':25});assert.deepEqual(s.periodReturnsInput.flowByDate,{'2026-11-04':25});
+  assert.equal(s.periodReturnsInput.points.find(x=>x.d==='2026-11-03').tot,136);assert.equal(s.periodReturnsInput.points.find(x=>x.d==='2026-11-04').tot,171);
+  assert.deepEqual(validateIbManagerReportInput(s,f.expected),s);await buildIbManagerReportBundle(s,f.expected);
+  // The same proof is stable on a later read; any later change to the owner leg is a historical change.
+  const again=await(await ownerFlowFixture({rows:[[12,'Payout',7,57],[14,'DEPOSIT',25,82],[11,'INTEREST_PAYMENT',3,85]],end:85,checkpoint:s})).run();
+  assert.deepEqual(again.incomeDateNormalizations,s.incomeDateNormalizations);
+  for(const rows of [[[12,'Payout',7,57],[14,'DEPOSIT',25,82,{id:15}],[11,'INTEREST_PAYMENT',3,85]],[[12,'Payout',7,57],[14,'DEPOSIT',25,82,{date_time:'2026-11-04T13:00:00.000Z'}],[11,'INTEREST_PAYMENT',3,85]]]){
+    await assert.rejects((await ownerFlowFixture({rows,end:85,checkpoint:s})).run(),/PAST_POINT_CHANGED/);
+  }
+  // ①(b): an owner deposit booked before the payout in the day's chain leaves the payout opening off the old anchor; the narrow correction stays refused.
+  await assert.rejects((await ownerFlowFixture({rows:[[14,'DEPOSIT',25,75],[12,'Payout',7,82],[11,'INTEREST_PAYMENT',3,85]],end:85})).run(),cashFailure('INCOME_PROOF_PAYOUT_LEG','PROOF'));
+});
+test('a historical anchor that already moved by capital and payout is not a payout date correction',async()=>{
+  // ②: old anchor 50, reread 82 (capital 25 + payout 7); owner deposit and payout both appear on the next day.
+  await assert.rejects((await ownerFlowFixture({rows:[[12,'Payout',7,57],[14,'DEPOSIT',25,82],[11,'INTEREST_PAYMENT',3,85]],end:85,anchorExtra:25})).run(),/PAST_POINT_CHANGED/);
+  // The same reread without any next-day owner flow is still a changed past point, never a larger "payout".
+  await assert.rejects((await ownerFlowFixture({rows:[[12,'Payout',7,57],[11,'INTEREST_PAYMENT',3,60]],end:60,anchorExtra:25})).run(),/PAST_POINT_CHANGED/);
+});
+test('owner withdrawals, offsetting flows and interest coexist with the correction and are never netted away',async()=>{
+  // ③: payout +7 (57), owner withdrawal -20 (37), interest +3 (40).
+  const out=await(await ownerFlowFixture({rows:[[12,'Payout',7,57],[16,'WITHDRAWAL',-20,37],[11,'INTEREST_PAYMENT',3,40]],end:40})).run();
+  assert.deepEqual(out.cashFlowByDate,{'2026-11-04':-20});assert.equal(out.closingSnapshots.find(x=>x.d==='2026-11-03').cash[3],5000);
+  assert.deepEqual(ownerLegs(out.incomeDateNormalizations[0]).map(l=>[l.type,l.amountCents]),[['WITHDRAWAL',-2000]]);
+  // Offsetting +20/-20 on the same date: both legs stay in the proof and the net external flow is zero.
+  const f=await ownerFlowFixture({rows:[[12,'Payout',7,57],[14,'DEPOSIT',20,77],[16,'WITHDRAWAL',-20,57],[11,'INTEREST_PAYMENT',3,60]],end:60}),s=await f.run();
+  assert.deepEqual(s.cashFlowByDate,{});assert.equal(s.incomeDateNormalizations[0].cashLegs.length,4);
+  assert.deepEqual(ownerLegs(s.incomeDateNormalizations[0]).map(l=>[l.type,l.amountCents,l.balanceCents]),[['DEPOSIT',2000,7700],['WITHDRAWAL',-2000,5700]]);
+  assert.deepEqual(validateIbManagerReportInput(s,f.expected),s);
+  assert.deepEqual(s.incomeDateNormalizations[0].ownerFlows,{3:{depositCents:2000,withdrawalCents:-2000,rowIds:[14,16]}});
+  // Dropping either offsetting leg from the persisted proof breaks the chain even though the sum still balances.
+  const rehash=async p=>{const {proofId,...body}=p;p.proofId=await createIbManagerReturnConsumer().digest(body);};
+  for(const type of ['DEPOSIT','WITHDRAWAL']){const bad=structuredClone(s);bad.incomeDateNormalizations[0].cashLegs=bad.incomeDateNormalizations[0].cashLegs.filter(l=>l.type!==type);await rehash(bad.incomeDateNormalizations[0]);assert.throws(()=>validateIbManagerReportInput(bad,f.expected),cashFailure('INCOME_PROOF_MOVEMENT','PROOF'));}
+  // Dropping both legs leaves the recorded owner rows unmatched; clearing or zeroing the record is refused too.
+  const strip=p=>{p.cashLegs=p.cashLegs.filter(l=>!['DEPOSIT','WITHDRAWAL'].includes(l.type));};
+  for(const change of [strip,p=>{strip(p);p.ownerFlows={};},p=>{strip(p);p.ownerFlows={3:{depositCents:0,withdrawalCents:0,rowIds:[14,16]}};}]){
+    const bad=structuredClone(s);change(bad.incomeDateNormalizations[0]);await rehash(bad.incomeDateNormalizations[0]);assert.throws(()=>validateIbManagerReportInput(bad,f.expected),cashFailure('INCOME_PROOF_OWNER_FLOWS','PROOF'));
+  }
+  // Known limit of standalone validation: a net-zero pair removed together with a downgrade to a
+  // v1 proof (no owner record) is self-consistent and indistinguishable from an honest v1 proof
+  // without the captured ledger. It is caught by the frozen same-capture input and by the next
+  // capture (PAST_POINT_CHANGED), not by this validator.
+  const downgraded=structuredClone(s);strip(downgraded.incomeDateNormalizations[0]);delete downgraded.incomeDateNormalizations[0].ownerFlows;downgraded.incomeDateNormalizations[0].schema='fee-console.ib-income-date-normalization.v1';await rehash(downgraded.incomeDateNormalizations[0]);
+  assert.deepEqual(validateIbManagerReportInput(downgraded,f.expected),downgraded);
+  await assert.rejects((await ownerFlowFixture({rows:[[12,'Payout',7,57],[14,'DEPOSIT',20,77],[16,'WITHDRAWAL',-20,57],[11,'INTEREST_PAYMENT',3,60]],end:60,checkpoint:downgraded})).run(),/PAST_POINT_CHANGED/);
+});
+test('owner-flow legs in a persisted income proof keep every structural, identity, sign, date, chain and source guard',async t=>{
+  const f=await ownerFlowFixture({rows:[[12,'Payout',7,57],[14,'DEPOSIT',25,82],[11,'INTEREST_PAYMENT',3,85]],end:85}),s=await f.run();
+  const rehash=async p=>{const {proofId,...body}=p;p.proofId=await createIbManagerReturnConsumer().digest(body);};
+  const owner=p=>p.cashLegs.find(l=>l.type==='DEPOSIT');
+  for(const [name,change,site] of [
+    ['owner leg with holding link',p=>owner(p).holdingId=2,'INCOME_PROOF_EXTERNAL_LEG'],
+    ['owner leg with payout link',p=>owner(p).payoutId=13,'INCOME_PROOF_EXTERNAL_LEG'],
+    ['owner leg with trade link',p=>owner(p).tradeId=5,'INCOME_PROOF_LEG_SCHEMA'],
+    ['deposit with negative sign',p=>{owner(p).type='WITHDRAWAL';},'INCOME_PROOF_EXTERNAL_LEG'],
+    ['zero owner flow',p=>{owner(p).amountCents=0;owner(p).balanceCents=5700;},'INCOME_PROOF_EXTERNAL_LEG'],
+    ['owner leg on another business date',p=>owner(p).dateTime='2026-11-03T12:00:00.000Z','INCOME_PROOF_EXTERNAL_LEG'],
+    ['owner leg on another cash account',p=>owner(p).cashId=4,'INCOME_PROOF_LEG_SCHEMA'],
+    ['duplicate owner leg id',p=>owner(p).id=11,'INCOME_PROOF_LEG_SCHEMA'],
+    ['owner flow relabelled as payout',p=>{owner(p).type='PAYOUT';},'INCOME_PROOF_PAYOUT_LEG'],
+    ['missing owner leg',p=>p.cashLegs=p.cashLegs.filter(l=>l.type!=='DEPOSIT'),'INCOME_PROOF_MOVEMENT'],
+    ['owner amount changed',p=>owner(p).amountCents++,'INCOME_PROOF_MOVEMENT'],
+    ['owner balance changed',p=>owner(p).balanceCents++,'INCOME_PROOF_CHAIN_LENGTH'],
+    ['payout net absorbed into owner flow',p=>{owner(p).amountCents+=700;p.payout.netCents=0;p.payout.grossCents=0;},'INCOME_PROOF_PAYOUT'],
+    ['closing cash changed',p=>p.rawClosing.cash[3]++,'INCOME_PROOF_MOVEMENT'],
+    ['owner record deposit cents changed',p=>p.ownerFlows[3].depositCents++,'INCOME_PROOF_OWNER_FLOWS'],
+    ['owner record row id changed',p=>p.ownerFlows[3].rowIds=[15],'INCOME_PROOF_OWNER_FLOWS'],
+    ['owner record row id duplicated',p=>p.ownerFlows[3].rowIds=[14,14],'INCOME_PROOF_OWNER_FLOWS'],
+    ['owner record extra row id',p=>p.ownerFlows[3].rowIds=[14,15],'INCOME_PROOF_OWNER_FLOWS'],
+    ['owner record moved to another account',p=>{p.ownerFlows={4:p.ownerFlows[3]};},'INCOME_PROOF_OWNER_FLOWS'],
+    ['owner record for a non-USD key',p=>{p.ownerFlows[99]={depositCents:1,withdrawalCents:0,rowIds:[90]};},'INCOME_PROOF_OWNER_FLOWS'],
+    ['owner record with wrong sign',p=>{p.ownerFlows[3]={depositCents:0,withdrawalCents:2500,rowIds:[14]};},'INCOME_PROOF_OWNER_FLOWS'],
+    ['owner record emptied',p=>{p.ownerFlows={};},'INCOME_PROOF_OWNER_FLOWS'],
+    ['owner record missing',p=>{delete p.ownerFlows;},'INCOME_PROOF_SCHEMA'],
+    ['owner leg carried by a v1 proof',p=>{delete p.ownerFlows;p.schema='fee-console.ib-income-date-normalization.v1';},'INCOME_PROOF_OTHER_LEG'],
+    ['unknown account claimed in the record',p=>{p.ownerFlows[5]={depositCents:100,withdrawalCents:0,rowIds:[31]};},'INCOME_PROOF_OWNER_FLOWS'],
+  ])await t.test(name,async()=>{const bad=structuredClone(s);change(bad.incomeDateNormalizations[0]);await rehash(bad.incomeDateNormalizations[0]);assert.throws(()=>validateIbManagerReportInput(bad,f.expected),cashFailure(site,'PROOF'));});
+  await t.test('source flow records changed in both places while the proof keeps its legs',()=>{
+    for(const value of [1,24.99,25.01,-25]){const bad=structuredClone(s);bad.cashFlowByDate['2026-11-04']=value;bad.periodReturnsInput.flowByDate['2026-11-04']=value;assert.throws(()=>validateIbManagerReportInput(bad,f.expected),cashFailure('INCOME_PROOF_SOURCE','PROOF'));}
+    const gone=structuredClone(s);delete gone.cashFlowByDate['2026-11-04'];delete gone.periodReturnsInput.flowByDate['2026-11-04'];assert.throws(()=>validateIbManagerReportInput(gone,f.expected),cashFailure('INCOME_PROOF_SOURCE','PROOF'));
+  });
+  await t.test('owner record and source flows changed together still break the balance chain',async()=>{
+    const bad=structuredClone(s),p=bad.incomeDateNormalizations[0];owner(p).amountCents=100;p.ownerFlows[3].depositCents=100;bad.cashFlowByDate['2026-11-04']=1;bad.periodReturnsInput.flowByDate['2026-11-04']=1;await rehash(p);
+    assert.throws(()=>validateIbManagerReportInput(bad,f.expected),cashFailure('INCOME_PROOF_MOVEMENT','PROOF'));
+  });
+  await t.test('stored proof without rehash',()=>{const bad=structuredClone(s);bad.incomeDateNormalizations[0].proofId='a'.repeat(64);assert.throws(()=>validateIbManagerReportInput(bad,f.expected),cashFailure('INCOME_PROOF_HASH','PROOF'));});
+  await t.test('owner flow relabelled as income no longer matches the recorded owner rows',async()=>{
+    const bad=structuredClone(s);owner(bad.incomeDateNormalizations[0]).type='INTEREST';await rehash(bad.incomeDateNormalizations[0]);
+    assert.throws(()=>validateIbManagerReportInput(bad,f.expected),cashFailure('INCOME_PROOF_OWNER_FLOWS','PROOF'));
+    bad.incomeDateNormalizations[0].ownerFlows={};await rehash(bad.incomeDateNormalizations[0]);assert.throws(()=>validateIbManagerReportInput(bad,f.expected),cashFailure('INCOME_PROOF_OWNER_FLOWS','PROOF'));
+    // An invalid checkpoint never seeds a reread either.
+    await assert.rejects((await ownerFlowFixture({rows:[[12,'Payout',7,57],[14,'DEPOSIT',25,82],[11,'INTEREST_PAYMENT',3,85]],end:85,checkpoint:bad})).run(),/IB_SOURCE_/);
+  });
+  await t.test('owner flow missing from the source flow record',()=>{for(const change of [x=>delete x.cashFlowByDate['2026-11-04'],x=>x.cashFlowByDate['2026-11-04']='25']){const bad=structuredClone(s);change(bad);assert.throws(()=>validateIbManagerReportInput(bad,f.expected),/IB_SOURCE_/);}});
+  await t.test('legacy v1 proofs keep their original leg rules and never gain owner legs',async()=>{
+    const plain=await(await earlyIncomeFixture()).run();assert.equal(plain.incomeDateNormalizations[0].schema,'fee-console.ib-income-date-normalization.v1');
+    for(const [change,site] of [
+      [p=>p.cashLegs.push({id:14,cashId:3,tradeId:null,holdingId:null,payoutId:null,dateTime:'2026-11-04T12:00:00.000Z',type:'DEPOSIT',amountCents:0,balanceCents:6000}),'INCOME_PROOF_OTHER_LEG'],
+      [p=>p.cashLegs.push({id:14,cashId:3,tradeId:null,holdingId:null,payoutId:null,dateTime:'2026-11-04T12:00:00.000Z',type:'DEPOSIT',amountCents:2500,balanceCents:8500}),'INCOME_PROOF_OTHER_LEG'],
+      [p=>{p.ownerFlows={};},'INCOME_PROOF_SCHEMA'],
+      [p=>{p.schema='fee-console.ib-income-date-normalization.v2';},'INCOME_PROOF_SCHEMA'],
+      [p=>{p.schema='fee-console.ib-income-date-normalization.v2';p.ownerFlows={};},'INCOME_PROOF_OWNER_FLOWS'],
+    ]){const bad=structuredClone(plain);change(bad.incomeDateNormalizations[0]);await rehash(bad.incomeDateNormalizations[0]);assert.throws(()=>validateIbManagerReportInput(bad,f.expected),cashFailure(site,'PROOF'));}
+    assert.deepEqual(validateIbManagerReportInput(plain,f.expected),plain);
+  });
+});
+test('owner flows on other cash accounts the same day are recorded to the cent and bound to the portfolio flow',async t=>{
+  const rows=[[12,'Payout',7,57],[14,'DEPOSIT',25,82],[11,'INTEREST_PAYMENT',3,85]];
+  const f=await ownerFlowFixture({rows,end:85,other:[[31,'DEPOSIT',40,40],[32,'WITHDRAWAL',-10,30]]}),s=await f.run();
+  const p=s.incomeDateNormalizations[0];
+  assert.deepEqual(p.ownerFlows,{3:{depositCents:2500,withdrawalCents:0,rowIds:[14]},5:{depositCents:4000,withdrawalCents:-1000,rowIds:[31,32]}});
+  assert.deepEqual(s.cashFlowByDate,{'2026-11-04':55});assert.equal(s.closingSnapshots.find(x=>x.d==='2026-11-03').cash[3],5000);assert.equal(s.closingSnapshots.find(x=>x.d==='2026-11-04').cash[5],3000);
+  assert.deepEqual(p.cashLegs.map(l=>l.id),[11,12,14],'only the proof account legs enter the chain');
+  assert.deepEqual(validateIbManagerReportInput(s,f.expected),s);
+  const rehash=async q=>{const {proofId,...body}=q;q.proofId=await createIbManagerReturnConsumer().digest(body);};
+  for(const [name,change,site] of [
+    ['other account dropped from the record',q=>{delete q.ownerFlows[5];},'PASSIVE_USD_BALANCE'],
+    ['other account cents changed',q=>q.ownerFlows[5].depositCents=4100,'INCOME_PROOF_OWNER_FLOWS'],
+    ['other account cents and source flow changed together',q=>{q.ownerFlows[5].depositCents=4100;},'INCOME_PROOF_OWNER_FLOWS'],
+    ['other account rows moved onto the proof account',q=>{q.ownerFlows={3:{depositCents:5500,withdrawalCents:0,rowIds:[14,31]}};},'PASSIVE_USD_BALANCE'],
+    ['other account listed without rows',q=>{q.ownerFlows[5].rowIds=[];},'INCOME_PROOF_OWNER_FLOWS'],
+  ])await t.test(name,async()=>{const bad=structuredClone(s);change(bad.incomeDateNormalizations[0]);await rehash(bad.incomeDateNormalizations[0]);assert.throws(()=>validateIbManagerReportInput(bad,f.expected),cashFailure(site,'PROOF'));});
+  await t.test('other account gross rows are bound by the capture, not by the standalone validator',async()=>{
+    // Known limit: for accounts other than the proof account the standalone validator can only
+    // check the net movement against both snapshots and the portfolio flow; a netted record
+    // (3000 in one row instead of +4000/-1000) is self-consistent and is refused only when the
+    // captured ledger is reread (PAST_POINT_CHANGED).
+    const netted=structuredClone(s);netted.incomeDateNormalizations[0].ownerFlows[5]={depositCents:3000,withdrawalCents:0,rowIds:[31]};await rehash(netted.incomeDateNormalizations[0]);
+    assert.deepEqual(validateIbManagerReportInput(netted,f.expected),netted);
+    await assert.rejects((await ownerFlowFixture({rows,end:85,other:[[31,'DEPOSIT',40,40],[32,'WITHDRAWAL',-10,30]],checkpoint:netted})).run(),/PAST_POINT_CHANGED/);
+  });
+  await t.test('source flow of the day cannot stand in for the single account subtotal',()=>{
+    for(const value of [25,30,55.01]){const bad=structuredClone(s);bad.cashFlowByDate['2026-11-04']=value;bad.periodReturnsInput.flowByDate['2026-11-04']=value;assert.throws(()=>validateIbManagerReportInput(bad,f.expected),cashFailure('INCOME_PROOF_SOURCE','PROOF'));}
+  });
+  await assert.rejects((await ownerFlowFixture({rows,end:85,other:[[31,'DEPOSIT',40,40],[33,'WITHDRAWAL',-10,30]],checkpoint:s})).run(),/PAST_POINT_CHANGED/);
+  const same=await(await ownerFlowFixture({rows,end:85,other:[[31,'DEPOSIT',40,40],[32,'WITHDRAWAL',-10,30]],checkpoint:s})).run();
+  assert.deepEqual(same.incomeDateNormalizations,s.incomeDateNormalizations);
+});
+test('v2 owner-flow capture rejects reconstructed proofs before this same capture is consumed, without another read',async t=>{
+  for(const [name,rows,end,other,alter] of [
+    ['offset pair removed and proof downgraded',[[12,'Payout',7,57],[14,'DEPOSIT',20,77],[16,'WITHDRAWAL',-20,57],[11,'INTEREST_PAYMENT',3,60]],60,null,p=>{
+      p.cashLegs=p.cashLegs.filter(l=>!['DEPOSIT','WITHDRAWAL'].includes(l.type));delete p.ownerFlows;p.schema='fee-console.ib-income-date-normalization.v1';
+    }],
+    ['other account gross rows replaced by net',[[12,'Payout',7,57],[14,'DEPOSIT',25,82],[11,'INTEREST_PAYMENT',3,85]],85,[[31,'DEPOSIT',40,40],[32,'WITHDRAWAL',-10,30]],p=>{
+      p.ownerFlows[5]={depositCents:3000,withdrawalCents:0,rowIds:[31]};
+    }],
+  ])await t.test(name,async()=>{
+    const f=await ownerFlowFixture({rows,end,other}),reader=f.w.reader;
+    const captured=await reader.readStableWithEvidence(f.args),original=JSON.stringify(captured),calls=f.w.calls.length;
+    assert.equal(reader.verifyCapturedRead(captured),true);
+    assert.ok(Object.isFrozen(captured.input.incomeDateNormalizations[0].ownerFlows));
+    assert.throws(()=>{captured.input.incomeDateNormalizations[0].ownerFlows={};},TypeError);
+    const reconstructed=JSON.parse(original),proof=reconstructed.input.incomeDateNormalizations[0];alter(proof);
+    const {proofId,...body}=proof;proof.proofId=await createIbManagerReturnConsumer().digest(body);
+    // Pure arithmetic cannot authenticate a reconstructed history. The actual
+    // same-reader capability rejects it now, before any later source refresh.
+    assert.deepEqual(validateIbManagerReportInput(reconstructed.input,f.expected),reconstructed.input);
+    for(const copy of [reconstructed,JSON.parse(original),{...captured,input:reconstructed.input}]){
+      assert.equal(reader.verifyCapturedRead(copy),false);
+      assert.throws(()=>reader.consumeCapturedRead(copy,f.args),/IB_SOURCE_STATE/);
+    }
+    assert.equal(JSON.stringify(captured),original);
+    assert.equal(reader.consumeCapturedRead(captured,f.args),captured.input);
+    assert.throws(()=>reader.consumeCapturedRead(captured,f.args),/IB_SOURCE_STATE/);
+    assert.equal(f.w.calls.length,calls,'rejection and consumption perform no additional request');
+  });
 });
 test('two different payouts are ambiguous for this narrow historical correction even with correct total cash',async()=>{
   const f=await earlyIncomeFixture({change:(b,{p,q})=>{
