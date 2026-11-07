@@ -2,7 +2,7 @@
 // credentials, files, writer, publication, schedule or consumption mutations.
 import {isCalendarDate,inclusiveDays} from './fee-engine.mjs';
 import {types} from 'node:util';
-import {ibCanonical,IbManagerSourceError,validateIbManagerReportInput} from './ib-manager-source.mjs';
+import {ibCanonical,IbManagerSourceError,validateIbManagerReportInput,ibSourceCashSite,ibSourceCashDateRole,IB_CASH_RECONCILIATION_SITES,IB_CASH_DATE_ROLES} from './ib-manager-source.mjs';
 import {buildIbManagerReportBundle,validateIbManagerReportState,createIbManagerReturnConsumer} from './ib-manager-return.mjs';
 import {sourceContractInputHash} from './fee-source-contract.mjs';
 
@@ -19,7 +19,23 @@ const privateCodes=new Set([...revisionCodes,...[...sourceCodes].map(c=>'SOURCE_
 const publicCode=code=>'IB_REVISION_'+code.replace(':','_');
 export const IB_SOURCE_REVISION_FAILURE_CODES=Object.freeze([...privateCodes].map(publicCode));
 export const ibSourceRevisionFailureCode=error=>publicCode(controlledErrors.get(error)||'REFUSED');
-const fail=code=>{const fixed=privateCodes.has(code)?code:'REFUSED',error=Error('IB_REVISION_'+fixed);controlledErrors.set(error,fixed);throw Object.freeze(error);};
+// Cash-reconciliation site/date-role are carried beside the unchanged public
+// code, by error identity only, and exist solely for the one refused source
+// read. They come from the reader's own WeakMap readers, never from an error's
+// properties, so a forged, cloned or proxied error reports UNCLASSIFIED/NONE.
+const CASH_SOURCE_CODE='SOURCE_REFUSED:IB_SOURCE_CASH_RECONCILIATION';
+const cashSites=new Set(IB_CASH_RECONCILIATION_SITES),cashRoles=new Set(IB_CASH_DATE_ROLES);
+const cashSiteByError=new WeakMap(),cashRoleByError=new WeakMap();
+export const ibSourceRevisionCashSite=error=>cashSiteByError.get(error)||'UNCLASSIFIED';
+export const ibSourceRevisionCashDateRole=error=>cashRoleByError.get(error)||'NONE';
+const fail=(code,cashSite,cashDateRole)=>{
+  const fixed=privateCodes.has(code)?code:'REFUSED',error=Error('IB_REVISION_'+fixed);controlledErrors.set(error,fixed);
+  if(fixed===CASH_SOURCE_CODE){
+    const site=cashSites.has(cashSite)?cashSite:'UNCLASSIFIED';
+    cashSiteByError.set(error,site);cashRoleByError.set(error,site!=='UNCLASSIFIED'&&cashRoles.has(cashDateRole)?cashDateRole:'NONE');
+  }
+  throw Object.freeze(error);
+};
 function sourceCode(error){
   // The existing error's public code is writable. Do not log it without a
   // second allowlist, or invoke an accessor supplied by an external callback.
@@ -195,7 +211,12 @@ export function createIbSourceRevisionPreparer({verifyAcceptedArtifacts,readStab
     try{
       revised=await readStable(freeze({targetDate:p.targetDate,expectedBaselineHash:p.baselineSha256,
         baseline:{from:anchor.baselineFrom,asOf:anchor.baselineAsOf},checkpoint:clone(anchor)}));
-    }catch(e){fail('SOURCE_REFUSED:'+sourceCode(e));}
+    }catch(e){
+      // Site/role are read by identity from the reader's private maps; the
+      // code itself is still taken only through the descriptor allowlist.
+      const code=sourceCode(e);
+      fail('SOURCE_REFUSED:'+code,code==='IB_SOURCE_CASH_RECONCILIATION'?ibSourceCashSite(e):undefined,ibSourceCashDateRole(e));
+    }
     const calculation=await revisionCalculation(originalCurrent,p,history,revised);
     if(!same(clone(await checkCurrent()),p.bindings))fail('BINDINGS');const checkedAt=new Date(checkTime()).toISOString();
     if(!same(clone(request),inputs))fail('INPUT_CHANGED');

@@ -11,7 +11,8 @@ import {dailyReportPlan} from './fee-report-period.mjs';
 import {authorizeHistoricalRevisionDiagnostic,readReportRecoveryRelease,readCurrentSyncRun} from './fee-report-producer.mjs';
 import {readPublicationState,decryptCandidate,safeProducerFailureSummary} from './fee-cloud-producer.mjs';
 import {fetchEconomicSnapshot,economicSourceDiagnosticCode} from './fee-economic-source.mjs';
-import {createFeeSourceRevisionRuntime,sourceRevisionRuntimeFailureCode} from './fee-source-revision-runtime.mjs';
+import {createFeeSourceRevisionRuntime,sourceRevisionRuntimeFailureCode,sourceRevisionRuntimeCashSite,sourceRevisionRuntimeCashDateRole} from './fee-source-revision-runtime.mjs';
+import {IB_CASH_RECONCILIATION_SITES,IB_CASH_DATE_ROLES} from './ib-manager-source.mjs';
 
 const ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const REPO='huanwujoy-crypto/fee-console',OWNER=283054367,OID=/^[a-f0-9]{40}$/,SHA=/^[a-f0-9]{64}$/;
@@ -101,8 +102,18 @@ export function revisionDiagnosticFailureCode(error){
   const safe=safeProducerFailureSummary(typeof message==='string'?message:'').code;
   return safe==='FEE_CLOUD_FAILED'?'FEE_REVISION_DIAGNOSTIC_FAILED':safe;
 }
-const result=(status,code)=>Object.freeze({schema:'fee-console.source-revision-diagnostic-result.v1',status,targetDate:REVISION_DIAGNOSTIC_SCOPE.targetDate,
-  reasonCode:code,reportGenerated:false,publicationReady:false});
+const CASH_RECONCILIATION_CODE='FEE_REPORT_SOURCE_REVISION_ARTIFACT_SOURCE_CASH_RECONCILIATION';
+// Only a genuine runtime cash-reconciliation refusal adds the reader's fixed
+// site/date-role, read by error identity; the code and every other result shape
+// are unchanged, and an unknown, forged or proxied error adds nothing.
+function cashLocation(code,error){
+  if(code!==CASH_RECONCILIATION_CODE||sourceRevisionRuntimeFailureCode(error)!==CASH_RECONCILIATION_CODE)return {};
+  const site=sourceRevisionRuntimeCashSite(error),role=sourceRevisionRuntimeCashDateRole(error);
+  const cashSite=IB_CASH_RECONCILIATION_SITES.includes(site)?site:'UNCLASSIFIED';
+  return {cashSite,cashDateRole:cashSite!=='UNCLASSIFIED'&&IB_CASH_DATE_ROLES.includes(role)?role:'NONE'};
+}
+const result=(status,code,error)=>Object.freeze({schema:'fee-console.source-revision-diagnostic-result.v1',status,targetDate:REVISION_DIAGNOSTIC_SCOPE.targetDate,
+  reasonCode:code,reportGenerated:false,publicationReady:false,...cashLocation(code,error)});
 
 // Dependency injection is for synthetic tests only. The executable below pins
 // every dependency to the original readers and does not accept modules or URLs.
@@ -130,7 +141,7 @@ export async function inspectRevisionDiagnostic({checkOnly=false,authorize,check
     privateInput=null;runtime=null;admission=null;
   }
   if(cleanupFailed)return result('incomplete','FEE_REVISION_DIAGNOSTIC_CLEANUP');
-  return error?result('incomplete',revisionDiagnosticFailureCode(error)):answer;
+  return error?result('incomplete',revisionDiagnosticFailureCode(error),error):answer;
 }
 
 function readRegular(filename,max){
@@ -189,4 +200,4 @@ async function main(){
     console.log(JSON.stringify(answer));if(!['verified','plan-verified'].includes(answer.status))process.exitCode=1;
   }finally{transport.close();}
 }
-if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url))main().catch(error=>{console.error(JSON.stringify(result('incomplete',revisionDiagnosticFailureCode(error))));process.exitCode=1;});
+if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url))main().catch(error=>{console.error(JSON.stringify(result('incomplete',revisionDiagnosticFailureCode(error),error)));process.exitCode=1;});

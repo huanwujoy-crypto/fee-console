@@ -369,7 +369,8 @@ const WIRE_REVISION_FILES=Object.freeze([
 const isProductionSyncRevision=contractId=>contractId===SYNC_REVISION_CONTRACT||contractId===WIRE_REVISION_CONTRACT;
 const DIAGNOSTIC_REVISION_CONTRACT='ib-source-revision-20261106-diagnostic-v1';
 const ECONOMIC_DIAGNOSTIC_CONTRACT='ib-source-revision-20261106-diagnostic-v2';
-const isDiagnosticRevision=contractId=>contractId===DIAGNOSTIC_REVISION_CONTRACT||contractId===ECONOMIC_DIAGNOSTIC_CONTRACT;
+const CASH_DIAGNOSTIC_CONTRACT='ib-source-revision-20261106-diagnostic-v3';
+const isDiagnosticRevision=contractId=>contractId===DIAGNOSTIC_REVISION_CONTRACT||contractId===ECONOMIC_DIAGNOSTIC_CONTRACT||contractId===CASH_DIAGNOSTIC_CONTRACT;
 const DIAGNOSTIC_REVISION_PURPOSE='read-only-diagnostic';
 const DIAGNOSTIC_REVISION_FILES=Object.freeze([
   ...['.github/workflows/fee-cloud-producer.yml','.github/workflows/scripts-check.yml','security/approval-tiers.json',
@@ -386,10 +387,21 @@ const ECONOMIC_DIAGNOSTIC_FILES=Object.freeze([
   'scripts/fee-sync-revision-artifacts.mjs','scripts/fee-sync-revision-artifacts.test.mjs',
   'scripts/ib-manager-source.mjs','scripts/ib-manager-source.test.mjs',
 ].map(path=>Object.freeze({path,status:'modified'})));
+const CASH_DIAGNOSTIC_FILES=Object.freeze([
+  'docs/fee-source-revision.md','scripts/fee-report-producer.mjs','scripts/fee-report-producer.test.mjs',
+  'scripts/fee-source-revision-diagnostic.mjs','scripts/fee-source-revision-diagnostic.test.mjs',
+  'scripts/fee-source-revision-runtime.mjs','scripts/fee-source-revision-runtime.test.mjs',
+  'scripts/fee-sync-revision-artifacts.mjs','scripts/fee-sync-revision-artifacts.test.mjs',
+  'scripts/ib-manager-source-revision.mjs','scripts/ib-manager-source-revision.test.mjs',
+].map(path=>Object.freeze({path,status:'modified'})));
 // Preserve each consumed contract and its evidence. Each independently reviewed
 // admission belongs only to its signed immediate successor; it neither resets
 // ordinary attempts nor grants a future target/version a retry.
 const RECOVERY_SCOPES=Object.freeze([
+ Object.freeze({contractId:CASH_DIAGNOSTIC_CONTRACT,purpose:DIAGNOSTIC_REVISION_PURPOSE,admissionModel:'sync-cycle-v1',target:'2026-11-06',
+  baseSha:'f1d4454d25849e1908ba508f8c7f140389e425bb',repairBase:'f1d4454d25849e1908ba508f8c7f140389e425bb',
+  baseParents:Object.freeze(['22174f04cae8ac18a071930f491598b327e315c5']),fileManifest:CASH_DIAGNOSTIC_FILES,
+  uiBlob:'2bb9f66ac890ba87cec504ef72a5083c07670689'}),
  Object.freeze({contractId:ECONOMIC_DIAGNOSTIC_CONTRACT,purpose:DIAGNOSTIC_REVISION_PURPOSE,admissionModel:'sync-cycle-v1',target:'2026-11-06',
   baseSha:'22174f04cae8ac18a071930f491598b327e315c5',repairBase:'22174f04cae8ac18a071930f491598b327e315c5',
   baseParents:Object.freeze(['b218f264c53e914d6469ec9f43824f48ccb7af18']),fileManifest:ECONOMIC_DIAGNOSTIC_FILES,

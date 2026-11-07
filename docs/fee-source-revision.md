@@ -421,3 +421,54 @@ Public upload, exact-head review, protected merge, private real-data preparation
 and any eventual recovery run remain distinct actions under the repository's
 approval rules. Passing synthetic tests or merging these utilities alone does
 not establish a successful production repair or automatic start mechanism.
+
+## Cash-site diagnostic binding (`diagnostic-v3`)
+
+This is a local candidate until its exact signed head is approved and protected
+checks and merge complete. It identifies a diagnostic information-loss defect,
+not the financial cause of the recorded cash-reconciliation failure. The
+previously approved diagnostic has finished; this code does not authorize a
+second dispatch or reuse its run.
+
+The new `ib-source-revision-20261106-diagnostic-v3` scope is read-only and accepts
+only the signed, owner-approved, single-parent squash successor of
+`f1d4454d25849e1908ba508f8c7f140389e425bb`, whose own parent is
+`22174f04cae8ac18a071930f491598b327e315c5`. Its complete modified-file manifest is:
+
+- `docs/fee-source-revision.md`
+- `scripts/fee-report-producer.mjs`
+- `scripts/fee-report-producer.test.mjs`
+- `scripts/fee-source-revision-diagnostic.mjs`
+- `scripts/fee-source-revision-diagnostic.test.mjs`
+- `scripts/fee-source-revision-runtime.mjs`
+- `scripts/fee-source-revision-runtime.test.mjs`
+- `scripts/fee-sync-revision-artifacts.mjs`
+- `scripts/fee-sync-revision-artifacts.test.mjs`
+- `scripts/ib-manager-source-revision.mjs`
+- `scripts/ib-manager-source-revision.test.mjs`
+
+The existing reader records finite `cashSite` and `cashDateRole` values. Revision,
+artifact and runtime wrappers now retain them through private WeakMaps. Only the
+diagnostic result for an authentic runtime cash-reconciliation error adds these
+two fields; unknown provenance produces no added location, while an unclassified
+registered error uses `UNCLASSIFIED` / `NONE`. Neither field contains an actual
+date, amount, account or exception text. The exported reader error constructor
+can itself register a fixed site; identity provenance is not evidence that a
+remote account was read. Real execution still uses the pinned native readers
+and source verification. Ordinary error codes and production summaries remain
+unchanged. Cleanup failure takes precedence and discards location details.
+
+All prior release scopes and consumption records remain unchanged. The target
+is still November 6, with source dates November 4–6 and the existing original
+encrypted anchors. No workflow, credential, permission, scheduling, ledger or
+publishing setting is changed. The diagnostic capability remains unusable by
+the production writer. Existing deadlines, first-attempt checks, exact main /
+owner-comment rechecks, complete source checks and temporary cleanup remain.
+
+If separately approved after merge, use the existing workflow with only
+`ib_diagnostic_once=true` and `ib_diagnostic_main=<exact merged main>`; other
+inputs stay empty or false. Send one new dispatch, resolve an uncertain result
+before any further action, and stop on failure without rerunning. There is no
+persistent cross-dispatch one-shot lock; authorization and the execution audit
+must enforce the single approved invocation. No financial plaintext is sent to
+Claude or uploaded as an artifact.
