@@ -35,7 +35,7 @@ export const IB_CASH_RECONCILIATION_SITES=Object.freeze([
   'TRADE_PROOF_PRE_POSITIONS','TRADE_PROOF_POSITION_DELTA','TRADE_PROOF_HASH','TRADE_PROOF_SOURCE','TRADE_PROOF_TOTAL','TRADE_PROOF_CLOSING',
   'TRADE_NORMALIZATION_SCOPE','TRADE_NORMALIZATION_LINK','TRADE_NORMALIZATION_ANCHOR',
   'INCOME_PROOF_SCHEMA','INCOME_PROOF_PAYOUT','INCOME_PROOF_POSITIONS_LEGS','INCOME_PROOF_LEG_SCHEMA',
-  'INCOME_PROOF_PAYOUT_LEG','INCOME_PROOF_OTHER_LEG','INCOME_PROOF_OPENING','INCOME_PROOF_MOVEMENT',
+  'INCOME_PROOF_PAYOUT_LEG','INCOME_PROOF_EXTERNAL_LEG','INCOME_PROOF_OWNER_FLOWS','INCOME_PROOF_OTHER_LEG','INCOME_PROOF_OPENING','INCOME_PROOF_MOVEMENT',
   'INCOME_PROOF_CHAIN_LENGTH','INCOME_PROOF_CHAIN_END','INCOME_PROOF_HASH','INCOME_PROOF_SOURCE','INCOME_PROOF_TOTAL','INCOME_PROOF_CLOSING',
   'INCOME_NORMALIZATION_TRADE','INCOME_NORMALIZATION_EXTERNAL',
   'TRADE_NORMALIZATION_COLLECTION','TRADE_NORMALIZATION_DUPLICATE','INCOME_NORMALIZATION_COLLECTION','INCOME_NORMALIZATION_DUPLICATE',
@@ -158,9 +158,9 @@ function cashDateSnapshot(s){
   for(const[k,v]of Object.entries(s.positions))if(!/^[1-9]\d*$/.test(k)||typeof v!=='string'||!/^\d{1,29}$/.test(v)||BigInt(v)>10n**28n)fail('CASH_RECONCILIATION','SNAPSHOT_POSITION');
   for(const[k,v]of Object.entries(s.foreignCurrencies||{}))if(!Object.hasOwn(s.positions,k)||!/^[A-Z]{3}$/.test(v)||v==='USD'||s.marks[k]!==null)fail('CASH_RECONCILIATION','SNAPSHOT_FOREIGN');
 }
-function cashDatePassive(a,b,except=null){
+function cashDatePassive(a,b,except=null,recorded=[]){
   if(ibCanonical(a.cashCurrency)!==ibCanonical(b.cashCurrency)||ibCanonical(a.nativeCash||{})!==ibCanonical(b.nativeCash||{})||ibCanonical(a.foreignCurrencies||{})!==ibCanonical(b.foreignCurrencies||{}))fail('CASH_RECONCILIATION','PASSIVE_CURRENCY');
-  for(const k of Object.keys(a.cash))if(k!==String(except)&&a.cashCurrency[k]==='USD'&&a.cash[k]!==b.cash[k])fail('CASH_RECONCILIATION','PASSIVE_USD_BALANCE');
+  for(const k of Object.keys(a.cash))if(k!==String(except)&&!recorded.includes(k)&&a.cashCurrency[k]==='USD'&&a.cash[k]!==b.cash[k])fail('CASH_RECONCILIATION','PASSIVE_USD_BALANCE');
 }
 function validateCashDateNormalization(p,source){
   if(!exact(p,['schema','portfolioIdentityHash','windowFrom','windowThrough','anchorKind','anchor','rawBefore','rawAfter','trade','cashLeg','proofId'])||p.schema!=='fee-console.ib-cash-date-normalization.v1'||!['window','checkpoint'].includes(p.anchorKind)||![p.windowFrom,p.windowThrough].every(isCalendarDate)||inclusiveDays(p.windowFrom,p.windowThrough)<2||inclusiveDays(p.windowFrom,p.windowThrough)>9)fail('CASH_RECONCILIATION','TRADE_PROOF_SCHEMA');
@@ -213,8 +213,14 @@ function normalizeEarlyTradeCash({reports,trades,ledger,rawCashRows,prior,baseli
 // exact restoration of an already authenticated full checkpoint. This is a
 // derived date projection: no transaction, source balance or old point is
 // rewritten, and no cash discrepancy is waived.
+// v1 proofs carry income legs only and keep their original checks byte for
+// byte. v2 adds `ownerFlows`: the same-capture owner-flow record of the payout
+// date for every USD cash account, so DEPOSIT/WITHDRAWAL legs are admitted only
+// where their ids, signed cents and the whole-portfolio cash flow all agree.
+const INCOME_PROOF_V1='fee-console.ib-income-date-normalization.v1',INCOME_PROOF_V2='fee-console.ib-income-date-normalization.v2';
 function validateIncomeDateNormalization(p,source){
-  if(!exact(p,['schema','portfolioIdentityHash','anchor','rawAnchor','rawClosing','payout','cashLegs','proofId'])||p.schema!=='fee-console.ib-income-date-normalization.v1')fail('CASH_RECONCILIATION','INCOME_PROOF_SCHEMA');
+  const v2=p?.schema===INCOME_PROOF_V2;
+  if(!exact(p,['schema','portfolioIdentityHash','anchor','rawAnchor','rawClosing','payout','cashLegs','proofId',...(v2?['ownerFlows']:[])])||!(v2||p.schema===INCOME_PROOF_V1))fail('CASH_RECONCILIATION','INCOME_PROOF_SCHEMA');
   const a=p.anchor,b=p.rawAnchor,c=p.rawClosing,t=p.payout;
   for(const s of [a,b,c])cashDateSnapshot(s);
   if(!exact(t,['id','portfolioId','holdingId','paidOn','currency','grossCents','taxCents','netCents','cashId','cashRecordId','dateTime'])
@@ -226,19 +232,43 @@ function validateIncomeDateNormalization(p,source){
   const corrected=structuredClone(b);
   corrected.cash[t.cashId]-=t.netCents;corrected.totalCents-=t.netCents;cashDateSnapshot(corrected);
   if(ibCanonical(corrected)!==ibCanonical(a))fail('PAST_POINT_CHANGED');
-  cashDatePassive(a,c,t.cashId);
+  // v2: the recorded owner rows of the date, per USD cash account. Other accounts
+  // may move between anchor and closing only by exactly their recorded signed
+  // cents; every account outside the record stays passive as before.
+  let ownerTotal=0n;const flows=v2?p.ownerFlows:null;
+  if(v2){
+    if(!object(flows)||!Object.keys(flows).length||Object.keys(flows).length>1000)fail('CASH_RECONCILIATION','INCOME_PROOF_OWNER_FLOWS');
+    for(const[k,v]of Object.entries(flows)){
+      if(!/^[1-9]\d*$/.test(k)||c.cashCurrency[k]!=='USD'||a.cashCurrency[k]!=='USD'||!exact(v,['depositCents','withdrawalCents','rowIds'])||![v.depositCents,v.withdrawalCents].every(Number.isSafeInteger)||v.depositCents<0||v.withdrawalCents>0
+        ||!Array.isArray(v.rowIds)||!v.rowIds.length||v.rowIds.length>1000||v.rowIds.some((x,i)=>!Number.isSafeInteger(x)||x<=0||i&&x<=v.rowIds[i-1]))fail('CASH_RECONCILIATION','INCOME_PROOF_OWNER_FLOWS');
+      ownerTotal+=BigInt(v.depositCents)+BigInt(v.withdrawalCents);
+      if(k!==String(t.cashId)&&BigInt(c.cash[k])-BigInt(a.cash[k])!==BigInt(v.depositCents)+BigInt(v.withdrawalCents))fail('CASH_RECONCILIATION','INCOME_PROOF_OWNER_FLOWS');
+    }
+  }
+  cashDatePassive(a,c,t.cashId,v2?Object.keys(flows):[]);
   if(ibCanonical(a.positions)!==ibCanonical(c.positions)||!Array.isArray(p.cashLegs)||!p.cashLegs.length||p.cashLegs.length>1000)fail('CASH_RECONCILIATION','INCOME_PROOF_POSITIONS_LEGS');
-  const ids=new Set(),edges=new Map();let sum=0n,payouts=0;
+  const ids=new Set(),edges=new Map(),ownerIds=[];let sum=0n,external=0n,deposits=0n,withdrawals=0n,payouts=0;
   for(const l of p.cashLegs){
     if(!exact(l,['id','cashId','tradeId','holdingId','payoutId','dateTime','type','amountCents','balanceCents'])||!Number.isSafeInteger(l.id)||l.id<=0||ids.has(l.id)||l.cashId!==t.cashId||l.tradeId!==null||![l.amountCents,l.balanceCents].every(Number.isSafeInteger))fail('CASH_RECONCILIATION','INCOME_PROOF_LEG_SCHEMA');
     ids.add(l.id);
     if(l.type==='PAYOUT'){
       if(++payouts!==1||l.id!==t.cashRecordId||l.payoutId!==t.id||l.holdingId!==t.holdingId||l.dateTime!==t.dateTime||l.amountCents!==t.netCents||l.balanceCents!==b.cash[t.cashId]||l.balanceCents-l.amountCents!==a.cash[t.cashId])fail('CASH_RECONCILIATION','INCOME_PROOF_PAYOUT_LEG');
+    }else if(v2&&['DEPOSIT','WITHDRAWAL'].includes(l.type)){
+      // An owner flow on the payout business date rides the balance chain so the
+      // chain stays complete. It is never income: it carries no holding, payout
+      // or trade link, keeps its own sign, and is kept out of the payout sum.
+      if(l.holdingId!==null||l.payoutId!==null||!l.amountCents||(l.type==='DEPOSIT')!==(l.amountCents>0)||nyBusinessDate(l.dateTime)!==c.d)fail('CASH_RECONCILIATION','INCOME_PROOF_EXTERNAL_LEG');
+      external+=BigInt(l.amountCents);if(l.type==='DEPOSIT')deposits+=BigInt(l.amountCents);else withdrawals+=BigInt(l.amountCents);ownerIds.push(l.id);
     }else if(!['INTEREST_PAYMENT','INTEREST'].includes(l.type)||l.holdingId!==null||l.payoutId!==null||l.amountCents<0||nyBusinessDate(l.dateTime)!==c.d)fail('CASH_RECONCILIATION','INCOME_PROOF_OTHER_LEG');
     const opening=l.balanceCents-l.amountCents;if(!Number.isSafeInteger(opening))fail('CASH_RECONCILIATION','INCOME_PROOF_OPENING');
     if(!edges.has(opening))edges.set(opening,[]);edges.get(opening).push(l.balanceCents);sum+=BigInt(l.amountCents);
   }
-  if(payouts!==1||BigInt(c.cash[t.cashId])-BigInt(a.cash[t.cashId])!==sum)fail('CASH_RECONCILIATION','INCOME_PROOF_MOVEMENT');
+  if(payouts!==1||BigInt(c.cash[t.cashId])-BigInt(a.cash[t.cashId])!==sum||sum-external<BigInt(t.netCents))fail('CASH_RECONCILIATION','INCOME_PROOF_MOVEMENT');
+  // v2: the proof's own owner legs must be exactly the recorded owner rows of its account.
+  if(v2){
+    const own=flows[t.cashId];
+    if(!own||BigInt(own.depositCents)!==deposits||BigInt(own.withdrawalCents)!==withdrawals||ibCanonical(own.rowIds)!==ibCanonical([...ownerIds].sort((x,y)=>x-y))||!ownerIds.length)fail('CASH_RECONCILIATION','INCOME_PROOF_OWNER_FLOWS');
+  }
   const stack=[a.cash[t.cashId]],path=[];
   while(stack.length){const out=edges.get(stack.at(-1));if(out?.length)stack.push(out.pop());else path.push(stack.pop());}
   if(path.length!==p.cashLegs.length+1)fail('CASH_RECONCILIATION','INCOME_PROOF_CHAIN_LENGTH');
@@ -246,6 +276,12 @@ function validateIncomeDateNormalization(p,source){
   const {proofId,...body}=p;if(hash(body)!==proofId)fail('CASH_RECONCILIATION','INCOME_PROOF_HASH');
   if(source){
     if(source.schema!=='fee-console.ib-manager-source.v3'||p.portfolioIdentityHash!==source.portfolioIdentityHash||a.d<=source.baselineAsOf||c.d>source.sourceAsOf)fail('CASH_RECONCILIATION','INCOME_PROOF_SOURCE');
+    // v2: the listed owner flows of the date, over every USD cash account, must equal
+    // the source's whole-portfolio external cash flow of that date to the cent.
+    if(v2){
+      const recorded=Object.hasOwn(source.cashFlowByDate,c.d)?BigInt(ibMoneyCents(source.cashFlowByDate[c.d])):0n;
+      if(recorded!==ownerTotal||ownerTotal===0n&&Object.hasOwn(source.cashFlowByDate,c.d))fail('CASH_RECONCILIATION','INCOME_PROOF_SOURCE');
+    }
     for(const s of [a,c]){
       if(ibMoneyCents(source.periodReturnsInput.points.find(x=>x.d===s.d)?.tot)!==s.totalCents)fail('CASH_RECONCILIATION','INCOME_PROOF_TOTAL');
       for(const closing of source.closingSnapshots)if(closing.d===s.d&&ibCanonical(closing)!==ibCanonical(s))fail('CASH_RECONCILIATION','INCOME_PROOF_CLOSING');
@@ -269,9 +305,22 @@ function normalizeEarlyIncomeCash({reports,trades,ledger,rawCashRows,payoutProof
   if(candidates.length!==1)return proofs;
   if(trades.some(t=>t.transaction_date===c.d))fail('CASH_RECONCILIATION','INCOME_NORMALIZATION_TRADE');
   const legs=ledger.filter(l=>l.cashId===cashId&&l.d===c.d);
-  if(legs.some(l=>l.external))fail('CASH_RECONCILIATION','INCOME_NORMALIZATION_EXTERNAL');
-  const body={schema:'fee-console.ib-income-date-normalization.v1',portfolioIdentityHash:hash({name:NAME,id:portfolioId,currency:'USD'}),anchor:structuredClone(a),rawAnchor:structuredClone(b),rawClosing:structuredClone(c),payout:structuredClone(candidates[0]),
-    cashLegs:legs.map(cashLeg).sort((x,y)=>x.id-y.id)};
+  // Owner flows already classified by the ledger (external DEPOSIT/WITHDRAWAL
+  // with no trade, holding or payout link and a non-zero signed amount) may sit
+  // on the payout date; any other external shape still refuses normalization.
+  if(legs.some(l=>l.external&&(!['DEPOSIT','WITHDRAWAL'].includes(l.type)||l.tradeId!==null||l.holdingId!==null||l.payoutId!==null||!l.movement||(l.type==='DEPOSIT')!==(l.movement>0))))fail('CASH_RECONCILIATION','INCOME_NORMALIZATION_EXTERNAL');
+  // Owner rows of the payout date are recorded per USD cash account from the
+  // same captured ledger: signed cents by type and every row id, so a stored
+  // proof can only be rebuilt from, and checked against, those very rows.
+  const ownerFlows={};
+  for(const l of ledger)if(l.d===c.d&&l.external&&c.cashCurrency[l.cashId]==='USD'){
+    const f=ownerFlows[l.cashId]||={depositCents:0,withdrawalCents:0,rowIds:[]};
+    if(l.type==='DEPOSIT')f.depositCents+=l.movement;else f.withdrawalCents+=l.movement;f.rowIds.push(l.id);
+  }
+  for(const f of Object.values(ownerFlows))f.rowIds.sort((x,y)=>x-y);
+  const v2=legs.some(l=>l.external);
+  const body={schema:v2?INCOME_PROOF_V2:INCOME_PROOF_V1,portfolioIdentityHash:hash({name:NAME,id:portfolioId,currency:'USD'}),anchor:structuredClone(a),rawAnchor:structuredClone(b),rawClosing:structuredClone(c),payout:structuredClone(candidates[0]),
+    cashLegs:legs.map(cashLeg).sort((x,y)=>x.id-y.id),...(v2?{ownerFlows}:{})};
   const proof={...body,proofId:hash(body)},corrected=validateIncomeDateNormalization(proof),existing=proofs.find(p=>p.payout.id===proof.payout.id);
   if(existing){if(ibCanonical(existing)!==ibCanonical(proof))fail('PAST_POINT_CHANGED');}else proofs.push(proof);
   reports[0]=corrected;return proofs;
