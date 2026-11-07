@@ -351,6 +351,14 @@ const RECOVERY_SCOPES=Object.freeze([
    {id:41945445626,jobId:126976478739,head:'5923e40afcf4fa17e91a4be8d05aedce0fe8cc28'},
    {id:41964614855,jobId:127038682646,head:'f1d8a9e453e80cb5644749313597fe78faf171c8'},
   ]),uiBlob:'a2c44b8e0e19b875221ccf537141d9435683f72b'}),
+ // One separately approved recovery after the Fund Records repair. Preserve
+ // the failed completed-sync run and its clock intent; no automatic retry.
+ Object.freeze({target:'2026-11-06',baseSha:'55f2cc9d60f360944b90ff610aee814589bb7cfc',repairBase:'55f2cc9d60f360944b90ff610aee814589bb7cfc',
+  baseParents:Object.freeze(['94210904dd95b2ff4496cb68dab6b49950fe4f74','a81d1a20e7214a96f9eafc6e65ee38d31010bc35']),
+  files:Object.freeze(['scripts/fee-report-producer.mjs','scripts/fee-report-producer.test.mjs']),
+  failures:Object.freeze([
+   {id:42309848352,jobId:128208373197,head:'94210904dd95b2ff4496cb68dab6b49950fe4f74'},
+  ]),uiBlob:'2bb9f66ac890ba87cec504ef72a5083c07670689'}),
 ]);
 const recoveryScope=target=>RECOVERY_SCOPES.find(s=>s.target===target);
 export async function readPeriodSourceAttempts({plan,now,currentRunId=null,recoveryMain=null,actionsToken=process.env.FEE_REPORT_ACTIONS_TOKEN,fetchImpl=globalThis.fetch}={}){
