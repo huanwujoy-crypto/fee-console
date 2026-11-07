@@ -46,6 +46,37 @@ test('reviewed IB inspection neither escalates nor resets production failures, i
   assert.equal(eligible({event:{workflow_run:{...diagnostic,actor:{id:1}}}}),true);
 });
 
+test('Nov6 read-only inspection neither escalates nor resets production failure history', () => {
+  const diagnostic={...run('failure',9,'workflow_dispatch'),display_title:'IB diagnostic 2026-11-06',
+    head_branch:'main',head_sha:'a'.repeat(40),path:'.github/workflows/fee-cloud-producer.yml',actor:{id:283054367},run_attempt:1};
+  const prior=[run('failure',2),run('failure',1)];
+  assert.equal(isIbReadOnlyDiagnostic(diagnostic),true);
+  for(const conclusion of ['failure','timed_out','success','cancelled']){
+    const d={...diagnostic,conclusion,producerValidated:true};
+    assert.equal(consecutiveFailures([d,...prior]),2);
+    assert.doesNotMatch(diagnosticBody([d,...prior]),/runs\/9/);
+  }
+  const old={...diagnostic,id:8,display_title:'IB diagnostic 2026-11-04',html_url:'https://github.test/runs/8'};
+  assert.equal(consecutiveFailures([diagnostic,old,...prior]),2);
+  assert.doesNotMatch(diagnosticBody([diagnostic,old,...prior]),/runs\/(8|9)/);
+});
+
+test('Nov6 supervisor exception is exact and retains actor, event, attempt and code identity gates', () => {
+  const diagnostic={...run('failure',9,'workflow_dispatch'),display_title:'IB diagnostic 2026-11-06',
+    head_branch:'main',head_sha:'a'.repeat(40),path:'.github/workflows/fee-cloud-producer.yml',actor:{id:283054367},run_attempt:1};
+  const prior=[run('failure',2),run('failure',1)];
+  const changes=[d=>d.event='schedule',d=>d.head_branch='other',d=>d.path='other',d=>d.actor.id=1,
+    d=>d.actor=null,d=>d.run_attempt=2,d=>delete d.run_attempt,d=>d.head_sha='invalid',
+    ...['IB diagnostic 2026-11-05','IB diagnostic 2026-11-07','IB diagnostic 2026-11-06 ',
+      'ib diagnostic 2026-11-06','IB diagnostic 2026-11-06 extra'].map(name=>d=>d.display_title=name)];
+  for(const change of changes){
+    const d=structuredClone(diagnostic);change(d);
+    assert.equal(isIbReadOnlyDiagnostic(d),false);
+    assert.equal(consecutiveFailures([d,...prior]),3);
+    assert.match(diagnosticBody([d,...prior]),/runs\/9/);
+  }
+});
+
 function executionFixture() {
   const now = new Date();
   const execution={id:99,status:'completed',conclusion:'success',event:'schedule',head_branch:'main',head_sha:'a'.repeat(40),

@@ -402,9 +402,9 @@ export async function readPeriodSourceAttempts({plan,now,currentRunId=null,recov
           &&!scope?.failures.some(old=>old.id===r.id&&old.head===r.head_sha))evidence.reservations.push(r.id);
       if(j.conclusion==='skipped'){if(j.status!=='completed')fail('SOURCE_ATTEMPT_METADATA');continue;}
       if(evidence&&j.started_at!==null&&(!Number.isFinite(Date.parse(j.started_at))||Date.parse(j.started_at)<Date.parse(r.created_at)||Date.parse(j.started_at)>now.getTime()+300000))fail('RECOVERY_METADATA');
-      // This one reviewed diagnostic cannot call the writer or publisher. Keep
-      // its own run history, but never consume or reset a production attempt.
-      if(j.name==='IB diagnostic 2026-11-04'){
+      // These two reviewed diagnostics cannot call the writer or publisher.
+      // Keep their histories without consuming or resetting production attempts.
+      if(j.name==='IB diagnostic 2026-11-04'||j.name==='IB diagnostic 2026-11-06'){
         if(r.event!=='workflow_dispatch'||r.display_title!==j.name||r.actor?.id!==RECOVERY_OWNER||r.run_attempt!==1)fail('SOURCE_ATTEMPT_METADATA');
         continue;
       }

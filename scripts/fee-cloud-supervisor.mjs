@@ -10,10 +10,10 @@ const ISSUE_TITLE = "[fee-cloud] producer needs Codex diagnosis";
 const ALLOWED_EVENTS = new Set(["schedule", "workflow_dispatch"]);
 const FAILED_CONCLUSIONS = new Set(['failure', 'timed_out']);
 
-// This fixed reviewed job has no writer. Its outcome is neither a production
+// These fixed reviewed jobs have no writer. Their outcomes are neither production
 // failure nor recovery evidence. Titles alone cannot suppress production alerts.
 export function isIbReadOnlyDiagnostic(run) {
-  return run?.display_title === 'IB diagnostic 2026-11-04'
+  return (run?.display_title === 'IB diagnostic 2026-11-04' || run?.display_title === 'IB diagnostic 2026-11-06')
     && run.event === 'workflow_dispatch' && run.head_branch === 'main'
     && run.path === '.github/workflows/fee-cloud-producer.yml'
     && run.actor?.id === 283054367 && run.run_attempt === 1

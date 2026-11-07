@@ -8,8 +8,38 @@ import {ibNoncashMark,buildIbNativeNoncashProof,validateIbNativeNoncashProof,val
 export const IB_BASELINE_WINDOW=Object.freeze({from:'2026-08-01',asOf:'2026-10-23'});
 const API='https://api.sharesight.com',NAME='IB-HK';
 const codes=new Set(['CONFIG','BASELINE_LOCK','BASELINE_MISMATCH','SCOPE','IDENTITY','INCOMPLETE','DATE','DATE_ALIGNMENT','AMOUNT','SCHEMA','CASH_RECONCILIATION','UNRESOLVED_FLOW','UNVERIFIED_TRANSFER','NONCASH_EVIDENCE','UNSUPPORTED_CURRENCY','UNSTABLE','HISTORY_LIMIT','PAST_POINT_CHANGED','STATE','NETWORK']);
-export class IbManagerSourceError extends Error{constructor(code){super('IB_SOURCE_'+(codes.has(code)?code:'NETWORK'));this.code=codes.has(code)?code:'NETWORK';}}
-const fail=code=>{throw new IbManagerSourceError(code);};
+// Fixed locations only: never attach source dates, identities, values or raw
+// exceptions. The diagnostic entry may explicitly read this field; existing
+// reason codes, source schemas and ordinary error serialization stay unchanged.
+export const IB_CASH_RECONCILIATION_SITES=Object.freeze([
+  'UNCLASSIFIED','SNAPSHOT_SCHEMA','SNAPSHOT_CASH_KEYS','SNAPSHOT_CASH_VALUE','SNAPSHOT_POSITION','SNAPSHOT_FOREIGN',
+  'PASSIVE_CURRENCY','PASSIVE_USD_BALANCE',
+  'TRADE_PROOF_SCHEMA','TRADE_PROOF_LEG_SCHEMA','TRADE_PROOF_LINK','TRADE_PROOF_BOUNDARY',
+  'TRADE_PROOF_PRE_POSITIONS','TRADE_PROOF_POSITION_DELTA','TRADE_PROOF_HASH','TRADE_PROOF_SOURCE','TRADE_PROOF_TOTAL','TRADE_PROOF_CLOSING',
+  'TRADE_NORMALIZATION_SCOPE','TRADE_NORMALIZATION_LINK','TRADE_NORMALIZATION_ANCHOR',
+  'INCOME_PROOF_SCHEMA','INCOME_PROOF_PAYOUT','INCOME_PROOF_POSITIONS_LEGS','INCOME_PROOF_LEG_SCHEMA',
+  'INCOME_PROOF_PAYOUT_LEG','INCOME_PROOF_OTHER_LEG','INCOME_PROOF_OPENING','INCOME_PROOF_MOVEMENT',
+  'INCOME_PROOF_CHAIN_LENGTH','INCOME_PROOF_CHAIN_END','INCOME_PROOF_HASH','INCOME_PROOF_SOURCE','INCOME_PROOF_TOTAL','INCOME_PROOF_CLOSING',
+  'INCOME_NORMALIZATION_TRADE','INCOME_NORMALIZATION_EXTERNAL',
+  'TRADE_NORMALIZATION_COLLECTION','TRADE_NORMALIZATION_DUPLICATE','INCOME_NORMALIZATION_COLLECTION','INCOME_NORMALIZATION_DUPLICATE',
+  'TARGET_API_AMOUNT','DATED_API_COUNT','DATED_API_IDENTITY','DATED_API_AMOUNT','DATED_API_USD_NATIVE',
+  'DAILY_MOVEMENT','DAILY_CHAIN_LENGTH','DAILY_CHAIN_END'
+]);
+export const IB_CASH_DATE_ROLES=Object.freeze(['NONE','ANCHOR','TARGET','WINDOW','PROOF']);
+const cashSites=new Set(IB_CASH_RECONCILIATION_SITES),cashRoles=new Set(IB_CASH_DATE_ROLES),cashSiteByError=new WeakMap(),cashRoleByError=new WeakMap();
+export class IbManagerSourceError extends Error{constructor(code,cashSite,cashDateRole){
+  super('IB_SOURCE_'+(codes.has(code)?code:'NETWORK'));this.code=codes.has(code)?code:'NETWORK';
+  if(this.code==='CASH_RECONCILIATION'){
+    const site=cashSites.has(cashSite)?cashSite:'UNCLASSIFIED';
+    const role=site!=='UNCLASSIFIED'&&cashRoles.has(cashDateRole)?cashDateRole:'NONE';
+    Object.defineProperties(this,{cashSite:{value:site},cashDateRole:{value:role}});
+    cashSiteByError.set(this,site);cashRoleByError.set(this,role);
+  }
+}}
+// WeakMap lookup does not invoke getters, coercion or Proxy traps on input.
+export const ibSourceCashSite=error=>cashSiteByError.get(error)||'UNCLASSIFIED';
+export const ibSourceCashDateRole=error=>cashRoleByError.get(error)||'NONE';
+const fail=(code,cashSite,cashDateRole='PROOF')=>{throw new IbManagerSourceError(code,cashSite,cashDateRole);};
 export const ibSourceFailureCode=e=>e instanceof IbManagerSourceError?'IB_SOURCE_'+e.code:'IB_SOURCE_NETWORK';
 export const ibCanonical=v=>Array.isArray(v)?'['+v.map(ibCanonical).join(',')+']':v&&typeof v==='object'?'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+ibCanonical(v[k])).join(',')+'}':JSON.stringify(v);
 const hash=v=>crypto.createHash('sha256').update(ibCanonical(v)).digest('hex');
@@ -59,35 +89,35 @@ export function validateIbOwnerBaseline(state,expectedHash){
 // only the derived snapshots enter the daily path and future anchor checks.
 function cashDateSnapshot(s){
   const native=Object.hasOwn(s||{},'nativeCash'),foreign=Object.hasOwn(s||{},'foreignCurrencies');
-  if(!exact(s,['d','totalCents','cash','cashCurrency','positions','marks',...(native?['nativeCash']:[]),...(foreign?['foreignCurrencies']:[])])||!isCalendarDate(s.d)||!Number.isSafeInteger(s.totalCents)||s.totalCents<=0||!['cash','cashCurrency','positions','marks'].every(k=>object(s[k]))||native&&!object(s.nativeCash)||foreign&&!object(s.foreignCurrencies))fail('CASH_RECONCILIATION');
-  if(ibCanonical(Object.keys(s.cash).sort())!==ibCanonical(Object.keys(s.cashCurrency).sort()))fail('CASH_RECONCILIATION');
-  for(const[k,v]of Object.entries(s.cash))if(!/^[1-9]\d*$/.test(k)||!Number.isSafeInteger(v)||!/^[A-Z]{3}$/.test(s.cashCurrency[k])||s.cashCurrency[k]!=='USD'&&!Number.isSafeInteger(s.nativeCash?.[k]))fail('CASH_RECONCILIATION');
-  for(const[k,v]of Object.entries(s.positions))if(!/^[1-9]\d*$/.test(k)||typeof v!=='string'||!/^\d{1,29}$/.test(v)||BigInt(v)>10n**28n)fail('CASH_RECONCILIATION');
-  for(const[k,v]of Object.entries(s.foreignCurrencies||{}))if(!Object.hasOwn(s.positions,k)||!/^[A-Z]{3}$/.test(v)||v==='USD'||s.marks[k]!==null)fail('CASH_RECONCILIATION');
+  if(!exact(s,['d','totalCents','cash','cashCurrency','positions','marks',...(native?['nativeCash']:[]),...(foreign?['foreignCurrencies']:[])])||!isCalendarDate(s.d)||!Number.isSafeInteger(s.totalCents)||s.totalCents<=0||!['cash','cashCurrency','positions','marks'].every(k=>object(s[k]))||native&&!object(s.nativeCash)||foreign&&!object(s.foreignCurrencies))fail('CASH_RECONCILIATION','SNAPSHOT_SCHEMA');
+  if(ibCanonical(Object.keys(s.cash).sort())!==ibCanonical(Object.keys(s.cashCurrency).sort()))fail('CASH_RECONCILIATION','SNAPSHOT_CASH_KEYS');
+  for(const[k,v]of Object.entries(s.cash))if(!/^[1-9]\d*$/.test(k)||!Number.isSafeInteger(v)||!/^[A-Z]{3}$/.test(s.cashCurrency[k])||s.cashCurrency[k]!=='USD'&&!Number.isSafeInteger(s.nativeCash?.[k]))fail('CASH_RECONCILIATION','SNAPSHOT_CASH_VALUE');
+  for(const[k,v]of Object.entries(s.positions))if(!/^[1-9]\d*$/.test(k)||typeof v!=='string'||!/^\d{1,29}$/.test(v)||BigInt(v)>10n**28n)fail('CASH_RECONCILIATION','SNAPSHOT_POSITION');
+  for(const[k,v]of Object.entries(s.foreignCurrencies||{}))if(!Object.hasOwn(s.positions,k)||!/^[A-Z]{3}$/.test(v)||v==='USD'||s.marks[k]!==null)fail('CASH_RECONCILIATION','SNAPSHOT_FOREIGN');
 }
 function cashDatePassive(a,b,except=null){
-  if(ibCanonical(a.cashCurrency)!==ibCanonical(b.cashCurrency)||ibCanonical(a.nativeCash||{})!==ibCanonical(b.nativeCash||{})||ibCanonical(a.foreignCurrencies||{})!==ibCanonical(b.foreignCurrencies||{}))fail('CASH_RECONCILIATION');
-  for(const k of Object.keys(a.cash))if(k!==String(except)&&a.cashCurrency[k]==='USD'&&a.cash[k]!==b.cash[k])fail('CASH_RECONCILIATION');
+  if(ibCanonical(a.cashCurrency)!==ibCanonical(b.cashCurrency)||ibCanonical(a.nativeCash||{})!==ibCanonical(b.nativeCash||{})||ibCanonical(a.foreignCurrencies||{})!==ibCanonical(b.foreignCurrencies||{}))fail('CASH_RECONCILIATION','PASSIVE_CURRENCY');
+  for(const k of Object.keys(a.cash))if(k!==String(except)&&a.cashCurrency[k]==='USD'&&a.cash[k]!==b.cash[k])fail('CASH_RECONCILIATION','PASSIVE_USD_BALANCE');
 }
 function validateCashDateNormalization(p,source){
-  if(!exact(p,['schema','portfolioIdentityHash','windowFrom','windowThrough','anchorKind','anchor','rawBefore','rawAfter','trade','cashLeg','proofId'])||p.schema!=='fee-console.ib-cash-date-normalization.v1'||!['window','checkpoint'].includes(p.anchorKind)||![p.windowFrom,p.windowThrough].every(isCalendarDate)||inclusiveDays(p.windowFrom,p.windowThrough)<2||inclusiveDays(p.windowFrom,p.windowThrough)>9)fail('CASH_RECONCILIATION');
+  if(!exact(p,['schema','portfolioIdentityHash','windowFrom','windowThrough','anchorKind','anchor','rawBefore','rawAfter','trade','cashLeg','proofId'])||p.schema!=='fee-console.ib-cash-date-normalization.v1'||!['window','checkpoint'].includes(p.anchorKind)||![p.windowFrom,p.windowThrough].every(isCalendarDate)||inclusiveDays(p.windowFrom,p.windowThrough)<2||inclusiveDays(p.windowFrom,p.windowThrough)>9)fail('CASH_RECONCILIATION','TRADE_PROOF_SCHEMA');
   const t=p.trade,l=p.cashLeg,a=p.anchor,b=p.rawBefore,c=p.rawAfter;
   for(const s of [a,b,c])cashDateSnapshot(s);
-  if(!exact(t,['id','portfolioId','holdingId','date','kind','quantityAtoms','valueCents','currency'])||!exact(l,['id','cashId','tradeId','holdingId','dateTime','amountCents','balanceCents','type','payoutId'])||![t.id,t.portfolioId,t.holdingId,l.id,l.cashId].every(v=>Number.isSafeInteger(v)&&v>0)||!['BUY','SELL'].includes(t.kind)||t.currency!=='USD'||typeof t.quantityAtoms!=='string'||!/^\d{1,29}$/.test(t.quantityAtoms)||BigInt(t.quantityAtoms)<=0n||BigInt(t.quantityAtoms)>10n**28n||![t.valueCents,l.amountCents,l.balanceCents].every(Number.isSafeInteger))fail('CASH_RECONCILIATION');
-  if(p.portfolioIdentityHash!==hash({name:NAME,id:t.portfolioId,currency:'USD'})||l.tradeId!==t.id||l.holdingId!==t.holdingId||l.payoutId!==null||l.dateTime!==t.date+'T00:00:00.000Z'||l.type!==(t.kind==='BUY'?'BUY TRADE':'SELL TRADE')||!l.amountCents||(t.kind==='BUY')!==(l.amountCents<0)||BigInt(l.amountCents)+BigInt(t.valueCents)!==0n||c.d!==t.date||add(b.d,1)!==c.d||b.d<p.windowFrom||c.d>p.windowThrough)fail('CASH_RECONCILIATION');
+  if(!exact(t,['id','portfolioId','holdingId','date','kind','quantityAtoms','valueCents','currency'])||!exact(l,['id','cashId','tradeId','holdingId','dateTime','amountCents','balanceCents','type','payoutId'])||![t.id,t.portfolioId,t.holdingId,l.id,l.cashId].every(v=>Number.isSafeInteger(v)&&v>0)||!['BUY','SELL'].includes(t.kind)||t.currency!=='USD'||typeof t.quantityAtoms!=='string'||!/^\d{1,29}$/.test(t.quantityAtoms)||BigInt(t.quantityAtoms)<=0n||BigInt(t.quantityAtoms)>10n**28n||![t.valueCents,l.amountCents,l.balanceCents].every(Number.isSafeInteger))fail('CASH_RECONCILIATION','TRADE_PROOF_LEG_SCHEMA');
+  if(p.portfolioIdentityHash!==hash({name:NAME,id:t.portfolioId,currency:'USD'})||l.tradeId!==t.id||l.holdingId!==t.holdingId||l.payoutId!==null||l.dateTime!==t.date+'T00:00:00.000Z'||l.type!==(t.kind==='BUY'?'BUY TRADE':'SELL TRADE')||!l.amountCents||(t.kind==='BUY')!==(l.amountCents<0)||BigInt(l.amountCents)+BigInt(t.valueCents)!==0n||c.d!==t.date||add(b.d,1)!==c.d||b.d<p.windowFrom||c.d>p.windowThrough)fail('CASH_RECONCILIATION','TRADE_PROOF_LINK');
   const opening=l.balanceCents-l.amountCents;
-  if(!Number.isSafeInteger(opening)||[a,b,c].some(s=>s.cashCurrency[l.cashId]!=='USD'||s.foreignCurrencies?.[t.holdingId])||a.cash[l.cashId]!==opening||b.cash[l.cashId]!==l.balanceCents||c.cash[l.cashId]!==l.balanceCents||a.d!==(p.anchorKind==='window'?add(b.d,-1):b.d)||a.d<p.windowFrom)fail('CASH_RECONCILIATION');
+  if(!Number.isSafeInteger(opening)||[a,b,c].some(s=>s.cashCurrency[l.cashId]!=='USD'||s.foreignCurrencies?.[t.holdingId])||a.cash[l.cashId]!==opening||b.cash[l.cashId]!==l.balanceCents||c.cash[l.cashId]!==l.balanceCents||a.d!==(p.anchorKind==='window'?add(b.d,-1):b.d)||a.d<p.windowFrom)fail('CASH_RECONCILIATION','TRADE_PROOF_BOUNDARY');
   cashDatePassive(a,b,l.cashId);cashDatePassive(b,c,l.cashId);
-  if(ibCanonical(a.positions)!==ibCanonical(b.positions))fail('CASH_RECONCILIATION');
-  for(const k of new Set([...Object.keys(b.positions),...Object.keys(c.positions)]))if(BigInt(c.positions[k]||'0')-BigInt(b.positions[k]||'0')!==(k===String(t.holdingId)?(t.kind==='BUY'?1n:-1n)*BigInt(t.quantityAtoms):0n))fail('CASH_RECONCILIATION');
+  if(ibCanonical(a.positions)!==ibCanonical(b.positions))fail('CASH_RECONCILIATION','TRADE_PROOF_PRE_POSITIONS');
+  for(const k of new Set([...Object.keys(b.positions),...Object.keys(c.positions)]))if(BigInt(c.positions[k]||'0')-BigInt(b.positions[k]||'0')!==(k===String(t.holdingId)?(t.kind==='BUY'?1n:-1n)*BigInt(t.quantityAtoms):0n))fail('CASH_RECONCILIATION','TRADE_PROOF_POSITION_DELTA');
   const corrected=structuredClone(b);corrected.cash[l.cashId]=opening;corrected.totalCents+=opening-b.cash[l.cashId];
   cashDateSnapshot(corrected);
   if(p.anchorKind==='checkpoint'&&ibCanonical(corrected)!==ibCanonical(a))fail('PAST_POINT_CHANGED');
-  const {proofId,...body}=p;if(hash(body)!==proofId)fail('CASH_RECONCILIATION');
+  const {proofId,...body}=p;if(hash(body)!==proofId)fail('CASH_RECONCILIATION','TRADE_PROOF_HASH');
   if(source){
-    if(source.schema!=='fee-console.ib-manager-source.v3'||p.portfolioIdentityHash!==source.portfolioIdentityHash||b.d<=source.baselineAsOf||p.windowThrough>source.sourceAsOf||source.noncashProofs.some(x=>x.tradeId===t.id))fail('CASH_RECONCILIATION');
-    for(const s of [a,corrected,c])if(ibMoneyCents(source.periodReturnsInput.points.find(x=>x.d===s.d)?.tot)!==s.totalCents)fail('CASH_RECONCILIATION');
-    for(const s of source.closingSnapshots)if(s.d===corrected.d&&ibCanonical(s)!==ibCanonical(corrected))fail('CASH_RECONCILIATION');
+    if(source.schema!=='fee-console.ib-manager-source.v3'||p.portfolioIdentityHash!==source.portfolioIdentityHash||b.d<=source.baselineAsOf||p.windowThrough>source.sourceAsOf||source.noncashProofs.some(x=>x.tradeId===t.id))fail('CASH_RECONCILIATION','TRADE_PROOF_SOURCE');
+    for(const s of [a,corrected,c])if(ibMoneyCents(source.periodReturnsInput.points.find(x=>x.d===s.d)?.tot)!==s.totalCents)fail('CASH_RECONCILIATION','TRADE_PROOF_TOTAL');
+    for(const s of source.closingSnapshots)if(s.d===corrected.d&&ibCanonical(s)!==ibCanonical(corrected))fail('CASH_RECONCILIATION','TRADE_PROOF_CLOSING');
   }
   return corrected;
 }
@@ -99,10 +129,10 @@ function normalizeEarlyTradeCash({reports,trades,ledger,rawCashRows,prior,baseli
     if(BigInt(reports[n].cash[k])-BigInt(reports[n-1].cash[k]||0)!==moved)mismatch=true;
   }
   if(!mismatch)return proofs;
-  if(!coverage||trades.length!==1||ledger.length!==1)fail('CASH_RECONCILIATION');
+  if(!coverage||trades.length!==1||ledger.length!==1)fail('CASH_RECONCILIATION','TRADE_NORMALIZATION_SCOPE');
   const t=trades[0],l=ledger[0],raw=rawCashRows.get(l.id),n=reports.findIndex(s=>s.d===t.transaction_date),b=reports[n-1],c=reports[n];
-  if(!b||!c||b.d<=baseline.asOf||t.state!=='confirmed'||!['BUY','SELL'].includes(t.description_code)||l.external||!raw||raw.date_time!==t.transaction_date+'T00:00:00.000Z'||l.tradeId!==t.id||l.holdingId!==t.holding_id||l.payoutId!==null)fail('CASH_RECONCILIATION');
-  const anchor=n>1?reports[n-2]:oldAnchor;if(!anchor)fail('CASH_RECONCILIATION');
+  if(!b||!c||b.d<=baseline.asOf||t.state!=='confirmed'||!['BUY','SELL'].includes(t.description_code)||l.external||!raw||raw.date_time!==t.transaction_date+'T00:00:00.000Z'||l.tradeId!==t.id||l.holdingId!==t.holding_id||l.payoutId!==null)fail('CASH_RECONCILIATION','TRADE_NORMALIZATION_LINK');
+  const anchor=n>1?reports[n-2]:oldAnchor;if(!anchor)fail('CASH_RECONCILIATION','TRADE_NORMALIZATION_ANCHOR');
   const body={schema:'fee-console.ib-cash-date-normalization.v1',portfolioIdentityHash:hash({name:NAME,id:portfolioId,currency:'USD'}),windowFrom:reports[0].d,windowThrough:reports.at(-1).d,anchorKind:n>1?'window':'checkpoint',anchor:structuredClone(anchor),rawBefore:structuredClone(b),rawAfter:structuredClone(c),
     trade:{id:t.id,portfolioId:t.portfolio_id,holdingId:t.holding_id,date:t.transaction_date,kind:t.description_code,quantityAtoms:quantity(t).toString(),valueCents:ibMoneyCents(t.value),currency:'USD'},
     cashLeg:{id:l.id,cashId:l.cashId,tradeId:l.tradeId,holdingId:l.holdingId,dateTime:raw.date_time,amountCents:l.movement,balanceCents:l.balance,type:l.type,payoutId:l.payoutId}};
@@ -121,7 +151,7 @@ function normalizeEarlyTradeCash({reports,trades,ledger,rawCashRows,prior,baseli
 // derived date projection: no transaction, source balance or old point is
 // rewritten, and no cash discrepancy is waived.
 function validateIncomeDateNormalization(p,source){
-  if(!exact(p,['schema','portfolioIdentityHash','anchor','rawAnchor','rawClosing','payout','cashLegs','proofId'])||p.schema!=='fee-console.ib-income-date-normalization.v1')fail('CASH_RECONCILIATION');
+  if(!exact(p,['schema','portfolioIdentityHash','anchor','rawAnchor','rawClosing','payout','cashLegs','proofId'])||p.schema!=='fee-console.ib-income-date-normalization.v1')fail('CASH_RECONCILIATION','INCOME_PROOF_SCHEMA');
   const a=p.anchor,b=p.rawAnchor,c=p.rawClosing,t=p.payout;
   for(const s of [a,b,c])cashDateSnapshot(s);
   if(!exact(t,['id','portfolioId','holdingId','paidOn','currency','grossCents','taxCents','netCents','cashId','cashRecordId','dateTime'])
@@ -129,32 +159,33 @@ function validateIncomeDateNormalization(p,source){
     ||![t.grossCents,t.taxCents,t.netCents].every(Number.isSafeInteger)||t.currency!=='USD'||t.grossCents<=0||t.taxCents<0||t.netCents<=0||BigInt(t.grossCents)-BigInt(t.taxCents)!==BigInt(t.netCents)
     ||a.d!==b.d||add(a.d,1)!==c.d||t.paidOn!==c.d||t.dateTime!==c.d+'T00:00:00.000Z'
     ||p.portfolioIdentityHash!==hash({name:NAME,id:t.portfolioId,currency:'USD'})
-    ||[a,b,c].some(s=>s.cashCurrency[t.cashId]!=='USD'||s.foreignCurrencies?.[t.holdingId]||!s.positions[t.holdingId]||BigInt(s.positions[t.holdingId])<=0n))fail('CASH_RECONCILIATION');
+    ||[a,b,c].some(s=>s.cashCurrency[t.cashId]!=='USD'||s.foreignCurrencies?.[t.holdingId]||!s.positions[t.holdingId]||BigInt(s.positions[t.holdingId])<=0n))fail('CASH_RECONCILIATION','INCOME_PROOF_PAYOUT');
   const corrected=structuredClone(b);
   corrected.cash[t.cashId]-=t.netCents;corrected.totalCents-=t.netCents;cashDateSnapshot(corrected);
   if(ibCanonical(corrected)!==ibCanonical(a))fail('PAST_POINT_CHANGED');
   cashDatePassive(a,c,t.cashId);
-  if(ibCanonical(a.positions)!==ibCanonical(c.positions)||!Array.isArray(p.cashLegs)||!p.cashLegs.length||p.cashLegs.length>1000)fail('CASH_RECONCILIATION');
+  if(ibCanonical(a.positions)!==ibCanonical(c.positions)||!Array.isArray(p.cashLegs)||!p.cashLegs.length||p.cashLegs.length>1000)fail('CASH_RECONCILIATION','INCOME_PROOF_POSITIONS_LEGS');
   const ids=new Set(),edges=new Map();let sum=0n,payouts=0;
   for(const l of p.cashLegs){
-    if(!exact(l,['id','cashId','tradeId','holdingId','payoutId','dateTime','type','amountCents','balanceCents'])||!Number.isSafeInteger(l.id)||l.id<=0||ids.has(l.id)||l.cashId!==t.cashId||l.tradeId!==null||![l.amountCents,l.balanceCents].every(Number.isSafeInteger))fail('CASH_RECONCILIATION');
+    if(!exact(l,['id','cashId','tradeId','holdingId','payoutId','dateTime','type','amountCents','balanceCents'])||!Number.isSafeInteger(l.id)||l.id<=0||ids.has(l.id)||l.cashId!==t.cashId||l.tradeId!==null||![l.amountCents,l.balanceCents].every(Number.isSafeInteger))fail('CASH_RECONCILIATION','INCOME_PROOF_LEG_SCHEMA');
     ids.add(l.id);
     if(l.type==='PAYOUT'){
-      if(++payouts!==1||l.id!==t.cashRecordId||l.payoutId!==t.id||l.holdingId!==t.holdingId||l.dateTime!==t.dateTime||l.amountCents!==t.netCents||l.balanceCents!==b.cash[t.cashId]||l.balanceCents-l.amountCents!==a.cash[t.cashId])fail('CASH_RECONCILIATION');
-    }else if(!['INTEREST_PAYMENT','INTEREST'].includes(l.type)||l.holdingId!==null||l.payoutId!==null||l.amountCents<0||nyBusinessDate(l.dateTime)!==c.d)fail('CASH_RECONCILIATION');
-    const opening=l.balanceCents-l.amountCents;if(!Number.isSafeInteger(opening))fail('CASH_RECONCILIATION');
+      if(++payouts!==1||l.id!==t.cashRecordId||l.payoutId!==t.id||l.holdingId!==t.holdingId||l.dateTime!==t.dateTime||l.amountCents!==t.netCents||l.balanceCents!==b.cash[t.cashId]||l.balanceCents-l.amountCents!==a.cash[t.cashId])fail('CASH_RECONCILIATION','INCOME_PROOF_PAYOUT_LEG');
+    }else if(!['INTEREST_PAYMENT','INTEREST'].includes(l.type)||l.holdingId!==null||l.payoutId!==null||l.amountCents<0||nyBusinessDate(l.dateTime)!==c.d)fail('CASH_RECONCILIATION','INCOME_PROOF_OTHER_LEG');
+    const opening=l.balanceCents-l.amountCents;if(!Number.isSafeInteger(opening))fail('CASH_RECONCILIATION','INCOME_PROOF_OPENING');
     if(!edges.has(opening))edges.set(opening,[]);edges.get(opening).push(l.balanceCents);sum+=BigInt(l.amountCents);
   }
-  if(payouts!==1||BigInt(c.cash[t.cashId])-BigInt(a.cash[t.cashId])!==sum)fail('CASH_RECONCILIATION');
+  if(payouts!==1||BigInt(c.cash[t.cashId])-BigInt(a.cash[t.cashId])!==sum)fail('CASH_RECONCILIATION','INCOME_PROOF_MOVEMENT');
   const stack=[a.cash[t.cashId]],path=[];
   while(stack.length){const out=edges.get(stack.at(-1));if(out?.length)stack.push(out.pop());else path.push(stack.pop());}
-  if(path.length!==p.cashLegs.length+1||path[0]!==c.cash[t.cashId])fail('CASH_RECONCILIATION');
-  const {proofId,...body}=p;if(hash(body)!==proofId)fail('CASH_RECONCILIATION');
+  if(path.length!==p.cashLegs.length+1)fail('CASH_RECONCILIATION','INCOME_PROOF_CHAIN_LENGTH');
+  if(path[0]!==c.cash[t.cashId])fail('CASH_RECONCILIATION','INCOME_PROOF_CHAIN_END');
+  const {proofId,...body}=p;if(hash(body)!==proofId)fail('CASH_RECONCILIATION','INCOME_PROOF_HASH');
   if(source){
-    if(source.schema!=='fee-console.ib-manager-source.v3'||p.portfolioIdentityHash!==source.portfolioIdentityHash||a.d<=source.baselineAsOf||c.d>source.sourceAsOf)fail('CASH_RECONCILIATION');
+    if(source.schema!=='fee-console.ib-manager-source.v3'||p.portfolioIdentityHash!==source.portfolioIdentityHash||a.d<=source.baselineAsOf||c.d>source.sourceAsOf)fail('CASH_RECONCILIATION','INCOME_PROOF_SOURCE');
     for(const s of [a,c]){
-      if(ibMoneyCents(source.periodReturnsInput.points.find(x=>x.d===s.d)?.tot)!==s.totalCents)fail('CASH_RECONCILIATION');
-      for(const closing of source.closingSnapshots)if(closing.d===s.d&&ibCanonical(closing)!==ibCanonical(s))fail('CASH_RECONCILIATION');
+      if(ibMoneyCents(source.periodReturnsInput.points.find(x=>x.d===s.d)?.tot)!==s.totalCents)fail('CASH_RECONCILIATION','INCOME_PROOF_TOTAL');
+      for(const closing of source.closingSnapshots)if(closing.d===s.d&&ibCanonical(closing)!==ibCanonical(s))fail('CASH_RECONCILIATION','INCOME_PROOF_CLOSING');
     }
   }
   return corrected;
@@ -173,9 +204,9 @@ function normalizeEarlyIncomeCash({reports,trades,ledger,rawCashRows,payoutProof
   if(changed.length!==1)return proofs;
   const cashId=Number(changed[0]),candidates=payoutProofs.filter(t=>t.cashId===cashId&&t.paidOn===c.d);
   if(candidates.length!==1)return proofs;
-  if(trades.some(t=>t.transaction_date===c.d))fail('CASH_RECONCILIATION');
+  if(trades.some(t=>t.transaction_date===c.d))fail('CASH_RECONCILIATION','INCOME_NORMALIZATION_TRADE');
   const legs=ledger.filter(l=>l.cashId===cashId&&l.d===c.d);
-  if(legs.some(l=>l.external))fail('CASH_RECONCILIATION');
+  if(legs.some(l=>l.external))fail('CASH_RECONCILIATION','INCOME_NORMALIZATION_EXTERNAL');
   const body={schema:'fee-console.ib-income-date-normalization.v1',portfolioIdentityHash:hash({name:NAME,id:portfolioId,currency:'USD'}),anchor:structuredClone(a),rawAnchor:structuredClone(b),rawClosing:structuredClone(c),payout:structuredClone(candidates[0]),
     cashLegs:legs.map(cashLeg).sort((x,y)=>x.id-y.id)};
   const proof={...body,proofId:hash(body)},corrected=validateIncomeDateNormalization(proof),existing=proofs.find(p=>p.payout.id===proof.payout.id);
@@ -227,15 +258,15 @@ export function validateIbManagerReportInput(source,expectedHash){
   if(ibCanonical(totalFlows)!==ibCanonical(Object.fromEntries(Object.entries(i.flowByDate).filter(([,v])=>ibMoneyCents(v)).map(([d,v])=>[d,String(ibMoneyCents(v))]))))fail('NONCASH_EVIDENCE');
   if(i.from!==source.baselineFrom||i.to!==source.sourceAsOf||i.to<source.baselineAsOf||ibBaselineBusinessHash(i,source.baselineAsOf)!==expectedHash)fail('BASELINE_MISMATCH');
   if(normalized){
-    if(!advanced||!Array.isArray(source.cashDateNormalizations)||!source.cashDateNormalizations.length||source.cashDateNormalizations.length>1000)fail('CASH_RECONCILIATION');
-    const ids=new Set(),dates=new Set();for(const p of source.cashDateNormalizations){validateCashDateNormalization(p,source);if(ids.has(p.trade.id)||dates.has(p.rawBefore.d))fail('CASH_RECONCILIATION');ids.add(p.trade.id);dates.add(p.rawBefore.d);}
+    if(!advanced||!Array.isArray(source.cashDateNormalizations)||!source.cashDateNormalizations.length||source.cashDateNormalizations.length>1000)fail('CASH_RECONCILIATION','TRADE_NORMALIZATION_COLLECTION');
+    const ids=new Set(),dates=new Set();for(const p of source.cashDateNormalizations){validateCashDateNormalization(p,source);if(ids.has(p.trade.id)||dates.has(p.rawBefore.d))fail('CASH_RECONCILIATION','TRADE_NORMALIZATION_DUPLICATE');ids.add(p.trade.id);dates.add(p.rawBefore.d);}
   }
   if(incomeNormalized){
-    if(!advanced||!Array.isArray(source.incomeDateNormalizations)||!source.incomeDateNormalizations.length||source.incomeDateNormalizations.length>1000)fail('CASH_RECONCILIATION');
+    if(!advanced||!Array.isArray(source.incomeDateNormalizations)||!source.incomeDateNormalizations.length||source.incomeDateNormalizations.length>1000)fail('CASH_RECONCILIATION','INCOME_NORMALIZATION_COLLECTION');
     const payouts=new Set(),cashIds=new Set((source.cashDateNormalizations||[]).map(p=>p.cashLeg.id)),dates=new Set((source.cashDateNormalizations||[]).map(p=>p.rawBefore.d));
     for(const p of source.incomeDateNormalizations){
       validateIncomeDateNormalization(p,source);
-      if(payouts.has(p.payout.id)||dates.has(p.anchor.d)||p.cashLegs.some(l=>cashIds.has(l.id)))fail('CASH_RECONCILIATION');
+      if(payouts.has(p.payout.id)||dates.has(p.anchor.d)||p.cashLegs.some(l=>cashIds.has(l.id)))fail('CASH_RECONCILIATION','INCOME_NORMALIZATION_DUPLICATE');
       payouts.add(p.payout.id);dates.add(p.anchor.d);for(const l of p.cashLegs)cashIds.add(l.id);
     }
   }
@@ -323,11 +354,11 @@ export class SharesightIbManagerReader{
     }
     const auditedEvent=t=>coverage?.events.find(e=>e.d===t.transaction_date&&e.quantityAtoms===quantity(t).toString()&&ibCanonical(e.instrument)===ibCanonical(instrumentKey(t.instrument))&&['SELL','TRANSFER_OUT'].includes(t.description_code)&&t.value===0&&t.price===0&&t.brokerage===0);
     const cashList=rows(await this.#json(API+'/api/v2/portfolios/'+this.#portfolio+'/cash_accounts.json?date='+targetDate,token),'cash_accounts');
-    for(const c of cashList){if(c.portfolio_id!==this.#portfolio||c.portfolio_currency!=='USD'||c.date!==targetDate)fail('IDENTITY');this.#cash.add(id(c.id));if((reports.at(-1).cash[c.id]||0)!==cashAmount(c,'balance_in_portfolio_currency'))fail('CASH_RECONCILIATION');}
+    for(const c of cashList){if(c.portfolio_id!==this.#portfolio||c.portfolio_currency!=='USD'||c.date!==targetDate)fail('IDENTITY');this.#cash.add(id(c.id));if((reports.at(-1).cash[c.id]||0)!==cashAmount(c,'balance_in_portfolio_currency'))fail('CASH_RECONCILIATION','TARGET_API_AMOUNT','TARGET');}
     for(const report of reports)if(Object.values(report.cashCurrency).some(c=>c!=='USD')){
       const dated=report.d===targetDate?cashList:rows(await this.#json(API+'/api/v2/portfolios/'+this.#portfolio+'/cash_accounts.json?date='+report.d,token),'cash_accounts');
-      if(dated.length!==Object.keys(report.cash).length)fail('CASH_RECONCILIATION');report.nativeCash={};
-      for(const c of dated){if(c.portfolio_id!==this.#portfolio||c.portfolio_currency!=='USD'||c.date!==report.d||c.currency!==report.cashCurrency[c.id]||cashAmount(c,'balance_in_portfolio_currency')!==report.cash[c.id])fail('CASH_RECONCILIATION');if(c.currency!=='USD')report.nativeCash[c.id]=cashAmount(c,'balance');else if(cashAmount(c,'balance')!==report.cash[c.id])fail('CASH_RECONCILIATION');}
+      if(dated.length!==Object.keys(report.cash).length)fail('CASH_RECONCILIATION','DATED_API_COUNT',report.d===targetDate?'TARGET':report.d===anchor?'ANCHOR':'WINDOW');report.nativeCash={};
+      for(const c of dated){if(c.portfolio_id!==this.#portfolio||c.portfolio_currency!=='USD'||c.date!==report.d||c.currency!==report.cashCurrency[c.id])fail('CASH_RECONCILIATION','DATED_API_IDENTITY',report.d===targetDate?'TARGET':report.d===anchor?'ANCHOR':'WINDOW');if(cashAmount(c,'balance_in_portfolio_currency')!==report.cash[c.id])fail('CASH_RECONCILIATION','DATED_API_AMOUNT',report.d===targetDate?'TARGET':report.d===anchor?'ANCHOR':'WINDOW');if(c.currency!=='USD')report.nativeCash[c.id]=cashAmount(c,'balance');else if(cashAmount(c,'balance')!==report.cash[c.id])fail('CASH_RECONCILIATION','DATED_API_USD_NATIVE',report.d===targetDate?'TARGET':report.d===anchor?'ANCHOR':'WINDOW');}
     }
     const trades=rows(await this.#json(base+'/trades.json?consolidated=false&end_date='+targetDate+'&start_date='+from,token),'trades');
     for(const t of trades){if(t.portfolio_id!==this.#portfolio||!holdingIds.has(id(t.holding_id))||t.state!=='confirmed'||!isCalendarDate(t.transaction_date)||t.transaction_date<from||t.transaction_date>targetDate)fail('IDENTITY');
@@ -414,12 +445,13 @@ export class SharesightIbManagerReader{
         if(current.cashCurrency[cashId]!==previous.cashCurrency[cashId]||current.nativeCash?.[cashId]!==previous.nativeCash?.[cashId])fail('UNSUPPORTED_CURRENCY');continue;
       }
       const movements=ledger.filter(p=>p.cashId===cashId&&p.d===current.d).reduce((sum,p)=>sum+BigInt(p.movement),0n);
-      if(BigInt(current.cash[cashId]||0)-BigInt(previous.cash[cashId]||0)!==movements)fail('CASH_RECONCILIATION');
+      if(BigInt(current.cash[cashId]||0)-BigInt(previous.cash[cashId]||0)!==movements)fail('CASH_RECONCILIATION','DAILY_MOVEMENT',current.d===targetDate?'TARGET':'WINDOW');
       const edges=new Map(),group=ledger.filter(p=>p.cashId===cashId&&p.d===current.d);
       for(const p of group){const before=p.balance-p.movement;if(!edges.has(before))edges.set(before,[]);edges.get(before).push(p.balance);}
       const stack=[previous.cash[cashId]||0],path=[];
       while(stack.length){const out=edges.get(stack.at(-1));if(out?.length)stack.push(out.pop());else path.push(stack.pop());}
-      if(path.length!==group.length+1||path[0]!== (current.cash[cashId]||0))fail('CASH_RECONCILIATION');
+      if(path.length!==group.length+1)fail('CASH_RECONCILIATION','DAILY_CHAIN_LENGTH',current.d===targetDate?'TARGET':'WINDOW');
+      if(path[0]!== (current.cash[cashId]||0))fail('CASH_RECONCILIATION','DAILY_CHAIN_END',current.d===targetDate?'TARGET':'WINDOW');
     }
     if(prior){const previous=prior.periodReturnsInput.points.find(p=>p.d===anchor);if(!previous||ibMoneyCents(previous.tot)!==reports[0].totalCents)fail('PAST_POINT_CHANGED');}
     if(prior?.closingSnapshots){const old=prior.closingSnapshots.find(p=>p.d===anchor);if(!old||ibCanonical(old)!==ibCanonical(reports[0]))fail('PAST_POINT_CHANGED');}
