@@ -36,10 +36,12 @@ test('runtime rejects fabricated admission before any GitHub or Sharesight reque
 });
 test('a serialized sync-cycle execution binding cannot replace the producer WeakMap admission',async t=>{
  const f=await fixture(t);let called=0;
- const binding={contractId:'ib-source-revision-20261106-sync-v2',targetDate:DATE,mainSha:'a'.repeat(40),repairBaseSha:'b'.repeat(40),
-  approvedHead:'c'.repeat(40),approvedTree:'d'.repeat(40),currentRunId:90000000001,admissionModel:'sync-cycle-v1',executionSha256:'e'.repeat(64)};
- for(const admission of [binding,{...binding,checkCurrent(){called++;return binding;},close(){called++;}}])
-  await rejects(createFeeSourceRevisionRuntime({...f.config,admission}),'ADMISSION');
+ for(const contractId of ['ib-source-revision-20261106-sync-v2','ib-source-revision-20261106-sync-v3']){
+  const binding={contractId,targetDate:DATE,mainSha:'a'.repeat(40),repairBaseSha:'b'.repeat(40),
+   approvedHead:'c'.repeat(40),approvedTree:'d'.repeat(40),currentRunId:90000000001,admissionModel:'sync-cycle-v1',executionSha256:'e'.repeat(64)};
+  for(const admission of [binding,{...binding,checkCurrent(){called++;return binding;},close(){called++;}}])
+   await rejects(createFeeSourceRevisionRuntime({...f.config,admission}),'ADMISSION');
+ }
  assert.equal(called,0);assert.equal(f.calls(),0);
 });
 test('runtime binds the one reviewed date and rejects ordinary, same-cutoff and other target plans before IO',async t=>{

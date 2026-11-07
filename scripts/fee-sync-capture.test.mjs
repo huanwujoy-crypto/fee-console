@@ -166,3 +166,71 @@ test('short configured credentials do not collide with JSON keys but reflected s
     }
   }
 });
+
+// Entirely synthetic bank-wire memo. Its source timestamp, monetary tokens and
+// paired reference stay source bytes; capture is not a synchronization receipt.
+const IB_WIRE_MEMO='IBKR U1000001 bank wire USD 50, received and available 2026-09-01 per Transfer Status & History and IBKR notice; source bank not verified. key=ib.manual|U1000001|wire|2026-09-01|USD|50.00';
+function ibWireCaptureFixture({change=()=>{},rawChange=body=>body}={}){
+  const originalBodies=[];
+  const f=ibCaptureFixture({mutate:(body,context)=>{
+    if(!context.p.endsWith('/cash_account_transactions.json'))return body;
+    const parsed=JSON.parse(body),row=parsed.cash_account_transactions[0];
+    Object.assign(row,{description:IB_WIRE_MEMO,trade_id:null,holding_id:null,payout_id:null,foreign_identifier:null});
+    change(row,{...context,parsed});
+    const raw=rawChange(JSON.stringify(parsed,null,1),context);originalBodies.push(raw);return raw;
+  }});
+  return {...f,originalBodies};
+}
+test('bank-wire capture shares the original reader, preserves exact source bytes and does not assert synchronization',async()=>{
+  const ordinary=ibWireCaptureFixture(),captured=ibWireCaptureFixture();
+  const expected=await ordinary.reader.readStable(ordinary.args),result=await captured.reader.readStableWithEvidence(captured.args);
+  verifyEvidence(captured.reader,result);assert.deepEqual(result.input,expected);
+  assert.deepEqual(result.input.cashFlowByDate,{'2026-09-01':50});assert.deepEqual(result.input.periodReturnsInput,ibBusiness());
+  assert.equal(captured.originalBodies.length,2);
+  for(const [index,batch]of result.evidence.captures.entries()){
+    const record=batch.records.find(r=>r.path==='/api/v2/cash_accounts/3/cash_account_transactions.json');
+    assert.equal(record.body,captured.originalBodies[index]);assert.equal(record.sha256,sha(captured.originalBodies[index]));
+    assert.deepEqual(record.query,{from:'2026-08-31',to:'2026-09-02'});
+    const row=JSON.parse(record.body).cash_account_transactions[0];
+    assert.equal(row.date_time,'2026-09-01T12:00:00Z');assert.equal(row.description,IB_WIRE_MEMO);
+    assert.equal(row.amount,50);assert.equal(row.balance,50);assert.equal(row.cash_account_transaction_type.name,'DEPOSIT');
+  }
+  assert.deepEqual(Object.keys(result).sort(),['evidence','input']);assert.equal(result.input.scope,'ib-manager');
+  for(const key of ['synchronizationReceipt','synchronized','publicationReady','reportGenerated','approved'])assert.equal(Object.hasOwn(result,key),false);
+});
+test('bank-wire capture is consumed by the same reader once without further account requests',async()=>{
+  const f=ibWireCaptureFixture(),captured=await f.reader.readStableWithEvidence(f.args),calls=f.calls.length;
+  assert.throws(()=>f.reader.consumeCapturedRead(structuredClone(captured),f.args),/^Error: IB_SOURCE_STATE$/);
+  assert.throws(()=>ibWireCaptureFixture().reader.consumeCapturedRead(captured,f.args),/^Error: IB_SOURCE_STATE$/);
+  assert.throws(()=>f.reader.consumeCapturedRead(captured,{...f.args,targetDate:'2026-09-03'}),/^Error: IB_SOURCE_STATE$/);
+  assert.equal(f.reader.consumeCapturedRead(captured,f.args),captured.input);
+  assert.throws(()=>f.reader.consumeCapturedRead(captured,f.args),/^Error: IB_SOURCE_STATE$/);assert.equal(f.calls.length,calls);
+});
+test('bank-wire memo amount/date conflicts fail both reader paths before any capture can be delivered',async t=>{
+  for(const [name,change]of [
+    ['memo amount differs from source amount',r=>r.description=r.description.replace('USD 50,','USD 51,')],
+    ['reference amount differs from source amount',r=>r.description=r.description.replace('|USD|50.00','|USD|51.00')],
+    ['memo date differs from reference date',r=>r.description=r.description.replace('available 2026-09-01','available 2026-09-02')],
+    ['memo and reference differ from the unchanged NY cash date',r=>r.description=r.description.replaceAll('2026-09-01','2026-09-02')],
+    ['same wire reference reused on another cash row',(_r,{parsed})=>parsed.cash_account_transactions.push({...parsed.cash_account_transactions[0],id:5})],
+  ])await t.test(name,async()=>{
+    for(const capture of [false,true]){
+      const f=ibWireCaptureFixture({change});let delivered=false;
+      const operation=capture?f.reader.readStableWithEvidence(f.args):f.reader.readStable(f.args);
+      await assert.rejects(operation.then(value=>{delivered=true;return value;}),/IB_SOURCE_(UNRESOLVED_FLOW|IDENTITY)/);assert.equal(delivered,false);
+      assert.equal(f.calls.filter(c=>c.method==='POST').length,1,'refused first input must not start a second read');
+    }
+  });
+});
+test('a changed otherwise valid bank-wire memo between reads remains unstable, never silently accepted',async()=>{
+  for(const capture of [false,true]){
+    const f=ibWireCaptureFixture({change:(r,{attempt})=>{if(attempt===2)r.description=r.description.replaceAll('U1000001','U1000002');}});
+    await assert.rejects(capture?f.reader.readStableWithEvidence(f.args):f.reader.readStable(f.args),/IB_SOURCE_UNSTABLE/);
+    assert.equal(f.calls.filter(c=>c.method==='POST').length,2);
+  }
+});
+test('bank-wire capture binds raw formatting changes even when normalized business input is unchanged',async()=>{
+  const rawChange=(body,{attempt})=>attempt===2?body+' ':body;
+  const ordinary=ibWireCaptureFixture({rawChange});assert.deepEqual((await ordinary.reader.readStable(ordinary.args)).periodReturnsInput,ibBusiness());
+  const captured=ibWireCaptureFixture({rawChange});await assert.rejects(captured.reader.readStableWithEvidence(captured.args),/IB_SOURCE_UNSTABLE/);
+});

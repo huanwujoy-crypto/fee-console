@@ -29,6 +29,7 @@ const KEY=Buffer.alloc(32,7),TOKEN='synthetic-github-token-123456789',ID='a'.rep
 const REPAIR='d617fdd25315ca09a5f89a81630b04ae19b24d1b',RUN=90000000001;
 const SYNC_REPAIR='50392c2fb5ec3b1b26e5515cdb0feebb48823d2d',SYNC_CONTRACT='ib-source-revision-20261106-sync-v2';
 const DIAGNOSTIC_REPAIR='4f98318c73d1727d323febdcc72b7d5fbfb77f01',DIAGNOSTIC_CONTRACT='ib-source-revision-20261106-diagnostic-v1';
+const SYNC_V3_REPAIR='b218f264c53e914d6469ec9f43824f48ccb7af18',SYNC_V3_CONTRACT='ib-source-revision-20261106-sync-v3';
 const SOURCE_P='9c5ec1636e3a6f5c6f307dba9fc681e3b14d73e8',SOURCE_U='5ad072aa8eae0fd04830250d0811a080b40931b9';
 const sha=b=>crypto.createHash('sha256').update(b).digest('hex');
 const blob=b=>crypto.createHash('sha1').update('blob '+b.length+'\0').update(b).digest('hex');
@@ -37,7 +38,7 @@ const decrypt=bytes=>{const s=Buffer.from(JSON.parse(bytes).data,'base64'),d=cry
 const response=(url,value)=>{const r=new Response(JSON.stringify(value),{headers:{'content-type':'application/json'}});Object.defineProperty(r,'url',{value:url});return r;};
 const rejection=(p,code)=>assert.rejects(p,e=>{assert.equal(ibRevisionArtifactFailureCode(e),'IB_REVISION_ARTIFACT_'+code);assert.equal(e.cause,undefined);return true;});
 
-function sourceWire({revised=false,state={sourceChanged:false},calls=[]}={}){
+function sourceWire({revised=false,state={sourceChanged:false},calls=[],bankWire=false,mutateCashRows}={}){
   const fetchImpl=async(url,init)=>{
     const u=new URL(url),p=u.pathname,q=u.searchParams;assert.equal(u.origin,'https://api.sharesight.com');calls.push({p,method:init.method});let body;
     if(p==='/oauth2/token'){assert.equal(init.method,'POST');body={access_token:'synthetic-source-token-123456789',token_type:'bearer'};}
@@ -49,9 +50,15 @@ function sourceWire({revised=false,state={sourceChanged:false},calls=[]}={}){
         holdings:[{id:2,value:900,quantity:1,valid_position:true,portfolio:{id:1,name:'IB-HK'},instrument_currency:{code:'USD'}}],cash_accounts:[{id:3,value:100+gain,currency:{code:'USD'},portfolio:{id:1,name:'IB-HK'}}]}};
       else if(p==='/api/v2/portfolios/1/cash_accounts.json')body={cash_accounts:[{id:3,portfolio_id:1,portfolio_currency:'USD',currency:'USD',date:d,balance:100+gain,balance_in_portfolio_currency:100+gain}]};
       else if(p==='/api/v3/portfolios/1/trades.json')body={trades:[]};
-      else if(p==='/api/v2/cash_accounts/3/cash_account_transactions.json')body={cash_account_transactions:revised&&q.get('from')<=P&&q.get('to')>=P?[
+      else if(p==='/api/v2/cash_accounts/3/cash_account_transactions.json'){
+        const cashRows=revised&&q.get('from')<=P&&q.get('to')>=P?[
         {id:12,cash_account_id:3,date_time:P+'T00:00:00.000Z',amount:7,balance:107,cash_account_transaction_type:{name:'Payout'},trade_id:null,holding_id:2,payout_id:13},
-        {id:14,cash_account_id:3,date_time:P+'T05:00:00.000Z',amount:300,balance:407,cash_account_transaction_type:{name:'DEPOSIT'},description:'Owner cash contribution',trade_id:null,holding_id:null,payout_id:null}]:[]};
+        {id:14,cash_account_id:3,date_time:P+'T05:00:00.000Z',amount:300,balance:407,cash_account_transaction_type:{name:'DEPOSIT'},
+          description:bankWire?`IBKR U1000001 bank wire USD 300, received and available ${P} per Transfer Status & History and IBKR notice; source bank not verified. key=ib.manual|U1000001|wire|${P}|USD|300.00`:'Owner cash contribution',
+          trade_id:null,holding_id:null,payout_id:null}]:[];
+        if(bankWire)mutateCashRows?.(cashRows);
+        body={cash_account_transactions:cashRows};
+      }
       else if(p==='/api/v2/payouts/13.json')body={id:13,portfolio_id:1,holding_id:2,symbol:'SYNTH',paid_on:P,currency:'USD',confirmed:true,state:'confirmed',non_taxable:false,tax_credit:0,gross_amount:10,resident_withholding_tax:3,amount:7};
       else assert.fail('unexpected synthetic source route');
     }
@@ -63,11 +70,11 @@ function sourceWire({revised=false,state={sourceChanged:false},calls=[]}={}){
 // Mint the native admission through the original release validators and the
 // selected attempt-history or current-execution/publication-state validators.
 // Neither a self-authored permission flag nor a test-only capability is used.
-function admissionWire(state,dailyPlan,sync=false,diagnostic=false){
-  sync=sync||diagnostic;
-  const manifest=reportHistoricalRecoveryManifest(sync?{contractId:diagnostic?DIAGNOSTIC_CONTRACT:SYNC_CONTRACT}:{}),actor={id:283054367,login:OWNER,type:'User'},ui='2bb9f66ac890ba87cec504ef72a5083c07670689',repairBase=diagnostic?DIAGNOSTIC_REPAIR:sync?SYNC_REPAIR:REPAIR;
+function admissionWire(state,dailyPlan,sync=false,diagnostic=false,syncV3=false){
+  sync=sync||diagnostic||syncV3;
+  const manifest=reportHistoricalRecoveryManifest(sync?{contractId:diagnostic?DIAGNOSTIC_CONTRACT:syncV3?SYNC_V3_CONTRACT:SYNC_CONTRACT}:{}),actor={id:283054367,login:OWNER,type:'User'},ui='2bb9f66ac890ba87cec504ef72a5083c07670689',repairBase=diagnostic?DIAGNOSTIC_REPAIR:syncV3?SYNC_V3_REPAIR:sync?SYNC_REPAIR:REPAIR;
   const signed=(id,parents,tree=TREE)=>({sha:id,parents:parents.map(sha=>({sha})),author:actor,committer:{login:OWNER},commit:{tree:{sha:tree},verification:{verified:true,reason:'valid'}}});
-  const commit=signed(MAIN,[repairBase]),repair=signed(repairBase,diagnostic?[SYNC_REPAIR]:sync?[REPAIR]:['4d798c77c9a9a5d459a75af45b4239c7c9cf984a','474e7b5a20f93358193791daf84d175a22e06d9e']);
+  const commit=signed(MAIN,[repairBase]),repair=signed(repairBase,diagnostic?[SYNC_REPAIR]:syncV3?[DIAGNOSTIC_REPAIR]:sync?[REPAIR]:['4d798c77c9a9a5d459a75af45b4239c7c9cf984a','474e7b5a20f93358193791daf84d175a22e06d9e']);
   const run=(id,head,created)=>({id,head_sha:head,head_branch:'main',path:'.github/workflows/fee-cloud-producer.yml',event:'workflow_dispatch',created_at:created,run_attempt:1,workflow_id:365873934,actor,status:id===RUN?'in_progress':'completed',conclusion:id===RUN?null:'failure'});
   const runs=[run(RUN,MAIN,'2026-11-07T01:00:00Z'),run(42309848352,'94210904dd95b2ff4496cb68dab6b49950fe4f74','2026-11-06T23:08:38Z'),run(42318324848,'2c32d695f4f2dc057920fc690046ddf3e1ccdaee','2026-11-07T00:00:00Z')];
   state.currentRun={...runs[0],repository:{full_name:REPO},...(diagnostic?{display_title:'IB diagnostic '+T}:{})};
@@ -94,8 +101,8 @@ function admissionWire(state,dailyPlan,sync=false,diagnostic=false){
       readState:async()=>{state.publicationReads++;return {...structuredClone(state.publication),data:Buffer.from(state.publication.data)};}}:{})};
 }
 
-async function fixture(t,{legacy=false,mutatePayload,mutateHealth,mutateEconomic,sync=false,diagnostic=false,lockedMonth=false}={}){
-  sync=sync||diagnostic;
+async function fixture(t,{legacy=false,mutatePayload,mutateHealth,mutateEconomic,sync=false,diagnostic=false,syncV3=false,lockedMonth=false,bankWire=false,mutateCashRows}={}){
+  sync=sync||diagnostic||syncV3;
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'revision-artifact-synthetic-'));fs.chmodSync(dir,0o700);t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
   const state={now:Date.parse('2026-11-07T01:10:00.000Z'),main:MAIN,economicRevision:o('e'),sourceChanged:false,calls:[],sourceCalls:[],admissionCalls:[],currentRunReads:0,publicationReads:0,mutate:null,log:null,competing:false};
   const clock=()=>state.now,dailyPlan=dailyReportPlan(T,['NYSE','NASDAQ'],{periodFrom:T,reviewedSyncDate:T});
@@ -128,7 +135,7 @@ async function fixture(t,{legacy=false,mutatePayload,mutateHealth,mutateEconomic
   const health=(date,bytes,checkedAt)=>{const h={schema:'fee-console.daily-health.v1',checkedAt,targetDate:date,sourceDates:{schwab:date,webull:date,benchmark:date},outcome:'updated',dataSha256:sha(bytes),errorCode:null};mutateHealth?.(h,date);return Buffer.from(JSON.stringify(h,null,2)+'\n');};
   const healthBytes=health(P,dataBytes,'2026-11-06T01:01:00.000Z'),anchorHealth=health(U,anchorBytes,'2026-11-05T05:45:00.000Z');
   state.publication={mainSha:MAIN,finalMainSha:MAIN,data:dataBytes,pending:false,health:JSON.parse(healthBytes)};
-  const admission=await (diagnostic?authorizeHistoricalRevisionDiagnostic:authorizeReportRecovery)({plan:dailyPlan,expectedMain:MAIN,currentRunId:RUN,now:new Date(state.now),clock:()=>new Date(state.now),actionsToken:TOKEN,...admissionWire(state,dailyPlan,sync,diagnostic)});
+  const admission=await (diagnostic?authorizeHistoricalRevisionDiagnostic:authorizeReportRecovery)({plan:dailyPlan,expectedMain:MAIN,currentRunId:RUN,now:new Date(state.now),clock:()=>new Date(state.now),actionsToken:TOKEN,...admissionWire(state,dailyPlan,sync,diagnostic,syncV3)});
   const oldEnv={id:process.env.FEE_ECON_GIST_ID,token:process.env.FEE_ECON_GITHUB_TOKEN};process.env.FEE_ECON_GIST_ID=ID;process.env.FEE_ECON_GITHUB_TOKEN='github_pat_SYNTHETIC_NOT_A_REAL_TOKEN_123456';
   const economicFetch=async(url,init)=>{assert.equal(url,'https://api.github.com/gists/'+ID);assert.equal(init.method,'GET');return new Response(JSON.stringify({id:ID,public:false,owner:{login:OWNER},truncated:false,history:[{version:state.economicRevision}],files:{'fee-console-db.json':{filename:'fee-console-db.json',content:economicBytes.toString(),size:economicBytes.length,truncated:false}}}),{headers:{etag:'"synthetic"','content-type':'application/json'}});};
   let economicSnapshot;try{economicSnapshot=await fetchEconomicSnapshot({tempRoot:dir,attempts:1,timeoutMs:100,fetchImpl:economicFetch});}finally{for(const[k,v]of Object.entries({FEE_ECON_GIST_ID:oldEnv.id,FEE_ECON_GITHUB_TOKEN:oldEnv.token}))if(v===undefined)delete process.env[k];else process.env[k]=v;}
@@ -144,7 +151,7 @@ async function fixture(t,{legacy=false,mutatePayload,mutateHealth,mutateEconomic
     const scope=SCOPE[role];runs[scope.producerRunId]={id:scope.producerRunId,status:'completed',conclusion:'success',run_attempt:1,event:'workflow_dispatch',head_branch:'main',path:'.github/workflows/fee-cloud-producer.yml',head_repository:{full_name:REPO},head_sha:head};
     jobs[scope.producerRunId]=[{id:jobId,run_id:scope.producerRunId,head_sha:head,name:'Produce daily '+date,status:'completed',conclusion:'success',started_at:start,completed_at:end,steps:[{name:'Read, calculate and validate the encrypted candidate',status:'completed',conclusion:'success'},{name:'Create a signed owner candidate',status:'completed',conclusion:'success',started_at:start,completed_at:end}]}];
   }
-  const source=sourceWire({revised:true,state,calls:state.sourceCalls});
+  const source=sourceWire({revised:true,state,calls:state.sourceCalls,bankWire,mutateCashRows});
   const fetchImpl=async(url,init)=>{
     if(url.startsWith('https://api.sharesight.com/'))return source.fetchImpl(url,init);
     assert.equal(init.method,'GET');const route=url.split('/repos/'+REPO+'/')[1];state.calls.push(route);let value;
@@ -250,6 +257,77 @@ test('sync-cycle v2 authenticates originals and the private writer without query
   await assert.rejects(runtime.prepare(),/REUSE/);assert.deepEqual(f.dataBytes,original);
 });
 
+test('sync-cycle v3 bank-wire memo creates a traceable historical revision without counting the deposit as return',async t=>{
+  const f=await fixture(t,{syncV3:true,lockedMonth:true,bankWire:true}),before={current:structuredClone(f.currentPayload),anchor:structuredClone(f.anchorPayload),
+    data:Buffer.from(f.dataBytes),health:Buffer.from(f.healthBytes),economic:fs.readFileSync(f.config.economicSnapshot.sourcePath)};
+  const runtime=await createFeeSourceRevisionRuntime({plan:f.dailyPlan,admission:f.admission,economicSnapshot:f.config.economicSnapshot,
+    sourceBytes:f.dataBytes,sourcePayload:f.currentPayload,healthBytes:f.healthBytes,githubToken:TOKEN,clientId:'synthetic-client',clientSecret:'synthetic-secret',
+    keyText:f.key.toString('base64url'),baselineSha256:f.baselineSha256,legacySourcePath:null,fetchImpl:f.fetchImpl,clock:f.clock});
+  t.after(()=>runtime.close());const revision=await runtime.prepare(),candidate=revision.candidate;
+  assert.equal((await f.admission.checkCurrent()).contractId,SYNC_V3_CONTRACT);
+  assert.equal(candidate.plan.schema,'fee-console.ib-source-revision-plan.v2');
+  assert.equal(candidate.plan.bindings.admissionModel,'sync-cycle-v1');
+  assert.match(candidate.plan.bindings.executionSha256,/^[a-f0-9]{64}$/);
+  assert.equal(Object.hasOwn(candidate.plan.bindings,'consumptionSha256'),false);
+  assert.equal(candidate.mode,'extend-cutoff');assert.deepEqual(candidate.changedHistoricalDates,[P]);
+  assert.equal(candidate.oldThrough,P);assert.equal(candidate.anchorDate,U);assert.equal(candidate.targetDate,T);
+  assert.equal(candidate.oldArtifactsPreserved,true);assert.equal(candidate.publicationReady,false);assert.equal(candidate.executionAuthorized,false);
+  assert.deepEqual(candidate.superseded.sourceState,before.current.ibManagerSourceState);
+  assert.deepEqual(candidate.acceptedAnchor.sourceState,before.anchor.ibManagerSourceState);
+  assert.deepEqual(candidate.replacement.sourceState.source.cashFlowByDate,{[P]:300});
+  assert.deepEqual(candidate.replacement.sourceState.source.periodReturnsInput.flowByDate,{[P]:300});
+  assert.equal(candidate.replacement.sourceState.source.periodReturnsInput.points.at(-1).tot,1307);
+  assert.equal(candidate.replacement.returnReceipt.grossTwrPpm,7000,'only the synthetic seven-dollar net payout is return, not the three-hundred-dollar deposit');
+  const {result}=await writeVerifiedRevision(f,revision);assert.equal(await runtime.checkCurrent(),true);
+  assert.equal(result.ibManagerReturnReceipt.grossTwrPpm,7000);
+  assert.deepEqual(result.ibManagerSourceRevision.candidate.changedHistoricalDates,[P]);
+  assert.deepEqual(result.feeReportMonthLocks,before.current.feeReportMonthLocks);assert.equal(result.feeReportMonthLocks.periods.length,1);
+  assert.deepEqual(result.consumedOperations,before.current.consumedOperations);
+  assert.deepEqual(f.currentPayload,before.current);assert.deepEqual(f.anchorPayload,before.anchor);
+  assert.deepEqual(f.dataBytes,before.data);assert.deepEqual(f.healthBytes,before.health);
+  assert.deepEqual(fs.readFileSync(f.config.economicSnapshot.sourcePath),before.economic);
+  assert.ok(f.state.sourceCalls.every(c=>c.method==='GET'||c.method==='POST'&&c.p==='/oauth2/token'));
+  assert.ok(![...f.state.calls,...f.state.admissionCalls].some(p=>p.startsWith('actions/workflows/')||p.includes('filter=all')));
+  await assert.rejects(runtime.prepare(),/REUSE/);
+});
+
+test('sync-cycle v3 bank-wire date, amount and identity conflicts fail closed before any private writer handoff',async t=>{
+  const cases=[
+    ['memo date',rows=>{rows.find(r=>r.id===14).description=rows.find(r=>r.id===14).description.replace(`available ${P}`,`available ${T}`);},'UNRESOLVED_FLOW'],
+    ['key date',rows=>{rows.find(r=>r.id===14).description=rows.find(r=>r.id===14).description.replace(`|wire|${P}|`,`|wire|${T}|`);},'UNRESOLVED_FLOW'],
+    ['both dates differ from the original business date',rows=>{rows.find(r=>r.id===14).description=rows.find(r=>r.id===14).description.replaceAll(P,T);},'UNRESOLVED_FLOW'],
+    ['memo amount',rows=>{rows.find(r=>r.id===14).description=rows.find(r=>r.id===14).description.replace('USD 300,','USD 301,');},'UNRESOLVED_FLOW'],
+    ['key amount',rows=>{rows.find(r=>r.id===14).description=rows.find(r=>r.id===14).description.replace('|USD|300.00','|USD|301.00');},'UNRESOLVED_FLOW'],
+    ['cash amount',rows=>{rows.find(r=>r.id===14).amount=301;},'UNRESOLVED_FLOW'],
+    ['unexpected foreign identifier',rows=>{rows.find(r=>r.id===14).foreign_identifier='SYNTHETIC_PRIVATE_CANARY';},'UNRESOLVED_FLOW'],
+    ['duplicate cash ID',rows=>{rows.push(structuredClone(rows.find(r=>r.id===14)));},'IDENTITY'],
+    ['duplicate memo key on a different cash ID',rows=>{rows.push({...structuredClone(rows.find(r=>r.id===14)),id:15});},'IDENTITY'],
+  ];
+  for(const[name,mutate,reason]of cases)await t.test(name,async t=>{
+    const f=await fixture(t,{syncV3:true,bankWire:true,mutateCashRows:rows=>{if(rows.length)mutate(rows);}}),before={current:structuredClone(f.currentPayload),anchor:structuredClone(f.anchorPayload),
+      data:Buffer.from(f.dataBytes),health:Buffer.from(f.healthBytes),economic:fs.readFileSync(f.config.economicSnapshot.sourcePath),files:fs.readdirSync(f.dir).sort()};
+    const runtime=await createFeeSourceRevisionRuntime({plan:f.dailyPlan,admission:f.admission,economicSnapshot:f.config.economicSnapshot,
+      sourceBytes:f.dataBytes,sourcePayload:f.currentPayload,healthBytes:f.healthBytes,githubToken:TOKEN,clientId:'synthetic-client',clientSecret:'synthetic-secret',
+      keyText:f.key.toString('base64url'),baselineSha256:f.baselineSha256,legacySourcePath:null,fetchImpl:f.fetchImpl,clock:f.clock});
+    t.after(()=>runtime.close());const expected='FEE_REPORT_SOURCE_REVISION_ARTIFACT_SOURCE_'+reason;
+    await assert.rejects(runtime.prepare(),error=>{
+      assert.equal(sourceRevisionRuntimeFailureCode(error),expected);assert.equal(error.message,expected);assert.equal(error.cause,undefined);
+      const summary=safeProducerFailureSummary(error.message+'\n');assert.deepEqual(summary,{code:expected,diagnostic:null});
+      for(const privateText of ['U1000001','ib.manual','bank wire','source bank','SYNTHETIC_PRIVATE_CANARY']){
+        assert.ok(!JSON.stringify(error).includes(privateText));assert.ok(!JSON.stringify(summary).includes(privateText));
+      }
+      return true;
+    });
+    assert.ok(f.state.sourceCalls.length>0);const calls=f.state.sourceCalls.length;
+    await assert.rejects(runtime.prepare(),/REUSE|CLOSED/);assert.equal(f.state.sourceCalls.length,calls);
+    assert.deepEqual(f.currentPayload,before.current);assert.deepEqual(f.anchorPayload,before.anchor);
+    assert.deepEqual(f.dataBytes,before.data);assert.deepEqual(f.healthBytes,before.health);
+    assert.deepEqual(fs.readFileSync(f.config.economicSnapshot.sourcePath),before.economic);
+    assert.deepEqual(fs.readdirSync(f.dir).sort(),before.files);
+    assert.equal(fs.existsSync(path.join(f.dir,'writer')),false);assert.equal(fs.existsSync(path.join(f.dir,'ib-manager-input.json')),false);
+  });
+});
+
 test('sync-cycle v2 refuses changed execution or publication state before account reads',async t=>{
   for(const[name,change]of [
     ['current run',s=>{s.currentRun.id++;}],['rerun',s=>{s.currentRun.run_attempt=2;}],
@@ -269,6 +347,37 @@ test('sync-cycle v2 artifact adapter rejects mixed schemas and bindings before s
     const f=await fixture(t,{sync:true}),v=await f.read(),plan=f.planOf(v);change(plan);
     await rejection(f.cap.prepareCandidate({plan,reader:f.reader}),'PLAN');assert.equal(f.state.sourceCalls.length,0);
   }
+});
+
+test('sync-cycle v3 rejects old execution, consumption and date bindings before source access',async t=>{
+  const old=await fixture(t,{sync:true}),oldView=await old.read();
+  assert.equal((await old.admission.checkCurrent()).contractId,SYNC_CONTRACT);
+  for(const[name,change]of [
+    ['old v2 execution',p=>{p.bindings={...p.bindings,executionSha256:oldView.bindings.executionSha256};}],
+    ['consumption field',p=>{p.bindings={...p.bindings,consumptionSha256:h('e')};}],
+    ['old schema',p=>{p.schema='fee-console.ib-source-revision-plan.v1';}],
+    ['wrong target date',p=>{p.targetDate=P;}],
+    ['wrong anchor date',p=>{p.anchorDate=B;}],
+  ])await t.test(name,async t=>{
+    const f=await fixture(t,{syncV3:true,bankWire:true}),view=await f.read(),plan=f.planOf(view);
+    assert.notEqual(view.bindings.executionSha256,oldView.bindings.executionSha256);
+    change(plan);await rejection(f.cap.prepareCandidate({plan,reader:f.reader}),'PLAN');
+    assert.equal(f.state.sourceCalls.length,0);await rejection(f.cap.checkCurrent(),'CLOSED');
+  });
+  const wrongRead=await fixture(t,{syncV3:true,bankWire:true});
+  await rejection(wrongRead.cap.readVerifiedArtifacts({targetDate:P,mainSha:MAIN}),'SCOPE');
+  assert.equal(wrongRead.state.sourceCalls.length,0);assert.equal(wrongRead.state.calls.length,0);
+  assert.deepEqual(await old.cap.checkCurrent(),oldView.bindings,'the independent old release remains valid within its original scope');
+});
+
+test('sync-cycle v3 and diagnostic admissions cannot cross artifact purposes',async t=>{
+  for(const diagnostic of [true,false])await t.test(String(diagnostic),async t=>{
+    const f=await fixture(t,diagnostic?{diagnostic:true}:{syncV3:true,bankWire:true}),config={...f.config};
+    if(diagnostic)delete config.diagnosticOnly;else config.diagnosticOnly=true;
+    const cap=createIbRevisionArtifacts(config);t.after(()=>cap.close());
+    await rejection(cap.readVerifiedArtifacts({targetDate:T,mainSha:MAIN}),'ADMISSION');
+    assert.equal(f.state.sourceCalls.length,0);assert.equal(f.state.calls.length,0);
+  });
 });
 
 test('sync-cycle runtime preserves original encrypted-byte binding before new source reads',async t=>{

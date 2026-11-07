@@ -1644,13 +1644,15 @@ test('actual period CLI and workflow summary carry the scoped token and safe fai
 
 
 const syncRevisionContract='ib-source-revision-20261106-sync-v2',syncRevisionBase='50392c2fb5ec3b1b26e5515cdb0feebb48823d2d';
-function syncRevisionFixture(){
- const f=sourceRevisionRecoveryFixture(),manifest=reportHistoricalRecoveryManifest({contractId:syncRevisionContract});
- f.commit.parents=[{sha:syncRevisionBase}];f.supportCommit.sha=syncRevisionBase;f.supportCommit.parents=[{sha:revisionRecoveryBase}];
- f.comparison.base_commit.sha=f.comparison.merge_base_commit.sha=syncRevisionBase;
+const wireRevisionContract='ib-source-revision-20261106-sync-v3',wireRevisionBase='b218f264c53e914d6469ec9f43824f48ccb7af18';
+function syncRevisionFixture(contractId=syncRevisionContract){
+ const wire=contractId===wireRevisionContract,base=wire?wireRevisionBase:syncRevisionBase;
+ const f=sourceRevisionRecoveryFixture(),manifest=reportHistoricalRecoveryManifest({contractId});
+ f.commit.parents=[{sha:base}];f.supportCommit.sha=base;f.supportCommit.parents=[{sha:wire?'4f98318c73d1727d323febdcc72b7d5fbfb77f01':revisionRecoveryBase}];
+ f.comparison.base_commit.sha=f.comparison.merge_base_commit.sha=base;
  f.comparison.files=manifest.map(m=>({filename:m.path,status:m.status,sha:'b'.repeat(40)}));
  f.tree.tree=[f.tree.tree[0],...manifest.map(m=>({path:m.path,type:'blob',mode:'100644',sha:'b'.repeat(40)}))];
- f.reviewedCommit.parents=[{sha:syncRevisionBase}];
+ f.reviewedCommit.parents=[{sha:base}];
  f.currentRun=syntheticSyncRun(recoveryHead,recoveryId,'2026-11-07T00:40:00Z');
  f.publication=state(dailyReportPlan('2026-11-05',['NYSE','NASDAQ']),'2026-11-06T01:00:00Z');
  f.publication.mainSha=f.publication.finalMainSha=recoveryHead;f.clock=revisionRecoveryNow;
@@ -1668,12 +1670,13 @@ function syncRevisionReaders(f,trace=[]){
  return {readRecoveryRelease:(sha,options)=>readReportRecoveryRelease(sha,{...options,fetchImpl,actionsToken:revisionActionsToken}),
   readCurrentRun:options=>readCurrentSyncRun({...options,fetchImpl,actionsToken:revisionActionsToken}),
   readState:async()=>({...f.publication,data:Buffer.from(f.publication.data)}),clock:()=>f.clock,
-  readSourceAttempts:()=>assert.fail('v2 may not count source attempts')};
+  readSourceAttempts:()=>assert.fail('sync admission may not count source attempts')};
 }
 const syncAdmission=(f,readers=syncRevisionReaders(f))=>authorizeReportRecovery({plan:f.plan,expectedMain:recoveryHead,currentRunId:recoveryId,now:revisionRecoveryNow,actionsToken:revisionActionsToken,...readers});
-test('sync revision binds real owner release, target, current execution and publication without inventing consumption',async()=>{
- const f=syncRevisionFixture(),trace=[],admission=await syncAdmission(f,syncRevisionReaders(f,trace));
- const binding=readHistoricalRevisionAdmission(admission);assert.equal(binding.contractId,syncRevisionContract);
+for(const contractId of [syncRevisionContract,wireRevisionContract]){
+test(contractId+' sync revision binds real owner release, target, current execution and publication without inventing consumption',async()=>{
+ const f=syncRevisionFixture(contractId),trace=[],admission=await syncAdmission(f,syncRevisionReaders(f,trace));
+ const binding=readHistoricalRevisionAdmission(admission);assert.equal(binding.contractId,contractId);
  assert.equal(binding.admissionModel,'sync-cycle-v1');assert.match(binding.executionSha256,/^[a-f0-9]{64}$/);
  assert.equal(binding.consumptionSha256,undefined);assert.equal(binding.currentRunId,recoveryId);assert.equal(binding.approvedHead,revisionReviewedHead);
  assert.deepEqual(await admission.checkCurrent(),binding);assert.equal(trace.filter(x=>x==='actions/runs/'+recoveryId).length,2);
@@ -1683,16 +1686,16 @@ test('sync revision binds real owner release, target, current execution and publ
  assert.throws(()=>validateReportRecoveryEvidence({plan:f.plan,expectedMain:recoveryHead,currentRunId:recoveryId,release,budget:{attempts:0,recoveryEvidence:{entries:[],reservations:[]}}}),/RECOVERY_SCOPE/);
  admission.close();await assert.rejects(admission.checkCurrent(),/RECOVERY_CONSUMED/);
 });
-test('new revision release requires exact complete manifest, real approval and unique direct successor',async()=>{
+test(contractId+' new revision release requires exact complete manifest, real approval and unique direct successor',async()=>{
  for(const change of [f=>f.commit.parents.push({sha:revisionRecoveryBase}),f=>f.supportCommit.parents[0].sha='f'.repeat(40),
   f=>f.comparison.files.pop(),f=>f.comparison.files[0].status='added',f=>f.tree.tree[1].mode='120000',
   f=>f.comments=[],f=>f.comments[0].user.id=1,f=>f.reviewedCommit.commit.tree.sha='f'.repeat(40),f=>f.commit.commit.verification.verified=false]){
-  const f=syncRevisionFixture();change(f);await assert.rejects(syncAdmission(f),/RECOVERY_/);
+  const f=syncRevisionFixture(contractId);change(f);await assert.rejects(syncAdmission(f),/RECOVERY_/);
  }
- const f=syncRevisionFixture(),readers=syncRevisionReaders(f),real=readers.readRecoveryRelease;
+ const f=syncRevisionFixture(contractId),readers=syncRevisionReaders(f),real=readers.readRecoveryRelease;
  await assert.rejects(syncAdmission(f,{...readers,readRecoveryRelease:async(...a)=>structuredClone(await real(...a))}),/RECOVERY_SCOPE/);
 });
-test('sync revision stops on changed publication, run identity, approval, timing or source base and revokes capability',async()=>{
+test(contractId+' sync revision stops on changed publication, run identity, approval, timing or source base and revokes capability',async()=>{
  const mutations=[f=>f.currentRun.id++,f=>f.currentRun.head_sha=revisionRecoveryBase,f=>f.currentRun.actor.id=1,
   f=>f.currentRun.triggering_actor.id=1,f=>f.currentRun.run_attempt=2,f=>f.currentRun.event='schedule',f=>f.currentRun.path='other',
   f=>f.currentRun.repository.full_name='other/repo',f=>f.currentRun.status='completed',f=>f.currentRun.conclusion='failure',
@@ -1700,11 +1703,12 @@ test('sync revision stops on changed publication, run identity, approval, timing
   f=>f.publication.health.targetDate='2026-11-06',f=>f.publication.data=Buffer.from('changed'),f=>f.publication.health.checkedAt='bad',
   f=>f.comments[0].body+=' changed',f=>f.ref.object.sha=revisionRecoveryBase,f=>f.plan.periodFrom='2026-11-05',f=>f.clock=new Date('2026-11-12T00:00:00Z')];
  for(const mutate of mutations){
-  const f=syncRevisionFixture(),admission=await syncAdmission(f);mutate(f);
+  const f=syncRevisionFixture(contractId),admission=await syncAdmission(f);mutate(f);
   await assert.rejects(admission.checkCurrent(),/RECOVERY_/);assert.equal(isHistoricalRevisionAdmission(admission),false);
   await assert.rejects(admission.checkCurrent(),/RECOVERY_CONSUMED/);
  }
 });
+}
 test('confirmed entry preserves published, pending, rerun and current execution identity gates without any history call',async()=>{
  const f=confirmedDailyFixture(),prior=state(dailyReportPlan('2026-11-02',['NYSE','NASDAQ']),'2026-11-03T01:00:00Z'),now=new Date('2026-11-04T00:00:00Z');
  const args={targetDate:f.target,reviewedSyncDate:f.target,confirmedMain:f.head,now,markets:['NYSE','NASDAQ'],ibEnabled:false,runAttempt:'1',currentRunId:1001,
@@ -1885,4 +1889,35 @@ test('closing a diagnostic during run IO prevents subsequent publication reads a
   readState:async(...args)=>{publicationReads++;return readers.readState(...args);}});
  const checking=admission.checkCurrent();await started;admission.close();release();await assert.rejects(checking,/RECOVERY_CONSUMED/);
  assert.equal(publicationReads,1);assert.equal(isHistoricalRevisionDiagnosticAdmission(admission),false);assert.equal(isHistoricalRevisionAdmission(admission),false);
+});
+
+
+test('wire recovery has an exact ten-file scope without changing historical admission manifests',()=>{
+ const expected=['docs/fee-source-revision.md','scripts/fee-report-producer.mjs','scripts/fee-report-producer.test.mjs',
+  'scripts/fee-source-revision-runtime.mjs','scripts/fee-source-revision-runtime.test.mjs','scripts/fee-sync-capture.test.mjs',
+  'scripts/fee-sync-revision-artifacts.mjs','scripts/fee-sync-revision-artifacts.test.mjs','scripts/ib-manager-source.mjs','scripts/ib-manager-source.test.mjs'];
+ const manifest=reportHistoricalRecoveryManifest({contractId:wireRevisionContract});
+ assert.deepEqual(manifest,expected.map(path=>({path,status:'modified'})));
+ assert(Object.isFrozen(manifest));assert(manifest.every(Object.isFrozen));
+ assert.equal(reportHistoricalRecoveryManifest({contractId:syncRevisionContract}).length,14);
+ assert.equal(reportHistoricalRecoveryManifest({contractId:diagnosticRevisionContract}).length,15);
+ assert.equal(reportHistoricalRecoveryManifest().length,17);
+});
+
+test('wire recovery cannot substitute old or diagnostic release trees, approvals, targets or private-state claims',async()=>{
+ const mutations=[f=>f.commit.parents[0].sha=syncRevisionBase,f=>f.commit.parents[0].sha=diagnosticRevisionBase,
+  f=>f.comparison.files=reportHistoricalRecoveryManifest({contractId:syncRevisionContract}).map(m=>({filename:m.path,status:m.status,sha:'b'.repeat(40)})),
+  f=>f.comparison.files[0].filename='data.json',f=>f.comparison.files[0].filename='security/approval-tiers.json',
+  f=>f.comments[0].body='/approve-xuan-ib-maintenance '+diagnosticRevisionBase,
+  f=>f.reviewedCommit.parents[0].sha=diagnosticRevisionBase,f=>f.pr.head.sha=diagnosticRevisionBase,
+  f=>f.plan=dailyReportPlan('2026-11-05',['NYSE','NASDAQ'],{reviewedSyncDate:'2026-11-05'}),
+  f=>f.tree.tree[0].sha='f'.repeat(40),f=>f.comparison.total_commits=2,
+  f=>f.publication.pending=true,f=>f.publication.health.targetDate='2026-11-06',
+  f=>f.currentRun.run_attempt=2,f=>f.currentRun.status='completed'];
+ for(const mutate of mutations){const f=syncRevisionFixture(wireRevisionContract);mutate(f);await assert.rejects(syncAdmission(f),/RECOVERY_/);}
+ const f=syncRevisionFixture(wireRevisionContract),readers=syncRevisionReaders(f),release=await readers.readRecoveryRelease(recoveryHead,{actionsToken:revisionActionsToken});
+ assert.equal(release.contractId,wireRevisionContract);assert.equal(release.repairBaseSha,wireRevisionBase);
+ await assert.rejects(diagnosticAdmission(f),/RECOVERY_SCOPE/);
+ await assert.rejects(syncAdmission(f,{...readers,readRecoveryRelease:async()=>({...release,contractId:syncRevisionContract})}),/RECOVERY_SCOPE/);
+ const diagnostic=diagnosticRevisionFixture();await assert.rejects(syncAdmission(diagnostic),/RECOVERY_SCOPE/);
 });

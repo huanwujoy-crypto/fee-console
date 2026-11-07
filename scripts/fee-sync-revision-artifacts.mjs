@@ -19,7 +19,8 @@ export const IB_REVISION_ARTIFACT_SCOPE=Object.freeze({targetDate:'2026-11-06',c
   anchor:Object.freeze({candidateSha:'5e19be2032b575b187bd53b8e524189697b9f448',producerRunId:41975903735})});
 const instances=new WeakSet(),failures=new WeakMap(),OID=/^[a-f0-9]{40}$/,SHA=/^[a-f0-9]{64}$/;
 const OWNER='huanwujoy-crypto',REPO=OWNER+'/fee-console',parseExact=createLegacyPolicy().parseExactJson;
-const CONTRACT_MODELS=Object.freeze({'ib-source-revision-20261106-v1':'consumption-v1','ib-source-revision-20261106-sync-v2':'sync-cycle-v1','ib-source-revision-20261106-diagnostic-v1':'sync-cycle-v1'});
+const CONTRACT_MODELS=Object.freeze({'ib-source-revision-20261106-v1':'consumption-v1','ib-source-revision-20261106-sync-v2':'sync-cycle-v1',
+  'ib-source-revision-20261106-sync-v3':'sync-cycle-v1','ib-source-revision-20261106-diagnostic-v1':'sync-cycle-v1'});
 const DIAGNOSTIC_ROLES=Object.freeze(['BASE','CURRENT','ANCHOR']);
 const GITHUB_STEPS=Object.freeze(['MAIN','COMMIT','TREE','HISTORY','DATA','HEALTH','RUN','JOBS']);
 const PREPARE_PHASES=Object.freeze(['READ','ADMISSION','ECON_BYTES','ECON_VERSION','MONTH_LOCKS','SOURCE_PREPARE','RECHECK']);
