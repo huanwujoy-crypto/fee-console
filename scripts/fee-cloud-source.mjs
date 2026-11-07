@@ -916,6 +916,23 @@ export class SharesightCloudReader {
   }
   #capturePeer(){const d=Object.getOwnPropertyDescriptor(this.#ownedHttp,'peerPortfolioId');if(!d||!Object.hasOwn(d,'value'))fail('CONFIG');return d.value;}
   verifyCapturedRead(result){const state=this.#capturedReads.get(result);return !!state&&!state.revoked;}
+  // Private policy capability for the same-process coordinator. The digest
+  // covers only the five actual business settings in #captureArguments; it
+  // excludes credentials, transport, target and benchmark (bound separately).
+  // This is not a synchronization, source-freshness or publication receipt.
+  getPolicyBinding(captured){
+    if(arguments.length>1||!this||typeof this!=='object'||types.isProxy(this)||!(#capturedReads in this))fail('CONFIG');
+    if(this.#capturing||this.#ordinaryReads)fail('CONFIG');
+    const config=this.#captureArguments(null,null).config;
+    if(!['legacy-reconstruction','sharesight-reference'].includes(config.sourceMode)||typeof config.reconcileInKind!=='boolean')fail('CONFIG');
+    const configurationSha256=sha256(config);
+    if(captured!==undefined){
+      const state=this.#capturedReads.get(captured);
+      if(!state||state.revoked||configurationSha256!==sha256(state.arguments.config))fail('CONFIG');
+    }
+    return freezeCapture({schema:'fee-console.sync-policy-profile.v1',sourceMode:config.sourceMode,
+      configuration:{feeReaderConfigurationSha256:configurationSha256}});
+  }
   // A fresh byte comparison, not a second business calculation or a new grant.
   // The only routes are private records from this instance's original capture.
   // OAuth remains internal; response observers are suppressed during this check.

@@ -20,6 +20,9 @@ import {sourceContractInputHash as hash} from './fee-source-contract.mjs';
 const PREFIX='FEE_SYNC_BASE_',failures=new WeakMap(),REPO='/repos/huanwujoy-crypto/fee-console/';
 const SHA=/^[a-f0-9]{64}$/,OID=/^[a-f0-9]{40}$/,OWNER='huanwujoy-crypto',OWNER_ID=283054367;
 const parser=createLegacyPolicy().parseExactJson;
+const verifiers=new WeakSet();
+// Identity only: this cannot substitute for readVerifiedBase/current checks.
+export const isPublishedBaseVerifier=value=>verifiers.has(value);
 const digest=b=>crypto.createHash('sha256').update(b).digest('hex');
 const blobHash=b=>crypto.createHash('sha1').update('blob '+b.length+'\0').update(b).digest('hex');
 function fail(code){const e=new Error(PREFIX+code);failures.set(e,code);throw Object.freeze(e);}
@@ -188,7 +191,7 @@ export function createPublishedBaseVerifier(options){
     try{return await operation();}catch(e){closed=true;c.dataKey.fill(0);record=null;if(failures.has(e))throw e;fail('REFUSED');}
     finally{busy=false;}
   };
-  return Object.freeze({
+  const verifier=Object.freeze({
     readVerifiedBase:r=>run(()=>prepare(r)),
     verifyPublishedBase:r=>run(async()=>{
       const value=copy(r);exact(value,['payload','benchmark','plan','targetDate','bindings']);
@@ -198,4 +201,5 @@ export function createPublishedBaseVerifier(options){
     }),
     close(){closed=true;c.dataKey.fill(0);record=null;},
   });
+  verifiers.add(verifier);return verifier;
 }
