@@ -1,0 +1,137 @@
+# Historical source revisions and shared validation
+
+Status: local, review-only candidate. No production entry, transport, credential
+lookup, publication, schedule, claim or consumption-record change is introduced.
+The existing source reader and calculation implementations are unchanged.
+
+## Historical revision candidate
+
+`createIbSourceRevisionPreparer` accepts three dependencies bound by reviewed
+coordinator code: `verifyAcceptedArtifacts`, `readStable`, and `checkCurrent`.
+They must never be selected or implemented by request JSON. A clock can be
+injected for synthetic tests. `prepare({currentPayload, anchorPayload, plan})`
+returns a private candidate, not a revised full fee report.
+
+Let U be a genuine previously published complete checkpoint, P the current
+published source cutoff and T the proposed target. The candidate requires
+U < P <= T and at most nine calendar days including U. U cannot be manufactured
+by truncating current history, copying only NAV, editing a balance or resetting
+the owner-confirmed baseline.
+
+The exact `fee-console.ib-source-revision-plan.v1` contains:
+
+- `anchorDate`, `targetDate`, `baselineSha256` and both source-state IDs;
+- `currentArtifact` and `anchorArtifact`, each containing raw encrypted-data
+  SHA-256, health-file SHA-256, producer run ID and candidate commit SHA;
+- `bindings`: reviewed main, economic revision, consumption-record hash,
+  current data/health hashes and current source-state ID;
+- `expiresAt` as an exact UTC timestamp. It is a reviewed limit, not a grant of
+  read, decryption, execution-budget or publication authority.
+
+The current artifact and state must match their binding fields. Both stored
+source states, return receipts and drawdown receipts are rebuilt using the
+existing validators. Identity, owner baseline, coverage, all NAV and flows
+through U, applicable normalization proofs and overlapping closing snapshots
+must agree. Proofs that straddle U are rejected rather than discarded.
+
+`verifyAcceptedArtifacts` must use authenticated evidence to verify both raw
+published artifacts, their decoded payload association and the accepted history
+link between them. Returning the expected hashes or a self-authored `verified`
+flag does not prove any of these facts. The real adapter is not supplied in this
+candidate. It must also verify the original fee month-lock digests with the
+existing `preserveReportMonthLocks` function and the corresponding economic
+inputs; the local candidate checks lock shape/range and unchanged IB return
+periods/factors, not the complete fee-lock digest by itself.
+
+`checkCurrent` must freshly obtain the bound versions, before and after the
+bounded source read. It must not echo values from the plan. A change refuses
+the candidate. The unchanged `SharesightIbManagerReader.readStable` is called
+once from U through T; it performs its original independent captures and full
+anchor, native-currency, flow, duplicate, payout and position checks. No balance
+tolerance, fabricated flow, date shift or unknown-flow exception is added.
+
+The replacement bundle is rebuilt by `buildIbManagerReportBundle`. The envelope
+retains the superseded bundle, accepted anchor, artifact references, target,
+checked time and a content digest. `changedHistoricalDates` lists changes in
+retained NAV, net external flow or overlapping closing snapshots; it is not an
+audit of every raw transaction. A net-neutral provenance-only revision may be
+conservatively refused as `NO_HISTORICAL_CHANGE`.
+
+The result always has `publicationReady: false` and `executionAuthorized: false`.
+It contains private source material and must never be logged, attached to a
+public PR or passed to an external model. `oldArtifactsPreserved: true` describes
+this module's non-mutating behavior; the caller still owns authenticated
+archival retention. Only fixed allowlisted error codes may leave the private
+boundary. Payload copying rejects accessors, proxies, custom prototypes, cycles
+and oversized JSON. Expiry, clock monotonicity and request immutability are
+checked again after the asynchronous candidate digest.
+
+Same-cutoff repair (`T = P`) and extension (`T > P`) are explicitly different.
+An extension cannot stamp old fee data with T. Any eventual full-report writer
+must retain the existing fee/source/return/drawdown common-cutoff checks, fee
+month locks, single-writer protection, budget, provenance and readback checks.
+This minimal candidate refuses historical changes across a locked month.
+
+An actual unchanged U, its archived original evidence, the trusted adapters,
+bounded read authorization and a separately approved recovery/publication path
+are still required. Unsupported early-valued cash that changes U remains a
+refusal. This module does not reset or reuse a consumed recovery opportunity.
+
+## Shared synchronization validator
+
+`createSourceContractValidator` binds a trusted deterministic `validate` function,
+its dependency hash, one execution ID, a clock and a bounded lifetime. Its
+`validateInputs` method copies and freezes the input before awaiting validation.
+Validation must complete and return exactly `true` before a capability exists.
+
+The request binds the complete report plan, actual target/source dates, the
+three required source roles, identity/evidence hashes, raw input hash, reviewed
+code, current published data/health, IB baseline/checkpoint/coverage/anchor,
+economic, benchmark and policy versions. The original report-plan, calendar,
+scope and source completeness rules belong in the bound validator. Structural
+checks here are not a substitute for those business rules.
+
+`consumeValidatedInputs` accepts only the same factory's opaque WeakMap handle,
+same execution and unchanged context. It returns the exact immutable input
+seen by the validator; it does not re-execute that deterministic check. Handles
+cannot be serialized, recreated from a success flag or reused by another
+process. Capture-to-expiry defaults to five minutes and cannot exceed fifteen.
+Expiry, clock rollback and any bound dependency change reject reuse. Repeated
+consumption is a pure read, not another production or publication permission.
+
+Runtime must retain independently obtained current-version comparisons,
+source-change/freshness checks, real accounting and month-end readiness,
+same-target atomic deduplication, consumed-operation history, shared publication
+serialization, calculation/publication checks and authenticated readback.
+The coordinator must stop the old execution when source changes are detected.
+This capability does not prove that Sharesight stayed unchanged after capture;
+no stable cross-request revision/ETag support has been established here.
+
+The shared module is not yet wired to the synchronization conversation or the
+producer. Its composition test uses the actual IB bundle reconstruction, with
+synthetic scope for the other roles. It is not a successful three-account run.
+A future coordinator can avoid duplicate deterministic validation of identical
+frozen input in one execution. Cross-process synchronization and production
+cannot trust a text message or serialized handle as a substitute.
+
+## Verification and deployment boundary
+
+Synthetic tests cover late income plus external capital, full-history return
+and drawdown rebuilding, preserved old records, invalid/changed anchors,
+missing/duplicate/unknown/misdated flows, source instability, lock boundaries,
+stale base/ledger/consumption versions, asynchronous mutation/expiry, immutable
+errors, hostile JSON and capability forgery. The original IB source and return
+regressions run with unchanged public reference files.
+
+Only these five new files form this candidate:
+
+1. `scripts/ib-manager-source-revision.mjs`
+2. `scripts/ib-manager-source-revision.test.mjs`
+3. `scripts/fee-source-contract.mjs`
+4. `scripts/fee-source-contract.test.mjs`
+5. `docs/fee-source-revision.md`
+
+Public upload, exact-head review, protected merge, private real-data preparation
+and any eventual recovery run remain distinct actions under the repository's
+approval rules. Passing synthetic tests or merging these utilities alone does
+not establish a successful production repair or automatic start mechanism.

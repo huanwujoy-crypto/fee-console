@@ -632,6 +632,11 @@
     "scripts/fee-ratio-aggregate-returns.test.mjs",
     "scripts/fee-ratio-performance-integration.test.mjs",
     "scripts/fee-ratio-aggregate-ui-fixture.mjs",
-    "scripts/fixtures/fee-ratio-aggregate-returns-ui.json"
+    "scripts/fixtures/fee-ratio-aggregate-returns-ui.json",
+    "scripts/ib-manager-source-revision.mjs",
+    "scripts/ib-manager-source-revision.test.mjs",
+    "scripts/fee-source-contract.mjs",
+    "scripts/fee-source-contract.test.mjs",
+    "docs/fee-source-revision.md"
   ]
 }
