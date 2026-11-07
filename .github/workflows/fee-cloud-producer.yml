@@ -264,21 +264,26 @@ jobs:
       - name: Confirm the frozen period base before financial access
         shell: bash
         env:
+          FEE_REPORT_ACTIONS_TOKEN: ${{ github.token }}
           PLANNED_MAIN: ${{ needs.period.outputs.main }}
           CONFIRMED_MAIN: ${{ inputs.confirmed_main }}
           REPORT_KIND: ${{ needs.period.outputs.kind }}
           REPORT_TARGET: ${{ needs.period.outputs.target }}
+          REPORT_PLAN: ${{ needs.period.outputs.plan }}
           REVIEWED_SYNC_DATE: ${{ inputs.manual_sync_completed_for }}
+          REVIEWED_RECOVERY_MAIN: ${{ github.event_name == 'workflow_dispatch' && inputs.run_reviewed_once && inputs.recovery_main || '' }}
         run: |
           set -euo pipefail
           export CHECKED_OUT_MAIN="$(git rev-parse HEAD)"
           test "$CHECKED_OUT_MAIN" = "$PLANNED_MAIN"
           node --input-type=module <<'NODE'
-          import {confirmReviewedMainBeforeSource} from './scripts/fee-report-producer.mjs';
+          import {confirmReviewedMainBeforeSource,confirmReviewedRecoveryBeforeSource} from './scripts/fee-report-producer.mjs';
           const args={mode:'produce','report-kind':process.env.REPORT_KIND,'report-target':process.env.REPORT_TARGET};
           if(process.env.CONFIRMED_MAIN)args['confirmed-main']=process.env.CONFIRMED_MAIN;
           if(process.env.REVIEWED_SYNC_DATE)args['manual-sync-completed-for']=process.env.REVIEWED_SYNC_DATE;
           await confirmReviewedMainBeforeSource(args,{checkedOutMain:process.env.CHECKED_OUT_MAIN});
+          if(process.env.REVIEWED_RECOVERY_MAIN)args['recovery-main']=process.env.REVIEWED_RECOVERY_MAIN;
+          await confirmReviewedRecoveryBeforeSource(args,{checkedOutMain:process.env.CHECKED_OUT_MAIN});
           NODE
 
       - name: Exchange the trusted workflow identity for short-lived Google credentials

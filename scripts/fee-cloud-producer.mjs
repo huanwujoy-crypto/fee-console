@@ -4,6 +4,7 @@
 // caller-owned private output directory; publication is a separate step.
 
 import crypto from "node:crypto";
+import {types} from "node:util";
 import { incomeDateEvidenceFromData, incomeDatePolicy } from './fee-income-date-policy.mjs';
 import fs from "node:fs";
 import os from "node:os";
@@ -20,6 +21,7 @@ import { STYLE_ACCOUNTS } from './fee-style-registry.mjs';
 import {prepareIbManagerReport,assertIbManagerConfiguration,assertIbManagerPublication,IB_PUBLICATION_DIAGNOSTIC_PREFIX,validateIbPublicationDiagnostic} from './ib-manager-report.mjs';
 import {validateReportPlan,selectReportBenchmark} from './fee-report-period.mjs';
 import {REPORT_METADATA_FAILURE_CODES} from './fee-report-metadata.mjs';
+import {IB_SOURCE_REVISION_FAILURE_CODES} from './ib-manager-source-revision.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const NODE = process.execPath;
@@ -701,9 +703,33 @@ function writerArgs(input, file) {
   return cli;
 }
 
+// Recovery capability is constructed by the reviewed runtime, never supplied
+// as workflow JSON. Reject it before financial IO unless the complete final-day
+// path and the two original instance identities are present.
+async function revisionForProducer(options){
+  if(options.ibRevision===undefined)return null;
+  const raw=options.ibRevision;
+  if(!raw||types.isProxy(raw)||Object.getPrototypeOf(raw)!==Object.prototype
+    ||options.periodMode!==true||options.includeIb!==true||options.requireIb!==true
+    ||options.ibReader!==undefined||!validateReportPlan(options.reportPlan)
+    ||options.reportPlan.kind!=='daily')fail('IB_REVISION_SCOPE');
+  const ds=Object.getOwnPropertyDescriptors(raw),keys=Reflect.ownKeys(ds);
+  if(keys.length!==3||keys.some(k=>typeof k!=='string'||!['candidate','artifacts','basePayload'].includes(k)
+    ||!Object.hasOwn(ds[k],'value')||!ds[k].enumerable))fail('IB_REVISION_SCOPE');
+  const value=Object.freeze(Object.fromEntries(keys.map(k=>[k,ds[k].value])));
+  const [{isIbRevisionArtifacts},{isIbSourceRevisionCandidate}]=await Promise.all([
+    import('./fee-sync-revision-artifacts.mjs'),import('./ib-manager-source-revision.mjs')]);
+  if(!isIbRevisionArtifacts(value.artifacts)||!isIbSourceRevisionCandidate(value.candidate)
+    ||value.candidate.mode!=='extend-cutoff'||value.candidate.targetDate!==options.reportPlan.accountingThrough
+    ||value.candidate.oldThrough>=value.candidate.targetDate)fail('IB_REVISION_SCOPE');
+  // Full artifact/captured-source freshness is checked at the actual private
+  // handoff below; this early identity gate performs no duplicate source read.
+  return value;
+}
 export async function produce(options = {}) {
   let stage = "CONFIG";
   try {
+    const ibRevision=await revisionForProducer(options);
     if(options.requireIb===true)assertIbManagerConfiguration();
     const cli = options.cli || args(process.argv.slice(2));
     const benchmarkFile = path.resolve(cli["benchmark-file"] || "");
@@ -764,7 +790,8 @@ export async function produce(options = {}) {
       stage = "STYLE_PREFLIGHT";
       styleProposal.checkCurrent();
       run("daily.mjs", [...baseArgs, "--style-preflight"], env);
-      const ib=options.includeIb===false?null:await prepareIbManagerReport({payload:process.env.IB_MANAGER_READ_ENABLED==='true'?decryptCandidate(dataFile,process.env.FEE_DATA_KEY):null,targetDate,outputDir:output,reader:options.ibReader});
+      if(ibRevision)stage='REVISION_PREPARE';
+      const ib=options.includeIb===false?null:await prepareIbManagerReport({payload:process.env.IB_MANAGER_READ_ENABLED==='true'?decryptCandidate(dataFile,process.env.FEE_DATA_KEY):null,targetDate,outputDir:output,reader:options.ibReader,...(ibRevision?{revision:{candidate:ibRevision.candidate,artifacts:ibRevision.artifacts},revisionBasePayload:ibRevision.basePayload}:{})});
       if(ib)baseArgs.push(`--ib-manager-input=${ib.file}`);
       if(options.reportPlan)baseArgs.push(`--report-plan=${JSON.stringify(options.reportPlan)}`);
       stage = "WRITER";
@@ -789,6 +816,7 @@ export async function produce(options = {}) {
         `--outcome=${outcome}`, "--style-preflight=pass", `--checked-at=${checkedAt}`], env);
       stage = "ECONOMIC_RECHECK";
       await economic.checkCurrent();
+      if(ibRevision)await ibRevision.artifacts.checkCurrent();
       incomeInput.checkCurrent();
       styleProposal.checkCurrent();
       stage = "HEALTH_VALIDATE";
@@ -814,7 +842,7 @@ export async function produce(options = {}) {
 }
 
 // Only fixed program stages and exception categories may enter public diagnostics.
-const DIAGNOSTIC_STAGES = new Set(['CONFIG', 'BENCHMARK', 'READER_SETUP', 'ECONOMIC_READ',
+const DIAGNOSTIC_STAGES = new Set(['CONFIG', 'BENCHMARK', 'READER_SETUP', 'ECONOMIC_READ', 'REVISION_PREPARE',
   'SOURCE_READ', 'PREPARE', 'WEEKEND_CARRY', 'STYLE_PREFLIGHT', 'WRITER', 'RECEIPT',
   'HEALTH_CREATE', 'ECONOMIC_RECHECK', 'HEALTH_VALIDATE', 'CLEANUP']);
 const SYSTEM_CODES = new Set(['EACCES', 'EPERM', 'ENOENT', 'EEXIST', 'ENOSPC', 'EMFILE', 'EIO']);
@@ -833,7 +861,7 @@ const SAFE_PRODUCER_FAILURE_CODES = new Set([
     CASH_ANCHOR_MISSING CASH_BALANCE_STALE CASH_CHAIN CASH_CURRENCY CASH_HISTORY_BOUNDARY
     CASH_HISTORY_EVIDENCE CASH_HISTORY_TARGET CASH_IDENTITY CASH_PRECISION CASH_PREVIOUS_EVIDENCE
     CASH_RECONCILIATION CASH_REPORT_BALANCE CASH_TRANSACTION_IDENTITY CONFIG CREDENTIALS DATE
-    ECON_VERSION FAILED HEALTH IB_CONFIG IB_BASELINE_LOCK IB_INCOMPLETE HOLDING HOLDING_CATALOG_DATE_CONFLICT HOLDING_HISTORY_CURRENT
+    ECON_VERSION FAILED HEALTH IB_CONFIG IB_BASELINE_LOCK IB_INCOMPLETE IB_INPUT IB_REVISION_SCOPE HOLDING HOLDING_CATALOG_DATE_CONFLICT HOLDING_HISTORY_CURRENT
     HOLDING_HISTORY_IDENTITY HOLDING_HISTORY_INCEPTION HOLDING_HISTORY_REQUIRED HOLDING_HISTORY_UNSUPPORTED
     HOLDING_IDENTITY HOLDING_TERMINAL_CURRENT HOLDING_TERMINAL_IDENTITY HOLDING_TERMINAL_OPEN
     HOLDING_TERMINAL_PRECISION HOLDING_TERMINAL_REQUIRED HTTP_REJECTED IDENTITY INCOME_EVIDENCE
@@ -849,8 +877,16 @@ const SAFE_PRODUCER_FAILURE_CODES = new Set([
     HISTORY_AHEAD_OF_TARGET IB_RECHECK_CHANGED_FEE_DATA IB_RETRY_METADATA MANUAL_SYNC_CONFIRMATION
     DAILY_SCOPE NOT_READY ONCE_CONTROL OUTPUT_DIR OUTPUT_EXISTS PLAN PUBLICATION_READ PUBLISHED_PERIOD_MISSING RANGE
     RECOVERY_CONFIRMATION RECOVERY_CONSUMED RECOVERY_METADATA RECOVERY_PRIOR_RUNS RECOVERY_RELEASE
-    RECOVERY_REQUIRED RECOVERY_RUN RECOVERY_SCOPE SOURCE_ATTEMPT_METADATA SOURCE_RERUN_NOT_ALLOWED
+    RECOVERY_REQUIRED RECOVERY_RUN RECOVERY_SCOPE REVISION_ADMISSION SOURCE_ATTEMPT_METADATA SOURCE_RERUN_NOT_ALLOWED
     SOURCE_UNSTABLE TARGET`.split(/\s+/).map(code=>'FEE_REPORT_'+code),
+  ...`CONFIG SCOPE ADMISSION CLOCK CLOSED EXPIRED REUSE BUSY NOT_PREPARED BASE_MISMATCH
+    CHANGED PREPARE_REFUSED RECHECK_REFUSED REFUSED`.split(/\s+/).map(code=>'FEE_REPORT_SOURCE_REVISION_'+code),
+  ...`INPUT CONFIG ENVELOPE DECRYPT CLOSED CLOCK EXPIRED ADMISSION MAIN COMMIT TREE ARTIFACT
+    HISTORY PRODUCER HEALTH FEE_RECEIPT IB_STATE NOT_READ CHANGED BUSY SCOPE CURRENT_PAIR STATE
+    PLAN READER CANDIDATE LEGACY_SOURCE ECONOMIC_SOURCE SOURCE_CHANGED`.split(/\s+/).map(code=>'FEE_REPORT_SOURCE_REVISION_ARTIFACT_'+code),
+  ...IB_SOURCE_REVISION_FAILURE_CODES.filter(code=>code!=='IB_REVISION_REFUSED').map(code=>
+    'FEE_REPORT_SOURCE_REVISION_ARTIFACT_'+(code.startsWith('IB_REVISION_SOURCE_REFUSED_IB_SOURCE_')
+      ?'SOURCE_'+code.slice('IB_REVISION_SOURCE_REFUSED_IB_SOURCE_'.length):'REVISION_'+code.slice('IB_REVISION_'.length))),
   ...['FIRST_HELD','LOCK','INPUT','HASH','SCOPE','CHANGED','CONFLICT'].map(code=>'FEE_CLOUD_STYLE_PROPOSAL_'+code),
   ...['CONFIG','ABORTED','HTTP','TYPE','SIZE','BODY','JSON','TIMEOUT','NETWORK'].map(code=>'FEE_CLOUD_RESPONSE_'+code),
 ]);
@@ -869,6 +905,7 @@ export function producerFailureCode(error, stage) {
   if (error instanceof SourceFetchError) return sourceFailureCode(error);
   const message = typeof error?.message === 'string' ? error.message : '';
   if (/^FEE_CLOUD_[A-Z0-9_]{1,80}$/.test(message)) return message;
+  if (message==='IB_REPORT_INPUT_REFUSED') return 'FEE_CLOUD_IB_INPUT';
   if (NONCASH_DIAGNOSTICS.has(message)) {
     return `FEE_CLOUD_STAGE_${DIAGNOSTIC_STAGES.has(stage) ? stage : 'UNKNOWN'}_${message.slice(4)}`;
   }

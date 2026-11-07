@@ -749,7 +749,7 @@ if (economicInput) {
 
 let ibReport=null;
 if(args['ib-manager-input']){
-  try{ibReport=await loadIbManagerReport(args['ib-manager-input']);nextData=ibReport.apply(nextData,date);}catch{die('IB_REPORT_INPUT_REFUSED — nothing written');}
+  try{ibReport=await loadIbManagerReport(args['ib-manager-input'],{previousPayload:data});nextData=ibReport.apply(nextData,date);}catch{die('IB_REPORT_INPUT_REFUSED — nothing written');}
 }
 try{
   if(data.feeReportMonthLocks!==undefined||reportPlan){

@@ -15,7 +15,7 @@ import {SourceFetchError} from './fee-economic-source.mjs';
 import {dailyReportPlan,weeklyReportPlan,monthlyReportPlan,reportAddDays} from './fee-report-period.mjs';
 import {HEALTH_SCHEMA,validateHealth} from './fee-data-health.mjs';
 import {CLOUD_ONCE,cloudOnceWindow,cloudOnceRequest,admitCloudOnce,confirmCloudOnce,recordCloudOnceCandidate,cloudOnceStatus,pauseCloudOnce,cloudOnceControl,scheduledDailyContext} from './fee-report-producer.mjs';
-import {reviewedMainConfirmation,confirmReviewedMainBeforeSource} from './fee-report-producer.mjs';
+import {reviewedMainConfirmation,confirmReviewedMainBeforeSource,confirmReviewedRecoveryBeforeSource,isHistoricalRevisionAdmission,readHistoricalRevisionAdmission,reportHistoricalRecoveryManifest} from './fee-report-producer.mjs';
 
 function cloudOnceFixture(){
  const main='a'.repeat(40),candidate='b'.repeat(40),runId=1001,now=new Date('2026-11-03T02:00:10Z');
@@ -1047,7 +1047,7 @@ test('recovery confirmation binds real reviewed event, exact target/head, owner,
 });
 test('workflow carries the opt-in exact recovery SHA through both gates without changing timeout, permissions or scheduled activation',()=>{
  const workflow=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8');
- assert.equal((workflow.match(/REVIEWED_RECOVERY_MAIN:/g)||[]).length,2);assert.equal((workflow.match(/args\+=\("--recovery-main=\$REVIEWED_RECOVERY_MAIN"\)/g)||[]).length,2);
+ assert.equal((workflow.match(/REVIEWED_RECOVERY_MAIN:/g)||[]).length,3);assert.equal((workflow.match(/args\+=\("--recovery-main=\$REVIEWED_RECOVERY_MAIN"\)/g)||[]).length,2);
  const expression=workflow.match(/REVIEWED_RECOVERY_MAIN:\s*\$\{\{([^\n]+)\}\}/)[1],value=Function('github','inputs','return ('+expression+');');
  assert.equal(value({event_name:'schedule'},{run_reviewed_once:true,recovery_main:recoveryHead}),'');assert.equal(value({event_name:'workflow_dispatch'},{run_reviewed_once:false,recovery_main:recoveryHead}),'');assert.equal(value({event_name:'workflow_dispatch'},{run_reviewed_once:true,recovery_main:recoveryHead}),recoveryHead);
  assert.match(workflow,/timeout-minutes: 15/);assert.match(workflow,/github\.run_attempt == 1/);assert.match(workflow,/vars\.FEE_REPORT_PERIODS_ENABLED == 'true'/);
@@ -1332,13 +1332,217 @@ test('November6 recovery confirmation retains the owner event and never accepts 
   const v=structuredClone({args,env,event});change(v);assert.throws(()=>reviewedRecoveryConfirmation(v.args,{env:v.env,readEvent:()=>v.event}),/RECOVERY_CONFIRMATION/);
  }
 });
+
+const revisionRecoveryBase='d617fdd25315ca09a5f89a81630b04ae19b24d1b';
+const revisionRecoveryParents=['4d798c77c9a9a5d459a75af45b4239c7c9cf984a','474e7b5a20f93358193791daf84d175a22e06d9e'];
+const revisionContract='ib-source-revision-20261106-v1',revisionReviewedHead='c'.repeat(40);
+const revisionActionsToken='synthetic-revision-actions-read-token';
+const revisionRecoveryNow=new Date('2026-11-07T01:00:00Z');
+function sourceRevisionRecoveryFixture(){
+ const f=fundRecordsRecoveryFixture(),files=reportHistoricalRecoveryManifest();
+ f.runs=[f.run(recoveryId,recoveryHead,'2026-11-07T00:40:00Z'),
+  f.run(42309848352,fundRecordsRecoveryParents[0],'2026-11-06T23:08:38Z'),
+  f.run(42318324848,'2c32d695f4f2dc057920fc690046ddf3e1ccdaee','2026-11-07T00:27:25Z')];
+ f.jobs={42309848352:[f.job(f.runs[1],128208373197,'Produce daily 2026-11-06')],
+  42318324848:[f.job(f.runs[2],90000000015,'period','completed','success'),f.job(f.runs[2],128236468656,'Produce daily 2026-11-06')]};
+ f.commit.parents=[{sha:revisionRecoveryBase}];f.supportCommit.sha=revisionRecoveryBase;f.supportCommit.parents=revisionRecoveryParents.map(sha=>({sha}));
+ f.comparison.base_commit.sha=f.comparison.merge_base_commit.sha=revisionRecoveryBase;
+ f.comparison.files=files.map(x=>({filename:x.path,status:x.status,sha:'b'.repeat(40)}));
+ f.tree.tree.push(...files.map(x=>({path:x.path,type:'blob',mode:'100644',sha:'b'.repeat(40)})));
+ f.reviewedCommit={...structuredClone(f.commit),sha:revisionReviewedHead};
+ f.associated=[{number:9001}];
+ f.pr={number:9001,state:'closed',merged:true,draft:false,merge_commit_sha:recoveryHead,
+  user:{id:283054367,login:'huanwujoy-crypto'},base:{ref:'main',repo:{full_name:'huanwujoy-crypto/fee-console'}},
+  head:{sha:revisionReviewedHead,repo:{full_name:'huanwujoy-crypto/fee-console'}},commits:1,merged_at:'2026-11-07T00:35:00Z'};
+ f.comments=[{id:9002,user:{id:283054367,login:'huanwujoy-crypto',type:'User'},issue_url:'https://api.github.com/repos/huanwujoy-crypto/fee-console/issues/9001',
+  body:'/approve-xuan-ib-maintenance '+revisionReviewedHead+'\nSYNTHETIC exact version only',created_at:'2026-11-07T00:30:00Z',updated_at:'2026-11-07T00:30:00Z'}];
+ return f;
+}
+function sourceRevisionWire(f,trace=[]){
+ const old=recoveryWire(f,trace);return async(url,init)=>{
+  assert.equal(init.method,'GET');assert.equal(init.redirect,'error');
+  const prefix='https://api.github.com/repos/huanwujoy-crypto/fee-console/';assert(url.startsWith(prefix));const p=url.slice(prefix.length);
+  const publicReview=/^(?:commits\/[a-f0-9]{40}\/pulls\?|pulls\/|issues\/)/.test(p);
+  assert.equal(init.headers.Authorization,publicReview?undefined:'Bearer '+revisionActionsToken);
+  if(f.metadataUnavailable)throw Error('private-canary');
+  const extra={['git/trees/'+'a'.repeat(40)+'?recursive=1']:f.tree,
+   ['commits/'+recoveryHead+'/pulls?per_page=100']:f.associated,'pulls/9001':f.pr,
+   'issues/9001/comments?per_page=100':f.comments,'issues/comments/9002':f.comments.find(c=>c.id===9002),['commits/'+revisionReviewedHead+'?per_page=1']:f.reviewedCommit};
+  if(!Object.hasOwn(extra,p))return old(url,{...init,headers:{...init.headers,Authorization:undefined}});
+  trace.push(p);const response=new Response(JSON.stringify(extra[p]),{headers:{'content-type':'application/json'}});Object.defineProperty(response,'url',{value:url});return response;
+ };
+}
+function sourceRevisionReaders(f,trace=[]){const fetchImpl=sourceRevisionWire(f,trace);return{
+ readRecoveryRelease:(sha,options={})=>readReportRecoveryRelease(sha,{...options,fetchImpl,actionsToken:revisionActionsToken}),
+ readSourceAttempts:args=>readPeriodSourceAttempts({...args,fetchImpl,actionsToken:revisionActionsToken})};}
+async function sourceRevisionAdmission(f,readers=sourceRevisionReaders(f)){
+ return authorizeReportRecovery({plan:f.plan,expectedMain:recoveryHead,currentRunId:recoveryId,now:revisionRecoveryNow,...readers});
+}
+test('revision recovery validates the actual frozen batch and returns only an authentic opaque admission',async()=>{
+ const manifest=reportHistoricalRecoveryManifest();assert(manifest.length>2);assert(manifest.some(x=>x.status==='added'));assert(manifest.some(x=>x.status==='modified'));
+ assert(Object.isFrozen(manifest));assert(manifest.every(Object.isFrozen));
+ const f=sourceRevisionRecoveryFixture(),trace=[],admission=await sourceRevisionAdmission(f,sourceRevisionReaders(f,trace));
+ assert(isHistoricalRevisionAdmission(admission));assert(Object.isFrozen(admission));assert.equal(JSON.stringify(admission),'{}');
+ const v=readHistoricalRevisionAdmission(admission);assert(Object.isFrozen(v));
+ assert.deepEqual(Object.keys(v).sort(),['approvedHead','approvedTree','consumptionSha256','contractId','currentRunId','mainSha','repairBaseSha','targetDate'].sort());
+ assert.equal(v.contractId,revisionContract);assert.equal(v.targetDate,'2026-11-06');assert.equal(v.repairBaseSha,revisionRecoveryBase);
+ assert.equal(v.mainSha,recoveryHead);assert.equal(v.approvedHead,revisionReviewedHead);assert.equal(v.currentRunId,recoveryId);assert.match(v.consumptionSha256,/^[a-f0-9]{64}$/);
+ assert(trace.indexOf('commits/'+recoveryHead+'/pulls?per_page=100')<trace.findIndex(x=>x.startsWith('actions/')));
+ assert.deepEqual(await admission.checkCurrent(),v);
+ for(const value of [{},JSON.parse(JSON.stringify(admission)),{...v,checkCurrent:async()=>v},structuredClone(v),new Proxy(admission,{})]){
+  assert.equal(isHistoricalRevisionAdmission(value),false);assert.throws(()=>readHistoricalRevisionAdmission(value),/RECOVERY_SCOPE/);
+ }
+});
+test('revision recovery requires branded unmodified results, not callback assertions of a verified release or budget',async()=>{
+ for(const which of ['release','budget']){
+  const f=sourceRevisionRecoveryFixture(),actual=sourceRevisionReaders(f),fake={...actual};
+  if(which==='release')fake.readRecoveryRelease=async(...args)=>structuredClone(await actual.readRecoveryRelease(...args));
+  else fake.readSourceAttempts=async args=>structuredClone(await actual.readSourceAttempts(args));
+  await assert.rejects(sourceRevisionAdmission(f,fake),/RECOVERY_METADATA/);
+ }
+ const f=sourceRevisionRecoveryFixture(),actual=sourceRevisionReaders(f);
+ await assert.rejects(sourceRevisionAdmission(f,{...actual,readSourceAttempts:async args=>{
+  const value=await actual.readSourceAttempts(args);value.recoveryEvidence.currentRun.id++;return value;
+ }}),/RECOVERY_RUN|RECOVERY_METADATA/);
+});
+test('same-target old and revision contracts cannot substitute for each other or reset the two consumed source entries',async()=>{
+ const f=sourceRevisionRecoveryFixture(),r=sourceRevisionReaders(f),release=await r.readRecoveryRelease(recoveryHead);
+ const args={plan:f.plan,now:revisionRecoveryNow,currentRunId:recoveryId,recoveryMain:recoveryHead};
+ const budget=await r.readSourceAttempts({...args,recoveryRelease:release});assert.equal(budget.attempts,2);
+ assert.deepEqual(budget.recoveryEvidence.entries.map(x=>[x.runId,x.jobId,x.head]),[
+  [42309848352,128208373197,fundRecordsRecoveryParents[0]],[42318324848,128236468656,'2c32d695f4f2dc057920fc690046ddf3e1ccdaee']]);
+ assert.equal(validateReportRecoveryEvidence({...args,expectedMain:recoveryHead,budget,release}),true);
+ const legacy=await r.readSourceAttempts(args);assert.equal(legacy.attempts,2);
+ assert.throws(()=>validateReportRecoveryEvidence({...args,expectedMain:recoveryHead,budget:legacy,release}),/RECOVERY_SCOPE/);
+ for(const change of [x=>x.budget.attempts--,x=>x.budget.attempts++,x=>x.budget.recoveryEvidence.entries.pop(),
+  x=>x.budget.recoveryEvidence.entries[1].head=fundRecordsRecoveryBase,x=>x.budget.recoveryEvidence.entries[1].jobId++,
+  x=>x.budget.recoveryEvidence.entries[1].attempt=2,x=>x.budget.recoveryEvidence.entries[1].conclusion='success',
+  x=>x.release.contractId='ib-source-revision-other',x=>x.release.repairBaseSha=fundRecordsRecoveryBase,
+  x=>x.budget.recoveryEvidence.contractId='ib-source-revision-other']){
+  const v=structuredClone({budget,release});change(v);assert.throws(()=>validateReportRecoveryEvidence({...args,expectedMain:recoveryHead,...v}),/RECOVERY_/);
+ }
+});
+test('revision release enforces exact file/status/mode, both base parents, one signed successor and the approved head tree',async()=>{
+ const changes=[f=>f.commit.parents.push({sha:revisionRecoveryBase}),f=>f.supportCommit.parents.reverse(),
+  f=>f.commit.commit.verification.verified=false,f=>f.comparison.ahead_by=2,f=>f.comparison.total_commits=2,
+  f=>f.comparison.files.pop(),f=>f.comparison.files.push({filename:'data.json',status:'modified',sha:'b'.repeat(40)}),
+  f=>f.comparison.files.find(x=>x.status==='added').status='modified',f=>f.comparison.files.find(x=>x.status==='modified').status='added',
+  f=>f.comparison.files[0].previous_filename='old',f=>f.comparison.files[0].status='renamed',
+  f=>f.tree.tree[1].mode='120000',f=>f.tree.tree[1].type='tree',f=>f.tree.tree[1].sha='e'.repeat(40),f=>f.tree.tree[0].sha='e'.repeat(40),f=>f.tree.truncated=true,
+  f=>f.associated.push({number:9003}),f=>f.associated=[],f=>f.associated[0].number='9001',
+  f=>f.pr.merged=false,f=>f.pr.merge_commit_sha='e'.repeat(40),f=>f.pr.base.ref='topic',f=>f.pr.head.repo.full_name='other/repo',
+  f=>f.pr.user.id=1,f=>f.pr.commits=2,f=>f.pr.draft=true,
+  f=>f.reviewedCommit.commit.tree.sha='e'.repeat(40),f=>f.reviewedCommit.parents=[{sha:fundRecordsRecoveryBase}],f=>f.reviewedCommit.commit.verification.verified=false,
+  f=>f.comments=[],f=>f.comments[0].user.id=1,f=>f.comments[0].user.type='Bot',f=>f.comments[0].body=f.comments[0].body.slice(1),
+  f=>f.comments[0].body='/approve-xuan-ib-maintenance '+recoveryHead,f=>f.comments[0].updated_at='2026-11-07T00:36:00Z',
+  f=>f.comments=Array.from({length:100},(_,i)=>({...f.comments[0],id:9002+i}))];
+ for(const change of changes){const f=sourceRevisionRecoveryFixture();change(f);await assert.rejects(readReportRecoveryRelease(recoveryHead,{fetchImpl:sourceRevisionWire(f),targetDate:'2026-11-06',actionsToken:revisionActionsToken}),/RECOVERY_/);}
+ const f=sourceRevisionRecoveryFixture(),wire=sourceRevisionWire(f);let refs=0;
+ await assert.rejects(readReportRecoveryRelease(recoveryHead,{fetchImpl:async(url,init)=>{
+  if(url.endsWith('/git/ref/heads/main')&&++refs===2)f.ref.object.sha='e'.repeat(40);return wire(url,init);
+ },actionsToken:revisionActionsToken}),/RECOVERY_RELEASE/);
+});
+test('revision admission burns on an extra queued/finished reservation and stops on all unexpected active sources',async()=>{
+ for(const head of [revisionRecoveryBase,recoveryHead])for(const [status,conclusion]of [['queued',null],['completed','cancelled'],['completed','skipped'],['completed','failure']]){
+  const f=sourceRevisionRecoveryFixture(),r=f.run(90000000021,head,'2026-11-07T00:38:00Z');Object.assign(r,{status,conclusion});f.runs.push(r);
+  f.jobs[r.id]=[{...f.job(r,90000000022,'period',status,conclusion),started_at:null}];
+  await assert.rejects(sourceRevisionAdmission(f),/RECOVERY_CONSUMED/);
+ }
+ for(const name of ['Produce daily 2026-11-06','Produce daily 2026-11-05','Source acceptance 2026-11-06']){
+  const f=sourceRevisionRecoveryFixture(),r=f.run(90000000021,'e'.repeat(40),'2026-11-07T00:38:00Z');r.status='in_progress';r.conclusion=null;f.runs.push(r);
+  f.jobs[r.id]=[f.job(r,90000000022,name,'in_progress',null)];await assert.rejects(sourceRevisionAdmission(f),/RECOVERY_CONSUMED/);
+ }
+});
+test('revision current-context checks revoke the capability after a new attempt, changed main, changed request or unknown metadata',async()=>{
+ for(const kind of ['attempt','main','plan','metadata','comment-edit']){
+  const f=sourceRevisionRecoveryFixture(),admission=await sourceRevisionAdmission(f);
+  if(kind==='main')f.ref.object.sha='e'.repeat(40);
+  if(kind==='plan')f.plan.extra='private-canary';
+  if(kind==='metadata')f.metadataUnavailable=true;
+  if(kind==='comment-edit')f.comments[0].body+='\nchanged';
+  if(kind==='attempt'){const run=f.run(90000000021,recoveryHead,'2026-11-07T00:45:00Z');f.runs.push(run);f.jobs[run.id]=[f.job(run,90000000022,'period','completed','failure')];}
+  await assert.rejects(admission.checkCurrent(),e=>{assert.match(e.message,/^FEE_REPORT_RECOVERY_(RELEASE|SCOPE|METADATA|CONSUMED)$/);assert.doesNotMatch(e.message,/private-canary/);return true;});
+  assert.equal(isHistoricalRevisionAdmission(admission),false);assert.throws(()=>readHistoricalRevisionAdmission(admission),/RECOVERY_SCOPE/);
+  await assert.rejects(admission.checkCurrent(),/RECOVERY_CONSUMED/);
+ }
+});
+test('revision cache reuses only immutable proof while fixed routing keeps token and anonymous request budget bounded',async()=>{
+ const f=sourceRevisionRecoveryFixture(),trace=[],admission=await sourceRevisionAdmission(f,sourceRevisionReaders(f,trace));
+ const immutable=trace.filter(x=>x.startsWith('commits/')||x.startsWith('git/trees/')||x.startsWith('compare/')||x.startsWith('pulls/')).length;
+ assert.equal(admission.readMetadataCounts().anonymous,3);
+ for(let i=0;i<29;i++)await admission.checkCurrent();
+ assert.equal(admission.readMetadataCounts().anonymous,32);
+ assert.equal(trace.filter(x=>x.startsWith('commits/')||x.startsWith('git/trees/')||x.startsWith('compare/')||x.startsWith('pulls/')).length,immutable);
+ assert.equal(trace.filter(x=>x==='issues/comments/9002').length,29);
+ assert(trace.filter(x=>x.startsWith('actions/workflows/')).length>=30);
+ await assert.rejects(admission.checkCurrent(),/RECOVERY_METADATA/);assert.equal(isHistoricalRevisionAdmission(admission),false);
+ const second=await sourceRevisionAdmission(sourceRevisionRecoveryFixture());second.close();
+ assert.equal(isHistoricalRevisionAdmission(second),false);await assert.rejects(second.checkCurrent(),/RECOVERY_CONSUMED/);
+});
+test('revision admission closed during metadata IO never returns late bindings or starts another request',async()=>{
+ for(const stage of ['git/ref/heads/main','actions/workflows/fee-cloud-producer.yml/runs?',
+  'actions/runs/42309848352/jobs?','actions/runs/42318324848/jobs?']){
+  const f=sourceRevisionRecoveryFixture(),trace=[],wire=sourceRevisionWire(f,trace);
+  let armed=false,releasePending,signalPending;
+  const reached=new Promise(resolve=>{signalPending=resolve;}),gate=new Promise(resolve=>{releasePending=resolve;});
+  const fetchImpl=async(url,init)=>{
+   const response=await wire(url,init),path=url.slice('https://api.github.com/repos/huanwujoy-crypto/fee-console/'.length);
+   if(armed&&path.startsWith(stage)){signalPending();await gate;}
+   return response;
+  };
+  const readers={readRecoveryRelease:(sha,options={})=>readReportRecoveryRelease(sha,{...options,fetchImpl,actionsToken:revisionActionsToken}),
+   readSourceAttempts:args=>readPeriodSourceAttempts({...args,fetchImpl,actionsToken:revisionActionsToken})};
+  const admission=await sourceRevisionAdmission(f,readers);armed=true;
+  const pending=admission.checkCurrent();await reached;
+  admission.close();const requestsAtClose=trace.length;
+  assert.equal(isHistoricalRevisionAdmission(admission),false);
+  assert.throws(()=>readHistoricalRevisionAdmission(admission),/RECOVERY_SCOPE/);
+  releasePending();
+  await assert.rejects(pending,/^Error: FEE_REPORT_RECOVERY_CONSUMED$/);
+  assert.equal(trace.length,requestsAtClose,stage+' must stop at the pending request');
+  await assert.rejects(admission.checkCurrent(),/RECOVERY_CONSUMED/);
+  assert.equal(trace.length,requestsAtClose);
+ }
+});
+test('recovery is rechecked in the original before-financial-access step without adding dispatch inputs or permissions',async()=>{
+ const f=sourceRevisionRecoveryFixture(),args={mode:'produce','report-kind':'daily','report-target':'2026-11-06','manual-sync-completed-for':'2026-11-06','recovery-main':recoveryHead};
+ const env={GITHUB_ACTIONS:'true',GITHUB_EVENT_NAME:'workflow_dispatch',GITHUB_RUN_ATTEMPT:'1',GITHUB_REF:'refs/heads/main',GITHUB_SHA:recoveryHead,
+  GITHUB_REPOSITORY:'huanwujoy-crypto/fee-console',GITHUB_ACTOR_ID:'283054367',GITHUB_RUN_ID:String(recoveryId),PLANNED_MAIN:recoveryHead,REPORT_PLAN:JSON.stringify(f.plan)};
+ const event={inputs:{run_reviewed_once:'true',report_kind:'daily',report_target:'2026-11-06',manual_sync_completed_for:'2026-11-06',recovery_main:recoveryHead},sender:{id:283054367},repository:{full_name:env.GITHUB_REPOSITORY}};
+ let calls=0;const authorize=async x=>{calls++;assert.equal(x.expectedMain,recoveryHead);assert.deepEqual(x.plan,f.plan);return 'synthetic-no-capability';};
+ assert.equal(await confirmReviewedRecoveryBeforeSource(args,{env,readEvent:()=>event,checkedOutMain:recoveryHead,authorize}),'synthetic-no-capability');assert.equal(calls,1);
+ for(const change of [x=>x.checkedOutMain='e'.repeat(40),x=>x.env.PLANNED_MAIN='e'.repeat(40),x=>x.env.REPORT_PLAN='{}',x=>x.env.GITHUB_RUN_ATTEMPT='2']){
+  const x={env:structuredClone(env),readEvent:()=>event,checkedOutMain:recoveryHead,authorize:()=>assert.fail('invalid context must not authorize')};change(x);await assert.rejects(confirmReviewedRecoveryBeforeSource(args,x),/RECOVERY_/);
+ }
+ assert.equal(await confirmReviewedRecoveryBeforeSource({mode:'produce'},{authorize:()=>assert.fail('ordinary path unchanged')}),null);
+ const wf=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8'),produce=wf.split('\n  produce:\n')[1].split('\n  once-finish:\n')[0];
+ assert(produce.indexOf('await confirmReviewedRecoveryBeforeSource')<produce.indexOf('google-github-actions/auth@'));
+ assert(produce.indexOf('await confirmReviewedRecoveryBeforeSource')<produce.indexOf('Complete the frozen price cutoff from Sharesight'));
+ assert.match(produce,/permissions:\n      contents: read\n      actions: read\n      id-token: write/);assert.doesNotMatch(wf,/recovery_contract:|recovery_reviewed_head:/);
+});
+test('period rejects forged, cloned, wrong-target and injected-reader revision admissions before any private or account IO',async()=>{
+ const f=sourceRevisionRecoveryFixture(),admission=await sourceRevisionAdmission(f);let io=0;
+ const base={plan:f.plan,reviewedSyncDate:'2026-11-06',now:revisionRecoveryNow,requireIb:true,historicalRevisionAdmission:admission,
+  fetchEconomic:()=>{io++;assert.fail('economic IO forbidden');},outputDir:'/synthetic/not-accessed',benchmarkFile:'/synthetic/not-accessed'};
+ const previous=process.env.GITHUB_SHA;process.env.GITHUB_SHA=recoveryHead;
+ try{
+  for(const change of [{historicalRevisionAdmission:{}},{historicalRevisionAdmission:structuredClone(readHistoricalRevisionAdmission(admission))},
+   {historicalRevisionAdmission:{...readHistoricalRevisionAdmission(admission),checkCurrent:async()=>true}},
+   {requireIb:false},{readOnce:()=>{io++;assert.fail('account IO forbidden');}},{ibReader:{readStable:()=>{io++;assert.fail('account IO forbidden');}}},
+   {sourceFile:'/synthetic/alternate'},
+   {plan:dailyReportPlan('2026-11-05',['NYSE','NASDAQ'],{reviewedSyncDate:'2026-11-05'}),reviewedSyncDate:'2026-11-05'}]){
+   await assert.rejects(produceReportPeriod({...base,...change}),/^Error: FEE_REPORT_REVISION_ADMISSION$/);assert.equal(io,0);
+  }
+  process.env.GITHUB_SHA='e'.repeat(40);await assert.rejects(produceReportPeriod(base),/^Error: FEE_REPORT_REVISION_ADMISSION$/);assert.equal(io,0);
+ }finally{if(previous===undefined)delete process.env.GITHUB_SHA;else process.env.GITHUB_SHA=previous;}
+});
 test('both admission checks use the existing ephemeral read token without extending other workflow steps or permissions',()=>{
  const wf=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8');
  const produce=wf.split('\n  produce:\n')[1].split('\n  once-finish:\n')[0];
  const step=produce.split('      - name: Read, calculate and validate the encrypted candidate\n')[1].split('\n      - name:')[0];
  assert.match(produce,/permissions:\n      contents: read\n      actions: read\n      id-token: write/);
- assert.match(step,/FEE_REPORT_ACTIONS_TOKEN: \$\{\{ github.token \}\}/);assert.equal((produce.match(/FEE_REPORT_ACTIONS_TOKEN:/g)||[]).length,1);
- assert.equal((wf.match(/FEE_REPORT_ACTIONS_TOKEN:/g)||[]).length,2);assert.doesNotMatch(produce,/contents: write|actions: write/);
+ assert.match(step,/FEE_REPORT_ACTIONS_TOKEN: \$\{\{ github.token \}\}/);assert.equal((produce.match(/FEE_REPORT_ACTIONS_TOKEN:/g)||[]).length,2);
+ assert.equal((wf.match(/FEE_REPORT_ACTIONS_TOKEN:/g)||[]).length,3);assert.doesNotMatch(produce,/contents: write|actions: write/);
  assert.deepEqual([...wf.matchAll(/cron: '([^']+)'/g)].map(m=>m[1]),['0 1 * * *','30 3 * * *','0 6 * * *']);
  assert.match(wf,/group: fee-cloud-producer\n  cancel-in-progress: false/);assert.match(wf,/github\.run_attempt == 1/);
 });
@@ -1358,7 +1562,7 @@ test('November4 actual CLI rechecks authenticated recovery metadata before econo
  globalThis.fetch=async(url,init={})=>{url=String(url);if(init.method&&init.method!=='GET')throw Error('unexpected request');let value,status=200;
  const api='https://api.github.com/repos/huanwujoy-crypto/fee-console/';
  if(url.startsWith(api)){if(init.redirect!=='error')throw Error('metadata redirect');const p=url.slice(api.length);calls.push('metadata');
- if(p.startsWith('actions/')){if(init.headers?.Authorization!=='Bearer '+process.env.FEE_REPORT_ACTIONS_TOKEN)throw Error('auth missing');if(process.env.SYNTHETIC_CASE==='unauthorized')status=401;}else if(init.headers?.Authorization)throw Error('token escaped metadata scope');
+ if(p.startsWith('actions/')){if(init.headers?.Authorization!=='Bearer '+process.env.FEE_REPORT_ACTIONS_TOKEN)throw Error('auth missing');if(process.env.SYNTHETIC_CASE==='unauthorized')status=401;}else if(init.headers?.Authorization&&init.headers.Authorization!=='Bearer '+process.env.FEE_REPORT_ACTIONS_TOKEN)throw Error('unexpected fixed-repository token');
  if(p.startsWith('actions/workflows/fee-cloud-producer.yml/runs?'))value={total_count:f.runs.length,workflow_runs:f.runs};
  else if(/^actions\\/runs\\/\\d+\\/jobs\\?filter=all&per_page=100$/.test(p)){const jobs=f.jobs[Number(p.match(/runs\\/(\\d+)/)[1])];if(!jobs)throw Error('unexpected jobs');value={total_count:jobs.length,jobs};}
  else if(p==='git/ref/heads/main')value=f.ref;
@@ -1406,7 +1610,7 @@ test('actual period CLI and workflow summary carry the scoped token and safe fai
  else{if(init.headers?.Authorization)throw Error('token escaped action scope');if(route==='git/ref/heads/main')v={object:{sha:'a'.repeat(40)}};else if(route.startsWith('contents/')){const text=route.startsWith('contents/data.json?')?data:route.startsWith('contents/fee-data-health.json?')?JSON.stringify(health):null;if(text===null)throw Error('unknown file');v={type:'file',encoding:'base64',size:Buffer.byteLength(text),content:Buffer.from(text).toString('base64')};}else if(route.startsWith('git/matching-refs/heads/'))v=[];else throw Error('unknown route');}
  const r=new Response(JSON.stringify(v),{status});Object.defineProperty(r,'url',{value:url});return r;};`);
  const workflow=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8'),period=workflow.split('\n  period:\n')[1].split('\n  once-admit:\n')[0];
- assert.match(period,/permissions:\n      contents: read\n      actions: read/);assert.match(period,/FEE_REPORT_ACTIONS_TOKEN: \$\{\{ github.token \}\}/);assert.equal((workflow.match(/FEE_REPORT_ACTIONS_TOKEN:/g)||[]).length,2);
+ assert.match(period,/permissions:\n      contents: read\n      actions: read/);assert.match(period,/FEE_REPORT_ACTIONS_TOKEN: \$\{\{ github.token \}\}/);assert.equal((workflow.match(/FEE_REPORT_ACTIONS_TOKEN:/g)||[]).length,3);
  const receiver=period.split(`node --input-type=module - "$summary" <<'NODE'\n`)[1].split('\n          NODE')[0].replace(/^          /gm,'');assert.ok(receiver.includes('reportPreflightSummary(r)'));
  const cli=new URL('./fee-report-producer.mjs',import.meta.url).pathname,cwd=path.resolve(path.dirname(cli),'..');
  for(const [kind,expected]of [['ok',null],['http401','HTTP_401'],['http403','HTTP_403'],['http429','HTTP_429'],['http500','HTTP'],['network','NETWORK'],['partial','METADATA_INVALID'],['missing','AUTH_REQUIRED']]){

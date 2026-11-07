@@ -1,0 +1,319 @@
+// Synthetic ciphertext, fixed-route HTTP and original validators only.
+// Never reads real credentials, historical reports or account data.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import {spawnSync} from 'node:child_process';
+import {createRevisionGithubRead} from './fee-sync-revision-github.mjs';
+import {createIbRevisionArtifacts,isIbRevisionArtifacts,ibRevisionArtifactFailureCode,IB_REVISION_ARTIFACT_SCOPE as SCOPE} from './fee-sync-revision-artifacts.mjs';
+import {fetchEconomicSnapshot} from './fee-economic-source.mjs';
+import {SharesightIbManagerReader,ibBaselineBusinessHash} from './ib-manager-source.mjs';
+import {buildIbOwnerBaseline,buildIbManagerReturnReceipt,buildIbManagerDrawdownReceipt,buildIbManagerReportBundle,createIbManagerReturnConsumer} from './ib-manager-return.mjs';
+import {buildFeeCalculationReceipt,validateFeeCalculationReceiptWithEcon} from './fee-receipt-core.mjs';
+import {sourceContractInputHash as hash} from './fee-source-contract.mjs';
+import {dailyReportPlan} from './fee-report-period.mjs';
+import {authorizeReportRecovery,readPeriodSourceAttempts,readReportRecoveryRelease,reportHistoricalRecoveryManifest} from './fee-report-producer.mjs';
+import {convertEncryptedV3Copy} from './fee-econ-v3-copy.mjs';
+import {createLegacyPolicy} from './fee-legacy-policy.mjs';
+import {prepareIbManagerReport,assertIbManagerPublication} from './ib-manager-report.mjs';
+import {preserveReportMonthLocks} from './fee-report-metadata.mjs';
+import {createFeeSourceRevisionRuntime} from './fee-source-revision-runtime.mjs';
+
+const B='2026-11-03',U='2026-11-04',P='2026-11-05',T='2026-11-06';
+const h=c=>c.repeat(64),o=c=>c.repeat(40),OWNER='huanwujoy-crypto',REPO=OWNER+'/fee-console';
+const KEY=Buffer.alloc(32,7),TOKEN='synthetic-github-token-123456789',ID='a'.repeat(32),MAIN=o('a'),TREE=o('b'),APPROVED=o('c');
+const REPAIR='d617fdd25315ca09a5f89a81630b04ae19b24d1b',RUN=90000000001;
+const SOURCE_P='9c5ec1636e3a6f5c6f307dba9fc681e3b14d73e8',SOURCE_U='5ad072aa8eae0fd04830250d0811a080b40931b9';
+const sha=b=>crypto.createHash('sha256').update(b).digest('hex');
+const blob=b=>crypto.createHash('sha1').update('blob '+b.length+'\0').update(b).digest('hex');
+const encrypt=(value,v)=>{const iv=crypto.randomBytes(12),c=crypto.createCipheriv('aes-256-gcm',KEY,iv);return Buffer.from(JSON.stringify({enc:true,v,data:Buffer.concat([iv,c.update(JSON.stringify(value)),c.final(),c.getAuthTag()]).toString('base64')}));};
+const decrypt=bytes=>{const s=Buffer.from(JSON.parse(bytes).data,'base64'),d=crypto.createDecipheriv('aes-256-gcm',KEY,s.subarray(0,12));d.setAuthTag(s.subarray(-16));return JSON.parse(Buffer.concat([d.update(s.subarray(12,-16)),d.final()]));};
+const response=(url,value)=>{const r=new Response(JSON.stringify(value),{headers:{'content-type':'application/json'}});Object.defineProperty(r,'url',{value:url});return r;};
+const rejection=(p,code)=>assert.rejects(p,e=>{assert.equal(ibRevisionArtifactFailureCode(e),'IB_REVISION_ARTIFACT_'+code);assert.equal(e.cause,undefined);return true;});
+
+function sourceWire({revised=false,state={sourceChanged:false},calls=[]}={}){
+  const fetchImpl=async(url,init)=>{
+    const u=new URL(url),p=u.pathname,q=u.searchParams;assert.equal(u.origin,'https://api.sharesight.com');calls.push({p,method:init.method});let body;
+    if(p==='/oauth2/token'){assert.equal(init.method,'POST');body={access_token:'synthetic-source-token-123456789',token_type:'bearer'};}
+    else{
+      assert.equal(init.method,'GET');assert.equal(init.redirect,'error');const d=q.get('end_date')||q.get('date'),gain=revised&&d>=P?307:0;
+      if(p==='/api/v2/portfolios.json')body={portfolios:[{id:1,name:'IB-HK',currency_code:'USD'}]};
+      else if(p==='/api/v3/portfolios/1/holdings')body={holdings:[{id:2,valid_position:true,portfolio:{id:1,name:'IB-HK'},note:state.sourceChanged?'changed':'same'}]};
+      else if(p==='/api/v3/portfolios/1/performance')body={report:{portfolio_id:1,start_date:d,end_date:d,currency:{code:'USD'},portfolio_tz_name:'America/New_York',include_sales:false,value:1000+gain,
+        holdings:[{id:2,value:900,quantity:1,valid_position:true,portfolio:{id:1,name:'IB-HK'},instrument_currency:{code:'USD'}}],cash_accounts:[{id:3,value:100+gain,currency:{code:'USD'},portfolio:{id:1,name:'IB-HK'}}]}};
+      else if(p==='/api/v2/portfolios/1/cash_accounts.json')body={cash_accounts:[{id:3,portfolio_id:1,portfolio_currency:'USD',currency:'USD',date:d,balance:100+gain,balance_in_portfolio_currency:100+gain}]};
+      else if(p==='/api/v3/portfolios/1/trades.json')body={trades:[]};
+      else if(p==='/api/v2/cash_accounts/3/cash_account_transactions.json')body={cash_account_transactions:revised&&q.get('from')<=P&&q.get('to')>=P?[
+        {id:12,cash_account_id:3,date_time:P+'T00:00:00.000Z',amount:7,balance:107,cash_account_transaction_type:{name:'Payout'},trade_id:null,holding_id:2,payout_id:13},
+        {id:14,cash_account_id:3,date_time:P+'T05:00:00.000Z',amount:300,balance:407,cash_account_transaction_type:{name:'DEPOSIT'},description:'Owner cash contribution',trade_id:null,holding_id:null,payout_id:null}]:[]};
+      else if(p==='/api/v2/payouts/13.json')body={id:13,portfolio_id:1,holding_id:2,symbol:'SYNTH',paid_on:P,currency:'USD',confirmed:true,state:'confirmed',non_taxable:false,tax_credit:0,gross_amount:10,resident_withholding_tax:3,amount:7};
+      else assert.fail('unexpected synthetic source route');
+    }
+    return response(url,body);
+  };
+  return {fetchImpl,calls,reader:new SharesightIbManagerReader({clientId:'synthetic-client',clientSecret:'synthetic-secret',fetchImpl})};
+}
+
+// Mint the actual native admission through original release/attempt validators.
+// Neither a self-authored permission flag nor a test-only capability is used.
+function admissionWire(state,dailyPlan){
+  const manifest=reportHistoricalRecoveryManifest(),actor={id:283054367,login:OWNER,type:'User'},ui='2bb9f66ac890ba87cec504ef72a5083c07670689';
+  const signed=(id,parents,tree=TREE)=>({sha:id,parents:parents.map(sha=>({sha})),author:actor,committer:{login:OWNER},commit:{tree:{sha:tree},verification:{verified:true,reason:'valid'}}});
+  const commit=signed(MAIN,[REPAIR]),repair=signed(REPAIR,['4d798c77c9a9a5d459a75af45b4239c7c9cf984a','474e7b5a20f93358193791daf84d175a22e06d9e']);
+  const run=(id,head,created)=>({id,head_sha:head,head_branch:'main',path:'.github/workflows/fee-cloud-producer.yml',event:'workflow_dispatch',created_at:created,run_attempt:1,workflow_id:365873934,actor,status:id===RUN?'in_progress':'completed',conclusion:id===RUN?null:'failure'});
+  const runs=[run(RUN,MAIN,'2026-11-07T01:00:00Z'),run(42309848352,'94210904dd95b2ff4496cb68dab6b49950fe4f74','2026-11-06T23:08:38Z'),run(42318324848,'2c32d695f4f2dc057920fc690046ddf3e1ccdaee','2026-11-07T00:00:00Z')];
+  const jobs=Object.fromEntries(runs.slice(1).map((r,i)=>[r.id,[{id:i?128236468656:128208373197,run_id:r.id,head_sha:r.head_sha,name:'Produce daily '+T,status:'completed',conclusion:'failure',started_at:r.created_at}]]));
+  const fetchImpl=async(url,init)=>{
+    assert.equal(init.method,'GET');const route=url.split('/repos/'+REPO+'/')[1];state.admissionCalls.push(route);let value;
+    if(route==='git/ref/heads/main')value={object:{sha:state.main}};
+    else if(route==='commits/'+MAIN+'?per_page=1')value=commit;
+    else if(route==='commits/'+REPAIR+'?per_page=1')value=repair;
+    else if(route==='commits/'+APPROVED+'?per_page=1')value=signed(APPROVED,[REPAIR]);
+    else if(route==='compare/'+REPAIR+'...'+MAIN+'?per_page=100')value={status:'ahead',ahead_by:1,behind_by:0,total_commits:1,base_commit:{sha:REPAIR},merge_base_commit:{sha:REPAIR},commits:[{sha:MAIN}],files:manifest.map(m=>({filename:m.path,status:m.status,sha:o('e')}))};
+    else if(route==='git/trees/'+TREE+'?recursive=1')value={sha:TREE,truncated:false,tree:[{path:'index.html',type:'blob',mode:'100644',sha:ui},...manifest.map(m=>({path:m.path,type:'blob',mode:'100644',sha:o('e')}))]};
+    else if(route==='commits/'+MAIN+'/pulls?per_page=100')value=[{number:999}];
+    else if(route==='pulls/999')value={number:999,state:'closed',merged:true,draft:false,merge_commit_sha:MAIN,user:actor,base:{ref:'main',repo:{full_name:REPO}},head:{sha:APPROVED,repo:{full_name:REPO}},commits:1,merged_at:'2026-11-07T00:50:00Z'};
+    else if(['issues/999/comments?per_page=100','issues/comments/1'].includes(route)){const comment={id:1,user:actor,body:'/approve-xuan-ib-maintenance '+APPROVED,created_at:'2026-11-07T00:40:00Z',updated_at:'2026-11-07T00:40:00Z',issue_url:'https://api.github.com/repos/'+REPO+'/issues/999'};value=route==='issues/comments/1'?comment:[comment];}
+    else if(route?.startsWith('actions/workflows/fee-cloud-producer.yml/runs?'))value={total_count:runs.length,workflow_runs:state.competing?[...runs,{...runs[0],id:90000000002}]:runs};
+    else if(/^actions\/runs\/\d+\/jobs\?filter=all&per_page=100$/.test(route)){const list=jobs[Number(route.split('/')[2])];assert.ok(list);value={total_count:list.length,jobs:list};}
+    else assert.fail('unexpected synthetic admission route '+route);
+    return response(url,value);
+  };
+  return {readRecoveryRelease:(sha,options)=>readReportRecoveryRelease(sha,{...options,fetchImpl}),readSourceAttempts:options=>readPeriodSourceAttempts({...options,fetchImpl,actionsToken:TOKEN})};
+}
+
+async function fixture(t,{legacy=false,mutatePayload,mutateHealth,mutateEconomic}={}){
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'revision-artifact-synthetic-'));fs.chmodSync(dir,0o700);t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  const state={now:Date.parse('2026-11-07T01:10:00.000Z'),main:MAIN,economicRevision:o('e'),sourceChanged:false,calls:[],sourceCalls:[],admissionCalls:[],mutate:null,log:null,competing:false};
+  const clock=()=>state.now,dailyPlan=dailyReportPlan(T,['NYSE','NASDAQ'],{periodFrom:T,reviewedSyncDate:T});
+  const admission=await authorizeReportRecovery({plan:dailyPlan,expectedMain:MAIN,currentRunId:RUN,now:new Date(state.now),actionsToken:TOKEN,...admissionWire(state,dailyPlan)});
+  const business={points:[{d:B,tot:1000}],openT:1000,from:B,to:B,days:1,flowByDate:{},rate:0,cr:0,cumBefore:0,hwmBefore:0},baselineSha256=ibBaselineBusinessHash(business);
+  const input={schema:'fee-console.ib-manager-return-input.v1',currency:'USD',timezone:'America/New_York',flowTiming:'eod',flowsComplete:true,correctionsConfirmed:true,sourceSha256:h('c'),periodReturnsInput:business};
+  const owner=await buildIbOwnerBaseline({ibManagerReturnReceipt:await buildIbManagerReturnReceipt(input),ibManagerDrawdownReceipt:await buildIbManagerDrawdownReceipt(input)},input,baselineSha256);
+  const coverageBody={schema:'fee-console.ib-manager-coverage.v2',authority:'reviewed-source-reconciliation',sourceProvider:'Sharesight',baselineInputsHash:baselineSha256,from:U,through:U,evidenceSha256:h('e'),events:[],quotes:[]};
+  const coverage={...coverageBody,coverageId:await createIbManagerReturnConsumer().digest(coverageBody)},baseline={from:B,asOf:B};
+  const u=await sourceWire().reader.readStable({targetDate:U,expectedBaselineHash:baselineSha256,baseline,ownerBaseline:owner,bootstrapCoverage:coverage});
+  const p=await sourceWire().reader.readStable({targetDate:P,expectedBaselineHash:baselineSha256,baseline,checkpoint:u});
+  let economic={v:4,settings:{start:B,mgmt:2,carry:20},accounts:[{id:'schwab',name:'Synthetic A',opening:100},{id:'webull',name:'Synthetic B',opening:100}],months:[],fees:[]},economicBytes,legacySourcePath=null;
+  if(legacy){
+    const raw={...economic,v:3,updatedAt:'2026-11-04T01:00:00Z',settings:{...economic.settings,who:'SYNTHETIC',openingAt:'2026-11-02',fx:{USD:1,HKD:.125,CNY:.14,EUR:1.1,SGD:.74,GBP:1.2,JPY:.006}},fees:[{id:'blank',note:'',type:'exp',deduct:true,date:B,fx:'',amount:'',ccy:'USD'}]};
+    const original=encrypt(raw,3);legacySourcePath=path.join(dir,'original-economic.json');fs.writeFileSync(legacySourcePath,original,{mode:0o600});
+    economicBytes=convertEncryptedV3Copy(original,KEY,{policyId:createLegacyPolicy().LEGACY_POLICY_ID});economic=decrypt(economicBytes);
+  }
+  mutateEconomic?.(economic);if(!economicBytes)economicBytes=encrypt(economic,4);
+  const payloadOf=async(source,date)=>{
+    const b=await buildIbManagerReportBundle(source,baselineSha256),out={daily:[B,U,...(date===P?[P]:[])].map(d=>({d,schwab:100,webull:100})),flowsAuto:[],flowsUnresolved:[],status:{asOf:date,provisional:false,calibrated:true,unresolvedCount:0,splitDelta:0,notes:[]},
+      ibManagerBaselineState:owner,ibManagerReturnReceipt:b.returnReceipt,ibManagerDrawdownReceipt:b.drawdownReceipt,ibManagerSourceState:b.sourceState,ibManagerCoverageState:coverage,ibManagerSourceStatus:{state:'verified',targetDate:date},
+      feeReportMonthLocks:{schema:'fee-console.report-month-locks.v1',periods:[]},consumedOperations:['synthetic-old-failure']};
+    out.feeCalculationReceipt=buildFeeCalculationReceipt({data:out,economicInput:economic});mutatePayload?.(out,date);return out;
+  };
+  const currentPayload=await payloadOf(p,P),anchorPayload=await payloadOf(u,U),dataBytes=encrypt(currentPayload,3),anchorBytes=encrypt(anchorPayload,3);
+  const health=(date,bytes,checkedAt)=>{const h={schema:'fee-console.daily-health.v1',checkedAt,targetDate:date,sourceDates:{schwab:date,webull:date,benchmark:date},outcome:'updated',dataSha256:sha(bytes),errorCode:null};mutateHealth?.(h,date);return Buffer.from(JSON.stringify(h,null,2)+'\n');};
+  const healthBytes=health(P,dataBytes,'2026-11-06T01:01:00.000Z'),anchorHealth=health(U,anchorBytes,'2026-11-05T05:45:00.000Z');
+  const oldEnv={id:process.env.FEE_ECON_GIST_ID,token:process.env.FEE_ECON_GITHUB_TOKEN};process.env.FEE_ECON_GIST_ID=ID;process.env.FEE_ECON_GITHUB_TOKEN='github_pat_SYNTHETIC_NOT_A_REAL_TOKEN_123456';
+  const economicFetch=async(url,init)=>{assert.equal(url,'https://api.github.com/gists/'+ID);assert.equal(init.method,'GET');return new Response(JSON.stringify({id:ID,public:false,owner:{login:OWNER},truncated:false,history:[{version:state.economicRevision}],files:{'fee-console-db.json':{filename:'fee-console-db.json',content:economicBytes.toString(),size:economicBytes.length,truncated:false}}}),{headers:{etag:'"synthetic"','content-type':'application/json'}});};
+  let economicSnapshot;try{economicSnapshot=await fetchEconomicSnapshot({tempRoot:dir,attempts:1,timeoutMs:100,fetchImpl:economicFetch});}finally{for(const[k,v]of Object.entries({FEE_ECON_GIST_ID:oldEnv.id,FEE_ECON_GITHUB_TOKEN:oldEnv.token}))if(v===undefined)delete process.env[k];else process.env[k]=v;}
+  t.after(()=>economicSnapshot.cleanup());
+  const files={[SCOPE.current.candidateSha]:{'data.json':dataBytes,'fee-data-health.json':healthBytes},[SCOPE.anchor.candidateSha]:{'data.json':anchorBytes,'fee-data-health.json':anchorHealth}};
+  const trees={},commits={},parents={};
+  const treeRows=files=>[...Object.entries(files).map(([path,bytes])=>({path,type:'blob',mode:'100644',sha:blob(bytes),size:bytes.length})),{path:'index.html',type:'blob',mode:'100644',sha:o('1'),size:1}];
+  const pTree=o('2'),uTree=o('3'),beforeTree=o('4');trees[TREE]=trees[pTree]=treeRows(files[SCOPE.current.candidateSha]);trees[uTree]=treeRows(files[SCOPE.anchor.candidateSha]);trees[beforeTree]=treeRows({'data.json':Buffer.from('old'),'fee-data-health.json':Buffer.from('old')});
+  const addCommit=(id,parent,tree,message)=>{parents[id]=parent;commits[id]={sha:id,author:{id:283054367,login:OWNER,type:'User'},parents:[{sha:parent}],commit:{tree:{sha:tree},message,verification:{verified:true,reason:'valid'}}};};
+  addCommit(MAIN,SCOPE.current.candidateSha,TREE,'synthetic merge');addCommit(SCOPE.current.candidateSha,SOURCE_P,pTree,'daily '+P);addCommit(SOURCE_P,SCOPE.anchor.candidateSha,uTree,'synthetic source');addCommit(SCOPE.anchor.candidateSha,SOURCE_U,uTree,'daily '+U);addCommit(SOURCE_U,o('5'),beforeTree,'synthetic source');
+  const runs={},jobs={};
+  for(const[role,date,head,start,end,jobId]of [['current',P,SOURCE_P,'2026-11-06T01:00:15Z','2026-11-06T01:01:06Z',9001],['anchor',U,SOURCE_U,'2026-11-05T05:44:29Z','2026-11-05T05:45:38Z',9002]]){
+    const scope=SCOPE[role];runs[scope.producerRunId]={id:scope.producerRunId,status:'completed',conclusion:'success',run_attempt:1,event:'workflow_dispatch',head_branch:'main',path:'.github/workflows/fee-cloud-producer.yml',head_repository:{full_name:REPO},head_sha:head};
+    jobs[scope.producerRunId]=[{id:jobId,run_id:scope.producerRunId,head_sha:head,name:'Produce daily '+date,status:'completed',conclusion:'success',started_at:start,completed_at:end,steps:[{name:'Read, calculate and validate the encrypted candidate',status:'completed',conclusion:'success'},{name:'Create a signed owner candidate',status:'completed',conclusion:'success',started_at:start,completed_at:end}]}];
+  }
+  const source=sourceWire({revised:true,state,calls:state.sourceCalls});
+  const fetchImpl=async(url,init)=>{
+    if(url.startsWith('https://api.sharesight.com/'))return source.fetchImpl(url,init);
+    assert.equal(init.method,'GET');const route=url.split('/repos/'+REPO+'/')[1];state.calls.push(route);let value;
+    if(route==='git/ref/heads/main')value={object:{sha:state.main}};
+    else if(route.startsWith('commits/'))value=commits[route.slice(8)];
+    else if(route.startsWith('git/commits/')){const id=route.slice(12);value={sha:id,parents:[{sha:parents[id]}]};}
+    else if(route.startsWith('git/trees/')){const id=route.slice(10);value={sha:id,truncated:false,tree:trees[id]};}
+    else if(route.startsWith('contents/')){const[name,id]=route.slice(9).split('?ref='),bytes=files[id]?.[name];assert.ok(bytes);value={type:'file',path:name,encoding:'base64',size:bytes.length,sha:blob(bytes),content:bytes.toString('base64')};}
+    else if(/^actions\/runs\/\d+$/.test(route))value=runs[Number(route.split('/')[2])];
+    else if(/^actions\/runs\/\d+\/jobs\?per_page=100$/.test(route)){const list=jobs[Number(route.split('/')[2])];value={total_count:list.length,jobs:list};}
+    else if(/^actions\/jobs\/(9001|9002)\/logs$/.test(route)){const role=route.includes('9001')?'current':'anchor',timestamp=role==='current'?'2026-11-06T01:01:01.0000000Z':'2026-11-05T05:45:33.0000000Z';return new Response(state.log??timestamp+' candidate '+SCOPE[role].candidateSha+'\n');}
+    else assert.fail('unexpected synthetic artifact route '+route);
+    assert.ok(value,'known synthetic response');return response(url,state.mutate?.(route,structuredClone(value))??value);
+  };
+  const github=createRevisionGithubRead({token:TOKEN,fetchImpl,clock}),config={github,economicSnapshot,dataKey:KEY,legacySourcePath,baselineSha256,clock,admission};
+  t.after(()=>github.close());const cap=createIbRevisionArtifacts(config);t.after(()=>cap.close());
+  const read=()=>cap.readVerifiedArtifacts({targetDate:T,mainSha:MAIN});
+  const planOf=v=>({schema:'fee-console.ib-source-revision-plan.v1',targetDate:T,anchorDate:U,baselineSha256,currentSourceStateId:currentPayload.ibManagerSourceState.stateId,anchorSourceStateId:anchorPayload.ibManagerSourceState.stateId,currentArtifact:v.artifacts.current,anchorArtifact:v.artifacts.anchor,bindings:v.bindings,expiresAt:v.expiresAt});
+  return{cap,config,read,planOf,reader:source.reader,currentPayload,anchorPayload,economic,key:KEY,dataBytes,healthBytes,dir,state,clock,baselineSha256,fetchImpl,admission,dailyPlan,files,trees,commits,runs,jobs,economicBytes};
+}
+
+test('native admission and actual ciphertext authenticate both historical producer artifacts and original fee/IB receipts',async t=>{
+  const f=await fixture(t),v=await f.read();assert.deepEqual(v.currentPayload,f.currentPayload);assert.deepEqual(v.anchorPayload,f.anchorPayload);
+  assert.equal(isIbRevisionArtifacts(f.cap),true);assert.equal(isIbRevisionArtifacts({...f.cap}),false);assert.equal(isIbRevisionArtifacts(new Proxy(f.cap,{})),false);
+  assert.equal(v.bindings.baseDataSha256,sha(f.dataBytes));assert.equal(v.bindings.baseHealthSha256,sha(f.healthBytes));assert.equal(v.artifacts.current.producerRunId,SCOPE.current.producerRunId);
+  assert.deepEqual(await f.cap.checkCurrent(),v.bindings);assert.equal(f.state.sourceCalls.length,0);
+  const candidate=await f.cap.prepareCandidate({plan:f.planOf(v),reader:f.reader});assert.equal(candidate.mode,'extend-cutoff');assert.deepEqual(candidate.changedHistoricalDates,[P]);
+  assert.equal(await f.cap.verifyCandidate(candidate),true);assert.equal(candidate.publicationReady,false);assert.equal(candidate.executionAuthorized,false);
+});
+
+async function writeVerifiedRevision(f,{candidate,artifacts,basePayload}){
+  const output=path.join(f.dir,'writer');fs.mkdirSync(output,{mode:0o700});
+  const dataFile=path.join(output,'data.json'),economicFile=f.config.economicSnapshot.sourcePath,clockFile=path.join(output,'clock.mjs');
+  const environ={IB_MANAGER_READ_ENABLED:'true',IB_MANAGER_BASELINE_SHA256:f.baselineSha256};
+  const prepared=await prepareIbManagerReport({payload:f.currentPayload,targetDate:T,outputDir:output,environ,clock:f.clock,
+    revision:{candidate,artifacts},revisionBasePayload:basePayload});
+  assert.equal(prepared.state,'verified');assert.equal(fs.statSync(prepared.file).mode&0o777,0o600);
+  const request=JSON.parse(fs.readFileSync(prepared.file));assert.equal(request.schema,'fee-console.ib-manager-report-request.v2');
+  assert.equal(request.revision.revisionId,candidate.revisionId);
+  fs.writeFileSync(dataFile,f.dataBytes,{mode:0o600});
+  fs.writeFileSync(clockFile,`const Original=Date;globalThis.Date=class extends Original{constructor(...args){super(...(args.length?args:[${f.state.now}]));}static now(){return ${f.state.now};}};globalThis.fetch=()=>{throw Error('SYNTHETIC_NETWORK_FORBIDDEN');};`,{mode:0o600});
+  const originalData=Buffer.from(f.dataBytes),originalHealth=Buffer.from(f.healthBytes),originalEconomic=fs.readFileSync(economicFile);
+  const argv=['--import',clockFile,new URL('./daily.mjs',import.meta.url).pathname,'--file='+dataFile,'--date='+T,
+    '--schwab=100','--webull=100','--src-schwab='+T,'--src-webull='+T,'--cash=0','--stock=200','--other=0',
+    '--spy=101','--qqq=102','--spyd=0','--qqqd=0','--src-bench='+T,'--bench-state=session',
+    '--ib-manager-input='+prepared.file,'--report-plan='+JSON.stringify(f.dailyPlan)];
+  const env={PATH:process.env.PATH,...environ,FEE_DATA_KEY:f.key.toString('base64url'),FEE_ECON_FILE:economicFile,FEE_STYLE_INPUT_FILE:'',FEE_MANAGEMENT_INPUT_FILE:''};
+  const child=spawnSync(process.execPath,argv,{encoding:'utf8',env});assert.equal(child.status,0,child.stderr);
+  const encrypted=fs.readFileSync(dataFile),result=decrypt(encrypted);
+  assert.equal(JSON.parse(encrypted).enc,true);assert.equal(result.feeCalculationReceipt.asOf,T);
+  assert.equal(result.ibManagerReturnReceipt.asOf,T);assert.equal(result.ibManagerSourceRevision.revisionId,candidate.revisionId);
+  assert.deepEqual(result.ibManagerSourceRevision.candidate.superseded.sourceState,f.currentPayload.ibManagerSourceState);
+  assert.deepEqual(result.ibManagerSourceRevision.candidate.acceptedAnchor.sourceState,f.anchorPayload.ibManagerSourceState);
+  assert.equal(result.ibManagerSourceRevision.previousRevisionId,null);
+  assert.equal(validateFeeCalculationReceiptWithEcon(result.feeCalculationReceipt,result,f.economic).ok,true);
+  assert.deepEqual(preserveReportMonthLocks(f.currentPayload,result,f.economic),f.currentPayload.feeReportMonthLocks);
+  await assertIbManagerPublication(result,T,environ);
+  assert.equal(result.feeReportPublication.plan.accountingThrough,T);assert.equal(result.feeReportPublication.plan.priceThrough,T);
+  assert.deepEqual(result.consumedOperations,f.currentPayload.consumedOperations);
+  assert.deepEqual(f.dataBytes,originalData);assert.deepEqual(f.healthBytes,originalHealth);assert.deepEqual(fs.readFileSync(economicFile),originalEconomic);
+  assert.equal(decrypt(originalData).feeCalculationReceipt.asOf,P);
+  const repeated=spawnSync(process.execPath,argv,{encoding:'utf8',env});assert.notEqual(repeated.status,0);
+  assert.match(repeated.stderr,/IB_REPORT_INPUT_REFUSED/);assert.deepEqual(fs.readFileSync(dataFile),encrypted);
+  return {result,dataFile,originalData,originalHealth,originalEconomic};
+}
+
+test('real artifact capability and original source candidate pass the private handoff and actual encrypted daily writer',async t=>{
+  const f=await fixture(t),view=await f.read(),candidate=await f.cap.prepareCandidate({plan:f.planOf(view),reader:f.reader});
+  const before=structuredClone(f.currentPayload);
+  await writeVerifiedRevision(f,{candidate,artifacts:f.cap,basePayload:view.currentPayload});
+  assert.deepEqual(f.currentPayload,before);assert.equal(await f.cap.verifyCandidate(candidate),true);
+  await assert.rejects(prepareIbManagerReport({payload:f.currentPayload,targetDate:T,outputDir:f.dir,
+    environ:{IB_MANAGER_READ_ENABLED:'true',IB_MANAGER_BASELINE_SHA256:f.baselineSha256},clock:f.clock,
+    revision:{candidate,artifacts:f.cap},revisionBasePayload:view.currentPayload}),/IB_REPORT_INPUT_REFUSED/);
+});
+
+test('native recovery runtime authenticates original bytes, creates the real reader and handoff, then rechecks after the actual writer',async t=>{
+  const f=await fixture(t),runtime=await createFeeSourceRevisionRuntime({plan:f.dailyPlan,admission:f.admission,economicSnapshot:f.config.economicSnapshot,
+    sourceBytes:f.dataBytes,sourcePayload:f.currentPayload,healthBytes:f.healthBytes,githubToken:TOKEN,clientId:'synthetic-client',clientSecret:'synthetic-secret',
+    keyText:f.key.toString('base64url'),baselineSha256:f.baselineSha256,legacySourcePath:null,fetchImpl:f.fetchImpl,clock:f.clock});
+  t.after(()=>runtime.close());const original=Buffer.from(f.dataBytes),ibRevision=await runtime.prepare();
+  assert.ok(f.state.sourceCalls.some(c=>c.method==='GET'));assert.ok(f.state.admissionCalls.length>0);
+  await writeVerifiedRevision(f,ibRevision);assert.equal(await runtime.checkCurrent(),true);
+  t.diagnostic(JSON.stringify({artifactGets:f.state.calls.length,admissionGets:f.state.admissionCalls.length,sourceCalls:f.state.sourceCalls.length,sourceAuthPosts:f.state.sourceCalls.filter(c=>c.method==='POST').length}));
+  await assert.rejects(runtime.prepare(),/REUSE/);
+  f.state.sourceChanged=true;await assert.rejects(runtime.checkCurrent(),/SOURCE_CHANGED/);
+  await assert.rejects(runtime.checkCurrent(),/CLOSED/);assert.deepEqual(f.dataBytes,original);
+});
+
+test('runtime refuses mismatched original ciphertext before any new source reads',async t=>{
+  const f=await fixture(t),bad=Buffer.from(f.dataBytes);bad[bad.length-1]^=1;
+  const runtime=await createFeeSourceRevisionRuntime({plan:f.dailyPlan,admission:f.admission,economicSnapshot:f.config.economicSnapshot,
+    sourceBytes:bad,sourcePayload:f.currentPayload,healthBytes:f.healthBytes,githubToken:TOKEN,clientId:'synthetic-client',clientSecret:'synthetic-secret',
+    keyText:f.key.toString('base64url'),baselineSha256:f.baselineSha256,legacySourcePath:null,fetchImpl:f.fetchImpl,clock:f.clock});
+  t.after(()=>runtime.close());await assert.rejects(runtime.prepare(),/BASE_MISMATCH/);assert.equal(f.state.sourceCalls.length,0);
+});
+
+test('lookalikes, accessors and cloned admissions cannot authorize artifact or account reads',async t=>{
+  const f=await fixture(t);let invoked=0;
+  for(const [key,value]of [['github',{}],['economicSnapshot',{}],['dataKey',new Proxy(KEY,{})]])assert.throws(()=>createIbRevisionArtifacts({...f.config,[key]:value}),/CONFIG/);
+  const options={...f.config};Object.defineProperty(options,'dataKey',{enumerable:true,get(){invoked++;return KEY;}});
+  assert.throws(()=>createIbRevisionArtifacts(options),/CONFIG/);
+  const proxy=new Proxy(f.config,{getPrototypeOf(){invoked++;return Object.prototype;}});assert.throws(()=>createIbRevisionArtifacts(proxy),/CONFIG/);
+  for(const admission of [{checkCurrent(){invoked++;return true;}},new Proxy(f.admission,{get(){invoked++;}})]){
+    const cap=createIbRevisionArtifacts({...f.config,admission});await rejection(cap.readVerifiedArtifacts({targetDate:T,mainSha:MAIN}),'ADMISSION');
+  }
+  assert.equal(invoked,0);assert.equal(f.state.calls.length,0);assert.equal(f.state.sourceCalls.length,0);
+});
+
+for(const[name,mutate,code]of [
+  ['invalid signature',(p,v)=>{if(p==='commits/'+SCOPE.current.candidateSha)v.commit.verification.verified=false;return v;},'COMMIT'],
+  ['current main carries a different pair',(p,v)=>{if(p==='git/trees/'+TREE)v.tree[0].sha=o('f');return v;},'CURRENT_PAIR'],
+  ['ciphertext not the claimed Git blob',(p,v)=>{if(p.startsWith('contents/data.json'))v.content=Buffer.alloc(v.size,65).toString('base64');return v;},'ARTIFACT'],
+  ['wrong producer head',(p,v)=>{if(p==='actions/runs/'+SCOPE.current.producerRunId)v.head_sha=o('f');return v;},'PRODUCER'],
+  ['incomplete jobs page',(p,v)=>{if(p.endsWith('/jobs?per_page=100'))v.total_count++;return v;},'PRODUCER'],
+  ['producer step did not succeed',(p,v)=>{if(p.endsWith('/jobs?per_page=100'))v.jobs[0].steps[0].conclusion='skipped';return v;},'PRODUCER'],
+  ['candidate changes an extra root path',(p,v)=>{if(p==='git/trees/'+o('2'))v.tree.push({path:'other.txt',type:'blob',mode:'100644',sha:o('f'),size:1});return v;},'PRODUCER'],
+  ['first-parent cycle',(p,v)=>p==='git/commits/'+MAIN?{sha:MAIN,parents:[{sha:MAIN}]}:v,'HISTORY'],
+  ['candidate only on a side parent',(p,v)=>p==='git/commits/'+MAIN?{sha:MAIN,parents:[{sha:SOURCE_U},{sha:SCOPE.current.candidateSha}]}:p==='git/commits/'+SOURCE_U?{sha:SOURCE_U,parents:[{sha:MAIN}]}:v,'HISTORY'],
+  ['history exceeds the bounded proof',(p,v)=>{if(p.startsWith('git/commits/')){const id=p.slice(12);return{sha:id,parents:[{sha:id===MAIN?'0'.repeat(39)+'1':(BigInt('0x'+id)+1n).toString(16).padStart(40,'0')}]};}return v;},'HISTORY'],
+])test(name+' is refused without Sharesight IO',async t=>{
+  const f=await fixture(t);f.state.mutate=mutate;await rejection(f.read(),code);assert.equal(f.state.sourceCalls.length,0);await rejection(f.read(),'CLOSED');
+});
+
+test('success metadata cannot replace the unique original producer log binding',async t=>{
+  for(const log of ['2026-11-06T01:01:01.0000000Z candidate '+o('f')+'\n',
+    ('2026-11-06T01:01:01.0000000Z candidate '+SCOPE.current.candidateSha+'\n').repeat(2),
+    '2026-11-07T01:01:01.0000000Z candidate '+SCOPE.current.candidateSha+'\n']){
+    const f=await fixture(t);f.state.log=log;await rejection(f.read(),'PRODUCER');assert.equal(f.state.sourceCalls.length,0);
+  }
+});
+
+test('original fee, IB and health validation remain mandatory before account reads',async t=>{
+  for(const[options,code]of [
+    [{mutatePayload:p=>p.feeCalculationReceipt.receiptId=h('f')},'FEE_RECEIPT'],
+    [{mutatePayload:p=>p.ibManagerReturnReceipt.grossTwrPpm++},'IB_STATE'],
+    [{mutatePayload:p=>delete p.ibManagerSourceStatus},'IB_STATE'],
+    [{mutateHealth:h=>h.dataSha256='f'.repeat(64)},'HEALTH'],
+    [{mutateHealth:h=>h.sourceDates.webull=B},'HEALTH']
+  ]){
+    const f=await fixture(t,options);await rejection(f.read(),code);assert.equal(f.state.sourceCalls.length,0);
+  }
+});
+
+test('native legacy v2 keeps its independent original-file guard and use-time recheck',async t=>{
+  const f=await fixture(t,{legacy:true});assert.equal(f.economic.legacyV3Copy.schema,'fee-console.economic-v3-copy.v2');
+  const missing=createIbRevisionArtifacts({...f.config,legacySourcePath:null});await rejection(missing.readVerifiedArtifacts({targetDate:T,mainSha:MAIN}),'LEGACY_SOURCE');
+  assert.equal(f.state.sourceCalls.length,0);await f.read();assert.ok(await f.cap.checkCurrent());
+  fs.appendFileSync(f.config.legacySourcePath,' ');await rejection(f.cap.checkCurrent(),'LEGACY_SOURCE');await rejection(f.cap.checkCurrent(),'CLOSED');
+});
+
+test('five-minute expiry, monotonic clock and economic changes revoke capability without resetting it',async t=>{
+  for(const kind of ['expiry','clock','economic']){
+    const f=await fixture(t);await f.read();
+    if(kind==='expiry')f.state.now+=300000;else if(kind==='clock')f.state.now--;else f.state.economicRevision=o('f');
+    await rejection(f.cap.checkCurrent(),kind==='expiry'?'EXPIRED':kind==='clock'?'CLOCK':'ECONOMIC_SOURCE');
+    await rejection(f.cap.checkCurrent(),'CLOSED');assert.equal(f.state.sourceCalls.length,0);
+  }
+});
+
+test('foreign candidates and source-version changes cannot pass the original candidate check',async t=>{
+  const f=await fixture(t),v=await f.read(),candidate=await f.cap.prepareCandidate({plan:f.planOf(v),reader:f.reader});
+  await rejection(f.cap.verifyCandidate(structuredClone(candidate)),'CANDIDATE');await rejection(f.cap.verifyCandidate(candidate),'CLOSED');
+  const g=await fixture(t),w=await g.read(),original=await g.cap.prepareCandidate({plan:g.planOf(w),reader:g.reader});
+  g.state.sourceChanged=true;await rejection(g.cap.verifyCandidate(original),'SOURCE_CHANGED');g.state.sourceChanged=false;
+  await rejection(g.cap.verifyCandidate(original),'CLOSED');
+});
+
+test('exact plan and native reader are mandatory, and ordinary empty objects never trigger a fallback read',async t=>{
+  for(const kind of ['plan','reader']){
+    const f=await fixture(t),v=await f.read(),plan=f.planOf(v);let called=0;
+    if(kind==='plan')plan.bindings={...plan.bindings,consumptionSha256:h('f')};
+    const reader=kind==='reader'?{readStableWithEvidence(){called++;}}:f.reader;
+    await rejection(f.cap.prepareCandidate({plan,reader}),kind==='plan'?'PLAN':'READER');assert.equal(called,0);assert.equal(f.state.sourceCalls.length,0);
+  }
+});
+
+test('concurrent entry is refused and a closed pending read cannot return verified material',async t=>{
+  const f=await fixture(t),pending=f.read();await rejection(f.read(),'BUSY');assert.ok(await pending);
+  const g=await fixture(t),read=g.read();g.cap.close();await rejection(read,'CLOSED');assert.equal(g.state.sourceCalls.length,0);
+});
+
+test('native source failures retain a finite reason code while forged messages cannot escape',async t=>{
+  const f=await fixture(t),v=await f.read();
+  f.reader.fetch=async(url,init)=>{const r=await f.fetchImpl(url,init);if(url.includes('cash_account_transactions')){const b=await r.json();b.cash_account_transactions.pop();return response(url,b);}return r;};
+  await rejection(f.cap.prepareCandidate({plan:f.planOf(v),reader:f.reader}),'SOURCE_CASH_RECONCILIATION');
+  for(const error of [Error('IB_REVISION_SOURCE_REFUSED_IB_SOURCE_PRIVATE_CANARY'),new Proxy({}, {get(){assert.fail('must not inspect');}})])assert.equal(ibRevisionArtifactFailureCode(error),'IB_REVISION_ARTIFACT_REFUSED');
+});
