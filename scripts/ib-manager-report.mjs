@@ -96,11 +96,15 @@ export async function validateIbManagerCoverage(state,targetDate,expectedHash,re
   return structuredClone(state);
 }
 
-export async function prepareIbManagerReport({payload,targetDate,outputDir,environ=process.env,reader}={}){
+// Shared source preparation for synchronization and the ordinary report handoff.
+// Dependencies are explicit: this entry never discovers credentials, constructs
+// a network reader, reads process.env or writes a file. A trusted coordinator may
+// supply a reader over its already captured, frozen source; request JSON cannot
+// select executable dependencies or grant permission to read an account.
+export async function prepareIbManagerReportInput({payload,targetDate,environ,reader}={}){
+  if(!environ||typeof environ!=='object'||!reader||typeof reader.readStable!=='function')refused();
   if(environ.IB_MANAGER_READ_ENABLED!=='true')return null;
   if(!/^\d{4}-\d{2}-\d{2}$/.test(targetDate||''))refused();
-  const dir=fs.realpathSync(outputDir),stat=fs.statSync(dir);
-  if(!outside(dir)||!stat.isDirectory()||(stat.mode&0o077)!==0)refused();
   const expectedBaselineHash=environ.IB_MANAGER_BASELINE_SHA256;
   let request,coverage=null;
   try{
@@ -127,14 +131,13 @@ export async function prepareIbManagerReport({payload,targetDate,outputDir,envir
       coverage=await validateIbManagerCoverage(payload.ibManagerCoverageState,coverageTarget,expectedBaselineHash,requiredFrom,checkpoint?.schema==='fee-console.ib-manager-source.v3'?checkpoint:null,baseline.asOf);
       if(coverage.schema==='fee-console.ib-manager-coverage.v2'&&checkpoint&&checkpoint.schema!=='fee-console.ib-manager-source.v3')throw Error('IB_SOURCE_STATE_INVALID');
     }
-    const activeReader=reader||new SharesightIbManagerReader({clientId:environ.FEE_CLOUD_SHARESIGHT_CLIENT_ID,clientSecret:environ.FEE_CLOUD_SHARESIGHT_CLIENT_SECRET});
     if(!checkpoint&&coverage?.schema==='fee-console.ib-manager-coverage.v2'&&targetDate>coverage.through){
-      const boundary=await activeReader.readStable({targetDate:coverage.through,expectedBaselineHash,baseline,ownerBaseline,bootstrapCoverage:coverage});
+      const boundary=await reader.readStable({targetDate:coverage.through,expectedBaselineHash,baseline,ownerBaseline,bootstrapCoverage:coverage});
       await buildIbManagerReportBundle(boundary,expectedBaselineHash);
       if(boundary.sourceAsOf!==coverage.through)throw Error('IB_SOURCE_STATE_INVALID');
       await validateIbManagerCoverage(coverage,targetDate,expectedBaselineHash,coverage.through,boundary);checkpoint=boundary;
     }
-    const source=await activeReader.readStable({targetDate,expectedBaselineHash,baseline,checkpoint,...(!checkpoint&&ownerBaseline?{ownerBaseline}:{}),...(!checkpoint&&coverage?.schema==='fee-console.ib-manager-coverage.v2'?{bootstrapCoverage:coverage}:{})});
+    const source=await reader.readStable({targetDate,expectedBaselineHash,baseline,checkpoint,...(!checkpoint&&ownerBaseline?{ownerBaseline}:{}),...(!checkpoint&&coverage?.schema==='fee-console.ib-manager-coverage.v2'?{bootstrapCoverage:coverage}:{})});
     await buildIbManagerReportBundle(source,expectedBaselineHash);
     if(source.sourceAsOf!==targetDate)throw Error('IB_SOURCE_STATE_INVALID');
     request={state:'verified',source,...(coverage?{coverage}:{})};
@@ -142,8 +145,23 @@ export async function prepareIbManagerReport({payload,targetDate,outputDir,envir
     const fixed=['IB_SOURCE_BASELINE_LOCK','IB_SOURCE_STATE_INVALID','IB_SOURCE_COVERAGE_UNVERIFIED'];
     request={state:'pending',reasonCode:fixed.includes(error?.message)?error.message:ibSourceFailureCode(error)};
   }
+  return {schema:'fee-console.ib-manager-report-request.v1',targetDate,...request};
+}
+
+export async function prepareIbManagerReport({payload,targetDate,outputDir,environ=process.env,reader}={}){
+  if(environ.IB_MANAGER_READ_ENABLED!=='true')return null;
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(targetDate||''))refused();
+  const dir=fs.realpathSync(outputDir),stat=fs.statSync(dir);
+  if(!outside(dir)||!stat.isDirectory()||(stat.mode&0o077)!==0)refused();
+  let activeReader;
+  // Preserve the original lazy construction: failed history/coverage checks do
+  // not inspect source credentials or create the live reader.
+  const request=await prepareIbManagerReportInput({payload,targetDate,environ,reader:{readStable(args){
+    activeReader??=reader||new SharesightIbManagerReader({clientId:environ.FEE_CLOUD_SHARESIGHT_CLIENT_ID,clientSecret:environ.FEE_CLOUD_SHARESIGHT_CLIENT_SECRET});
+    return activeReader.readStable(args);
+  }}});
   const file=path.join(dir,'ib-manager-input.json');
-  fs.writeFileSync(file,JSON.stringify({schema:'fee-console.ib-manager-report-request.v1',targetDate,...request}),{mode:0o600,flag:'wx'});
+  fs.writeFileSync(file,JSON.stringify(request),{mode:0o600,flag:'wx'});
   return {file,state:request.state,...(request.reasonCode?{reasonCode:request.reasonCode}:{})};
 }
 
