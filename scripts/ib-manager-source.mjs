@@ -1,5 +1,7 @@
 // Normal-report IB source only. No credential discovery, writes, scheduler or CLI.
 import crypto from 'node:crypto';
+import {AsyncLocalStorage} from 'node:async_hooks';
+import {types} from 'node:util';
 import {boundedJson} from './fee-http-json.mjs';
 import {isCalendarDate,inclusiveDays} from './fee-engine.mjs';
 import {parseSourceJson,cashCents,exactNumberText} from './fee-cloud-source.mjs';
@@ -43,6 +45,52 @@ const fail=(code,cashSite,cashDateRole='PROOF')=>{throw new IbManagerSourceError
 export const ibSourceFailureCode=e=>e instanceof IbManagerSourceError?'IB_SOURCE_'+e.code:'IB_SOURCE_NETWORK';
 export const ibCanonical=v=>Array.isArray(v)?'['+v.map(ibCanonical).join(',')+']':v&&typeof v==='object'?'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+ibCanonical(v[k])).join(',')+'}':JSON.stringify(v);
 const hash=v=>crypto.createHash('sha256').update(ibCanonical(v)).digest('hex');
+const CAPTURE_MAX_BYTES=32*1024*1024,CAPTURE_MAX_RECORDS=2048;
+function freezeCapture(value){if(value&&typeof value==='object'){for(const child of Object.values(value))freezeCapture(child);Object.freeze(value);}return value;}
+function captureOptions(request){
+  const active=new Set();let nodes=0,bytes=0;
+  const copy=(value,depth)=>{
+    if(++nodes>200000||depth>64)fail('STATE');
+    if(value===null||typeof value==='boolean')return value;
+    if(typeof value==='string'){bytes+=Buffer.byteLength(value);if(bytes>CAPTURE_MAX_BYTES)fail('STATE');return value;}
+    if(typeof value==='number'){if(!Number.isFinite(value)||Object.is(value,-0)||Math.abs(value)>Number.MAX_SAFE_INTEGER)fail('STATE');return value;}
+    if(typeof value!=='object'||types.isProxy(value)||active.has(value))fail('STATE');
+    const array=Array.isArray(value),proto=Object.getPrototypeOf(value);
+    if(array?proto!==Array.prototype:proto!==Object.prototype&&proto!==null)fail('STATE');
+    const descriptors=Object.getOwnPropertyDescriptors(value),keys=Reflect.ownKeys(descriptors);
+    if(keys.some(key=>typeof key!=='string'||['__proto__','constructor','prototype'].includes(key)))fail('STATE');
+    active.add(value);let result;
+    if(array){
+      const length=descriptors.length?.value;
+      if(!Number.isSafeInteger(length)||length<0||length>200000||keys.length!==length+1)fail('STATE');
+      result=[];for(let index=0;index<length;index++){const descriptor=descriptors[String(index)];if(!descriptor||!Object.hasOwn(descriptor,'value')||!descriptor.enumerable)fail('STATE');result.push(copy(descriptor.value,depth+1));}
+    }else{
+      result={};for(const key of keys){const descriptor=descriptors[key];if(!Object.hasOwn(descriptor,'value')||!descriptor.enumerable)fail('STATE');bytes+=Buffer.byteLength(key);if(bytes>CAPTURE_MAX_BYTES)fail('STATE');Object.defineProperty(result,key,{value:copy(descriptor.value,depth+1),enumerable:true});}
+    }
+    active.delete(value);return result;
+  };
+  const options=copy(request,0),keys=['targetDate','expectedBaselineHash','baseline','checkpoint','ownerBaseline','bootstrapCoverage'];
+  if(!object(options)||Object.keys(options).some(key=>!keys.includes(key)))fail('STATE');
+  return freezeCapture({targetDate:options.targetDate,expectedBaselineHash:options.expectedBaselineHash,
+    baseline:options.baseline===undefined?IB_BASELINE_WINDOW:options.baseline,
+    checkpoint:options.checkpoint===undefined?null:options.checkpoint,
+    ownerBaseline:options.ownerBaseline===undefined?null:options.ownerBaseline,
+    bootstrapCoverage:options.bootstrapCoverage===undefined?null:options.bootstrapCoverage});
+}
+function captureContainsSecret(value,secrets){
+  const pending=[value];let count=0;
+  while(pending.length){
+    if(++count>200000)fail('INCOMPLETE');const next=pending.pop();
+    if(typeof next==='string'){if(secrets.some(secret=>next===secret||secret.length>=8&&next.includes(secret)))return true;}
+    else if(next&&typeof next==='object')for(const[key,child]of Object.entries(next)){if(secrets.some(secret=>secret.length>=8&&key.includes(secret)))return true;pending.push(child);}
+  }
+  return false;
+}
+function finishCapture(capture){
+  const records=capture.records.sort((a,b)=>{const x=a.path+'\0'+ibCanonical(a.query)+'\0'+a.body,y=b.path+'\0'+ibCanonical(b.query)+'\0'+b.body;return x<y?-1:x>y?1:0;});
+  if(!records.length)fail('INCOMPLETE');
+  return {attempt:capture.attempt,records,sha256:hash(records)};
+}
 const object=v=>v&&typeof v==='object'&&!Array.isArray(v);
 const exact=(v,keys)=>object(v)&&Object.keys(v).sort().join(',')===[...keys].sort().join(',');
 const day=d=>{if(!isCalendarDate(d))fail('DATE');return d;};
@@ -297,6 +345,7 @@ function nativePayoutDateProof(p,row,portfolioId){
 
 export class SharesightIbManagerReader{
   #portfolio=null;#cash=new Set();#payouts=new Set();
+  #captureContext=new AsyncLocalStorage();#capturedReads=new WeakMap();#captureExclusive=false;#ordinaryReads=0;
   constructor({clientId,clientSecret,fetchImpl=globalThis.fetch,timeoutMs=20000}={}){
     if(![clientId,clientSecret].every(v=>typeof v==='string'&&v.length>0&&v.length<=8192&&!/[\r\n\0]/.test(v))||typeof fetchImpl!=='function'||!Number.isInteger(timeoutMs)||timeoutMs<1000||timeoutMs>30000)fail('CONFIG');
     this.clientId=clientId;this.clientSecret=clientSecret;this.fetch=fetchImpl;this.timeoutMs=timeoutMs;
@@ -305,7 +354,26 @@ export class SharesightIbManagerReader{
     const p=new URL(url),base='/api/v3/portfolios/'+this.#portfolio;
     const allowed=url===API+'/oauth2/token'||url===API+'/api/v2/portfolios.json'||p.origin===API&&this.#portfolio&&([base+'/performance',base+'/holdings',base+'/trades.json','/api/v2/portfolios/'+this.#portfolio+'/cash_accounts.json'].includes(p.pathname)||[...this.#cash].some(n=>p.pathname==='/api/v2/cash_accounts/'+n+'/cash_account_transactions.json')||[...this.#payouts].some(n=>url===API+'/api/v2/payouts/'+n+'.json'));
     if(!allowed||body&&url!==API+'/oauth2/token')fail('SCOPE');
-    try{const response=await boundedJson(this.fetch,url,{method:body?'POST':'GET',headers:{Accept:'application/json',...(body?{'Content-Type':'application/x-www-form-urlencoded'}:{Authorization:'Bearer '+token})},...(body?{body}:{})},{timeoutMs:this.timeoutMs,maxBytes:2*1024*1024,requireJsonType:true,includeBytes:true});return parseSourceJson(response.bytes.toString('utf8'));}catch{fail('NETWORK');}
+    try{
+      const response=await boundedJson(this.fetch,url,{method:body?'POST':'GET',headers:{Accept:'application/json',...(body?{'Content-Type':'application/x-www-form-urlencoded'}:{Authorization:'Bearer '+token})},...(body?{body}:{})},{timeoutMs:this.timeoutMs,maxBytes:2*1024*1024,requireJsonType:true,includeBytes:true});
+      const capture=this.#captureContext.getStore();
+      // The ordinary path retains its existing parsing behavior. Evidence is
+      // retained only for this private GET batch, never for the OAuth response,
+      // headers or request body. Decode original bytes, not a reserialization.
+      const text=capture?new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(response.bytes):response.bytes.toString('utf8');
+      const parsed=parseSourceJson(text);
+      if(capture&&!body&&url!==API+'/oauth2/token'){
+        if(!capture.active||p.origin!==API||p.username||p.password||p.hash)fail('SCOPE');
+        const pairs=[...p.searchParams.entries()].sort(([a],[b])=>a<b?-1:a>b?1:0);
+        if(new Set(pairs.map(([key])=>key)).size!==pairs.length)fail('SCOPE');
+        const query=Object.fromEntries(pairs),secrets=[token,this.clientId,this.clientSecret].filter(x=>typeof x==='string'&&x.length);
+        if(secrets.some(secret=>secret.length>=8&&text.includes(secret))||captureContainsSecret(parsed,secrets))fail('SCOPE');
+        capture.bytes+=response.bytes.length;
+        if(capture.bytes>CAPTURE_MAX_BYTES||capture.records.length>=CAPTURE_MAX_RECORDS)fail('INCOMPLETE');
+        capture.records.push({method:'GET',path:p.pathname,query,body:text,sha256:crypto.createHash('sha256').update(response.bytes).digest('hex')});
+      }
+      return parsed;
+    }catch{fail('NETWORK');}
   }
   async #read({targetDate,expectedBaselineHash,baseline,checkpoint,ownerBaseline,bootstrapCoverage}){
     day(targetDate);day(baseline.from);day(baseline.asOf);
@@ -488,8 +556,41 @@ export class SharesightIbManagerReader{
     return {source,fingerprint:hash({identityHash,reports,ledger:ledger.sort((a,b)=>a.id-b.id),trades:trades.sort((a,b)=>a.id-b.id),cashList:cashList.sort((a,b)=>a.id-b.id),...payoutEvidence,...(cashDateNormalizations.length?{cashDateNormalizations}:{}),...incomeEvidence})};
   }
   async readStable({targetDate,expectedBaselineHash,baseline=IB_BASELINE_WINDOW,checkpoint=null,ownerBaseline=null,bootstrapCoverage=null}={}){
-    if(!/^[a-f0-9]{64}$/.test(expectedBaselineHash||''))fail('BASELINE_LOCK');
-    const a=await this.#read({targetDate,expectedBaselineHash,baseline,checkpoint,ownerBaseline,bootstrapCoverage}),b=await this.#read({targetDate,expectedBaselineHash,baseline,checkpoint,ownerBaseline,bootstrapCoverage});
-    if(a.fingerprint!==b.fingerprint)fail('UNSTABLE');return a.source;
+    if(this.#captureExclusive)fail('STATE');this.#ordinaryReads++;
+    try{
+      if(!/^[a-f0-9]{64}$/.test(expectedBaselineHash||''))fail('BASELINE_LOCK');
+      const a=await this.#read({targetDate,expectedBaselineHash,baseline,checkpoint,ownerBaseline,bootstrapCoverage}),b=await this.#read({targetDate,expectedBaselineHash,baseline,checkpoint,ownerBaseline,bootstrapCoverage});
+      if(a.fingerprint!==b.fingerprint)fail('UNSTABLE');return a.source;
+    }finally{this.#ordinaryReads--;}
+  }
+  // An in-memory acquisition result, not an approval to publish or a receipt
+  // transferable to another process. All original business checks still run.
+  async readStableWithEvidence(request={}){
+    const options=captureOptions(request),{targetDate,expectedBaselineHash,baseline,checkpoint,ownerBaseline,bootstrapCoverage}=options;
+    if(this.#captureExclusive||this.#ordinaryReads)fail('STATE');this.#captureExclusive=true;
+    const captures=[];
+    try{
+      if(!/^[a-f0-9]{64}$/.test(expectedBaselineHash||''))fail('BASELINE_LOCK');
+      const run=async attempt=>{
+        const capture={attempt,records:[],bytes:0,active:true};
+        try{
+          return await this.#captureContext.run(capture,async()=>{
+            const result=await this.#read({targetDate,expectedBaselineHash,baseline,checkpoint,ownerBaseline,bootstrapCoverage});
+            captures.push(finishCapture(capture));return result;
+          });
+        }finally{capture.active=false;}
+      };
+      const first=await run(1),second=await run(2);
+      if(first.fingerprint!==second.fingerprint||captures[0].sha256!==captures[1].sha256)fail('UNSTABLE');
+      const result=freezeCapture({input:first.source,evidence:{schema:'fee-console.sharesight-capture.v1',provider:'Sharesight',targetDate,captures,sourceSha256:captures[0].sha256}});
+      this.#capturedReads.set(result,{parametersSha256:hash(options),consumed:false});return result;
+    }finally{this.#captureExclusive=false;}
+  }
+  verifyCapturedRead(result){return this.#capturedReads.has(result);}
+  consumeCapturedRead(result,request={}){
+    const state=this.#capturedReads.get(result);
+    if(!state||state.consumed)fail('STATE');
+    if(hash(captureOptions(request))!==state.parametersSha256)fail('STATE');
+    state.consumed=true;return result.input;
   }
 }

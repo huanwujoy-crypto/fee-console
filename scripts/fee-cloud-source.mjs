@@ -4,6 +4,8 @@
 // It deliberately exposes no arbitrary URL, method, portfolio, or date range.
 
 import crypto from "node:crypto";
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { types } from 'node:util';
 import { boundedJson, BoundedJsonError } from './fee-http-json.mjs';
 import {managedTransferCandidates,buildManagedTransferProof,consumeManagedTransferProof,validateManagedTransferIdentities} from './fee-sharesight-transfers.mjs';
 import {validateManagementRegistry} from './fee-management-exemption.mjs';
@@ -19,6 +21,8 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TOKEN_RE = /^[A-Za-z0-9._~+/=-]{20,16384}$/;
 const MAX_BODY = 2 * 1024 * 1024;
 const NUMBER_TEXT = Symbol('Sharesight number text');
+const sourceCaptureContext = new AsyncLocalStorage();
+const MAX_CAPTURE_BYTES = 32 * 1024 * 1024, MAX_CAPTURE_RECORDS = 2048;
 
 export const CLOUD_ACCOUNTS = Object.freeze({
   schwab: Object.freeze({ name: "Schwab-HK", portfolioId: 936249 }),
@@ -35,6 +39,45 @@ const stable = value => {
   return JSON.stringify(value);
 };
 const sha256 = value => crypto.createHash("sha256").update(stable(value)).digest("hex");
+
+// Evidence is an explicit, private-memory result, never a log or an artifact.
+// Copy non-secret business arguments without invoking getters or proxy traps.
+function captureArgument(value) {
+  const active=new Set();let nodes=0,bytes=0;
+  const copy=(v,depth)=>{
+    if(++nodes>100000||depth>64)fail('CONFIG');
+    if(v===null||typeof v==='boolean')return v;
+    if(typeof v==='string'){bytes+=Buffer.byteLength(v);if(bytes>MAX_CAPTURE_BYTES)fail('CONFIG');return v;}
+    if(typeof v==='number'){if(!Number.isFinite(v)||Object.is(v,-0))fail('CONFIG');return v;}
+    if(typeof v!=='object'||types.isProxy(v)||active.has(v))fail('CONFIG');
+    const array=Array.isArray(v),proto=Object.getPrototypeOf(v);
+    if(array?proto!==Array.prototype:proto!==Object.prototype&&proto!==null)fail('CONFIG');
+    const ds=Object.getOwnPropertyDescriptors(v),keys=Reflect.ownKeys(ds);
+    if(keys.some(k=>typeof k!=='string'||['__proto__','constructor','prototype'].includes(k)))fail('CONFIG');
+    active.add(v);let out;
+    if(array){const n=ds.length?.value;if(!Number.isSafeInteger(n)||n<0||n>100000||keys.length!==n+1)fail('CONFIG');out=[];for(let i=0;i<n;i++){const d=ds[i];if(!d||!Object.hasOwn(d,'value')||!d.enumerable)fail('CONFIG');out.push(copy(d.value,depth+1));}}
+    else{out={};for(const k of keys.sort()){const d=ds[k];if(!Object.hasOwn(d,'value')||!d.enumerable)fail('CONFIG');out[k]=copy(d.value,depth+1);}}
+    active.delete(v);return out;
+  };
+  return copy(value,0);
+}
+function freezeCapture(value){if(value&&typeof value==='object'){for(const v of Object.values(value))freezeCapture(v);Object.freeze(value);}return value;}
+function captureRecord(context,url,init,response) {
+  const u=new URL(url);
+  if(u.origin!==API||u.username||u.password||u.hash||init.method!=='GET'||init.body!==undefined)fail('ROUTE_BLOCKED');
+  const query={};
+  for(const [k,v]of [...u.searchParams].sort(([a],[b])=>a<b?-1:a>b?1:0)){if(Object.hasOwn(query,k)||!['consolidated','end_date','grouping','include_limited','include_sales','report_combined','start_date','date','from','to'].includes(k))fail('ROUTE_BLOCKED');query[k]=v;}
+  const body=new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(response.bytes);
+  const bearer=init.headers?.Authorization?.replace(/^Bearer /,'');
+  const secrets=[bearer,...context.secrets].filter(v=>typeof v==='string'&&v.length);
+  const seen=[JSON.parse(body)];let nodes=0;
+  while(seen.length){const v=seen.pop();if(++nodes>100000)fail('RESPONSE_SIZE');if(typeof v==='string'&&secrets.some(s=>v===s||s.length>=8&&v.includes(s)))fail('RESPONSE_CREDENTIAL');if(v&&typeof v==='object'){if(Object.keys(v).some(k=>secrets.some(s=>s.length>=8&&k.includes(s))))fail('RESPONSE_CREDENTIAL');seen.push(...Object.values(v));}}
+  if(secrets.some(s=>s.length>=8&&body.includes(s)))fail('RESPONSE_CREDENTIAL');
+  context.bytes+=response.bytes.length;
+  if(context.bytes>MAX_CAPTURE_BYTES||context.records.length>=MAX_CAPTURE_RECORDS)fail('RESPONSE_SIZE');
+  context.records.push({method:'GET',path:u.pathname,query,body,sha256:crypto.createHash('sha256').update(response.bytes).digest('hex')});
+  return body;
+}
 
 function rows(payload, key) {
   assertComplete(payload);
@@ -822,12 +865,15 @@ class FixedHttp {
       const path = new URL(url).pathname;
       const isPrecisionSource = path.endsWith('/trades.json') || path.endsWith('/performance') || path.endsWith('/cash_accounts.json')
         || path.endsWith('/cash_account_transactions.json') || /^\/api\/v2\/payouts\/[1-9]\d{0,14}\.json$/.test(path);
-      const includeBytes=isPrecisionSource||this.onSourceResponse&&url!==TOKEN_URL;
+      const capture=sourceCaptureContext.getStore();
+      const captureThis=capture?.http===this&&url!==TOKEN_URL;
+      const includeBytes=isPrecisionSource||this.onSourceResponse&&url!==TOKEN_URL||captureThis;
       const response = await boundedJson(this.fetchImpl, url, init, {
         timeoutMs: this.timeoutMs, maxBytes: MAX_BODY, requireJsonType: true, includeBytes: !!includeBytes,
       });
+      const capturedBody=captureThis?captureRecord(capture,url,init,response):null;
       if(this.onSourceResponse&&url!==TOKEN_URL){const bearer=init?.headers?.Authorization?.replace(/^Bearer /,'');if(bearer&&response.bytes.includes(Buffer.from(bearer)))fail('RESPONSE_CREDENTIAL');await this.onSourceResponse(response.bytes);}
-      return isPrecisionSource ? parseSourceJson(new TextDecoder('utf-8', { fatal: true }).decode(response.bytes)) : includeBytes?response.json:response;
+      return isPrecisionSource ? parseSourceJson(capturedBody??new TextDecoder('utf-8', { fatal: true }).decode(response.bytes)) : includeBytes?response.json:response;
     } catch (error) {
       const code = error instanceof BoundedJsonError ? error.code : 'NETWORK';
       if (['NETWORK', 'TIMEOUT', 'ABORTED'].includes(code)) fail(url === TOKEN_URL ? 'AUTH_UNAVAILABLE' : 'SOURCE_UNAVAILABLE');
@@ -838,6 +884,7 @@ class FixedHttp {
 }
 
 export class SharesightCloudReader {
+  #capturing=false;#capturedReads=new WeakMap();#ownedHttp;#ordinaryReads=0;
   constructor({ clientId, clientSecret, fetchImpl = globalThis.fetch, timeoutMs, incomeDateEvidence = {},reconcileInKind=false,onSourceResponse=null,managedTransferIdentities=null,managementExemptionRegistry,sourceMode='legacy-reconstruction' } = {}) {
     if(!['legacy-reconstruction','sharesight-reference'].includes(sourceMode))fail('SOURCE_MODE');this.sourceMode=sourceMode;
     if(typeof reconcileInKind!=='boolean')fail('CONFIG');this.reconcileInKind=reconcileInKind;
@@ -849,8 +896,22 @@ export class SharesightCloudReader {
         && !/[\r\n\0]/.test(value))) fail("CREDENTIALS");
     this.clientId = clientId; this.clientSecret = clientSecret;
     this.http = new FixedHttp(fetchImpl, { timeoutMs,onSourceResponse });
+    this.#ownedHttp=this.http;
+  }
+  #captureGuard(){if(this.#capturing&&sourceCaptureContext.getStore()?.reader!==this)fail('CONFIG');}
+  #captureArguments(targetDate,benchmark){
+    const names=['sourceMode','incomeDateEvidence','reconcileInKind','managedTransferIdentities','managementExemptionRegistry'];
+    const config={};for(const name of names){const d=Object.getOwnPropertyDescriptor(this,name);if(!d||!Object.hasOwn(d,'value'))fail('CONFIG');config[name]=d.value??null;}
+    return captureArgument({targetDate,benchmark,config});
+  }
+  verifyCapturedRead(result){return this.#capturedReads.has(result);}
+  consumeCapturedRead(result,targetDate,benchmark){
+    const state=this.#capturedReads.get(result);
+    if(!state||state.consumed||state.argumentsHash!==sha256(this.#captureArguments(targetDate,benchmark)))fail('CONFIG');
+    state.consumed=true;return result.input;
   }
   async token() {
+    this.#captureGuard();
     const body = new URLSearchParams({ grant_type: "client_credentials", client_id: this.clientId,
       client_secret: this.clientSecret }).toString();
     const payload = await this.http.json(TOKEN_URL, { method: "POST", headers: {
@@ -861,10 +922,14 @@ export class SharesightCloudReader {
     return payload.access_token;
   }
   async get(url, token) {
+    this.#captureGuard();
     return this.http.json(url, { method: "GET", headers: { Accept: "application/json",
       Authorization: `Bearer ${token}`, "User-Agent": "fee-console-cloud-reader/1.0" } });
   }
   async readOnce(targetDate) {
+    this.#captureGuard();
+    const ordinary=sourceCaptureContext.getStore()?.reader!==this;if(ordinary)this.#ordinaryReads++;
+    try{
     date(targetDate);
     const token = await this.token();
     const portfolioPayload = await this.get(PORTFOLIOS_URL, token);
@@ -941,16 +1006,47 @@ export class SharesightCloudReader {
       for(const [account,p]of Object.entries(raw))p.managedTransferProof=buildManagedTransferProof({account,portfolio:{name:CLOUD_ACCOUNTS[account].name,id:CLOUD_ACCOUNTS[account].portfolioId},raw:p,peerPortfolio,peer,targetDate,identifiedTransfers:identitiesFor(account),managementExemptionRegistry:this.managementExemptionRegistry,referenceSource:this.sourceMode==='sharesight-reference'});
     }
     return raw;
+    }finally{if(ordinary)this.#ordinaryReads--;}
   }
   async readStable(targetDate, benchmark) {
+    this.#captureGuard();
+    this.#ordinaryReads++;
+    try{
     const first = normalizeRead(await this.readOnce(targetDate), targetDate, benchmark,{sourceMode:this.sourceMode});
     const second = normalizeRead(await this.readOnce(targetDate), targetDate, benchmark,{sourceMode:this.sourceMode});
     if (stable(first) !== stable(second)) fail("SOURCE_UNSTABLE");
     return first;
+    }finally{this.#ordinaryReads--;}
+  }
+  // Explicit opt-in only. The old readStable return value and ordinary path
+  // are unchanged. A JSON copy of this result cannot authorize later reuse.
+  async readStableWithEvidence(targetDate,benchmark){
+    this.#captureGuard();if(this.#capturing||this.#ordinaryReads)fail('CONFIG');
+    if(this.http!==this.#ownedHttp||this.http.json!==FixedHttp.prototype.json||this.readOnce!==SharesightCloudReader.prototype.readOnce||this.get!==SharesightCloudReader.prototype.get||this.token!==SharesightCloudReader.prototype.token)fail('CONFIG');
+    const argumentsCopy=this.#captureArguments(targetDate,benchmark),argumentsHash=sha256(argumentsCopy);
+    const captures=[],secrets=[this.clientId,this.clientSecret];this.#capturing=true;
+    try{
+      const inputs=[];
+      for(const attempt of [1,2]){
+        const context={reader:this,http:this.http,records:[],bytes:0,secrets};
+        const input=await sourceCaptureContext.run(context,async()=>normalizeRead(await SharesightCloudReader.prototype.readOnce.call(this,targetDate),targetDate,argumentsCopy.benchmark,{sourceMode:argumentsCopy.config.sourceMode}));
+        if(!context.records.length)fail('SOURCE_INCOMPLETE');
+        const order=r=>r.path+'\0'+stable(r.query)+'\0'+r.body;
+        const records=context.records.sort((a,b)=>order(a)<order(b)?-1:order(a)>order(b)?1:0),digest=sha256(records);
+        captures.push({attempt,records,sha256:digest});inputs.push(input);
+      }
+      if(stable(inputs[0])!==stable(inputs[1])||captures[0].sha256!==captures[1].sha256)fail('SOURCE_UNSTABLE');
+      if(argumentsHash!==sha256(this.#captureArguments(targetDate,benchmark)))fail('SOURCE_UNSTABLE');
+      const result=freezeCapture({input:inputs[0],evidence:{schema:'fee-console.sharesight-capture.v1',provider:'Sharesight',targetDate,captures,sourceSha256:captures[0].sha256}});
+      this.#capturedReads.set(result,{argumentsHash,consumed:false});return result;
+    }finally{secrets.length=0;this.#capturing=false;}
   }
   // Field acceptance only, not an IB TWR receipt or a baseline/coverage grant.
   // Uses the same credential, fixed GET client and name-bound peer discovery.
   async readIbEvidenceWindow(fromDate,targetDate){
+    this.#captureGuard();
+    this.#ordinaryReads++;
+    try{
     date(fromDate);date(targetDate);const span=(Date.parse(targetDate)-Date.parse(fromDate))/86400000;if(span<0||span>7)fail('DATE');
     const token=await this.token(),listing=rows(await this.get(PORTFOLIOS_URL,token),'portfolios'),matches=listing.filter(p=>p.name==='IB-HK'&&p.currency_code==='USD');
     if(matches.length!==1)fail('PORTFOLIO_IDENTITY');this.http.registerIbPeer(matches[0]);const portfolio={id:id(matches[0].id),name:'IB-HK',currency:'USD'},base=`${API}/api/v3/portfolios/${portfolio.id}`;
@@ -961,5 +1057,6 @@ export class SharesightCloudReader {
       days.push({date:d,performance,cashAccounts,cashTransactions});
     }
     return {portfolio,catalog,trades,days};
+    }finally{this.#ordinaryReads--;}
   }
 }

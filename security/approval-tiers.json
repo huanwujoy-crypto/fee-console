@@ -637,6 +637,18 @@
     "scripts/ib-manager-source-revision.test.mjs",
     "scripts/fee-source-contract.mjs",
     "scripts/fee-source-contract.test.mjs",
-    "docs/fee-source-revision.md"
+    "docs/fee-source-revision.md",
+    "docs/fee-unified-source-readiness.md",
+    "scripts/fee-sync-capture.test.mjs",
+    "scripts/fee-sync-captured-inputs.mjs",
+    "scripts/fee-sync-captured-inputs.test.mjs",
+    "scripts/fee-sync-cycle.mjs",
+    "scripts/fee-sync-cycle.test.mjs",
+    "scripts/fee-sync-readiness.mjs",
+    "scripts/fee-sync-readiness.test.mjs",
+    "scripts/fee-sync-source-projection.mjs",
+    "scripts/fee-sync-source-projection.test.mjs",
+    "scripts/fee-sync-test-fixtures.mjs",
+    "scripts/ib-manager-report-memory.test.mjs"
   ]
 }
