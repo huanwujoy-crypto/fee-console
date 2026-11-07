@@ -16,6 +16,7 @@ import {dailyReportPlan,weeklyReportPlan,monthlyReportPlan,reportAddDays} from '
 import {HEALTH_SCHEMA,validateHealth} from './fee-data-health.mjs';
 import {CLOUD_ONCE,cloudOnceWindow,cloudOnceRequest,admitCloudOnce,confirmCloudOnce,recordCloudOnceCandidate,cloudOnceStatus,pauseCloudOnce,cloudOnceControl,scheduledDailyContext} from './fee-report-producer.mjs';
 import {reviewedMainConfirmation,confirmReviewedMainBeforeSource,confirmReviewedRecoveryBeforeSource,isHistoricalRevisionAdmission,readHistoricalRevisionAdmission,reportHistoricalRecoveryManifest,readCurrentSyncRun} from './fee-report-producer.mjs';
+import {isHistoricalRevisionDiagnosticAdmission,readHistoricalRevisionDiagnosticAdmission,authorizeHistoricalRevisionDiagnostic} from './fee-report-producer.mjs';
 
 function cloudOnceFixture(){
  const main='a'.repeat(40),candidate='b'.repeat(40),runId=1001,now=new Date('2026-11-03T02:00:10Z');
@@ -1542,13 +1543,16 @@ test('period rejects forged, cloned, wrong-target and injected-reader revision a
   process.env.GITHUB_SHA='e'.repeat(40);await assert.rejects(produceReportPeriod(base),/^Error: FEE_REPORT_REVISION_ADMISSION$/);assert.equal(io,0);
  }finally{if(previous===undefined)delete process.env.GITHUB_SHA;else process.env.GITHUB_SHA=previous;}
 });
-test('both admission checks use the existing ephemeral read token without extending other workflow steps or permissions',()=>{
+test('both production admission checks retain their original ephemeral read token and permissions',()=>{
  const wf=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8');
  const produce=wf.split('\n  produce:\n')[1].split('\n  once-finish:\n')[0];
  const step=produce.split('      - name: Read, calculate and validate the encrypted candidate\n')[1].split('\n      - name:')[0];
  assert.match(produce,/permissions:\n      contents: read\n      actions: read\n      id-token: write/);
  assert.match(step,/FEE_REPORT_ACTIONS_TOKEN: \$\{\{ github.token \}\}/);assert.equal((produce.match(/FEE_REPORT_ACTIONS_TOKEN:/g)||[]).length,2);
- assert.equal((wf.match(/FEE_REPORT_ACTIONS_TOKEN:/g)||[]).length,3);assert.doesNotMatch(produce,/contents: write|actions: write/);
+ const diagnostic=wf.split('\n  ib-diagnostic:\n');assert.equal(diagnostic.length,2);
+ assert.equal((diagnostic[0].match(/FEE_REPORT_ACTIONS_TOKEN:/g)||[]).length,3);
+ assert.equal((diagnostic[1].match(/FEE_REPORT_ACTIONS_TOKEN:/g)||[]).length,2);
+ assert.doesNotMatch(produce,/contents: write|actions: write/);
  assert.deepEqual([...wf.matchAll(/cron: '([^']+)'/g)].map(m=>m[1]),['0 1 * * *','30 3 * * *','0 6 * * *']);
  assert.match(wf,/group: fee-cloud-producer\n  cancel-in-progress: false/);assert.match(wf,/github\.run_attempt == 1/);
 });
@@ -1616,7 +1620,17 @@ test('actual period CLI and workflow summary carry the scoped token and safe fai
  else{if(init.headers?.Authorization)throw Error('token escaped action scope');if(route==='git/ref/heads/main')v={object:{sha:'a'.repeat(40)}};else if(route.startsWith('contents/')){const text=route.startsWith('contents/data.json?')?data:route.startsWith('contents/fee-data-health.json?')?JSON.stringify(health):null;if(text===null)throw Error('unknown file');v={type:'file',encoding:'base64',size:Buffer.byteLength(text),content:Buffer.from(text).toString('base64')};}else if(route.startsWith('git/matching-refs/heads/'))v=[];else throw Error('unknown route');}
  const r=new Response(JSON.stringify(v),{status});Object.defineProperty(r,'url',{value:url});return r;};`);
  const workflow=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8'),period=workflow.split('\n  period:\n')[1].split('\n  once-admit:\n')[0];
- assert.match(period,/permissions:\n      contents: read\n      actions: read/);assert.match(period,/FEE_REPORT_ACTIONS_TOKEN: \$\{\{ github.token \}\}/);assert.equal((workflow.match(/FEE_REPORT_ACTIONS_TOKEN:/g)||[]).length,3);
+ assert.match(period,/permissions:\n      contents: read\n      actions: read/);assert.match(period,/FEE_REPORT_ACTIONS_TOKEN: \$\{\{ github.token \}\}/);
+ const workflowJobs=[...workflow.matchAll(/^  ([a-z][a-z-]*):\n([\s\S]*?)(?=^  [a-z][a-z-]*:\n|(?![\s\S]))/gm)];
+ const tokenJobs=Object.fromEntries(workflowJobs.map(([,name,body])=>[name,(body.match(/FEE_REPORT_ACTIONS_TOKEN:/g)||[]).length]).filter(([,count])=>count));
+ assert.deepEqual(tokenJobs,{period:1,produce:2,'ib-diagnostic':2});
+ assert.equal((workflow.match(/FEE_REPORT_ACTIONS_TOKEN:/g)||[]).length,5);
+ const diagnostic=workflowJobs.find(([,name])=>name==='ib-diagnostic')[2];
+ assert.match(diagnostic,/permissions:\n      contents: read\n      actions: read\n      id-token: write/);
+ const tokenSteps=[...diagnostic.matchAll(/      - name: ([^\n]+)\n([\s\S]*?)(?=      - name: |(?![\s\S]))/g)].filter(([, ,body])=>body.includes('FEE_REPORT_ACTIONS_TOKEN:'));
+ assert.deepEqual(tokenSteps.map(([,name])=>name),['Verify exact one-time diagnostic and frozen baseline before credentials','Inspect Jenny without a writer or publication token']);
+ for(const [, ,body]of tokenSteps)assert.equal((body.match(/FEE_REPORT_ACTIONS_TOKEN: \$\{\{ github.token \}\}/g)||[]).length,1);
+ assert.doesNotMatch(tokenSteps[0][2],/FEE_DATA_KEY|FEE_CLOUD_SHARESIGHT_CLIENT|FEE_ECON_GIST_ID/);
  const receiver=period.split(`node --input-type=module - "$summary" <<'NODE'\n`)[1].split('\n          NODE')[0].replace(/^          /gm,'');assert.ok(receiver.includes('reportPreflightSummary(r)'));
  const cli=new URL('./fee-report-producer.mjs',import.meta.url).pathname,cwd=path.resolve(path.dirname(cli),'..');
  for(const [kind,expected]of [['ok',null],['http401','HTTP_401'],['http403','HTTP_403'],['http429','HTTP_429'],['http500','HTTP'],['network','NETWORK'],['partial','METADATA_INVALID'],['missing','AUTH_REQUIRED']]){
@@ -1753,4 +1767,122 @@ test('closing sync admission during current-run IO stops before the next publica
   readState:async(...args)=>{publicationReads++;return readers.readState(...args);}});
  const checking=admission.checkCurrent();await entered;admission.close();releaseRun();
  await assert.rejects(checking,/RECOVERY_CONSUMED/);assert.equal(publicationReads,1);assert.equal(isHistoricalRevisionAdmission(admission),false);
+});
+
+const diagnosticRevisionContract='ib-source-revision-20261106-diagnostic-v1';
+const diagnosticRevisionBase='4f98318c73d1727d323febdcc72b7d5fbfb77f01';
+function diagnosticRevisionFixture(){
+ const f=syncRevisionFixture(),manifest=reportHistoricalRecoveryManifest({contractId:diagnosticRevisionContract});
+ f.commit.parents=[{sha:diagnosticRevisionBase}];f.supportCommit.sha=diagnosticRevisionBase;f.supportCommit.parents=[{sha:syncRevisionBase}];
+ f.comparison.base_commit.sha=f.comparison.merge_base_commit.sha=diagnosticRevisionBase;
+ f.comparison.files=manifest.map(m=>({filename:m.path,status:m.status,sha:'b'.repeat(40)}));
+ f.tree.tree=[f.tree.tree[0],...manifest.map(m=>({path:m.path,type:'blob',mode:'100644',sha:'b'.repeat(40)}))];
+ f.reviewedCommit.parents=[{sha:diagnosticRevisionBase}];f.currentRun.display_title='IB diagnostic 2026-11-06';
+ return f;
+}
+const diagnosticAdmission=(f,readers=syncRevisionReaders(f))=>authorizeHistoricalRevisionDiagnostic({plan:f.plan,expectedMain:recoveryHead,
+ currentRunId:recoveryId,now:revisionRecoveryNow,actionsToken:revisionActionsToken,...readers});
+
+test('read-only revision release has its own exact fifteen-file manifest and preserves older scopes',()=>{
+ const expected=[
+  ...['.github/workflows/fee-cloud-producer.yml','.github/workflows/scripts-check.yml','security/approval-tiers.json',
+   'docs/fee-source-revision.md','scripts/fee-cloud-producer.mjs','scripts/fee-report-producer.mjs','scripts/fee-report-producer.test.mjs',
+   'scripts/fee-source-revision-runtime.mjs','scripts/fee-sync-revision-artifacts.mjs','scripts/fee-sync-revision-artifacts.test.mjs',
+   'scripts/fee-sync-revision-github.mjs','scripts/fee-sync-revision-github.test.mjs','scripts/ib-manager-source.test.mjs'].map(path=>({path,status:'modified'})),
+  ...['scripts/fee-source-revision-diagnostic.mjs','scripts/fee-source-revision-diagnostic.test.mjs'].map(path=>({path,status:'added'})),
+ ];
+ const manifest=reportHistoricalRecoveryManifest({contractId:diagnosticRevisionContract});assert.deepEqual(manifest,expected);
+ assert.equal(manifest.length,15);assert(Object.isFrozen(manifest));assert(manifest.every(Object.isFrozen));
+ assert.equal(reportHistoricalRecoveryManifest().length,17);assert.equal(reportHistoricalRecoveryManifest({contractId:syncRevisionContract}).length,14);
+ assert(!reportHistoricalRecoveryManifest({contractId:syncRevisionContract}).some(x=>x.path==='scripts/fee-source-revision-diagnostic.mjs'));
+});
+
+test('diagnostic admission is authentic, read-only, execution-bound and never a production admission',async()=>{
+ const f=diagnosticRevisionFixture(),before=JSON.stringify(f),trace=[],readers=syncRevisionReaders(f,trace),admission=await diagnosticAdmission(f,readers);
+ assert.equal(isHistoricalRevisionDiagnosticAdmission(admission),true);assert.equal(isHistoricalRevisionAdmission(admission),false);
+ assert.equal(Object.isFrozen(admission),true);assert.equal(JSON.stringify(admission),'{}');
+ assert.throws(()=>readHistoricalRevisionAdmission(admission),/RECOVERY_SCOPE/);
+ const binding=readHistoricalRevisionDiagnosticAdmission(admission);assert.equal(binding.contractId,diagnosticRevisionContract);
+ assert.equal(binding.purpose,'read-only-diagnostic');assert.equal(binding.admissionModel,'sync-cycle-v1');assert.equal(binding.mainSha,recoveryHead);
+ assert.equal(binding.repairBaseSha,diagnosticRevisionBase);assert.equal(binding.targetDate,'2026-11-06');assert.equal(binding.currentRunId,recoveryId);
+ assert.equal(binding.approvedHead,revisionReviewedHead);assert.match(binding.executionSha256,/^[a-f0-9]{64}$/);assert.equal(Object.hasOwn(binding,'consumptionSha256'),false);
+ assert(Object.isFrozen(binding));assert.deepEqual(await admission.checkCurrent(),binding);assert.equal(JSON.stringify(f),before);
+ assert.equal(trace.filter(x=>x==='actions/runs/'+recoveryId).length,2);
+ assert(!trace.some(x=>x.includes('/runs?')||x.includes('/jobs')||x.includes('sharesight')||x.includes('git/refs')));
+ for(const forged of [{},{...admission},structuredClone(binding),{...binding,checkCurrent:async()=>binding},new Proxy(admission,{})]){
+  assert.equal(isHistoricalRevisionDiagnosticAdmission(forged),false);assert.equal(isHistoricalRevisionAdmission(forged),false);
+  assert.throws(()=>readHistoricalRevisionDiagnosticAdmission(forged),/RECOVERY_SCOPE/);
+ }
+ admission.close();assert.equal(isHistoricalRevisionDiagnosticAdmission(admission),false);assert.throws(()=>readHistoricalRevisionDiagnosticAdmission(admission),/RECOVERY_SCOPE/);
+ const calls=trace.length;await assert.rejects(admission.checkCurrent(),/RECOVERY_CONSUMED/);assert.equal(trace.length,calls);
+});
+
+test('diagnostic scope cannot enter production, legacy attempt enumeration or fabricated consumption validation',async()=>{
+ const f=diagnosticRevisionFixture(),trace=[],readers=syncRevisionReaders(f,trace);let attempts=0,runReads=0,stateReads=0;
+ await assert.rejects(authorizeReportRecovery({plan:f.plan,expectedMain:recoveryHead,currentRunId:recoveryId,now:revisionRecoveryNow,
+  actionsToken:revisionActionsToken,...readers,readSourceAttempts:()=>{attempts++;assert.fail('diagnostic must not enumerate consumption');},
+  readCurrentRun:()=>{runReads++;assert.fail('production gate must reject first');},readState:()=>{stateReads++;assert.fail('production gate must reject first');}}),/RECOVERY_SCOPE/);
+ assert.equal(attempts+runReads+stateReads,0);assert(!trace.some(x=>x.startsWith('actions/')));
+ const release=await readers.readRecoveryRelease(recoveryHead,{targetDate:'2026-11-06'});
+ await assert.rejects(readPeriodSourceAttempts({plan:f.plan,now:revisionRecoveryNow,currentRunId:recoveryId,recoveryMain:recoveryHead,recoveryRelease:release,
+  fetchImpl:()=>assert.fail('diagnostic has no historical budget query')}),/RECOVERY_SCOPE/);
+ assert.throws(()=>validateReportRecoveryEvidence({plan:f.plan,expectedMain:recoveryHead,currentRunId:recoveryId,release,
+  budget:{attempts:0,recoveryEvidence:{entries:[],reservations:[]}}}),/RECOVERY_SCOPE/);
+});
+
+test('production entry refuses diagnostic capability before files, economic source, account reads or writer',async()=>{
+ const f=diagnosticRevisionFixture(),admission=await diagnosticAdmission(f);let privateIo=0;
+ const options={plan:f.plan,reviewedSyncDate:'2026-11-06',now:revisionRecoveryNow,requireIb:true,historicalRevisionAdmission:admission,
+  outputDir:'/synthetic/nonexistent-output',benchmarkFile:'/synthetic/nonexistent-benchmark',fetchEconomic:()=>{privateIo++;assert.fail('economic source forbidden');}};
+ for(const value of [admission,structuredClone(readHistoricalRevisionDiagnosticAdmission(admission)),{...admission},new Proxy(admission,{})])
+  await assert.rejects(produceReportPeriod({...options,historicalRevisionAdmission:value}),/^Error: FEE_REPORT_REVISION_ADMISSION$/);
+ assert.equal(privateIo,0);assert.equal(isHistoricalRevisionDiagnosticAdmission(admission),true);admission.close();
+ const ordinary=syncRevisionFixture(),production=await syncAdmission(ordinary);
+ assert.equal(isHistoricalRevisionAdmission(production),true);assert.equal(isHistoricalRevisionDiagnosticAdmission(production),false);
+ assert.throws(()=>readHistoricalRevisionDiagnosticAdmission(production),/RECOVERY_SCOPE/);production.close();
+});
+
+test('diagnostic admission rejects old production releases, copied releases and changed exact manifests before run reads',async()=>{
+ for(const fixture of [syncRevisionFixture,sourceRevisionRecoveryFixture]){
+  const f=fixture();await assert.rejects(diagnosticAdmission(f,{...syncRevisionReaders(f),readCurrentRun:()=>assert.fail('wrong release must stop first')}),/RECOVERY_SCOPE/);
+ }
+ const f=diagnosticRevisionFixture(),readers=syncRevisionReaders(f),real=readers.readRecoveryRelease;
+ await assert.rejects(diagnosticAdmission(f,{...readers,readRecoveryRelease:async(...args)=>structuredClone(await real(...args)),
+  readCurrentRun:()=>assert.fail('copied release must stop first')}),/RECOVERY_SCOPE/);
+ for(const mutate of [f=>f.commit.parents.push({sha:syncRevisionBase}),f=>f.commit.parents[0].sha=syncRevisionBase,
+  f=>f.supportCommit.parents[0].sha=revisionRecoveryBase,f=>f.comparison.files.pop(),f=>f.comparison.files.at(-1).status='modified',
+  f=>f.comparison.files[0].status='added',f=>f.comparison.files.push({filename:'scripts/other.mjs',status:'added',sha:'b'.repeat(40)}),
+  f=>f.tree.tree.at(-1).mode='120000',f=>f.tree.truncated=true,f=>f.comments=[],f=>f.comments[0].user.id=1,
+  f=>f.comments[0].body='/approve-xuan-ib-maintenance '+'f'.repeat(40),f=>f.comments[0].updated_at='2026-11-07T00:36:00Z',
+  f=>f.pr.commits=2,f=>f.pr.head.sha='f'.repeat(40),f=>f.commit.commit.verification.verified=false,
+  f=>f.reviewedCommit.commit.tree.sha='f'.repeat(40),f=>f.ref.object.sha=diagnosticRevisionBase]){
+  const bad=diagnosticRevisionFixture();mutate(bad);await assert.rejects(diagnosticAdmission(bad,{...syncRevisionReaders(bad),
+   readCurrentRun:()=>assert.fail('invalid reviewed release must stop before current run')}),/RECOVERY_/);
+ }
+});
+
+test('diagnostic live binding rejects wrong title, target, identity, attempt, owner approval and changed source state',async()=>{
+ const mutations=[f=>f.currentRun.id++,f=>f.currentRun.display_title='Produce daily 2026-11-06',f=>delete f.currentRun.display_title,
+  f=>f.currentRun.head_sha=diagnosticRevisionBase,f=>f.currentRun.actor.id=1,f=>f.currentRun.triggering_actor.id=1,
+  f=>f.currentRun.workflow_id++,f=>f.currentRun.path='other',f=>f.currentRun.repository.full_name='other/repo',f=>f.currentRun.head_branch='other',
+  f=>f.currentRun.run_attempt=2,f=>f.currentRun.event='schedule',f=>f.currentRun.status='completed',f=>f.currentRun.conclusion='success',
+  f=>f.publication.pending=true,f=>f.publication.finalMainSha=diagnosticRevisionBase,f=>f.publication.health.targetDate='2026-11-06',
+  f=>f.publication.data=Buffer.from('synthetic changed'),f=>f.comments[0].body+=' edited',f=>f.ref.object.sha=diagnosticRevisionBase,
+  f=>f.plan.periodFrom='2026-11-05',f=>f.plan.accountingThrough='2026-11-05',f=>f.plan.markets=['NYSE'],
+  f=>f.clock=new Date('2026-11-12T00:00:00Z')];
+ for(const mutate of mutations){
+  const f=diagnosticRevisionFixture(),admission=await diagnosticAdmission(f);mutate(f);
+  await assert.rejects(admission.checkCurrent(),/RECOVERY_/);assert.equal(isHistoricalRevisionDiagnosticAdmission(admission),false);
+  assert.equal(isHistoricalRevisionAdmission(admission),false);await assert.rejects(admission.checkCurrent(),/RECOVERY_CONSUMED/);
+ }
+ const f=diagnosticRevisionFixture();delete f.currentRun.display_title;await assert.rejects(diagnosticAdmission(f),/RECOVERY_RUN/);
+});
+
+test('closing a diagnostic during run IO prevents subsequent publication reads and never creates a reusable capability',async()=>{
+ const f=diagnosticRevisionFixture(),readers=syncRevisionReaders(f);let reads=0,publicationReads=0,release,entered;
+ const started=new Promise(resolve=>entered=resolve),blocked=new Promise(resolve=>release=resolve);
+ const admission=await diagnosticAdmission(f,{...readers,readCurrentRun:async args=>{if(++reads===2){entered();await blocked;}return readers.readCurrentRun(args);},
+  readState:async(...args)=>{publicationReads++;return readers.readState(...args);}});
+ const checking=admission.checkCurrent();await started;admission.close();release();await assert.rejects(checking,/RECOVERY_CONSUMED/);
+ assert.equal(publicationReads,1);assert.equal(isHistoricalRevisionDiagnosticAdmission(admission),false);assert.equal(isHistoricalRevisionAdmission(admission),false);
 });

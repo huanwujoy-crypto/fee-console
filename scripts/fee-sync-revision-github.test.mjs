@@ -2,7 +2,8 @@
 // credentials, process environment, or the network.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createRevisionGithubRead,isRevisionGithubRead,revisionGithubFailureCode} from './fee-sync-revision-github.mjs';
+import {createRevisionGithubRead,isRevisionGithubRead,revisionGithubFailureCode,IB_REVISION_GITHUB_FAILURE_CODES} from './fee-sync-revision-github.mjs';
+import {BoundedJsonError} from './fee-http-json.mjs';
 
 const ROOT='https://api.github.com/repos/huanwujoy-crypto/fee-console/';
 const TOKEN='synthetic_revision_token_not_a_credential';
@@ -15,6 +16,7 @@ const code=(expected)=>e=>{
   assert.equal(Object.hasOwn(e,'cause'),false);
   assert.equal(JSON.stringify(e).includes(TOKEN),false);
   assert.equal(String(e.stack).includes(TOKEN),false);
+  assert.ok(IB_REVISION_GITHUB_FAILURE_CODES.includes(revisionGithubFailureCode(e)));
   return true;
 };
 const rejected=(operation,expected)=>assert.rejects(async()=>operation(),code(expected));
@@ -99,16 +101,18 @@ test('no arbitrary URL, path, query or coercion reaches transport',async()=>{
   assert.equal(calls,0);assert.equal(traps,0);a.close();
 });
 
-for(const [name,make] of [
-  ['wrong URL',url=>json({ok:true},url+'/other')],
-  ['already followed redirect',url=>response('{}',{url,redirected:true,headers:{'content-type':'application/json'}})],
-  ['non-success status',url=>response('{}',{url,status:403,headers:{'content-type':'application/json'}})],
-  ['non-JSON MIME',url=>response('{}',{url,headers:{'content-type':'text/html'}})],
-  ['declared oversized JSON',url=>json({ok:true},url,{'content-length':String(8*1024*1024+1)})],
-  ['actual oversized JSON',url=>json({text:'x'.repeat(8*1024*1024)},url)],
-  ['malformed JSON',url=>response('{',{url,headers:{'content-type':'application/json'}})],
-  ['invalid UTF-8 JSON',url=>response(Buffer.from([0x7b,0x22,0x78,0x22,0x3a,0x22,0xff,0x22,0x7d]),{url,headers:{'content-type':'application/json'}})],
-])test('JSON refuses '+name,async()=>{const a=createRevisionGithubRead(config(async url=>make(url)));await rejected(()=>a.readJson('git/ref/heads/main'),'REQUEST');a.close();});
+for(const [name,make,expected] of [
+  ['wrong URL',url=>json({ok:true},url+'/other'),'JSON_HTTP_OTHER'],
+  ['already followed redirect',url=>response('{}',{url,redirected:true,headers:{'content-type':'application/json'}}),'JSON_HTTP_OTHER'],
+  ['non-success status',url=>response('{}',{url,status:403,headers:{'content-type':'application/json'}}),'JSON_HTTP_FORBIDDEN'],
+  ['non-JSON MIME',url=>response('{}',{url,headers:{'content-type':'text/html'}}),'JSON_TYPE'],
+  ['declared oversized JSON',url=>json({ok:true},url,{'content-length':String(8*1024*1024+1)}),'JSON_SIZE'],
+  ['actual oversized JSON',url=>json({text:'x'.repeat(8*1024*1024)},url),'JSON_SIZE'],
+  ['empty JSON',url=>response('',{url,headers:{'content-type':'application/json'}}),'JSON_SIZE'],
+  ['missing body reader',url=>({url,status:200,headers:new Headers({'content-type':'application/json'})}),'JSON_BODY'],
+  ['malformed JSON',url=>response('{',{url,headers:{'content-type':'application/json'}}),'JSON_JSON'],
+  ['invalid UTF-8 JSON',url=>response(Buffer.from([0x7b,0x22,0x78,0x22,0x3a,0x22,0xff,0x22,0x7d]),{url,headers:{'content-type':'application/json'}}),'JSON_JSON'],
+])test('JSON refuses '+name,async()=>{const a=createRevisionGithubRead(config(async url=>make(url)));await rejected(()=>a.readJson('git/ref/heads/main'),expected);a.close();});
 
 for(const [name,value] of [['nested token',{nested:[{value:TOKEN}]}],['reflected object key',{[TOKEN]:true}],['null',null],['primitive',1]])
   test('JSON rejects '+name+' without exposing response',async()=>{const a=createRevisionGithubRead(config(async url=>json(value,url)));await rejected(()=>a.readJson('git/ref/heads/main'),'RESPONSE');a.close();});
@@ -174,7 +178,90 @@ test('exactly two MiB of genuine log bytes fits the inclusive limit',async()=>{
 
 test('HTTP failure errors never disclose token, URL or transport exception',async()=>{
   const a=createRevisionGithubRead(config(async()=>{throw Error('private '+TOKEN+' '+BLOB);}));
-  await rejected(()=>a.readJson('git/ref/heads/main'),'REQUEST');await rejected(()=>a.readJobLog(7),'REQUEST');a.close();
+  await rejected(()=>a.readJson('git/ref/heads/main'),'JSON_NETWORK');await rejected(()=>a.readJobLog(7),'REQUEST');a.close();
+});
+
+test('diagnostic allowlist is finite, frozen and contains no private transport value',()=>{
+  assert.equal(Object.isFrozen(IB_REVISION_GITHUB_FAILURE_CODES),true);
+  assert.deepEqual(IB_REVISION_GITHUB_FAILURE_CODES,[
+    'INPUT','CONFIG','CLOSED','REQUEST','SCOPE','RESPONSE','LOG','LOG_HOST','REFUSED',
+    'JSON_CONFIG','JSON_HTTP','JSON_TYPE','JSON_SIZE','JSON_BODY','JSON_JSON','JSON_ABORTED','JSON_TIMEOUT','JSON_NETWORK',
+    ...['BAD_REQUEST','UNAUTHORIZED','FORBIDDEN','NOT_FOUND','TIMEOUT','CONFLICT','GONE','UNPROCESSABLE','RATE_LIMIT','SERVER','OTHER'].map(value=>'JSON_HTTP_'+value),
+  ].map(value=>'IB_REVISION_GITHUB_'+value));
+  assert.equal(new Set(IB_REVISION_GITHUB_FAILURE_CODES).size,IB_REVISION_GITHUB_FAILURE_CODES.length);
+});
+
+test('message, code, native class, subclass and prototype forgeries thrown by transport cannot select diagnostics',async()=>{
+  let traps=0;const trap=()=>{traps++;throw Error(TOKEN+' '+BLOB);};
+  const inherited=Object.create(BoundedJsonError.prototype);inherited.code='HTTP';
+  const accessor=new BoundedJsonError('HTTP');Object.defineProperty(accessor,'code',{get:trap});
+  const native=new BoundedJsonError('HTTP');Object.defineProperties(native,{message:{get:trap},stack:{get:trap}});
+  class Forged extends BoundedJsonError {}
+  for(const forged of [new Error('BOUNDED_JSON_HTTP '+TOKEN),{code:'HTTP',message:'BOUNDED_JSON_HTTP'},
+    new BoundedJsonError(TOKEN+' '+BLOB),new BoundedJsonError('SIZE'),new Forged('HTTP'),inherited,accessor,native,
+    new Proxy({}, {get:trap,getPrototypeOf:trap,ownKeys:trap}),null,undefined,TOKEN]){
+    assert.equal(revisionGithubFailureCode(forged),'IB_REVISION_GITHUB_REFUSED');
+    const a=createRevisionGithubRead(config(async()=>{throw forged;}));
+    await rejected(()=>a.readJson('git/ref/heads/main'),'JSON_NETWORK');
+    await rejected(()=>a.readJobLog(7),'REQUEST');a.close();
+  }
+  assert.equal(traps,0);
+});
+
+test('HTTP and JSON diagnostics never retain private response content, headers or URL',async()=>{
+  const secret='synthetic_private_response_marker',privateUrl=ROOT+'?sensitive='+secret;
+  for(const [make,expected] of [
+    [url=>response(secret+' '+TOKEN+' '+BLOB,{url,status:403,headers:{'x-private':secret}}),'JSON_HTTP_FORBIDDEN'],
+    [()=>response('{}',{url:privateUrl,headers:{'content-type':'application/json'}}),'JSON_HTTP_OTHER'],
+    [url=>response('{"'+secret+'":'+TOKEN,{url,headers:{'content-type':'application/json'}}),'JSON_JSON'],
+  ]){
+    const a=createRevisionGithubRead(config(async url=>make(url)));
+    await assert.rejects(()=>a.readJson('git/ref/heads/main'),error=>{
+      code(expected)(error);
+      for(const value of [error.message,error.stack,JSON.stringify(error)])for(const denied of [secret,privateUrl,TOKEN,BLOB])assert.equal(value.includes(denied),false);
+      assert.deepEqual(Object.getOwnPropertyNames(error).sort(),['message','stack']);
+      return true;
+    });a.close();
+  }
+});
+
+for(const [status,expected] of [[400,'BAD_REQUEST'],[401,'UNAUTHORIZED'],[403,'FORBIDDEN'],[404,'NOT_FOUND'],
+  [408,'TIMEOUT'],[409,'CONFLICT'],[410,'GONE'],[422,'UNPROCESSABLE'],[429,'RATE_LIMIT'],
+  [500,'SERVER'],[503,'SERVER'],[599,'SERVER'],[201,'OTHER'],[418,'OTHER']])
+test('JSON HTTP status '+status+' maps only to the fixed '+expected+' class',async()=>{
+  let calls=0;const a=createRevisionGithubRead(config(async url=>{
+    calls++;return {url,status,redirected:false,get headers(){assert.fail('HTTP error headers are private');},get body(){assert.fail('HTTP error body is private');}};
+  }));
+  await rejected(()=>a.readJson('git/ref/heads/main'),'JSON_HTTP_'+expected);assert.equal(calls,1);a.close();
+});
+
+test('HTTP status classification never coerces a value or reads an exception',async()=>{
+  let traps=0;const trap=()=>{traps++;throw new BoundedJsonError(TOKEN);};
+  for(const status of ['403',NaN,Infinity,403.5,{valueOf:trap,toString:trap},new Proxy({}, {get:trap})]){
+    const a=createRevisionGithubRead(config(async url=>({url,status,redirected:false})));
+    await rejected(()=>a.readJson('git/ref/heads/main'),'JSON_HTTP_OTHER');a.close();
+  }
+  assert.equal(traps,0);
+  const a=createRevisionGithubRead(config(async url=>({url,get status(){throw new BoundedJsonError('HTTP');}})));
+  await rejected(()=>a.readJson('git/ref/heads/main'),'JSON_NETWORK');a.close();
+});
+
+test('HTTP classes are isolated between concurrent calls and never substitute for MIME failures',async()=>{
+  const delayed=deferred();let calls=0;
+  const a=createRevisionGithubRead(config(async url=>{
+    if(++calls===1){await delayed.promise;return response('{}',{url,status:401});}
+    return response('{}',{url,status:404});
+  }));
+  const first=a.readJson('git/ref/heads/main');await rejected(()=>a.readJson('actions/runs/8'),'JSON_HTTP_NOT_FOUND');
+  delayed.resolve();await rejected(()=>first,'JSON_HTTP_UNAUTHORIZED');a.close();
+  const b=createRevisionGithubRead(config(async url=>response('{}',{url,headers:{'content-type':'text/html'}})));
+  await rejected(()=>b.readJson('git/ref/heads/main'),'JSON_TYPE');b.close();
+});
+
+test('JSON timeout has its fixed native diagnostic and does not retry or fall back to another route',async()=>{
+  const calls=[],c=config(async(url,init)=>{calls.push({url,init});return new Promise(()=>{});});c.timeoutMs=15;
+  const a=createRevisionGithubRead(c);await rejected(()=>a.readJson('git/ref/heads/main'),'JSON_TIMEOUT');
+  assert.equal(calls.length,1);assert.equal(calls[0].init.signal.aborted,true);a.close();
 });
 
 test('timeouts bound a transport which ignores abort and never retry',async()=>{

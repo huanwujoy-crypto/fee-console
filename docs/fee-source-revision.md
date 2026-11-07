@@ -7,6 +7,74 @@ artifacts and original writer; it does not edit the economic book, change a
 schedule or reset any claim/consumption record. Code approval and an actual
 one-time recovery authorization remain separate prerequisites.
 
+## Read-only historical revision diagnosis
+
+The local `ib-source-revision-20261106-diagnostic-v1` candidate is a separate
+diagnostic admission, not a new production recovery permission. Its release
+must be the signed, protected squash successor of
+`4f98318c73d1727d323febdcc72b7d5fbfb77f01`, with the exact approved head/tree,
+owner comment and complete fifteen-file manifest below. The new main cannot
+reuse the older `sync-v2` release binding. A diagnostic capability is not
+accepted by the report producer or publication path.
+
+The complete candidate consists of:
+
+- `.github/workflows/fee-cloud-producer.yml`
+- `.github/workflows/scripts-check.yml`
+- `docs/fee-source-revision.md`
+- `scripts/fee-cloud-producer.mjs`
+- `scripts/fee-report-producer.mjs`
+- `scripts/fee-report-producer.test.mjs`
+- `scripts/fee-source-revision-diagnostic.mjs`
+- `scripts/fee-source-revision-diagnostic.test.mjs`
+- `scripts/fee-source-revision-runtime.mjs`
+- `scripts/fee-sync-revision-artifacts.mjs`
+- `scripts/fee-sync-revision-artifacts.test.mjs`
+- `scripts/fee-sync-revision-github.mjs`
+- `scripts/fee-sync-revision-github.test.mjs`
+- `scripts/ib-manager-source.test.mjs`
+- `security/approval-tiers.json`
+
+The existing `ib_diagnostic_once` and `ib_diagnostic_main` dispatch fields select
+only the independent `IB diagnostic 2026-11-06` job. Its title, first-attempt
+restriction, workflow concurrency, environment and read permissions are retained.
+The period, normal producer, once-claim/finalizer, source-acceptance and ratio jobs
+remain excluded. No cron, claim, consumption record or supervisor setting is
+changed. A malformed or mixed request stops before financial access.
+
+The dedicated CLI is `scripts/fee-source-revision-diagnostic.mjs` with
+`--expected-main=<approved-main>`; `--check-plan` performs the public gate before
+WIF or financial credentials. The execution phase uses only the existing
+`FEE_REPORT_ACTIONS_TOKEN`, existing Sharesight pair, `FEE_DATA_KEY`,
+`FEE_ECON_GIST_ID` and the baseline binding. The Gist locator is supplied only
+to the execution phase. No publisher, ratio-manager or economic-write token is
+provided, and no credential is discovered or exported.
+
+The diagnostic authenticates the unchanged published data/health pair, original
+November 4 and 5 artifacts and producer evidence, and the economic version. It
+then exercises the original bounded Jenny historical-source preparation through
+November 6 and its current-context checks. No ordinary three-account source
+capture, benchmark refresh, daily writer, signed candidate, promotion, ratio
+update or production reservation is called. Any in-memory revision candidate
+remains private and is discarded; it is never handed to a writer or emitted.
+
+Only fixed stage, role and allowlisted reason codes leave the process. Raw
+exceptions, URLs, account values, source payloads and credentials do not appear
+in logs or uploaded artifacts. Temporary encrypted economic inputs and private
+runtime material are cleaned on success and failure; a cleanup error remains
+a failure. Existing signatures, original-producer log binding, source checks,
+month locks, expiry and change detection are not relaxed to obtain a result.
+
+This is local preparation only. Upload, exact-version approval and required
+checks do not themselves authorize a real diagnostic. Its bounded private reads
+require the applicable explicit execution approval; failure stops without a
+retry. First-attempt and workflow serialization checks are not a persistent
+limit across separately created dispatches: the operator must submit only the
+one authorized dispatch and resolve an uncertain result before any further action.
+A successful diagnostic proves only its stated checks, not a generated
+or published fee report or an updated ratio snapshot. A later production attempt
+requires its own reviewed version, authorization and unchanged safety gates.
+
 ## One complete recovery batch
 
 The integration is limited to extending the current published source through

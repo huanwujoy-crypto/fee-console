@@ -663,6 +663,8 @@
     "scripts/fee-sync-revision-github.mjs",
     "scripts/fee-sync-revision-github.test.mjs",
     "scripts/fee-source-revision-runtime.mjs",
-    "scripts/fee-source-revision-runtime.test.mjs"
+    "scripts/fee-source-revision-runtime.test.mjs",
+    "scripts/fee-source-revision-diagnostic.mjs",
+    "scripts/fee-source-revision-diagnostic.test.mjs"
   ]
 }

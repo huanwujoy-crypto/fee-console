@@ -605,8 +605,8 @@ jobs:
       - name: Verify exact one-time diagnostic and frozen baseline before credentials
         env:
           DIAGNOSTIC_MAIN: ${{ inputs.ib_diagnostic_main }}
-          FEE_IB_DIAGNOSTIC_ACTIONS_TOKEN: ${{ github.token }}
-        run: node scripts/ib-manager-diagnostic.mjs --check-plan --expected-main="$DIAGNOSTIC_MAIN"
+          FEE_REPORT_ACTIONS_TOKEN: ${{ github.token }}
+        run: node scripts/fee-source-revision-diagnostic.mjs --check-plan --expected-main="$DIAGNOSTIC_MAIN"
       - name: Reuse the existing read identity
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
         with:
@@ -623,13 +623,14 @@ jobs:
       - name: Inspect Jenny without a writer or publication token
         env:
           DIAGNOSTIC_MAIN: ${{ inputs.ib_diagnostic_main }}
-          FEE_IB_DIAGNOSTIC_ACTIONS_TOKEN: ${{ github.token }}
+          FEE_REPORT_ACTIONS_TOKEN: ${{ github.token }}
           FEE_CLOUD_SHARESIGHT_CLIENT_ID: ${{ steps.diagnostic_credentials.outputs.client_id }}
           FEE_CLOUD_SHARESIGHT_CLIENT_SECRET: ${{ steps.diagnostic_credentials.outputs.client_secret }}
           FEE_DATA_KEY: ${{ secrets.FEE_DATA_KEY }}
+          FEE_ECON_GIST_ID: ${{ secrets.FEE_ECON_GIST_ID }}
           IB_MANAGER_READ_ENABLED: 'true'
           IB_MANAGER_BASELINE_SHA256: ${{ vars.IB_MANAGER_BASELINE_SHA256 }}
-        run: node scripts/ib-manager-diagnostic.mjs --expected-main="$DIAGNOSTIC_MAIN"
+        run: node scripts/fee-source-revision-diagnostic.mjs --expected-main="$DIAGNOSTIC_MAIN"
       - name: Remove diagnostic temporary inputs without artifacts
         if: always()
         run: |

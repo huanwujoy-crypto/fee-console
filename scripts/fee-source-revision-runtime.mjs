@@ -14,6 +14,7 @@ const PREFIX='FEE_REPORT_SOURCE_REVISION_',errors=new WeakMap();
 const CONTRACTS=Object.freeze({
   'ib-source-revision-20261106-v1':'fee-console.ib-source-revision-plan.v1',
   'ib-source-revision-20261106-sync-v2':'fee-console.ib-source-revision-plan.v2',
+  'ib-source-revision-20261106-diagnostic-v1':'fee-console.ib-source-revision-plan.v2',
 }),TARGET='2026-11-06',ANCHOR='2026-11-04',PREVIOUS='2026-11-05';
 const SHA=/^[a-f0-9]{64}$/,MAX_BYTES=2*1024*1024;
 const sha=bytes=>crypto.createHash('sha256').update(bytes).digest('hex');
@@ -26,8 +27,9 @@ function optionsOf(value){
   try{
     if(!value||types.isProxy(value)||Object.getPrototypeOf(value)!==Object.prototype)fail('CONFIG');
     const ds=Object.getOwnPropertyDescriptors(value),actual=Reflect.ownKeys(ds);
-    if(actual.length!==keys.length||actual.some(k=>typeof k!=='string'||!keys.includes(k)||!Object.hasOwn(ds[k],'value')||!ds[k].enumerable))fail('CONFIG');
-    const c=Object.fromEntries(keys.map(k=>[k,ds[k].value]));
+    if(keys.some(k=>!Object.hasOwn(ds,k))||actual.some(k=>typeof k!=='string'||![...keys,'diagnosticOnly'].includes(k)||!Object.hasOwn(ds[k],'value')||!ds[k].enumerable))fail('CONFIG');
+    if(Object.hasOwn(ds,'diagnosticOnly')&&ds.diagnosticOnly.value!==true)fail('CONFIG');
+    const c=Object.fromEntries(actual.map(k=>[k,ds[k].value]));
     if(typeof c.fetchImpl!=='function'||types.isProxy(c.fetchImpl)||typeof c.clock!=='function'||types.isProxy(c.clock)
       ||!verifyEconomicSnapshot(c.economicSnapshot)||!SHA.test(c.baselineSha256||'')
       ||!(c.legacySourcePath===null||typeof c.legacySourcePath==='string')
@@ -63,10 +65,14 @@ export async function createFeeSourceRevisionRuntime(options){
     if(view&&t>=Date.parse(view.expiresAt)){close();fail('EXPIRED');}return t;};
   try{
     // Dynamic import avoids a module initialization cycle with the sole caller.
-    const {isHistoricalRevisionAdmission,readHistoricalRevisionAdmission}=await import('./fee-report-producer.mjs');
-    if(!isHistoricalRevisionAdmission(c.admission))fail('ADMISSION');
+    const producer=await import('./fee-report-producer.mjs');
+    const isAdmission=c.diagnosticOnly?producer.isHistoricalRevisionDiagnosticAdmission:producer.isHistoricalRevisionAdmission;
+    const readAdmission=c.diagnosticOnly?producer.readHistoricalRevisionDiagnosticAdmission:producer.readHistoricalRevisionAdmission;
+    if(!isAdmission(c.admission))fail('ADMISSION');
     admissionVerified=true;
-    const admitted=readHistoricalRevisionAdmission(c.admission);
+    const admitted=readAdmission(c.admission);
+    if(c.diagnosticOnly?(admitted.contractId!=='ib-source-revision-20261106-diagnostic-v1'||admitted.purpose!=='read-only-diagnostic')
+      :Object.hasOwn(admitted,'purpose'))fail('ADMISSION');
     if(!Object.hasOwn(CONTRACTS,admitted.contractId)||admitted.targetDate!==TARGET)fail('SCOPE');
     const schema=CONTRACTS[admitted.contractId],sync=schema==='fee-console.ib-source-revision-plan.v2';
     if(!SHA.test(sync?admitted.executionSha256:admitted.consumptionSha256)
@@ -75,7 +81,7 @@ export async function createFeeSourceRevisionRuntime(options){
     live();
     github=createRevisionGithubRead({token:c.githubToken,fetchImpl:c.fetchImpl,clock:c.clock});
     artifacts=createIbRevisionArtifacts({github,economicSnapshot:c.economicSnapshot,dataKey:c.key,
-      legacySourcePath:c.legacySourcePath,baselineSha256:c.baselineSha256,clock:c.clock,admission:c.admission});
+      legacySourcePath:c.legacySourcePath,baselineSha256:c.baselineSha256,clock:c.clock,admission:c.admission,...(c.diagnosticOnly?{diagnosticOnly:true}:{})});
     // The transport and capability now own only their necessary references.
     c.githubToken=null;
     const check=async()=>{
@@ -83,28 +89,31 @@ export async function createFeeSourceRevisionRuntime(options){
       const bindings=await artifacts.checkCurrent();live();
       if(hash(bindings)!==hash(view.bindings))fail('CHANGED');return true;
     };
-    return Object.freeze({
+    const api=Object.freeze({
       async prepare(){
         if(busy||started)fail('REUSE');live();busy=true;started=true;
+        let phase='ARTIFACTS';
         try{
           view=await artifacts.readVerifiedArtifacts({targetDate:TARGET,mainSha:admitted.mainSha});live();
+          phase='BASE_BINDING';
           if(hash(view.currentPayload)!==hash(c.sourcePayload)||view.bindings.baseDataSha256!==sha(c.sourceBytes)
             ||view.bindings.baseHealthSha256!==sha(c.healthBytes)||view.baselineSha256!==c.baselineSha256
             ||view.currentPayload.feeCalculationReceipt?.asOf!==PREVIOUS
             ||view.anchorPayload.feeCalculationReceipt?.asOf!==ANCHOR)fail('BASE_MISMATCH');
           // These are authenticated source state identifiers, never request claims.
+          phase='PLAN';
           const plan=frozenCopy({schema,targetDate:TARGET,anchorDate:ANCHOR,
             baselineSha256:c.baselineSha256,currentSourceStateId:view.currentPayload.ibManagerSourceState?.stateId,
             anchorSourceStateId:view.anchorPayload.ibManagerSourceState?.stateId,currentArtifact:view.artifacts.current,
             anchorArtifact:view.artifacts.anchor,bindings:view.bindings,expiresAt:view.expiresAt});
-          reader=new SharesightIbManagerReader({clientId:c.clientId,clientSecret:c.clientSecret,fetchImpl:c.fetchImpl});
+          phase='READER';reader=new SharesightIbManagerReader({clientId:c.clientId,clientSecret:c.clientSecret,fetchImpl:c.fetchImpl});
           c.clientId=null;c.clientSecret=null;
-          const candidate=await artifacts.prepareCandidate({plan,reader});live();
+          phase='CANDIDATE';const candidate=await artifacts.prepareCandidate({plan,reader});live();
           if(candidate.mode!=='extend-cutoff'||candidate.oldThrough!==PREVIOUS||candidate.targetDate!==TARGET)fail('SCOPE');
-          await check();
+          phase='RECHECK';await check();
           prepared=Object.freeze({candidate,artifacts,basePayload:view.currentPayload});
           return prepared;
-        }catch(e){close();if(errors.has(e))throw e;artifactFailure(e,'PREPARE_REFUSED');}
+        }catch(e){close();if(errors.has(e))throw e;artifactFailure(e,'PREPARE_'+phase);}
         finally{busy=false;}
       },
       async checkCurrent(){
@@ -116,6 +125,14 @@ export async function createFeeSourceRevisionRuntime(options){
         finally{busy=false;}
       },
       close,
+    });
+    if(!c.diagnosticOnly)return api;
+    // Never expose the prepared candidate, artifact verifier or writer handoff.
+    // This mode has no production admission and always destroys private state.
+    return Object.freeze({
+      async diagnose(){try{await api.prepare();await api.checkCurrent();
+        return Object.freeze({schema:'fee-console.source-revision-diagnostic-result.v1',status:'verified',targetDate:TARGET});
+      }finally{close();}},close,
     });
   }catch(e){close();if(errors.has(e))throw e;fail('CONFIG');}
 }
