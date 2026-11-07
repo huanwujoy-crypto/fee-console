@@ -12,14 +12,26 @@ import {validateIbManagerReportState,validateIbOwnerBaselineState,createIbManage
 import {SharesightIbManagerReader} from './ib-manager-source.mjs';
 import {createIbSourceRevisionPreparer,isIbSourceRevisionCandidate,ibSourceRevisionFailureCode} from './ib-manager-source-revision.mjs';
 import {sourceContractInputHash as hash} from './fee-source-contract.mjs';
-import {isRevisionGithubRead} from './fee-sync-revision-github.mjs';
+import {isRevisionGithubRead,revisionGithubFailureCode,IB_REVISION_GITHUB_FAILURE_CODES} from './fee-sync-revision-github.mjs';
 
 export const IB_REVISION_ARTIFACT_SCOPE=Object.freeze({targetDate:'2026-11-06',currentDate:'2026-11-05',anchorDate:'2026-11-04',
   current:Object.freeze({candidateSha:'eff2e28f581ae178f871fc0c5f5f5cb0852f9b32',producerRunId:42140821158}),
   anchor:Object.freeze({candidateSha:'5e19be2032b575b187bd53b8e524189697b9f448',producerRunId:41975903735})});
 const instances=new WeakSet(),failures=new WeakMap(),OID=/^[a-f0-9]{40}$/,SHA=/^[a-f0-9]{64}$/;
 const OWNER='huanwujoy-crypto',REPO=OWNER+'/fee-console',parseExact=createLegacyPolicy().parseExactJson;
-const CONTRACT_MODELS=Object.freeze({'ib-source-revision-20261106-v1':'consumption-v1','ib-source-revision-20261106-sync-v2':'sync-cycle-v1'});
+const CONTRACT_MODELS=Object.freeze({'ib-source-revision-20261106-v1':'consumption-v1','ib-source-revision-20261106-sync-v2':'sync-cycle-v1','ib-source-revision-20261106-diagnostic-v1':'sync-cycle-v1'});
+const DIAGNOSTIC_ROLES=Object.freeze(['BASE','CURRENT','ANCHOR']);
+const GITHUB_STEPS=Object.freeze(['MAIN','COMMIT','TREE','HISTORY','DATA','HEALTH','RUN','JOBS']);
+const PREPARE_PHASES=Object.freeze(['READ','ADMISSION','ECON_BYTES','ECON_VERSION','MONTH_LOCKS','SOURCE_PREPARE','RECHECK']);
+const githubDiagnosticReason=code=>code.slice('IB_REVISION_GITHUB_'.length).replace(/^JSON_HTTP_/,'HTTP_')
+  .replace(/^HTTP_UNPROCESSABLE$/,'HTTP_INVALID').replace(/^HTTP_UNAUTHORIZED$/,'HTTP_AUTH');
+// Every public suffix is made only from finite source literals. No exception
+// message, route, response, identifier or financial value becomes a diagnostic.
+export const IB_REVISION_ARTIFACT_DIAGNOSTIC_CODES=Object.freeze([
+  ...DIAGNOSTIC_ROLES.flatMap(role=>PREPARE_PHASES.map(phase=>'PHASE_'+role+'_'+phase)),
+  ...DIAGNOSTIC_ROLES.flatMap(role=>GITHUB_STEPS.flatMap(step=>IB_REVISION_GITHUB_FAILURE_CODES
+    .filter(code=>code!=='IB_REVISION_GITHUB_REFUSED').map(code=>'GITHUB_'+role+'_'+step+'_'+githubDiagnosticReason(code)))),
+]);
 export const isIbRevisionArtifacts=value=>instances.has(value);
 function fail(code){const e=new Error('IB_REVISION_ARTIFACT_'+code);failures.set(e,code);throw Object.freeze(e);}
 export const ibRevisionArtifactFailureCode=e=>'IB_REVISION_ARTIFACT_'+(failures.get(e)||'REFUSED');
@@ -27,10 +39,10 @@ const digest=b=>crypto.createHash('sha256').update(b).digest('hex');
 const blob=b=>crypto.createHash('sha1').update('blob '+b.length+'\0').update(b).digest('hex');
 function freeze(v){if(v&&typeof v==='object'){Object.values(v).forEach(freeze);Object.freeze(v);}return v;}
 function copy(v){try{hash(v);return freeze(JSON.parse(JSON.stringify(v)));}catch{fail('INPUT');}}
-function shape(v,keys){
+function shape(v,keys,optional=[]){
   if(!v||types.isProxy(v)||![Object.prototype,null].includes(Object.getPrototypeOf(v)))fail('CONFIG');
   const d=Object.getOwnPropertyDescriptors(v),own=Reflect.ownKeys(d);
-  if(own.length!==keys.length||own.some(k=>typeof k!=='string'||!keys.includes(k)||!Object.hasOwn(d[k],'value')||!d[k].enumerable))fail('CONFIG');
+  if(keys.some(k=>!Object.hasOwn(d,k))||own.some(k=>typeof k!=='string'||![...keys,...optional].includes(k)||!Object.hasOwn(d[k],'value')||!d[k].enumerable))fail('CONFIG');
   return Object.fromEntries(own.map(k=>[k,d[k].value]));
 }
 const time=v=>typeof v==='string'&&/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,7})?Z$/.test(v)?Date.parse(v):NaN;
@@ -43,22 +55,28 @@ function decrypt(bytes,version,key){
   }catch(e){if(failures.has(e))throw e;fail('DECRYPT');}finally{sealed?.fill(0);plain?.fill(0);}
 }
 export function createIbRevisionArtifacts(options){
-  const c=shape(options,['github','economicSnapshot','dataKey','legacySourcePath','baselineSha256','clock','admission']);
+  const c=shape(options,['github','economicSnapshot','dataKey','legacySourcePath','baselineSha256','clock','admission'],['diagnosticOnly']);
+  if(Object.hasOwn(c,'diagnosticOnly')&&c.diagnosticOnly!==true)fail('CONFIG');
   if(!isRevisionGithubRead(c.github)||!verifyEconomicSnapshot(c.economicSnapshot)||types.isProxy(c.dataKey)||!Buffer.isBuffer(c.dataKey)||c.dataKey.length!==32
     ||!SHA.test(c.baselineSha256||'')||typeof c.clock!=='function'||types.isProxy(c.clock)
     ||c.legacySourcePath!==null&&typeof c.legacySourcePath!=='string')fail('CONFIG');
   c.dataKey=Buffer.from(c.dataKey);
-  let closed=false,busy=false,record=null,candidate=null,sourceCapture=null,sourceReader=null,prepared=false,lastNow=-1;
+  let closed=false,busy=false,record=null,candidate=null,sourceCapture=null,sourceReader=null,prepared=false,lastNow=-1,role='BASE',phase='READ';
+  const at=async(name,operation)=>{const previous=phase;phase=name;const result=await operation();phase=previous;return result;};
   const live=()=>{if(closed)fail('CLOSED');};
   const now=()=>{const n=c.clock();if(!Number.isSafeInteger(n)||n<0||n<lastNow)fail('CLOCK');lastNow=n;return n;};
   const active=()=>{live();if(record&&now()>=record.expiresAt)fail('EXPIRED');};
   const admissionCurrent=async()=>{
     // Avoid a static report -> artifacts -> producer import cycle. The actual
     // producer's WeakMap admission is required; JSON and callbacks cannot mint it.
-    const {isHistoricalRevisionAdmission,readHistoricalRevisionAdmission}=await import('./fee-report-producer.mjs');
-    active();if(!isHistoricalRevisionAdmission(c.admission))fail('ADMISSION');
-    const before=copy(readHistoricalRevisionAdmission(c.admission));
-    const checked=copy(await c.admission.checkCurrent());active();
+    const producer=await import('./fee-report-producer.mjs');
+    const isAdmission=c.diagnosticOnly?producer.isHistoricalRevisionDiagnosticAdmission:producer.isHistoricalRevisionAdmission;
+    const readAdmission=c.diagnosticOnly?producer.readHistoricalRevisionDiagnosticAdmission:producer.readHistoricalRevisionAdmission;
+    active();if(!isAdmission(c.admission))fail('ADMISSION');
+    const before=copy(readAdmission(c.admission));
+    if(c.diagnosticOnly?(before.contractId!=='ib-source-revision-20261106-diagnostic-v1'||before.purpose!=='read-only-diagnostic')
+      :Object.hasOwn(before,'purpose'))fail('ADMISSION');
+    const checked=copy(await at('ADMISSION',()=>c.admission.checkCurrent()));active();
     if(hash(before)!==hash(checked)||!Object.hasOwn(CONTRACT_MODELS,before.contractId)||before.targetDate!==IB_REVISION_ARTIFACT_SCOPE.targetDate
       ||!OID.test(before.mainSha))fail('ADMISSION');
     const sync=CONTRACT_MODELS[before.contractId]==='sync-cycle-v1';
@@ -67,7 +85,21 @@ export function createIbRevisionArtifacts(options){
       ||(sync?before.admissionModel!=='sync-cycle-v1':Object.hasOwn(before,'admissionModel')))fail('ADMISSION');
     return before;
   };
-  const get=async route=>{active();const x=copy(await c.github.readJson(route));active();return x;};
+  const get=async route=>{
+    active();let raw;
+    try{raw=await c.github.readJson(route);}catch(error){
+      const code=revisionGithubFailureCode(error);
+      if(code!=='IB_REVISION_GITHUB_REFUSED'&&IB_REVISION_GITHUB_FAILURE_CODES.includes(code)){
+        const step=route==='git/ref/heads/main'?'MAIN':route.startsWith('git/commits/')?'HISTORY'
+          :route.startsWith('commits/')?'COMMIT':route.startsWith('git/trees/')?'TREE'
+          :route.startsWith('contents/data.json?')?'DATA':route.startsWith('contents/fee-data-health.json?')?'HEALTH'
+          :route.endsWith('/jobs?per_page=100')?'JOBS':'RUN';
+        fail('GITHUB_'+role+'_'+step+'_'+githubDiagnosticReason(code));
+      }
+      throw error;
+    }
+    const x=copy(raw);active();return x;
+  };
   const main=async()=>{const x=await get('git/ref/heads/main');if(!OID.test(x.object?.sha||''))fail('MAIN');return x.object.sha;};
   const signed=async sha=>{
     const x=await get('commits/'+sha);
@@ -133,7 +165,7 @@ export function createIbRevisionArtifacts(options){
   };
   const validatePayload=async(payload,date,economic)=>{
     if(payload.feeCalculationReceipt?.asOf!==date||!validateFeeCalculationReceiptWithEcon(payload.feeCalculationReceipt,payload,economic).ok)fail('FEE_RECEIPT');
-    preserveReportMonthLocks(payload,payload,economic);
+    await at('MONTH_LOCKS',()=>preserveReportMonthLocks(payload,payload,economic));
     try{
       const source=await validateIbManagerReportState(payload,c.baselineSha256),owner=await validateIbOwnerBaselineState(payload,c.baselineSha256);
       if(source?.schema!=='fee-console.ib-manager-source.v3'||source.sourceAsOf!==date||owner&&hash(source.ownerBaseline)!==hash(owner))fail('IB_STATE');
@@ -147,15 +179,15 @@ export function createIbRevisionArtifacts(options){
     active();if(!record)fail('NOT_READ');
     const admission=await admissionCurrent();if(hash(admission)!==record.admissionSha256||await main()!==record.mainSha)fail('CHANGED');
     try{await c.economicSnapshot.checkCurrent();}catch{fail('ECONOMIC_SOURCE');}active();
-    if(c.economicSnapshot.getVersionBinding().sha256!==record.bindings.economicRevisionSha256)fail('CHANGED');
+    if((await at('ECON_VERSION',()=>c.economicSnapshot.getVersionBinding())).sha256!==record.bindings.economicRevisionSha256)fail('CHANGED');
     try{record.checkLegacy();}catch{fail('LEGACY_SOURCE');}active();return record.bindings;
   };
-  const run=async operation=>{live();if(busy)fail('BUSY');busy=true;try{return await operation();}catch(e){
+  const run=async(operation,initialPhase='READ')=>{live();if(busy)fail('BUSY');busy=true;role='BASE';phase=initialPhase;try{return await operation();}catch(e){
     closed=true;record=null;candidate=null;sourceCapture=null;sourceReader=null;c.dataKey.fill(0);if(failures.has(e))throw e;
     const revisionCode=ibSourceRevisionFailureCode(e);
     if(revisionCode.startsWith('IB_REVISION_SOURCE_REFUSED_IB_SOURCE_'))fail('SOURCE_'+revisionCode.slice('IB_REVISION_SOURCE_REFUSED_IB_SOURCE_'.length));
     if(revisionCode!=='IB_REVISION_REFUSED')fail('REVISION_'+revisionCode.slice('IB_REVISION_'.length));
-    fail('REFUSED');
+    fail('PHASE_'+role+'_'+phase);
   }finally{busy=false;}};
   const read=async request=>{
     const r=copy(request);if(Object.keys(r).sort().join(',')!=='mainSha,targetDate'||r.targetDate!==IB_REVISION_ARTIFACT_SCOPE.targetDate||!OID.test(r.mainSha||''))fail('SCOPE');
@@ -166,26 +198,27 @@ export function createIbRevisionArtifacts(options){
     const head=await signed(r.mainSha),mainTree=await tree(head.commit.tree.sha);await history(r.mainSha);
     try{await c.economicSnapshot.checkCurrent();}catch{fail('ECONOMIC_SOURCE');}active();let economicBytes;const artifacts={},payloads={};let economic,checkLegacy;
     try{
-      economicBytes=readEconomicSnapshotBytes(c.economicSnapshot);economic=decrypt(economicBytes,4,c.dataKey);
+      economicBytes=await at('ECON_BYTES',()=>readEconomicSnapshotBytes(c.economicSnapshot));economic=decrypt(economicBytes,4,c.dataKey);
       // The existing independent-file guard remains mandatory for legacy v2.
       // An embedded old envelope or a caller-provided digest cannot replace it.
       try{checkLegacy=guardLegacySourceFile(economic,c.dataKey,c.legacySourcePath);}catch{fail('LEGACY_SOURCE');}
-      for(const role of ['current','anchor']){
-        const scope=IB_REVISION_ARTIFACT_SCOPE[role],date=role==='current'?IB_REVISION_ARTIFACT_SCOPE.currentDate:IB_REVISION_ARTIFACT_SCOPE.anchorDate;
+      for(const artifactRole of ['current','anchor']){
+        role=artifactRole.toUpperCase();
+        const scope=IB_REVISION_ARTIFACT_SCOPE[artifactRole],date=artifactRole==='current'?IB_REVISION_ARTIFACT_SCOPE.currentDate:IB_REVISION_ARTIFACT_SCOPE.anchorDate;
         const commit=await signed(scope.candidateSha),t=await tree(commit.commit.tree.sha),dataEntry=entry(t,'data.json'),healthEntry=entry(t,'fee-data-health.json');
-        if(role==='current'&&['data.json','fee-data-health.json'].some(name=>entry(mainTree,name).sha!==entry(t,name).sha))fail('CURRENT_PAIR');
+        if(artifactRole==='current'&&['data.json','fee-data-health.json'].some(name=>entry(mainTree,name).sha!==entry(t,name).sha))fail('CURRENT_PAIR');
         let data,healthBytes;try{
           data=await file('data.json',scope.candidateSha,dataEntry);healthBytes=await file('fee-data-health.json',scope.candidateSha,healthEntry);
           const health=copy(parseExact(healthBytes));
           if(validateHealth(health,{now:new Date(health.checkedAt)}).length||health.targetDate!==date||health.outcome!=='updated'||health.dataSha256!==digest(data)
             ||!['schwab','webull','benchmark'].every(k=>health.sourceDates[k]===date)||time(health.checkedAt)>started+300000)fail('HEALTH');
           await producerProof(scope,date,data,healthBytes,commit,t);
-          const payload=decrypt(data,3,c.dataKey);await validatePayload(payload,date,economic);payloads[role]=payload;
-          artifacts[role]=freeze({...scope,dataSha256:digest(data),healthSha256:digest(healthBytes)});
+          const payload=decrypt(data,3,c.dataKey);await validatePayload(payload,date,economic);payloads[artifactRole]=payload;
+          artifacts[artifactRole]=freeze({...scope,dataSha256:digest(data),healthSha256:digest(healthBytes)});
         }finally{data?.fill(0);healthBytes?.fill(0);}
       }
-      const sync=CONTRACT_MODELS[admission.contractId]==='sync-cycle-v1';
-      const bindings=freeze({mainSha:r.mainSha,economicRevisionSha256:c.economicSnapshot.getVersionBinding().sha256,
+      role='BASE';const sync=CONTRACT_MODELS[admission.contractId]==='sync-cycle-v1';
+      const bindings=freeze({mainSha:r.mainSha,economicRevisionSha256:(await at('ECON_VERSION',()=>c.economicSnapshot.getVersionBinding())).sha256,
         ...(sync?{admissionModel:'sync-cycle-v1',executionSha256:admission.executionSha256}:{consumptionSha256:admission.consumptionSha256}),
         baseDataSha256:artifacts.current.dataSha256,baseHealthSha256:artifacts.current.healthSha256,currentSourceStateId:payloads.current.ibManagerSourceState.stateId});
       const expiresAt=started+300000,view=freeze({currentPayload:payloads.current,anchorPayload:payloads.anchor,artifacts,bindings,baselineSha256:c.baselineSha256,expiresAt:new Date(expiresAt).toISOString()});
@@ -194,7 +227,7 @@ export function createIbRevisionArtifacts(options){
   };
   const api=Object.freeze({
     readVerifiedArtifacts:r=>run(()=>read(r)),
-    checkCurrent:()=>run(check),
+    checkCurrent:()=>run(check,'RECHECK'),
     prepareCandidate:options=>run(async()=>{
       if(prepared||!record)fail('STATE');const o=shape(options,['plan','reader']),plan=copy(o.plan);prepared=true;
       if(plan.schema!==(record.bindings.admissionModel==='sync-cycle-v1'?'fee-console.ib-source-revision-plan.v2':'fee-console.ib-source-revision-plan.v1')
@@ -204,11 +237,22 @@ export function createIbRevisionArtifacts(options){
         ||hash(plan.bindings)!==hash(record.bindings)||time(plan.expiresAt)>record.expiresAt||time(plan.expiresAt)<=now())fail('PLAN');
       if(!o.reader||types.isProxy(o.reader)||!SharesightIbManagerReader.prototype.isPrototypeOf(o.reader))fail('READER');
       Reflect.apply(SharesightIbManagerReader.prototype.verifyCapturedRead,o.reader,[null]);sourceReader=o.reader;
-      const preparer=createIbSourceRevisionPreparer({clock:now,checkCurrent:check,
-        verifyAcceptedArtifacts:async x=>{await check();if(hash(x.currentPayload)!==hash(record.view.currentPayload)||hash(x.anchorPayload)!==hash(record.view.anchorPayload)||hash(x.expected)!==hash(record.view.artifacts))fail('ARTIFACT');return record.view.artifacts;},
-        readStable:async args=>{await check();if(sourceCapture||args.targetDate!==plan.targetDate||hash(args.checkpoint)!==hash(record.view.anchorPayload.ibManagerSourceState.source))fail('SCOPE');
-          sourceCapture=await Reflect.apply(SharesightIbManagerReader.prototype.readStableWithEvidence,sourceReader,[args]);await check();return sourceCapture.input;}});
-      const result=await preparer.prepare({plan,currentPayload:record.view.currentPayload,anchorPayload:record.view.anchorPayload});
+      // The source preparer sanitizes foreign callback errors as source errors.
+      // Preserve only this adapter's fixed diagnostic when its own surrounding
+      // checks fail; a real reader failure keeps the original source classifier.
+      let localDiagnostic=null;
+      const localCheck=async operation=>{try{return await operation();}catch(error){
+        localDiagnostic=failures.get(error)||'PHASE_'+role+'_'+phase;throw error;
+      }};
+      const preparer=createIbSourceRevisionPreparer({clock:now,checkCurrent:()=>localCheck(check),
+        verifyAcceptedArtifacts:async x=>localCheck(async()=>{await check();if(hash(x.currentPayload)!==hash(record.view.currentPayload)||hash(x.anchorPayload)!==hash(record.view.anchorPayload)||hash(x.expected)!==hash(record.view.artifacts))fail('ARTIFACT');return record.view.artifacts;}),
+        readStable:async args=>{
+          await localCheck(async()=>{await check();if(sourceCapture||args.targetDate!==plan.targetDate||hash(args.checkpoint)!==hash(record.view.anchorPayload.ibManagerSourceState.source))fail('SCOPE');});
+          sourceCapture=await Reflect.apply(SharesightIbManagerReader.prototype.readStableWithEvidence,sourceReader,[args]);
+          await localCheck(check);return sourceCapture.input;}});
+      let result;
+      try{result=await at('SOURCE_PREPARE',()=>preparer.prepare({plan,currentPayload:record.view.currentPayload,anchorPayload:record.view.anchorPayload}));}
+      catch(error){if(localDiagnostic!==null)fail(localDiagnostic);throw error;}
       if(result.mode!=='extend-cutoff'||!isIbSourceRevisionCandidate(result))fail('CANDIDATE');candidate=result;await check();return result;
     }),
     verifyCandidate:value=>run(async()=>{
@@ -216,5 +260,7 @@ export function createIbRevisionArtifacts(options){
       await check();try{await Reflect.apply(SharesightIbManagerReader.prototype.checkCapturedReadCurrent,sourceReader,[sourceCapture]);}catch{fail('SOURCE_CHANGED');}await check();return true;
     }),
     close(){closed=true;record=null;candidate=null;sourceCapture=null;sourceReader=null;c.dataKey.fill(0);},
-  });instances.add(api);return api;
+  });
+  // A diagnostic instance never has the artifact brand required by the writer.
+  if(!c.diagnosticOnly)instances.add(api);return api;
 }

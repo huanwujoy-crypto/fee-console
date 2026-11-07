@@ -236,17 +236,26 @@ test('diagnostic event and metadata reject mixed modes, reruns, duplicates and c
   assert.throws(()=>validateIbDiagnosticBase({data:Buffer.from('{}'),health:Buffer.from('{}'),now}),/BASE_BYTES/);
 });
 
-test('diagnostic workflow excludes all production paths and receives no publication or ledger credential',()=>{
+test('diagnostic workflow excludes production and scopes the existing economic locator to read-only execution',()=>{
   const text=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8');
   const diagnostic=text.split('\n  ib-diagnostic:')[1];assert.ok(diagnostic);
   const original=text.split('\n  ib-diagnostic:')[0];
   for(const job of ['period','once-admit','produce','once-finish','source-plan-check','source-acceptance','ratio-preflight','ratio']){
     const section=original.split('\n  '+job+':')[1].split(/\n  [a-z][a-z-]+:/)[0];assert.match(section,/if: \$\{\{ !inputs\.ib_diagnostic_once && !inputs\.ib_diagnostic_main &&/);
   }
-  assert.match(diagnostic,/timeout-minutes: 15/);assert.match(diagnostic,/actions: read/);assert.doesNotMatch(diagnostic,/contents: write|actions: write|FEE_CLOUD_GITHUB_TOKEN|FEE_ECON_GIST_ID|FEE_RATIO_MANAGER_TOKEN|upload-artifact|promote|daily\.mjs/);
+  assert.match(diagnostic,/timeout-minutes: 15/);assert.match(diagnostic,/actions: read/);assert.doesNotMatch(diagnostic,/contents: write|actions: write|FEE_CLOUD_GITHUB_TOKEN|FEE_ECON_GITHUB_TOKEN|FEE_RATIO_MANAGER_TOKEN|upload-artifact|promote|daily\.mjs/);
   assert.ok(diagnostic.indexOf('--check-plan')<diagnostic.indexOf('google-github-actions/auth@'));
   assert.match(diagnostic,/if: always\(\)/);assert.match(text,/group: fee-cloud-producer\n  cancel-in-progress: false/);
-  const source=fs.readFileSync(new URL('./ib-manager-diagnostic.mjs',import.meta.url),'utf8');assert.doesNotMatch(source,/\.apply\(payload|produce\(|execFileSync\('(?!git)/);
+  const beforeCredentials=diagnostic.split('      - name: Reuse the existing read identity')[0];
+  assert.doesNotMatch(beforeCredentials,/FEE_ECON_GIST_ID|FEE_DATA_KEY|FEE_CLOUD_SHARESIGHT_CLIENT_(?:ID|SECRET)/);
+  const privateRead=diagnostic.split('      - name: Inspect Jenny without a writer or publication token')[1].split('      - name: Remove diagnostic temporary inputs')[0];
+  assert.equal((diagnostic.match(/FEE_ECON_GIST_ID:/g)||[]).length,1);
+  assert.match(privateRead,/FEE_ECON_GIST_ID: \$\{\{ secrets\.FEE_ECON_GIST_ID \}\}/);
+  assert.match(privateRead,/node scripts\/fee-source-revision-diagnostic\.mjs --expected-main=/);
+  const source=fs.readFileSync(new URL('./fee-source-revision-diagnostic.mjs',import.meta.url),'utf8');
+  assert.doesNotMatch(source,/\.apply\(payload|produce\(|produceReportPeriod\(|writeFileSync\(|execFileSync\('(?!git)/);
+  assert.match(source,/fetchEconomicSnapshot\(\{fetchImpl:transport\.fetch,tempRoot:storage\.directory,attempts:1\}\)/);
+  assert.match(source,/diagnosticOnly:true/);
 });
 function wire({mutate=()=>{},changeSecond=false}={}){
   const calls=[];let capture=0;

@@ -1,12 +1,28 @@
 // Explicit existing-token transport for the one reviewed historical revision.
 // No credential discovery, write, retries, log output, or arbitrary URL ingress.
 import {types} from 'node:util';
-import {boundedJson} from './fee-http-json.mjs';
+import {boundedJson,BoundedJsonError} from './fee-http-json.mjs';
 
 const REPO='/repos/huanwujoy-crypto/fee-console/',ORIGIN='https://api.github.com';
 const instances=new WeakSet(),failures=new WeakMap();
 const JSON_ROUTE=/^(?:git\/ref\/heads\/main|(?:git\/)?commits\/[a-f0-9]{40}|git\/trees\/[a-f0-9]{40}|contents\/(?:data\.json|fee-data-health\.json)\?ref=[a-f0-9]{40}|actions\/runs\/[1-9][0-9]{0,15}(?:\/jobs\?per_page=100)?)$/;
-function fail(code){const e=new Error('IB_REVISION_GITHUB_'+code);failures.set(e,code);throw Object.freeze(e);}
+const JSON_CODES=Object.freeze(['CONFIG','HTTP','TYPE','SIZE','BODY','JSON','ABORTED','TIMEOUT','NETWORK']);
+const HTTP_CODES=Object.freeze({400:'BAD_REQUEST',401:'UNAUTHORIZED',403:'FORBIDDEN',404:'NOT_FOUND',408:'TIMEOUT',
+  409:'CONFLICT',410:'GONE',422:'UNPROCESSABLE',429:'RATE_LIMIT'});
+const HTTP_CLASSES=Object.freeze([...Object.values(HTTP_CODES),'SERVER','OTHER']);
+export const IB_REVISION_GITHUB_FAILURE_CODES=Object.freeze([
+  'INPUT','CONFIG','CLOSED','REQUEST','SCOPE','RESPONSE','LOG','LOG_HOST','REFUSED',...JSON_CODES.map(code=>'JSON_'+code),
+  ...HTTP_CLASSES.map(code=>'JSON_HTTP_'+code),
+].map(code=>'IB_REVISION_GITHUB_'+code));
+function failure(code){const e=new Error('IB_REVISION_GITHUB_'+code);failures.set(e,code);return Object.freeze(e);}
+function fail(code){throw failure(code);}
+function boundedFailureCode(error){
+  // Only the bounded helper's fixed native enum is diagnostic evidence. Never
+  // inspect/coerce message, stack, cause, URL or response content for a code.
+  if(!error||typeof error!=='object'||types.isProxy(error)||Object.getPrototypeOf(error)!==BoundedJsonError.prototype)return null;
+  const descriptor=Object.getOwnPropertyDescriptor(error,'code');
+  return descriptor&&Object.hasOwn(descriptor,'value')&&JSON_CODES.includes(descriptor.value)?'JSON_'+descriptor.value:null;
+}
 export const revisionGithubFailureCode=e=>'IB_REVISION_GITHUB_'+(failures.get(e)||'REFUSED');
 export const isRevisionGithubRead=value=>instances.has(value);
 function plain(value,required,optional=[]){
@@ -25,20 +41,32 @@ export function createRevisionGithubRead(options){
   const active=new Set();
   const live=()=>{if(closed)fail('CLOSED');};
   const headers=()=>({Accept:'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28',Authorization:'Bearer '+token});
-  const run=async operation=>{
+  const run=async(operation,jsonMode=false)=>{
     live();const controller=new AbortController();let timer,rejectClose;
     const close=new Promise((_,reject)=>{rejectClose=reject;});const entry={controller,rejectClose};active.add(entry);
-    try{return await Promise.race([operation(controller.signal),close,new Promise((_,reject)=>{timer=setTimeout(()=>{controller.abort();reject(new Error());},timeoutMs);})]);}
-    catch(e){if(closed)fail('CLOSED');if(failures.has(e))throw e;fail('REQUEST');}
+    try{return await Promise.race([operation(controller.signal),close,new Promise((_,reject)=>{timer=setTimeout(()=>{controller.abort();reject(failure(jsonMode?'JSON_TIMEOUT':'REQUEST'));},timeoutMs);})]);}
+    catch(e){if(closed)fail('CLOSED');if(failures.has(e))throw e;fail(jsonMode?boundedFailureCode(e)||'REQUEST':'REQUEST');}
     finally{clearTimeout(timer);active.delete(entry);controller.abort();}
   };
   const json=async path=>{
     if(typeof path!=='string'||!JSON_ROUTE.test(path))fail('SCOPE');
     return run(async signal=>{
-      const result=await boundedJson(fetchImpl,ORIGIN+REPO+path,{method:'GET',redirect:'error',credentials:'omit',signal,headers:headers()},
-        {timeoutMs,maxBytes:8*1024*1024,requireJsonType:true});
+      let httpClass='OTHER';
+      // A transport may throw an arbitrary object, including an externally
+      // constructed BoundedJsonError. Replace it before the helper handles it.
+      // Retain only a fixed status class in this request's closure, never the
+      // response, its body, headers, URL or authentication as diagnostic state.
+      const jsonFetch=async(...args)=>{try{
+        const response=await fetchImpl(...args),status=response?.status;
+        if(Number.isInteger(status))httpClass=Object.hasOwn(HTTP_CODES,status)?HTTP_CODES[status]:status>=500&&status<=599?'SERVER':'OTHER';
+        return response;
+      }catch{throw new Error();}};
+      let result;
+      try{result=await boundedJson(jsonFetch,ORIGIN+REPO+path,{method:'GET',redirect:'error',credentials:'omit',signal,headers:headers()},
+        {timeoutMs,maxBytes:8*1024*1024,requireJsonType:true});}
+      catch(error){if(boundedFailureCode(error)==='JSON_HTTP')fail('JSON_HTTP_'+httpClass);throw error;}
       live();if(!result||typeof result!=='object'||JSON.stringify(result).includes(token))fail('RESPONSE');return result;
-    });
+    },true);
   };
   const raw=async(response,signal)=>{
     if(response.status!==200||response.redirected||!response.body?.getReader)fail('LOG');
