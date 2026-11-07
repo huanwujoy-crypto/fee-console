@@ -73,26 +73,34 @@ function planInput(p){
     ||p.bindings.baseDataSha256!==p.currentArtifact.dataSha256||p.bindings.baseHealthSha256!==p.currentArtifact.healthSha256
     ||p.bindings.currentSourceStateId!==p.currentSourceStateId||!iso(p.expiresAt))fail('PLAN');
 }
-function proofsBefore(source,anchor){
+// The one admitted boundary proof: an income date proof whose authenticated
+// `anchor` is exactly the accepted anchor's full closing snapshot at U and whose
+// raw reread/closing are U and U+1. It changes nothing at or before U (the
+// source validator already requires corrected == anchor), so it is neither a
+// prefix member nor a crossing. Every other proof that spans U is still refused.
+function boundaryIncomeProof(p,anchor,boundary){
+  return !!boundary&&p.rawAnchor.d===anchor&&p.anchor.d===anchor&&p.rawClosing.d===next(anchor)&&ibCanonical(p.anchor)===ibCanonical(boundary);
+}
+function proofsBefore(source,anchor,boundary){
   const result={};
   for(const [key,start,end] of [
     ['cashDateNormalizations',p=>p.rawBefore.d,p=>p.rawAfter.d],
     ['incomeDateNormalizations',p=>p.rawAnchor.d,p=>p.rawClosing.d]
   ]){
     const proofs=source[key]||[];
-    if(proofs.some(p=>start(p)<=anchor&&end(p)>anchor))fail('CROSS_ANCHOR_PROOF');
+    if(proofs.some(p=>start(p)<=anchor&&end(p)>anchor&&!(key==='incomeDateNormalizations'&&boundaryIncomeProof(p,anchor,boundary))))fail('CROSS_ANCHOR_PROOF');
     result[key]=proofs.filter(p=>end(p)<=anchor);
   }
   return result;
 }
-function prefix(source,through){
+function prefix(source,through,boundary=null){
   const i=source.periodReturnsInput;
   return {baselineFrom:source.baselineFrom,baselineAsOf:source.baselineAsOf,baselineInputsHash:source.baselineInputsHash,
     portfolioIdentityHash:source.portfolioIdentityHash,ownerBaseline:source.ownerBaseline,bootstrapCoverage:source.bootstrapCoverage,
     openT:i.openT,from:i.from,points:i.points.filter(p=>p.d<=through),
     flowByDate:Object.fromEntries(Object.entries(i.flowByDate).filter(([d])=>d<=through)),
     cashFlowByDate:Object.fromEntries(Object.entries(source.cashFlowByDate).filter(([d])=>d<=through)),
-    noncashProofs:source.noncashProofs.filter(p=>p.effectiveDate<=through),...proofsBefore(source,through)};
+    noncashProofs:source.noncashProofs.filter(p=>p.effectiveDate<=through),...proofsBefore(source,through,boundary)};
 }
 function bundleOf(payload){return {returnReceipt:clone(payload.ibManagerReturnReceipt),drawdownReceipt:clone(payload.ibManagerDrawdownReceipt),sourceState:clone(payload.ibManagerSourceState)};}
 function locksOf(payload){
@@ -119,17 +127,21 @@ async function revisionHistory(originalCurrent,originalAnchor,p){
   if(!current||!anchor||current.schema!=='fee-console.ib-manager-source.v3'||anchor.schema!=='fee-console.ib-manager-source.v3'
     ||originalCurrent.ibManagerSourceState.stateId!==p.currentSourceStateId||originalAnchor.ibManagerSourceState.stateId!==p.anchorSourceStateId
     ||anchor.sourceAsOf!==p.anchorDate||anchor.sourceAsOf>=current.sourceAsOf||p.targetDate<current.sourceAsOf)fail('ANCHOR');
-  if(!same(prefix(current,p.anchorDate),prefix(anchor,p.anchorDate)))fail('PREFIX');
+  // The accepted anchor's own full closing snapshot at U is the only boundary a
+  // U -> U+1 income proof may restore to; the anchor source never carries one.
+  const boundary=anchor.closingSnapshots.find(x=>x.d===p.anchorDate)||null;
+  if(!boundary||(anchor.incomeDateNormalizations||[]).some(x=>x.rawClosing.d>p.anchorDate))fail('ANCHOR');
+  if(!same(prefix(current,p.anchorDate,boundary),prefix(anchor,p.anchorDate)))fail('PREFIX');
   for(const a of anchor.closingSnapshots){const c=current.closingSnapshots.find(x=>x.d===a.d);if(c&&!same(a,c))fail('ANCHOR_CHANGED');}
   const locks=locksOf(originalCurrent);
   if(locks.some(ym=>ym>=next(p.anchorDate).slice(0,7)&&ym<=current.sourceAsOf.slice(0,7)))fail('MONTH_LOCK');
-  return {current,anchor,locks};
+  return {current,anchor,locks,boundary};
 }
 async function revisionCalculation(originalCurrent,p,history,revised){
-  const {current,anchor,locks}=history;
+  const {current,anchor,locks,boundary}=history;
   revised=validateIbManagerReportInput(clone(revised),p.baselineSha256);
   if(revised.schema!=='fee-console.ib-manager-source.v3'||revised.sourceAsOf!==p.targetDate
-    ||!same(prefix(revised,p.anchorDate),prefix(anchor,p.anchorDate)))fail('REVISED_SCOPE');
+    ||!same(prefix(revised,p.anchorDate,boundary),prefix(anchor,p.anchorDate)))fail('REVISED_SCOPE');
   const replacement=await buildIbManagerReportBundle(revised,p.baselineSha256),changes=changedDays(current,revised,p.anchorDate);
   if(!changes.length)fail('NO_HISTORICAL_CHANGE');
   for(const ym of locks){

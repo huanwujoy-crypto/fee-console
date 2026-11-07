@@ -35,6 +35,7 @@ const SYNC_REPAIR='50392c2fb5ec3b1b26e5515cdb0feebb48823d2d',SYNC_CONTRACT='ib-s
 const DIAGNOSTIC_REPAIR='4f98318c73d1727d323febdcc72b7d5fbfb77f01',DIAGNOSTIC_CONTRACT='ib-source-revision-20261106-diagnostic-v1';
 const DIAGNOSTIC_V2_REPAIR='22174f04cae8ac18a071930f491598b327e315c5',DIAGNOSTIC_V2_CONTRACT='ib-source-revision-20261106-diagnostic-v2';
 const DIAGNOSTIC_V3_REPAIR='f1d4454d25849e1908ba508f8c7f140389e425bb',DIAGNOSTIC_V3_CONTRACT='ib-source-revision-20261106-diagnostic-v3';
+const DIAGNOSTIC_V4_REPAIR='e30015d7260e43622f8ad63a119b0efbef35acb4',DIAGNOSTIC_V4_CONTRACT='ib-source-revision-20261106-diagnostic-v4';
 const SYNC_V3_REPAIR='b218f264c53e914d6469ec9f43824f48ccb7af18',SYNC_V3_CONTRACT='ib-source-revision-20261106-sync-v3';
 const SOURCE_P='9c5ec1636e3a6f5c6f307dba9fc681e3b14d73e8',SOURCE_U='5ad072aa8eae0fd04830250d0811a080b40931b9';
 const sha=b=>crypto.createHash('sha256').update(b).digest('hex');
@@ -76,11 +77,11 @@ function sourceWire({revised=false,state={sourceChanged:false},calls=[],bankWire
 // Mint the native admission through the original release validators and the
 // selected attempt-history or current-execution/publication-state validators.
 // Neither a self-authored permission flag nor a test-only capability is used.
-function admissionWire(state,dailyPlan,sync=false,diagnostic=false,syncV3=false,diagnosticV2=false,diagnosticV3=false){
-  diagnostic=diagnostic||diagnosticV2||diagnosticV3;sync=sync||diagnostic||syncV3;
-  const manifest=reportHistoricalRecoveryManifest(sync?{contractId:diagnosticV3?DIAGNOSTIC_V3_CONTRACT:diagnosticV2?DIAGNOSTIC_V2_CONTRACT:diagnostic?DIAGNOSTIC_CONTRACT:syncV3?SYNC_V3_CONTRACT:SYNC_CONTRACT}:{}),actor={id:283054367,login:OWNER,type:'User'},ui='2bb9f66ac890ba87cec504ef72a5083c07670689',repairBase=diagnosticV3?DIAGNOSTIC_V3_REPAIR:diagnosticV2?DIAGNOSTIC_V2_REPAIR:diagnostic?DIAGNOSTIC_REPAIR:syncV3?SYNC_V3_REPAIR:sync?SYNC_REPAIR:REPAIR;
+function admissionWire(state,dailyPlan,sync=false,diagnostic=false,syncV3=false,diagnosticV2=false,diagnosticV3=false,diagnosticV4=false){
+  diagnostic=diagnostic||diagnosticV2||diagnosticV3||diagnosticV4;sync=sync||diagnostic||syncV3;
+  const manifest=reportHistoricalRecoveryManifest(sync?{contractId:diagnosticV4?DIAGNOSTIC_V4_CONTRACT:diagnosticV3?DIAGNOSTIC_V3_CONTRACT:diagnosticV2?DIAGNOSTIC_V2_CONTRACT:diagnostic?DIAGNOSTIC_CONTRACT:syncV3?SYNC_V3_CONTRACT:SYNC_CONTRACT}:{}),actor={id:283054367,login:OWNER,type:'User'},ui='2bb9f66ac890ba87cec504ef72a5083c07670689',repairBase=diagnosticV4?DIAGNOSTIC_V4_REPAIR:diagnosticV3?DIAGNOSTIC_V3_REPAIR:diagnosticV2?DIAGNOSTIC_V2_REPAIR:diagnostic?DIAGNOSTIC_REPAIR:syncV3?SYNC_V3_REPAIR:sync?SYNC_REPAIR:REPAIR;
   const signed=(id,parents,tree=TREE)=>({sha:id,parents:parents.map(sha=>({sha})),author:actor,committer:{login:OWNER},commit:{tree:{sha:tree},verification:{verified:true,reason:'valid'}}});
-  const commit=signed(MAIN,[repairBase]),repair=signed(repairBase,diagnosticV3?[DIAGNOSTIC_V2_REPAIR]:diagnosticV2?[SYNC_V3_REPAIR]:diagnostic?[SYNC_REPAIR]:syncV3?[DIAGNOSTIC_REPAIR]:sync?[REPAIR]:['4d798c77c9a9a5d459a75af45b4239c7c9cf984a','474e7b5a20f93358193791daf84d175a22e06d9e']);
+  const commit=signed(MAIN,[repairBase]),repair=signed(repairBase,diagnosticV4?[DIAGNOSTIC_V3_REPAIR]:diagnosticV3?[DIAGNOSTIC_V2_REPAIR]:diagnosticV2?[SYNC_V3_REPAIR]:diagnostic?[SYNC_REPAIR]:syncV3?[DIAGNOSTIC_REPAIR]:sync?[REPAIR]:['4d798c77c9a9a5d459a75af45b4239c7c9cf984a','474e7b5a20f93358193791daf84d175a22e06d9e']);
   const run=(id,head,created)=>({id,head_sha:head,head_branch:'main',path:'.github/workflows/fee-cloud-producer.yml',event:'workflow_dispatch',created_at:created,run_attempt:1,workflow_id:365873934,actor,status:id===RUN?'in_progress':'completed',conclusion:id===RUN?null:'failure'});
   const runs=[run(RUN,MAIN,'2026-11-07T01:00:00Z'),run(42309848352,'94210904dd95b2ff4496cb68dab6b49950fe4f74','2026-11-06T23:08:38Z'),run(42318324848,'2c32d695f4f2dc057920fc690046ddf3e1ccdaee','2026-11-07T00:00:00Z')];
   state.currentRun={...runs[0],repository:{full_name:REPO},...(diagnostic?{display_title:'IB diagnostic '+T}:{})};
@@ -107,8 +108,8 @@ function admissionWire(state,dailyPlan,sync=false,diagnostic=false,syncV3=false,
       readState:async()=>{state.publicationReads++;return {...structuredClone(state.publication),data:Buffer.from(state.publication.data)};}}:{})};
 }
 
-async function fixture(t,{legacy=false,mutatePayload,mutateHealth,mutateEconomic,sync=false,diagnostic=false,syncV3=false,diagnosticV2=false,diagnosticV3=false,lockedMonth=false,bankWire=false,mutateCashRows}={}){
-  diagnostic=diagnostic||diagnosticV2||diagnosticV3;sync=sync||diagnostic||syncV3;
+async function fixture(t,{legacy=false,mutatePayload,mutateHealth,mutateEconomic,sync=false,diagnostic=false,syncV3=false,diagnosticV2=false,diagnosticV3=false,diagnosticV4=false,lockedMonth=false,bankWire=false,mutateCashRows}={}){
+  diagnostic=diagnostic||diagnosticV2||diagnosticV3||diagnosticV4;sync=sync||diagnostic||syncV3;
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'revision-artifact-synthetic-'));fs.chmodSync(dir,0o700);t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
   const state={now:Date.parse('2026-11-07T01:10:00.000Z'),main:MAIN,economicRevision:o('e'),sourceChanged:false,calls:[],sourceCalls:[],admissionCalls:[],currentRunReads:0,publicationReads:0,mutate:null,log:null,competing:false};
   const clock=()=>state.now,dailyPlan=dailyReportPlan(T,['NYSE','NASDAQ'],{periodFrom:T,reviewedSyncDate:T});
@@ -141,7 +142,7 @@ async function fixture(t,{legacy=false,mutatePayload,mutateHealth,mutateEconomic
   const health=(date,bytes,checkedAt)=>{const h={schema:'fee-console.daily-health.v1',checkedAt,targetDate:date,sourceDates:{schwab:date,webull:date,benchmark:date},outcome:'updated',dataSha256:sha(bytes),errorCode:null};mutateHealth?.(h,date);return Buffer.from(JSON.stringify(h,null,2)+'\n');};
   const healthBytes=health(P,dataBytes,'2026-11-06T01:01:00.000Z'),anchorHealth=health(U,anchorBytes,'2026-11-05T05:45:00.000Z');
   state.publication={mainSha:MAIN,finalMainSha:MAIN,data:dataBytes,pending:false,health:JSON.parse(healthBytes)};
-  const admission=await (diagnostic?authorizeHistoricalRevisionDiagnostic:authorizeReportRecovery)({plan:dailyPlan,expectedMain:MAIN,currentRunId:RUN,now:new Date(state.now),clock:()=>new Date(state.now),actionsToken:TOKEN,...admissionWire(state,dailyPlan,sync,diagnostic,syncV3,diagnosticV2,diagnosticV3)});
+  const admission=await (diagnostic?authorizeHistoricalRevisionDiagnostic:authorizeReportRecovery)({plan:dailyPlan,expectedMain:MAIN,currentRunId:RUN,now:new Date(state.now),clock:()=>new Date(state.now),actionsToken:TOKEN,...admissionWire(state,dailyPlan,sync,diagnostic,syncV3,diagnosticV2,diagnosticV3,diagnosticV4)});
   const oldEnv={id:process.env.FEE_ECON_GIST_ID,token:process.env.FEE_ECON_GITHUB_TOKEN};process.env.FEE_ECON_GIST_ID=ID;process.env.FEE_ECON_GITHUB_TOKEN='github_pat_SYNTHETIC_NOT_A_REAL_TOKEN_123456';
   const economicFetch=async(url,init)=>{assert.equal(url,'https://api.github.com/gists/'+ID);assert.equal(init.method,'GET');state.economicReads=(state.economicReads||0)+1;const override=await state.economicTransport?.(url,init);if(override!==undefined)return override;return new Response(JSON.stringify({id:ID,public:false,owner:{login:OWNER},truncated:false,history:[{version:state.economicRevision}],files:{'fee-console-db.json':{filename:'fee-console-db.json',content:economicBytes.toString(),size:economicBytes.length,truncated:false}}}),{headers:{etag:'"synthetic"','content-type':'application/json'}});};
   let economicSnapshot;try{economicSnapshot=await fetchEconomicSnapshot({tempRoot:dir,attempts:1,timeoutMs:100,fetchImpl:economicFetch});}finally{for(const[k,v]of Object.entries({FEE_ECON_GIST_ID:oldEnv.id,FEE_ECON_GITHUB_TOKEN:oldEnv.token}))if(v===undefined)delete process.env[k];else process.env[k]=v;}
@@ -525,7 +526,7 @@ test('artifact capability keeps the reader cash site and date-role beside the un
   assert.equal(ibRevisionArtifactCashSite(other),'UNCLASSIFIED');assert.equal(ibRevisionArtifactCashDateRole(other),'NONE');
 });
 test('diagnostic runtime and final CLI result carry the fixed cash site and date-role, then clean up, for the genuine refusal only',async t=>{
-  for(const contract of ['diagnostic','diagnosticV2','diagnosticV3'])await t.test(contract,async t=>{
+  for(const contract of ['diagnostic','diagnosticV2','diagnosticV3','diagnosticV4'])await t.test(contract,async t=>{
     const f=await fixture(t,{[contract]:true,bankWire:true}),options=diagnosticRuntimeOptions(f);
     options.fetchImpl=async(url,init)=>{const r=await f.fetchImpl(url,init);if(url.includes('cash_account_transactions')){const b=await r.json();b.cash_account_transactions.pop();return response(url,b);}return r;};
     const before={data:Buffer.from(f.dataBytes),health:Buffer.from(f.healthBytes),files:fs.readdirSync(f.dir).sort()};
@@ -750,7 +751,7 @@ test('diagnostic-v2 emits economic reasons through runtime and CLI without write
 });
 
 test('new exact diagnostic release walks the complete Jenny preparation and recheck without publication',async t=>{
- for(const contract of ['diagnosticV2','diagnosticV3'])await t.test(contract,async t=>{
+ for(const contract of ['diagnosticV2','diagnosticV3','diagnosticV4'])await t.test(contract,async t=>{
   const f=await fixture(t,{[contract]:true,bankWire:true,lockedMonth:true});
   const before={data:Buffer.from(f.dataBytes),health:Buffer.from(f.healthBytes),econ:fs.readFileSync(f.config.economicSnapshot.sourcePath),files:fs.readdirSync(f.dir).sort()};
   const runtime=await createFeeSourceRevisionRuntime(diagnosticRuntimeOptions(f));
