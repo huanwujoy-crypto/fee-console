@@ -6,7 +6,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import {nyDate} from './daily-core.mjs';
-import {SharesightIbManagerReader,IbManagerSourceError,IB_CASH_RECONCILIATION_SITES,IB_CASH_DATE_ROLES,ibSourceCashSite,ibSourceCashDateRole,ibBaselineBusinessHash,ibSourceFailureCode,validateIbBootstrapCoverage,validateIbManagerReportInput} from './ib-manager-source.mjs';
+import {SharesightIbManagerReader,IbManagerSourceError,IB_CASH_RECONCILIATION_SITES,IB_CASH_DATE_ROLES,ibSourceCashSite,ibSourceCashDateRole,ibBaselineBusinessHash,ibSourceFailureCode,validateIbBootstrapCoverage,validateIbManagerReportInput,IB_CAPTURE_RECHECK_DIAGNOSTIC_CODES,ibSourceCaptureRecheckDiagnostic} from './ib-manager-source.mjs';
+import {BoundedJsonError} from './fee-http-json.mjs';
 import {buildIbManagerReportBundle,validateIbManagerReportState,buildIbOwnerBaseline,validateIbOwnerBaselineState,buildIbManagerReturnReceipt,buildIbManagerDrawdownReceipt,createIbManagerReturnConsumer,createIbManagerDrawdownConsumer} from './ib-manager-return.mjs';
 import {prepareIbManagerReport,loadIbManagerReport,sameIbManagerData,validateIbManagerCoverage,assertIbManagerConfiguration,assertIbManagerPublication,IB_PUBLICATION_DIAGNOSTIC_PREFIX,validateIbPublicationDiagnostic} from './ib-manager-report.mjs';
 import {safeProducerFailureSummary} from './fee-cloud-producer.mjs';
@@ -288,6 +289,93 @@ function wire({mutate=()=>{},changeSecond=false}={}){
 }
 const read=(w,extra={})=>w.reader.readStable({targetDate:baseline.asOf,expectedBaselineHash:lock(),baseline,...extra});
 const source=async()=>read(wire());
+
+// These responses are all generated in memory. The switch is changed only
+// after a genuine two-pass capture has been accepted by the original reader.
+async function captureDiagnosticFixture(){
+  const w=wire(),control={stage:null,mode:null,calls:[]},original=w.reader.fetch;
+  w.reader.fetch=async(url,init)=>{
+    const p=new URL(url).pathname;control.calls.push({path:p,method:init.method});
+    const chosen=control.stage==='AUTH'?p==='/oauth2/token':control.stage==='READ'&&p==='/api/v2/portfolios.json';
+    if(chosen&&control.mode==='network')throw Error('PRIVATE_CANARY url=private.invalid account=SYNTH');
+    if(chosen&&['TIMEOUT','ABORTED'].includes(control.mode))throw new BoundedJsonError(control.mode);
+    const response=await original(url,init);if(!chosen)return response;
+    const text=await response.text();let bytes=text,status=200,type='application/json';
+    if(control.mode==='http')status=403;
+    else if(control.mode==='type')type='text/plain';
+    else if(control.mode==='json')bytes='{PRIVATE_CANARY';
+    else if(control.mode==='changed')bytes=text+' ';
+    else if(control.mode==='secret')bytes=text.replace('{','{"private":"synthetic-secret",');
+    else if(control.mode==='auth-shape')bytes='{"access_token":"PRIVATE_CANARY","token_type":"bearer"}';
+    const output=new Response(bytes,{status,headers:{'content-type':type}});Object.defineProperty(output,'url',{value:url});return output;
+  };
+  const args={targetDate:baseline.asOf,expectedBaselineHash:lock(),baseline};
+  const cap=await w.reader.readStableWithEvidence(args);
+  return {...w,control,args,cap};
+}
+test('capture recheck diagnostics never inspect unknown errors, proxies or private error fields',()=>{
+  assert.ok(Object.isFrozen(IB_CAPTURE_RECHECK_DIAGNOSTIC_CODES));
+  assert.equal(new Set(IB_CAPTURE_RECHECK_DIAGNOSTIC_CODES).size,IB_CAPTURE_RECHECK_DIAGNOSTIC_CODES.length);
+  for(const code of IB_CAPTURE_RECHECK_DIAGNOSTIC_CODES)assert.match(code,/^[A-Z_]{1,32}$/);
+  let touched=0;const hostile={get code(){touched++;throw Error('PRIVATE_CANARY');},get message(){touched++;throw Error('PRIVATE_CANARY');},toString(){touched++;throw Error('PRIVATE_CANARY');}};
+  const proxy=new Proxy({}, {get(){touched++;throw Error('PRIVATE_CANARY');},getPrototypeOf(){touched++;throw Error('PRIVATE_CANARY');}});
+  const revoked=Proxy.revocable({},{});revoked.revoke();
+  for(const value of [null,undefined,0,'PRIVATE_CANARY',hostile,proxy,revoked.proxy,
+    new IbManagerSourceError('UNSTABLE'),new Error('PRIVATE_CANARY'),Object.assign(Object.create(IbManagerSourceError.prototype),{code:'UNSTABLE'})])
+    assert.equal(ibSourceCaptureRecheckDiagnostic(value),'UNKNOWN');
+  assert.equal(touched,0);
+});
+test('capture recheck preserves fixed network and response reasons without exposing source text',async t=>{
+  for(const stage of ['AUTH','READ'])for(const [mode,reason]of [['network','NETWORK'],['TIMEOUT','TIMEOUT'],['ABORTED','ABORTED'],['http','HTTP'],['type','TYPE'],['json','JSON']])
+    await t.test(stage+' '+mode,async()=>{
+      const f=await captureDiagnosticFixture(),before=JSON.stringify(f.cap),count=f.control.calls.length;
+      f.control.stage=stage;f.control.mode=mode;
+      await assert.rejects(f.reader.checkCapturedReadCurrent(f.cap),error=>{
+        assert.equal(error.message,'IB_SOURCE_UNSTABLE');assert.equal(error.code,'UNSTABLE');
+        assert.equal(ibSourceCaptureRecheckDiagnostic(error),stage+'_'+reason);
+        assert.equal(JSON.stringify(error),'{"code":"UNSTABLE"}');assert.equal(error.cause,undefined);return true;
+      });
+      const expectedCalls=stage==='AUTH'?1:2+f.cap.evidence.captures[0].records.findIndex(x=>x.path==='/api/v2/portfolios.json');
+      assert.equal(f.control.calls.length-count,expectedCalls,'no extra requests or retries');
+      assert.equal(JSON.stringify(f.cap),before);assert.equal(f.reader.verifyCapturedRead(f.cap),false);
+      assert.throws(()=>f.reader.consumeCapturedRead(f.cap,f.args),/IB_SOURCE_STATE/);
+      const after=f.control.calls.length;f.control.mode=null;
+      await assert.rejects(f.reader.checkCapturedReadCurrent(f.cap),error=>{
+        assert.equal(error.code,'STATE');assert.equal(ibSourceCaptureRecheckDiagnostic(error),'STATE');return true;
+      });
+      assert.equal(f.control.calls.length,after,'revocation cannot refresh a capture');
+    });
+});
+test('capture recheck distinguishes valid changed records, secret rejection and invalid authentication response',async t=>{
+  for(const[stage,mode,expected]of [['READ','changed','RECORD_CHANGED'],['READ','secret','READ_REFUSED'],['AUTH','auth-shape','AUTH_RESPONSE']])
+    await t.test(mode,async()=>{
+      const f=await captureDiagnosticFixture(),old=JSON.stringify(f.cap);f.control.stage=stage;f.control.mode=mode;
+      await assert.rejects(f.reader.checkCapturedReadCurrent(f.cap),error=>{
+        assert.equal(error.code,'UNSTABLE');assert.equal(ibSourceCaptureRecheckDiagnostic(error),expected);assert(!JSON.stringify(error).includes('PRIVATE_CANARY'));return true;
+      });
+      assert.equal(JSON.stringify(f.cap),old);assert.equal(f.reader.verifyCapturedRead(f.cap),false);
+    });
+});
+test('capture recheck rejects changed local transport without executing accessor or issuing requests',async t=>{
+  for(const kind of ['replacement','getter','credential'])await t.test(kind,async()=>{
+    const f=await captureDiagnosticFixture(),before=f.control.calls.length;let calls=0;
+    if(kind==='replacement')f.reader.fetch=async()=>{calls++;throw Error('PRIVATE_CANARY');};
+    else Object.defineProperty(f.reader,kind==='credential'?'clientSecret':'fetch',{get(){calls++;throw Error('PRIVATE_CANARY');}});
+    await assert.rejects(f.reader.checkCapturedReadCurrent(f.cap),error=>{
+      assert.equal(error.code,'UNSTABLE');assert.equal(ibSourceCaptureRecheckDiagnostic(error),'LOCAL_TRANSPORT');return true;
+    });
+    assert.equal(calls,0);assert.equal(f.control.calls.length,before);assert.equal(f.reader.verifyCapturedRead(f.cap),false);
+  });
+});
+test('successful capture recheck keeps evidence, exact GET set and one-shot consumption unchanged',async()=>{
+  const f=await captureDiagnosticFixture(),before=JSON.stringify(f.cap),count=f.control.calls.length;
+  assert.equal(await f.reader.checkCapturedReadCurrent(f.cap),true);
+  const calls=f.control.calls.slice(count),records=f.cap.evidence.captures[0].records;
+  assert.equal(calls.filter(x=>x.method==='POST').length,1);
+  assert.deepEqual(calls.filter(x=>x.method==='GET').map(x=>x.path),records.map(x=>x.path));
+  assert.equal(JSON.stringify(f.cap),before);assert.equal(f.reader.consumeCapturedRead(f.cap,f.args),f.cap.input);
+  assert.throws(()=>f.reader.consumeCapturedRead(f.cap,f.args),/IB_SOURCE_STATE/);
+});
 // Canonical synchronization format with synthetic account, date and amount.
 const bankWireMemo=(display='50',keyAmount='50.00',d='2026-09-01')=>`IBKR U1000001 bank wire USD ${display}, received and available ${d} per Transfer Status & History and IBKR notice; source bank not verified. key=ib.manual|U1000001|wire|${d}|USD|${keyAmount}`;
 function bankWireFixture(change=()=>{},changeBody=()=>{}){

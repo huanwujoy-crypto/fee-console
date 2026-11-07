@@ -17,6 +17,17 @@ const CODES = new Set([
   "SOURCE_IDENTITY", "SOURCE_TRUNCATED", "SOURCE_FILE", "SOURCE_ENVELOPE",
   "SOURCE_REVISION", "SOURCE_ETAG", "SOURCE_CHANGED", "SOURCE_STORAGE", "SOURCE_CLOSED",
 ]);
+const diagnosticFailures = new WeakMap();
+export const ECONOMIC_SOURCE_DIAGNOSTIC_CODES = Object.freeze([
+  'UNKNOWN', ...CODES,
+  'PAIR_REVISION', 'PAIR_BYTES', 'PAIR_ETAG', 'PAIR_MULTIPLE',
+  'FROZEN_REVISION', 'FROZEN_BYTES', 'FROZEN_ETAG', 'FROZEN_MULTIPLE',
+  'LOCAL_DIRECTORY', 'LOCAL_FILE', 'LOCAL_MODE', 'LOCAL_BYTES', 'LOCAL_IO',
+]);
+const DIAGNOSTIC_CODES = new Set(ECONOMIC_SOURCE_DIAGNOSTIC_CODES);
+// Identity-only lookup: never inspect a caller's properties, prototype, or text.
+// Public SourceFetchError construction does not confer diagnostic provenance.
+export const economicSourceDiagnosticCode = error => diagnosticFailures.get(error) || 'UNKNOWN';
 
 export class SourceFetchError extends Error {
   constructor(code) {
@@ -26,7 +37,16 @@ export class SourceFetchError extends Error {
     this.code = safe;
   }
 }
-const fail = code => { throw new SourceFetchError(code); };
+const sourceError = (code, diagnostic = code) => {
+  const error = new SourceFetchError(code);
+  diagnosticFailures.set(error, DIAGNOSTIC_CODES.has(diagnostic) ? diagnostic : 'UNKNOWN');
+  return error;
+};
+const fail = (code, diagnostic = code) => { throw sourceError(code, diagnostic); };
+const storageDiagnostic = error => {
+  const diagnostic = economicSourceDiagnosticCode(error);
+  return diagnostic === 'UNKNOWN' ? 'LOCAL_IO' : diagnostic;
+};
 const object = value => value !== null && typeof value === "object" && !Array.isArray(value);
 export const sourceFailureCode = error => error instanceof SourceFetchError && CODES.has(error.code)
   ? error.code : "SOURCE_RESPONSE";
@@ -132,12 +152,12 @@ async function readOnce(id, token, options) {
   const deadline = new Promise((_, reject) => {
     timer = setTimeout(() => {
       controller.abort();
-      reject(new SourceFetchError("SOURCE_TIMEOUT"));
+      reject(sourceError("SOURCE_TIMEOUT"));
     }, options.timeoutMs);
   });
   try { return await Promise.race([operation, deadline]); }
   catch (error) {
-    if (error instanceof SourceFetchError) throw new SourceFetchError(sourceFailureCode(error));
+    if (error instanceof SourceFetchError) throw sourceError(sourceFailureCode(error), economicSourceDiagnosticCode(error));
     fail(controller.signal.aborted ? "SOURCE_TIMEOUT" : "SOURCE_NETWORK");
   } finally { clearTimeout(timer); }
 }
@@ -157,9 +177,18 @@ function same(a, b) {
   return a.revision === b.revision && a.bytes.equals(b.bytes)
     && (a.etag === b.etag || a.etag === `W/${b.etag}` || b.etag === `W/${a.etag}`);
 }
+function changeDiagnostic(a, b, phase) {
+  // Called only after the unchanged acceptance predicate rejected. Compare
+  // already-held bytes/metadata; no extra source access or value is exposed.
+  const changed = [];
+  if (a.revision !== b.revision) changed.push('REVISION');
+  if (!a.bytes.equals(b.bytes)) changed.push('BYTES');
+  if (!(a.etag === b.etag || a.etag === `W/${b.etag}` || b.etag === `W/${a.etag}`)) changed.push('ETAG');
+  return `${phase}_${changed.length === 1 ? changed[0] : 'MULTIPLE'}`;
+}
 async function stableRead(id, token, options) {
   const first = await readWithRetry(id, token, options), second = await readWithRetry(id, token, options);
-  if (!same(first, second)) fail("SOURCE_CHANGED");
+  if (!same(first, second)) fail("SOURCE_CHANGED", changeDiagnostic(first, second, 'PAIR'));
   return {...first,managerRecipientStable:first.managerRecipientRaw===second.managerRecipientRaw,
     fundProfileStable:first.fundProfileRaw===second.fundProfileRaw};
 }
@@ -177,16 +206,16 @@ function economicVersionBinding(id, snapshot) {
 }
 
 function checkedRoot(requested) {
-  if (typeof requested !== "string" || !path.isAbsolute(requested)) fail("SOURCE_STORAGE");
+  if (typeof requested !== "string" || !path.isAbsolute(requested)) fail("SOURCE_STORAGE", 'LOCAL_DIRECTORY');
   let root;
   try {
     root = fs.realpathSync(requested);
-    if (!fs.statSync(root).isDirectory()) fail("SOURCE_STORAGE");
+    if (!fs.statSync(root).isDirectory()) fail("SOURCE_STORAGE", 'LOCAL_DIRECTORY');
     for (let at = root; ; at = path.dirname(at)) {
-      if (fs.existsSync(path.join(at, ".git"))) fail("SOURCE_STORAGE");
+      if (fs.existsSync(path.join(at, ".git"))) fail("SOURCE_STORAGE", 'LOCAL_DIRECTORY');
       if (at === path.dirname(at)) break;
     }
-  } catch { fail("SOURCE_STORAGE"); }
+  } catch (error) { fail("SOURCE_STORAGE", storageDiagnostic(error)); }
   return root;
 }
 
@@ -223,7 +252,7 @@ export async function fetchEconomicSnapshot(options = {}) {
   const checkedDirectory = () => {
     const stat = fs.lstatSync(directory);
     if (!stat.isDirectory() || stat.isSymbolicLink() || fs.realpathSync(directory) !== directory
-        || stat.dev !== directoryIdentity.dev || stat.ino !== directoryIdentity.ino) fail("SOURCE_STORAGE");
+        || stat.dev !== directoryIdentity.dev || stat.ino !== directoryIdentity.ino) fail("SOURCE_STORAGE", 'LOCAL_DIRECTORY');
     return stat;
   };
   const cleanup = () => {
@@ -234,7 +263,7 @@ export async function fetchEconomicSnapshot(options = {}) {
       if (directory && fs.existsSync(directory)) fs.rmdirSync(directory);
       closed = true;
       token = undefined;
-    } catch { fail("SOURCE_STORAGE"); }
+    } catch (error) { fail("SOURCE_STORAGE", storageDiagnostic(error)); }
   };
   try {
     directory = fs.mkdtempSync(path.join(root, "fee-economic-source-"));
@@ -243,18 +272,18 @@ export async function fetchEconomicSnapshot(options = {}) {
     sourcePath = path.join(directory, "encrypted-source.json");
     fs.writeFileSync(sourcePath, expected.bytes, { flag: "wx", mode: 0o600 });
     fs.chmodSync(sourcePath, 0o600);
-  } catch {
+  } catch (error) {
     try { cleanup(); } catch { /* Preserve a fixed storage error only. */ }
-    fail("SOURCE_STORAGE");
+    fail("SOURCE_STORAGE", storageDiagnostic(error));
   }
   const verifyLocal = () => {
     if (closed) fail("SOURCE_CLOSED");
     try {
       const parent = checkedDirectory(), stat = fs.lstatSync(sourcePath);
-      if (!stat.isFile() || stat.isSymbolicLink()
-          || (stat.mode & 0o777) !== 0o600 || (parent.mode & 0o777) !== 0o700
-          || !fs.readFileSync(sourcePath).equals(expected.bytes)) fail("SOURCE_STORAGE");
-    } catch { fail("SOURCE_STORAGE"); }
+      if (!stat.isFile() || stat.isSymbolicLink()) fail("SOURCE_STORAGE", 'LOCAL_FILE');
+      if ((stat.mode & 0o777) !== 0o600 || (parent.mode & 0o777) !== 0o700) fail("SOURCE_STORAGE", 'LOCAL_MODE');
+      if (!fs.readFileSync(sourcePath).equals(expected.bytes)) fail("SOURCE_STORAGE", 'LOCAL_BYTES');
+    } catch (error) { fail("SOURCE_STORAGE", storageDiagnostic(error)); }
   };
   try { verifyLocal(); } catch (error) { try { cleanup(); } catch {} throw error; }
   const snapshot = {
@@ -271,7 +300,7 @@ export async function fetchEconomicSnapshot(options = {}) {
           || ['requireManagerRecipient','requireFundProfile'].some(k=>options[k]!==undefined&&options[k]!==true)) fail('SOURCE_CHANGED');
       verifyLocal();
       const current = await stableRead(id, token, opts);
-      if (!same(expected, current)) fail("SOURCE_CHANGED");
+      if (!same(expected, current)) fail("SOURCE_CHANGED", changeDiagnostic(expected, current, 'FROZEN'));
       if (options.requireManagerRecipient && (!expected.managerRecipientStable || !current.managerRecipientStable
           || !expected.managerRecipientRaw || expected.managerRecipientRaw !== current.managerRecipientRaw)) fail('SOURCE_CHANGED');
       if(options.requireFundProfile&&(!expected.fundProfileStable||!current.fundProfileStable

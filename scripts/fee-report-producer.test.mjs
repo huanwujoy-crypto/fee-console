@@ -1775,13 +1775,16 @@ test('closing sync admission during current-run IO stops before the next publica
 
 const diagnosticRevisionContract='ib-source-revision-20261106-diagnostic-v1';
 const diagnosticRevisionBase='4f98318c73d1727d323febdcc72b7d5fbfb77f01';
-function diagnosticRevisionFixture(){
- const f=syncRevisionFixture(),manifest=reportHistoricalRecoveryManifest({contractId:diagnosticRevisionContract});
- f.commit.parents=[{sha:diagnosticRevisionBase}];f.supportCommit.sha=diagnosticRevisionBase;f.supportCommit.parents=[{sha:syncRevisionBase}];
- f.comparison.base_commit.sha=f.comparison.merge_base_commit.sha=diagnosticRevisionBase;
+const economicDiagnosticContract='ib-source-revision-20261106-diagnostic-v2';
+const economicDiagnosticBase='22174f04cae8ac18a071930f491598b327e315c5';
+function diagnosticRevisionFixture(contractId=diagnosticRevisionContract){
+ const economic=contractId===economicDiagnosticContract,base=economic?economicDiagnosticBase:diagnosticRevisionBase;
+ const f=syncRevisionFixture(),manifest=reportHistoricalRecoveryManifest({contractId});
+ f.commit.parents=[{sha:base}];f.supportCommit.sha=base;f.supportCommit.parents=[{sha:economic?wireRevisionBase:syncRevisionBase}];
+ f.comparison.base_commit.sha=f.comparison.merge_base_commit.sha=base;
  f.comparison.files=manifest.map(m=>({filename:m.path,status:m.status,sha:'b'.repeat(40)}));
  f.tree.tree=[f.tree.tree[0],...manifest.map(m=>({path:m.path,type:'blob',mode:'100644',sha:'b'.repeat(40)}))];
- f.reviewedCommit.parents=[{sha:diagnosticRevisionBase}];f.currentRun.display_title='IB diagnostic 2026-11-06';
+ f.reviewedCommit.parents=[{sha:base}];f.currentRun.display_title='IB diagnostic 2026-11-06';
  return f;
 }
 const diagnosticAdmission=(f,readers=syncRevisionReaders(f))=>authorizeHistoricalRevisionDiagnostic({plan:f.plan,expectedMain:recoveryHead,
@@ -1801,14 +1804,53 @@ test('read-only revision release has its own exact fifteen-file manifest and pre
  assert(!reportHistoricalRecoveryManifest({contractId:syncRevisionContract}).some(x=>x.path==='scripts/fee-source-revision-diagnostic.mjs'));
 });
 
-test('diagnostic admission is authentic, read-only, execution-bound and never a production admission',async()=>{
- const f=diagnosticRevisionFixture(),before=JSON.stringify(f),trace=[],readers=syncRevisionReaders(f,trace),admission=await diagnosticAdmission(f,readers);
+test('economic diagnosis has a distinct exact thirteen-file manifest without granting a new production release',()=>{
+ const expected=['docs/fee-source-revision.md','scripts/fee-economic-source.mjs','scripts/fee-economic-source.test.mjs',
+  'scripts/fee-report-producer.mjs','scripts/fee-report-producer.test.mjs',
+  'scripts/fee-source-revision-diagnostic.mjs','scripts/fee-source-revision-diagnostic.test.mjs',
+  'scripts/fee-source-revision-runtime.mjs','scripts/fee-source-revision-runtime.test.mjs',
+  'scripts/fee-sync-revision-artifacts.mjs','scripts/fee-sync-revision-artifacts.test.mjs',
+  'scripts/ib-manager-source.mjs','scripts/ib-manager-source.test.mjs'];
+ const manifest=reportHistoricalRecoveryManifest({contractId:economicDiagnosticContract});
+ assert.deepEqual(manifest,expected.map(path=>({path,status:'modified'})));assert.equal(manifest.length,13);
+ assert(Object.isFrozen(manifest));assert(manifest.every(Object.isFrozen));
+ assert.equal(reportHistoricalRecoveryManifest({contractId:diagnosticRevisionContract}).length,15);
+ assert.equal(reportHistoricalRecoveryManifest({contractId:wireRevisionContract}).length,10);
+ assert.equal(reportHistoricalRecoveryManifest({contractId:syncRevisionContract}).length,14);
+ assert.equal(reportHistoricalRecoveryManifest().length,17);
+ assert(!manifest.some(x=>/^(?:data\.json|fee-data-health\.json|index\.html|security\/|cloud\/|\.github\/)/.test(x.path)));
+});
+
+test('new diagnostic release cannot substitute previous contract, base, tree, manifest or owner approval',async()=>{
+ const mutations=[
+  f=>f.commit.parents[0].sha=wireRevisionBase,
+  f=>f.supportCommit.parents[0].sha=diagnosticRevisionBase,
+  f=>f.comparison.files=reportHistoricalRecoveryManifest({contractId:diagnosticRevisionContract}).map(m=>({filename:m.path,status:m.status,sha:'b'.repeat(40)})),
+  f=>f.comparison.files=reportHistoricalRecoveryManifest({contractId:wireRevisionContract}).map(m=>({filename:m.path,status:m.status,sha:'b'.repeat(40)})),
+  f=>f.comparison.files[0].filename='data.json',f=>f.comparison.files[0].filename='security/approval-tiers.json',
+  f=>f.tree.tree[0].sha='f'.repeat(40),f=>f.comparison.total_commits=2,
+  f=>f.comments[0].body='/approve-xuan-ib-maintenance '+wireRevisionBase,
+  f=>f.reviewedCommit.parents[0].sha=wireRevisionBase,
+ ];
+ for(const mutate of mutations){const f=diagnosticRevisionFixture(economicDiagnosticContract);mutate(f);
+  await assert.rejects(diagnosticAdmission(f,{...syncRevisionReaders(f),readCurrentRun:()=>assert.fail('wrong release must stop before execution or private reads')}),/RECOVERY_/);
+ }
+ const f=diagnosticRevisionFixture(economicDiagnosticContract),readers=syncRevisionReaders(f),real=readers.readRecoveryRelease;
+ for(const contractId of [diagnosticRevisionContract,wireRevisionContract]){
+  await assert.rejects(diagnosticAdmission(f,{...readers,readRecoveryRelease:async(...args)=>({...await real(...args),contractId}),
+   readCurrentRun:()=>assert.fail('copied contract cannot acquire admission')}),/RECOVERY_SCOPE/);
+ }
+});
+
+for(const contractId of [diagnosticRevisionContract,economicDiagnosticContract]){
+test(contractId+' diagnostic admission is authentic, read-only, execution-bound and never a production admission',async()=>{
+ const f=diagnosticRevisionFixture(contractId),before=JSON.stringify(f),trace=[],readers=syncRevisionReaders(f,trace),admission=await diagnosticAdmission(f,readers);
  assert.equal(isHistoricalRevisionDiagnosticAdmission(admission),true);assert.equal(isHistoricalRevisionAdmission(admission),false);
  assert.equal(Object.isFrozen(admission),true);assert.equal(JSON.stringify(admission),'{}');
  assert.throws(()=>readHistoricalRevisionAdmission(admission),/RECOVERY_SCOPE/);
- const binding=readHistoricalRevisionDiagnosticAdmission(admission);assert.equal(binding.contractId,diagnosticRevisionContract);
+ const binding=readHistoricalRevisionDiagnosticAdmission(admission);assert.equal(binding.contractId,contractId);
  assert.equal(binding.purpose,'read-only-diagnostic');assert.equal(binding.admissionModel,'sync-cycle-v1');assert.equal(binding.mainSha,recoveryHead);
- assert.equal(binding.repairBaseSha,diagnosticRevisionBase);assert.equal(binding.targetDate,'2026-11-06');assert.equal(binding.currentRunId,recoveryId);
+ assert.equal(binding.repairBaseSha,contractId===economicDiagnosticContract?economicDiagnosticBase:diagnosticRevisionBase);assert.equal(binding.targetDate,'2026-11-06');assert.equal(binding.currentRunId,recoveryId);
  assert.equal(binding.approvedHead,revisionReviewedHead);assert.match(binding.executionSha256,/^[a-f0-9]{64}$/);assert.equal(Object.hasOwn(binding,'consumptionSha256'),false);
  assert(Object.isFrozen(binding));assert.deepEqual(await admission.checkCurrent(),binding);assert.equal(JSON.stringify(f),before);
  assert.equal(trace.filter(x=>x==='actions/runs/'+recoveryId).length,2);
@@ -1821,8 +1863,8 @@ test('diagnostic admission is authentic, read-only, execution-bound and never a 
  const calls=trace.length;await assert.rejects(admission.checkCurrent(),/RECOVERY_CONSUMED/);assert.equal(trace.length,calls);
 });
 
-test('diagnostic scope cannot enter production, legacy attempt enumeration or fabricated consumption validation',async()=>{
- const f=diagnosticRevisionFixture(),trace=[],readers=syncRevisionReaders(f,trace);let attempts=0,runReads=0,stateReads=0;
+test(contractId+' diagnostic scope cannot enter production, legacy attempt enumeration or fabricated consumption validation',async()=>{
+ const f=diagnosticRevisionFixture(contractId),trace=[],readers=syncRevisionReaders(f,trace);let attempts=0,runReads=0,stateReads=0;
  await assert.rejects(authorizeReportRecovery({plan:f.plan,expectedMain:recoveryHead,currentRunId:recoveryId,now:revisionRecoveryNow,
   actionsToken:revisionActionsToken,...readers,readSourceAttempts:()=>{attempts++;assert.fail('diagnostic must not enumerate consumption');},
   readCurrentRun:()=>{runReads++;assert.fail('production gate must reject first');},readState:()=>{stateReads++;assert.fail('production gate must reject first');}}),/RECOVERY_SCOPE/);
@@ -1834,8 +1876,8 @@ test('diagnostic scope cannot enter production, legacy attempt enumeration or fa
   budget:{attempts:0,recoveryEvidence:{entries:[],reservations:[]}}}),/RECOVERY_SCOPE/);
 });
 
-test('production entry refuses diagnostic capability before files, economic source, account reads or writer',async()=>{
- const f=diagnosticRevisionFixture(),admission=await diagnosticAdmission(f);let privateIo=0;
+test(contractId+' production entry refuses diagnostic capability before files, economic source, account reads or writer',async()=>{
+ const f=diagnosticRevisionFixture(contractId),admission=await diagnosticAdmission(f);let privateIo=0;
  const options={plan:f.plan,reviewedSyncDate:'2026-11-06',now:revisionRecoveryNow,requireIb:true,historicalRevisionAdmission:admission,
   outputDir:'/synthetic/nonexistent-output',benchmarkFile:'/synthetic/nonexistent-benchmark',fetchEconomic:()=>{privateIo++;assert.fail('economic source forbidden');}};
  for(const value of [admission,structuredClone(readHistoricalRevisionDiagnosticAdmission(admission)),{...admission},new Proxy(admission,{})])
@@ -1846,26 +1888,26 @@ test('production entry refuses diagnostic capability before files, economic sour
  assert.throws(()=>readHistoricalRevisionDiagnosticAdmission(production),/RECOVERY_SCOPE/);production.close();
 });
 
-test('diagnostic admission rejects old production releases, copied releases and changed exact manifests before run reads',async()=>{
- for(const fixture of [syncRevisionFixture,sourceRevisionRecoveryFixture]){
+test(contractId+' diagnostic admission rejects old production releases, copied releases and changed exact manifests before run reads',async()=>{
+ for(const fixture of [syncRevisionFixture,()=>syncRevisionFixture(wireRevisionContract),sourceRevisionRecoveryFixture]){
   const f=fixture();await assert.rejects(diagnosticAdmission(f,{...syncRevisionReaders(f),readCurrentRun:()=>assert.fail('wrong release must stop first')}),/RECOVERY_SCOPE/);
  }
- const f=diagnosticRevisionFixture(),readers=syncRevisionReaders(f),real=readers.readRecoveryRelease;
+ const f=diagnosticRevisionFixture(contractId),readers=syncRevisionReaders(f),real=readers.readRecoveryRelease;
  await assert.rejects(diagnosticAdmission(f,{...readers,readRecoveryRelease:async(...args)=>structuredClone(await real(...args)),
   readCurrentRun:()=>assert.fail('copied release must stop first')}),/RECOVERY_SCOPE/);
  for(const mutate of [f=>f.commit.parents.push({sha:syncRevisionBase}),f=>f.commit.parents[0].sha=syncRevisionBase,
-  f=>f.supportCommit.parents[0].sha=revisionRecoveryBase,f=>f.comparison.files.pop(),f=>f.comparison.files.at(-1).status='modified',
+  f=>f.supportCommit.parents[0].sha=revisionRecoveryBase,f=>f.comparison.files.pop(),f=>f.comparison.files.at(-1).status=f.comparison.files.at(-1).status==='added'?'modified':'added',
   f=>f.comparison.files[0].status='added',f=>f.comparison.files.push({filename:'scripts/other.mjs',status:'added',sha:'b'.repeat(40)}),
   f=>f.tree.tree.at(-1).mode='120000',f=>f.tree.truncated=true,f=>f.comments=[],f=>f.comments[0].user.id=1,
   f=>f.comments[0].body='/approve-xuan-ib-maintenance '+'f'.repeat(40),f=>f.comments[0].updated_at='2026-11-07T00:36:00Z',
   f=>f.pr.commits=2,f=>f.pr.head.sha='f'.repeat(40),f=>f.commit.commit.verification.verified=false,
   f=>f.reviewedCommit.commit.tree.sha='f'.repeat(40),f=>f.ref.object.sha=diagnosticRevisionBase]){
-  const bad=diagnosticRevisionFixture();mutate(bad);await assert.rejects(diagnosticAdmission(bad,{...syncRevisionReaders(bad),
+  const bad=diagnosticRevisionFixture(contractId);mutate(bad);await assert.rejects(diagnosticAdmission(bad,{...syncRevisionReaders(bad),
    readCurrentRun:()=>assert.fail('invalid reviewed release must stop before current run')}),/RECOVERY_/);
  }
 });
 
-test('diagnostic live binding rejects wrong title, target, identity, attempt, owner approval and changed source state',async()=>{
+test(contractId+' diagnostic live binding rejects wrong title, target, identity, attempt, owner approval and changed source state',async()=>{
  const mutations=[f=>f.currentRun.id++,f=>f.currentRun.display_title='Produce daily 2026-11-06',f=>delete f.currentRun.display_title,
   f=>f.currentRun.head_sha=diagnosticRevisionBase,f=>f.currentRun.actor.id=1,f=>f.currentRun.triggering_actor.id=1,
   f=>f.currentRun.workflow_id++,f=>f.currentRun.path='other',f=>f.currentRun.repository.full_name='other/repo',f=>f.currentRun.head_branch='other',
@@ -1875,21 +1917,23 @@ test('diagnostic live binding rejects wrong title, target, identity, attempt, ow
   f=>f.plan.periodFrom='2026-11-05',f=>f.plan.accountingThrough='2026-11-05',f=>f.plan.markets=['NYSE'],
   f=>f.clock=new Date('2026-11-12T00:00:00Z')];
  for(const mutate of mutations){
-  const f=diagnosticRevisionFixture(),admission=await diagnosticAdmission(f);mutate(f);
+  const f=diagnosticRevisionFixture(contractId),admission=await diagnosticAdmission(f);mutate(f);
   await assert.rejects(admission.checkCurrent(),/RECOVERY_/);assert.equal(isHistoricalRevisionDiagnosticAdmission(admission),false);
   assert.equal(isHistoricalRevisionAdmission(admission),false);await assert.rejects(admission.checkCurrent(),/RECOVERY_CONSUMED/);
  }
- const f=diagnosticRevisionFixture();delete f.currentRun.display_title;await assert.rejects(diagnosticAdmission(f),/RECOVERY_RUN/);
+ const f=diagnosticRevisionFixture(contractId);delete f.currentRun.display_title;await assert.rejects(diagnosticAdmission(f),/RECOVERY_RUN/);
 });
 
-test('closing a diagnostic during run IO prevents subsequent publication reads and never creates a reusable capability',async()=>{
- const f=diagnosticRevisionFixture(),readers=syncRevisionReaders(f);let reads=0,publicationReads=0,release,entered;
+test(contractId+' closing a diagnostic during run IO prevents subsequent publication reads and never creates a reusable capability',async()=>{
+ const f=diagnosticRevisionFixture(contractId),readers=syncRevisionReaders(f);let reads=0,publicationReads=0,release,entered;
  const started=new Promise(resolve=>entered=resolve),blocked=new Promise(resolve=>release=resolve);
  const admission=await diagnosticAdmission(f,{...readers,readCurrentRun:async args=>{if(++reads===2){entered();await blocked;}return readers.readCurrentRun(args);},
   readState:async(...args)=>{publicationReads++;return readers.readState(...args);}});
  const checking=admission.checkCurrent();await started;admission.close();release();await assert.rejects(checking,/RECOVERY_CONSUMED/);
  assert.equal(publicationReads,1);assert.equal(isHistoricalRevisionDiagnosticAdmission(admission),false);assert.equal(isHistoricalRevisionAdmission(admission),false);
 });
+
+}
 
 
 test('wire recovery has an exact ten-file scope without changing historical admission manifests',()=>{
