@@ -184,6 +184,63 @@ flows, duplicates or original financial validation.
 
 ## Remaining production acceptance
 
+### Concrete acquisition and transport wiring
+
+`createSyncGithubRead` binds the published-base GET allowlist to the existing
+short-lived Actions token supplied explicitly by trusted runtime code. It has
+no credential discovery or default network implementation. It rejects other
+repositories, methods, routes and redirects, bounds response size and time, and
+releases its references on close. The producer step already receives
+`FEE_REPORT_ACTIONS_TOKEN`; the integration must pass that existing token rather
+than assume a different environment variable is present. This is not an IAM
+change or a grant to upload receipts.
+
+`SharesightCloudReader.getPolicyBinding(captured?)` hashes the reader's actual
+five business settings without returning the settings, credentials or transport.
+With a capture, it also verifies the same instance's private capture registry
+and unchanged settings. This binds normalization policy separately from the
+benchmark and response bytes; it does not attest synchronization completeness.
+
+`createVerifiedSourceAcquisition` requires the original published-base verifier
+and real source-reader instances. It authenticates the base and actual policy
+before any account read. It then calls the original IB preparation function,
+so history and coverage failures prevent both IB and fee source IO. Bootstrap
+and multi-stage recovery are refused by this ordinary-daily entry. Only after
+IB preparation succeeds does it acquire the two fee accounts. Its private
+handle releases the captured inputs after checking base, policy and both
+actual captured GET sets again. It does not consume the source capabilities,
+create a synchronization receipt, grant another report opportunity or write
+anything. A failed acquisition is closed, with no automatic retry.
+Handle expiry and close prevent new stages and reuse; they do not cancel an
+original reader's already in-flight bounded request batch. A protected runtime
+that requires immediate network cancellation must also bind its existing fetch
+transport to that lifetime. This candidate does not claim that guarantee.
+
+The current manual synchronization procedure is an agent-orchestrated set of
+tools, not one three-account executable with an authenticated final receipt.
+The native reader returns one operation per invocation; existing mail-sync
+records and the IB daily comparison cover narrower scopes. The missing final
+adapter must capture the actual current-cycle tool results and unresolved-item
+state at the end of that procedure. It must not turn prose, a cash-only check or
+the new acquisition handle into `verified-sync.v1`. Cross-process storage,
+identity and permission have not been established here. No production workflow
+is changed by this local adapter batch.
+
+### Independent path for an already failed historical target
+
+The ordinary handoff cannot repair a changed accepted checkpoint or restore a
+consumed opportunity. The existing source-revision module currently prepares a
+candidate only; the producer does not consume it. A bounded historical recovery
+needs two authenticated, genuinely published artifacts: the affected current
+bundle and a complete v3 anchor from before the affected date. An earlier anchor
+must not be manufactured by truncating the current bundle. The original strict
+reader can reconstruct at most its supported nine-day window while retaining
+the old artifacts as provenance and preserving month locks. A reviewed consumer
+and a separately approved, exact-version single recovery opportunity are still
+required before any real production. This path can proceed independently of the
+manual synchronization finalizer; ratio publication still follows verified fee
+publication and readback.
+
 After exact-version review and protected merge, the synchronization executor
 and producer still need a reviewed, authenticated handoff using existing
 permissions where sufficient. A new persistent credential or wider private

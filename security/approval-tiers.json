@@ -652,6 +652,11 @@
     "scripts/ib-manager-report-memory.test.mjs",
     "scripts/fee-sync-capture-current.test.mjs",
     "scripts/fee-sync-published-base.mjs",
-    "scripts/fee-sync-published-base.test.mjs"
+    "scripts/fee-sync-published-base.test.mjs",
+    "scripts/fee-sync-github-read.mjs",
+    "scripts/fee-sync-github-read.test.mjs",
+    "scripts/fee-sync-policy-binding.test.mjs",
+    "scripts/fee-sync-source-acquisition.mjs",
+    "scripts/fee-sync-source-acquisition.test.mjs"
   ]
 }
