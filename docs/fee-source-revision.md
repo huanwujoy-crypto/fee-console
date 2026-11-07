@@ -75,6 +75,64 @@ A successful diagnostic proves only its stated checks, not a generated
 or published fee report or an updated ratio snapshot. A later production attempt
 requires its own reviewed version, authorization and unchanged safety gates.
 
+## Economic-source reason mapping (`diagnostic-v2`)
+
+Status: diagnostic improvement only. The recorded `ECONOMIC_SOURCE` failure came
+from two catch sites that discarded the underlying reason; the mapping below
+makes a future failure distinguishable. It does not identify the historical
+root cause, which remains unknown, and it does not relax any acceptance,
+rejection or retry policy: every path that was refused before remains refused.
+Lower-level source codes are unchanged; the diagnostic wrappers add the fixed
+reason details below. No path gains an extra read, retry or fallback.
+
+`ib-source-revision-20261106-diagnostic-v2` is a second read-only diagnostic
+admission with the same purpose, title, dispatch fields, CLI and credentials as
+`diagnostic-v1`. Its release must be the signed, protected squash successor of
+`22174f04cae8ac18a071930f491598b327e315c5`, with this exact thirteen-file
+manifest (all `modified`): `docs/fee-source-revision.md`,
+`scripts/fee-economic-source.mjs`, `scripts/fee-economic-source.test.mjs`,
+`scripts/fee-report-producer.mjs`, `scripts/fee-report-producer.test.mjs`,
+`scripts/fee-source-revision-diagnostic.mjs`,
+`scripts/fee-source-revision-diagnostic.test.mjs`,
+`scripts/fee-source-revision-runtime.mjs`,
+`scripts/fee-source-revision-runtime.test.mjs`,
+`scripts/fee-sync-revision-artifacts.mjs`,
+`scripts/fee-sync-revision-artifacts.test.mjs`, `scripts/ib-manager-source.mjs`
+and `scripts/ib-manager-source.test.mjs`. A `diagnostic-v1`, `sync-v2` or
+`sync-v3` release cannot be relabelled as `diagnostic-v2`, and a `diagnostic-v2`
+capability is still refused by the report producer, writer and publication path.
+
+Provenance is identity-only. Each module keeps a private `WeakMap` from the
+exact error object it threw to one literal from a frozen allowlist; a lookup
+never reads `code`, `message`, `cause`, prototypes or proxy traps, and a
+caller-constructed error (even a genuine `SourceFetchError`) has no provenance
+and reports `UNKNOWN`. The public error shape (`code`, `message`, no `cause`)
+and `sourceFailureCode` are unchanged.
+
+| Site | Public code | Reason suffix (finite literals) |
+| --- | --- | --- |
+| `fetchEconomicSnapshot` acquisition in the CLI `readPrivate` stage | `FEE_REVISION_DIAGNOSTIC_ECON_INITIAL_<reason>` | ordinary source code without `SOURCE_` (`AUTH`, `FORBIDDEN`, `HTTP`, `REDIRECT`, `NETWORK`, `TIMEOUT`, `RESPONSE`, `OPTIONS`, `LOCATOR`, ...); `PAIR_{REVISION,BYTES,ETAG,MULTIPLE}` when the two acquisition reads disagree; `LOCAL_{DIRECTORY,FILE,MODE,BYTES,IO}` for private-storage integrity |
+| artifact `readVerifiedArtifacts` first economic recheck | `..._ARTIFACT_ECON_FIRST_<reason>` | as above, plus `FROZEN_{REVISION,BYTES,ETAG,MULTIPLE}` when the current source differs from the pinned acquisition, `CHANGED` for refused recheck options or unstable optional recipient/fund metadata, `CLOSED`, `UNKNOWN` |
+| artifact `checkCurrent` economic recheck | `..._ARTIFACT_ECON_RECHECK_<reason>` | same set |
+| ciphertext read / version binding | `..._ARTIFACT_ECON_BYTES_<reason>`, `..._ARTIFACT_ECON_BINDING_<reason>` | same set |
+| captured Sharesight recheck in `verifyCandidate` | `..._ARTIFACT_SOURCE_RECHECK_<stage>` | `STATE`, `LOCAL_TRANSPORT`, `LOCAL_SCOPE`, `AUTH_RESPONSE`, `RECORD_CHANGED`, `CAPTURE_CHANGED`, `{AUTH,READ}_{CONFIG,HTTP,TYPE,SIZE,BODY,JSON,ABORTED,TIMEOUT,NETWORK,REFUSED}`, `UNKNOWN` |
+| original-producer log download | `..._ARTIFACT_GITHUB_<role>_LOG_<reason>` | existing bounded GitHub read reasons |
+
+`..._ARTIFACT_` is `FEE_REPORT_SOURCE_REVISION_ARTIFACT_` after the runtime
+wrapper, and `IB_REVISION_ARTIFACT_` on the artifact capability itself. The
+former `ECONOMIC_SOURCE` and generic `SOURCE_CHANGED` artifact codes are
+replaced by these stage-qualified codes; the `IB_SOURCE_UNSTABLE`/`STATE`
+errors raised by the reader are unchanged. Every suffix is composed only from
+the literals above; no response, URL, locator, credential, timestamp, account
+value or exception text can enter a code, a log line or an uploaded artifact.
+
+A reason answers "where and why this one run was refused". It is not a repair:
+a `PAIR_*`/`FROZEN_*` reason still requires inspecting the economic source
+history by the existing manual process, a `LOCAL_*` reason the runner's private
+storage, and a transport reason the credential or GitHub status, each outside
+the diagnostic. Reproducing the historical failure needs a run under the same
+conditions, which this candidate does not perform.
+
 ## One complete recovery batch
 
 The integration is limited to extending the current published source through

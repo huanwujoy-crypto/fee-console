@@ -5,7 +5,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {createHash} from 'node:crypto';
-import { fetchEconomicSnapshot, SourceFetchError, sourceFailureCode, verifyEconomicSnapshot, readEconomicSnapshotBytes } from "./fee-economic-source.mjs";
+import { fetchEconomicSnapshot, SourceFetchError, sourceFailureCode, verifyEconomicSnapshot, readEconomicSnapshotBytes,
+  economicSourceDiagnosticCode, ECONOMIC_SOURCE_DIAGNOSTIC_CODES } from "./fee-economic-source.mjs";
 
 const ID = "a".repeat(32), OWNER = "huanwujoy-crypto", NAME = "fee-console-db.json";
 const TOKEN = "github_pat_" + "SYNTHETIC_NOT_A_REAL_TOKEN_".repeat(3);
@@ -508,4 +509,115 @@ test('optional recipient is stable metadata only; missing or changed registratio
   assert.equal(snap.managerRecipientRaw,text);await snap.checkCurrent({requireManagerRecipient:true});
   text='{"public":"different-synthetic-recipient"}';await snap.checkCurrent();await rejected(snap.checkCurrent({requireManagerRecipient:true}),'SOURCE_CHANGED');snap.cleanup();
   const missing=await run(t,async()=>reply(fixture(4)));await missing.checkCurrent();await rejected(missing.checkCurrent({requireManagerRecipient:true}),'SOURCE_CHANGED');missing.cleanup();
+});
+
+test('economic diagnostics use private error identity and never inspect unknown or malicious errors',async()=>{
+  let touches=0;
+  const hostile={};
+  for(const key of ['code','message','cause','name','stack'])Object.defineProperty(hostile,key,{get(){touches++;throw Error('SYNTHETIC_PRIVATE');}});
+  const proxy=new Proxy(hostile,{get(){touches++;throw Error('SYNTHETIC_PRIVATE');},getPrototypeOf(){touches++;throw Error('SYNTHETIC_PRIVATE');},ownKeys(){touches++;throw Error('SYNTHETIC_PRIVATE');}});
+  const revoked=Proxy.revocable({},{});revoked.revoke();
+  for(const value of [undefined,null,false,0,'SOURCE_HTTP',Symbol('synthetic'),hostile,proxy,revoked.proxy,
+    new Error('SYNTHETIC_PRIVATE'),new SourceFetchError('SOURCE_HTTP'),Object.create(SourceFetchError.prototype)]){
+    assert.equal(economicSourceDiagnosticCode(value),'UNKNOWN');
+  }
+  let actual;
+  await assert.rejects(fetchEconomicSnapshot({notAnAllowedOption:true}),error=>{actual=error;return error.code==='SOURCE_OPTIONS';});
+  assert.equal(economicSourceDiagnosticCode(actual),'SOURCE_OPTIONS');
+  assert.deepEqual(Object.keys(actual).sort(),['code','name'],'diagnostic metadata is not attached to the error');
+  Object.defineProperty(actual,'code',{get(){touches++;throw Error('SYNTHETIC_PRIVATE');}});
+  Object.defineProperty(actual,'message',{get(){touches++;throw Error('SYNTHETIC_PRIVATE');}});
+  assert.equal(economicSourceDiagnosticCode(actual),'SOURCE_OPTIONS');
+  assert.equal(economicSourceDiagnosticCode(new Proxy(actual,{})),'UNKNOWN');
+  assert.equal(touches,0);
+  assert.equal(Object.isFrozen(ECONOMIC_SOURCE_DIAGNOSTIC_CODES),true);
+  assert.equal(new Set(ECONOMIC_SOURCE_DIAGNOSTIC_CODES).size,ECONOMIC_SOURCE_DIAGNOSTIC_CODES.length);
+  assert.ok(ECONOMIC_SOURCE_DIAGNOSTIC_CODES.every(value=>/^[A-Z_]+$/.test(value)));
+});
+
+test('diagnostics distinguish pair and frozen mismatches without changing rejection or reads',async t=>{
+  for(const stage of ['initial-pair','recheck-pair','frozen'])for(let mask=1;mask<8;mask++)await t.test(`${stage} ${mask}`,async t=>{
+    let calls=0,snapshot;
+    const fetchImpl=async()=>{
+      calls++;
+      const changed=stage==='initial-pair'?calls===2:stage==='recheck-pair'?calls===4:calls>2;
+      const body=fixture(4);let etag='"synthetic-fixed"';
+      if(changed){
+        if(mask&1)body.history[0].version='c'.repeat(40);
+        if(mask&2){body.files[NAME].content+=' ';body.files[NAME].size++;}
+        if(mask&4)etag='"synthetic-changed"';
+      }
+      return reply(body,etag);
+    };
+    const operation=stage==='initial-pair'?run(t,fetchImpl):(snapshot=await run(t,fetchImpl),snapshot.checkCurrent());
+    const suffix=mask===1?'REVISION':mask===2?'BYTES':mask===4?'ETAG':'MULTIPLE';
+    await assert.rejects(operation,error=>{
+      assert.equal(sourceFailureCode(error),'SOURCE_CHANGED');assert.equal(error.message,'SOURCE_CHANGED');
+      assert.equal(economicSourceDiagnosticCode(error),`${stage==='frozen'?'FROZEN':'PAIR'}_${suffix}`);
+      assert.equal(Object.hasOwn(error,'cause'),false);return true;
+    });
+    assert.equal(calls,stage==='initial-pair'?2:4);
+    if(snapshot){
+      assert.equal(fs.readFileSync(snapshot.sourcePath,'utf8'),envelope(4));
+      assert.throws(()=>snapshot.getVersionBinding(),{code:'SOURCE_CHANGED'});snapshot.cleanup();
+    }
+  });
+});
+
+test('diagnostics preserve transport classification, bounded retry and unknown-error provenance',async t=>{
+  const cases=[
+    ['auth',()=>reply({},'"synthetic"',401),'SOURCE_AUTH',1],
+    ['forbidden',()=>reply({},'"synthetic"',403),'SOURCE_FORBIDDEN',1],
+    ['http',()=>reply({},'"synthetic"',429),'SOURCE_HTTP',1],
+    ['redirect',()=>reply({},'"synthetic"',302),'SOURCE_REDIRECT',1],
+    ['network',()=>{throw Error(`SYNTHETIC_PRIVATE ${ID} ${TOKEN}`);},'SOURCE_NETWORK',2],
+    ['timeout',()=>new Promise(()=>{}),'SOURCE_TIMEOUT',2],
+    ['response',()=>new Response('SYNTHETIC_PRIVATE',{headers:{etag:'"synthetic"'}}),'SOURCE_RESPONSE',1],
+    ['forged',()=>{throw new SourceFetchError('SOURCE_HTTP');},'SOURCE_HTTP',1],
+  ];
+  for(const [name,badReply,code,attempts]of cases)await t.test(name,async t=>{
+    let calls=0;
+    const snap=await run(t,async()=>++calls<=2?reply(fixture(4)):badReply(),{timeoutMs:10});
+    await assert.rejects(snap.checkCurrent(),error=>{
+      assert.equal(sourceFailureCode(error),code);assert.equal(error.message,code);
+      assert.equal(economicSourceDiagnosticCode(error),name==='forged'?'UNKNOWN':code);
+      assert.equal(Object.hasOwn(error,'cause'),false);return true;
+    });
+    assert.equal(calls,2+attempts);assert.equal(fs.readFileSync(snap.sourcePath,'utf8'),envelope(4));
+    assert.throws(()=>snap.getVersionBinding(),{code:'SOURCE_CHANGED'});snap.cleanup();
+  });
+});
+
+test('diagnostics separate local directory, file, mode, bytes and IO without remote rechecks',async t=>{
+  for(const kind of ['directory','file','file-mode','directory-mode','bytes','io'])await t.test(kind,async t=>{
+    let calls=0;
+    const snap=await run(t,async()=>{calls++;return reply(fixture(4));});
+    const directory=path.dirname(snap.sourcePath),moved=directory+'-original';let restore;
+    if(kind==='directory'){
+      fs.renameSync(directory,moved);fs.mkdirSync(directory,{mode:0o700});
+      restore=()=>{fs.rmdirSync(directory);fs.renameSync(moved,directory);};
+    }else if(kind==='file'){
+      fs.unlinkSync(snap.sourcePath);fs.mkdirSync(snap.sourcePath,{mode:0o700});
+      restore=()=>{fs.rmdirSync(snap.sourcePath);fs.writeFileSync(snap.sourcePath,envelope(4),{mode:0o600});};
+    }else if(kind==='file-mode'||kind==='directory-mode'){
+      const file=kind==='file-mode'?snap.sourcePath:directory;fs.chmodSync(file,0o755);
+      restore=()=>fs.chmodSync(file,kind==='file-mode'?0o600:0o700);
+    }else if(kind==='bytes'){
+      fs.appendFileSync(snap.sourcePath,' ');restore=()=>fs.writeFileSync(snap.sourcePath,envelope(4));
+    }else{
+      fs.unlinkSync(snap.sourcePath);restore=()=>fs.writeFileSync(snap.sourcePath,envelope(4),{mode:0o600});
+    }
+    try{
+      await assert.rejects(snap.checkCurrent(),error=>{
+        assert.equal(sourceFailureCode(error),'SOURCE_STORAGE');assert.equal(error.message,'SOURCE_STORAGE');
+        assert.equal(economicSourceDiagnosticCode(error),'LOCAL_'+(kind.endsWith('mode')?'MODE':kind.toUpperCase()));return true;
+      });
+      assert.equal(calls,2);
+    }finally{restore();}
+    assert.throws(()=>snap.getVersionBinding(),{code:'SOURCE_CHANGED'});snap.cleanup();
+    await assert.rejects(snap.checkCurrent(),error=>{
+      assert.equal(sourceFailureCode(error),'SOURCE_CLOSED');assert.equal(economicSourceDiagnosticCode(error),'SOURCE_CLOSED');return true;
+    });
+    assert.equal(calls,2);
+  });
 });

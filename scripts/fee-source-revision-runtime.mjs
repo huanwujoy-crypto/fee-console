@@ -16,7 +16,9 @@ const CONTRACTS=Object.freeze({
   'ib-source-revision-20261106-sync-v2':'fee-console.ib-source-revision-plan.v2',
   'ib-source-revision-20261106-sync-v3':'fee-console.ib-source-revision-plan.v2',
   'ib-source-revision-20261106-diagnostic-v1':'fee-console.ib-source-revision-plan.v2',
+  'ib-source-revision-20261106-diagnostic-v2':'fee-console.ib-source-revision-plan.v2',
 }),TARGET='2026-11-06',ANCHOR='2026-11-04',PREVIOUS='2026-11-05';
+const DIAGNOSTIC_CONTRACTS=Object.freeze(['ib-source-revision-20261106-diagnostic-v1','ib-source-revision-20261106-diagnostic-v2']);
 const SHA=/^[a-f0-9]{64}$/,MAX_BYTES=2*1024*1024;
 const sha=bytes=>crypto.createHash('sha256').update(bytes).digest('hex');
 function fail(code){const e=new Error(PREFIX+code);errors.set(e,code);throw Object.freeze(e);}
@@ -72,7 +74,7 @@ export async function createFeeSourceRevisionRuntime(options){
     if(!isAdmission(c.admission))fail('ADMISSION');
     admissionVerified=true;
     const admitted=readAdmission(c.admission);
-    if(c.diagnosticOnly?(admitted.contractId!=='ib-source-revision-20261106-diagnostic-v1'||admitted.purpose!=='read-only-diagnostic')
+    if(c.diagnosticOnly?(!DIAGNOSTIC_CONTRACTS.includes(admitted.contractId)||admitted.purpose!=='read-only-diagnostic')
       :Object.hasOwn(admitted,'purpose'))fail('ADMISSION');
     if(!Object.hasOwn(CONTRACTS,admitted.contractId)||admitted.targetDate!==TARGET)fail('SCOPE');
     const schema=CONTRACTS[admitted.contractId],sync=schema==='fee-console.ib-source-revision-plan.v2';

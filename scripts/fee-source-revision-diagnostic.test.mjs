@@ -7,6 +7,7 @@ import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {revisionDiagnosticArgs,validateRevisionDiagnosticEvent,revisionDiagnosticTransport,revisionDiagnosticFailureCode,
   inspectRevisionDiagnostic,createRevisionDiagnosticDirectory,REVISION_DIAGNOSTIC_SCOPE} from './fee-source-revision-diagnostic.mjs';
+import {fetchEconomicSnapshot,SourceFetchError,sourceFailureCode} from './fee-economic-source.mjs';
 
 const MAIN='a'.repeat(40),TARGET='2026-11-06',ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const env=()=>({GITHUB_ACTIONS:'true',GITHUB_REPOSITORY:'huanwujoy-crypto/fee-console',GITHUB_REF:'refs/heads/main',
@@ -114,6 +115,70 @@ test('arbitrary errors, traps, URLs and text cannot become a public diagnostic',
   const poison=new Error('https://private.example/token?account=secret');
   for(const e of [poison,{message:'SOURCE_SECRET_VALUE'},new Proxy({}, {get(){assert.fail('proxy accessed');}}),Object.defineProperty({},'message',{get(){assert.fail('getter accessed');}})])
     assert.equal(revisionDiagnosticFailureCode(e),'FEE_REVISION_DIAGNOSTIC_FAILED');
+});
+
+// Initial economic acquisition (the readPrivate stage) is the one place the CLI
+// calls fetchEconomicSnapshot directly, so its private WeakMap reason surfaces
+// as FEE_REVISION_DIAGNOSTIC_ECON_INITIAL_<reason>. Everything below is
+// synthetic: a fixed locator and a fake token are set only for one acquisition
+// and restored afterwards; no real Gist, credential, report or account is read.
+const ECON_ID='b'.repeat(32),ECON_TOKEN='github_pat_SYNTHETIC_NOT_A_REAL_TOKEN_123456',ECON_PRIVATE='PRIVATE_ACCOUNT_TOKEN_URL';
+const econEnvelope=JSON.stringify({enc:true,v:4,data:Buffer.alloc(40,7).toString('base64')},null,2)+'\n';
+const econGist=(revision='b'.repeat(40))=>({id:ECON_ID,public:false,owner:{login:'huanwujoy-crypto'},truncated:false,history:[{version:revision}],
+  files:{'fee-console-db.json':{filename:'fee-console-db.json',content:econEnvelope,size:Buffer.byteLength(econEnvelope),truncated:false}}});
+const econReply=(body,status=200)=>new Response(JSON.stringify(body),{status,headers:{etag:'"synthetic-etag"','content-type':'application/json'}});
+async function economicAcquisitionFailure(t,fetchImpl){
+  const previous={id:process.env.FEE_ECON_GIST_ID,token:process.env.FEE_ECON_GITHUB_TOKEN};
+  const tempRoot=fs.mkdtempSync(path.join(os.tmpdir(),'revision-diagnostic-economic-synthetic-'));
+  t.after(()=>fs.rmSync(tempRoot,{recursive:true,force:true}));
+  process.env.FEE_ECON_GIST_ID=ECON_ID;process.env.FEE_ECON_GITHUB_TOKEN=ECON_TOKEN;
+  let error;
+  try{await fetchEconomicSnapshot({fetchImpl,tempRoot,timeoutMs:50,attempts:1});}
+  catch(e){error=e;}
+  finally{for(const [key,value] of [['FEE_ECON_GIST_ID',previous.id],['FEE_ECON_GITHUB_TOKEN',previous.token]])if(value===undefined)delete process.env[key];else process.env[key]=value;}
+  assert.ok(error instanceof SourceFetchError,'synthetic acquisition must fail with a native source error');
+  assert.equal(fs.readdirSync(tempRoot).length,0,'a failed acquisition leaves no private file behind');
+  return error;
+}
+test('initial economic acquisition failures map to fixed ECON_INITIAL reasons without exposing locator, token or text',async t=>{
+  const cases=[
+    ['options',()=>fetchEconomicSnapshot({notAnAllowedOption:true}),'SOURCE_OPTIONS','OPTIONS'],
+    ['auth',t=>economicAcquisitionFailure(t,async()=>econReply({},401)),'SOURCE_AUTH','AUTH'],
+    ['forbidden',t=>economicAcquisitionFailure(t,async()=>econReply({},403)),'SOURCE_FORBIDDEN','FORBIDDEN'],
+    ['http',t=>economicAcquisitionFailure(t,async()=>econReply({},429)),'SOURCE_HTTP','HTTP'],
+    ['network',t=>economicAcquisitionFailure(t,async()=>{throw Error(ECON_PRIVATE);}),'SOURCE_NETWORK','NETWORK'],
+    ['response',t=>economicAcquisitionFailure(t,async()=>new Response(ECON_PRIVATE,{headers:{etag:'"synthetic-etag"'}})),'SOURCE_RESPONSE','RESPONSE'],
+    ['pair revision',t=>{let calls=0;return economicAcquisitionFailure(t,async()=>econReply(econGist(++calls===1?'b'.repeat(40):'c'.repeat(40))));},'SOURCE_CHANGED','PAIR_REVISION'],
+  ];
+  for(const [name,produce,sourceCode,reason] of cases)await t.test(name,async t=>{
+    let error;
+    if(name==='options')await assert.rejects(produce(),e=>{error=e;return true;});else error=await produce(t);
+    const code='FEE_REVISION_DIAGNOSTIC_ECON_INITIAL_'+reason;
+    assert.equal(sourceFailureCode(error),sourceCode,'ordinary acceptance/rejection code is unchanged');
+    assert.equal(revisionDiagnosticFailureCode(error),code);
+    // The CLI boundary: a readPrivate failure must surface the same fixed reason,
+    // never create the runtime, always clean up, and leak no private value.
+    const h=harness({async readPrivate(){throw error;}});const r=await inspectRevisionDiagnostic(h.options);
+    assert.equal(r.status,'incomplete');assert.equal(r.reasonCode,code);assert.equal(r.reportGenerated,false);assert.equal(r.publicationReady,false);
+    assert.ok(!h.trace.includes('runtime'));assert.ok(!h.trace.includes('diagnose'));assert.ok(h.trace.includes('cleanup'));assert.ok(h.trace.includes('cap-close'));
+    const text=JSON.stringify(r)+code;
+    for(const secret of [ECON_ID,ECON_TOKEN,ECON_PRIVATE,'synthetic-etag','api.github.com'])assert.equal(text.includes(secret),false,secret);
+  });
+});
+test('economic reasons require native provenance and never pre-empt diagnostic, runtime or artifact-stage codes',async()=>{
+  // A caller-constructed SourceFetchError has no private provenance; it cannot
+  // forge an ECON_INITIAL reason (its generic mapping is covered above).
+  for(const forged of [new SourceFetchError('SOURCE_AUTH'),Object.assign(new Error('SOURCE_CHANGED'),{code:'SOURCE_CHANGED'}),{code:'SOURCE_OPTIONS',message:'SOURCE_OPTIONS'}])
+    assert.doesNotMatch(revisionDiagnosticFailureCode(forged),/ECON_INITIAL/);
+  // Own argument/route codes are unchanged by the economic mapping.
+  assert.throws(()=>revisionDiagnosticArgs([]),e=>revisionDiagnosticFailureCode(e)==='FEE_REVISION_DIAGNOSTIC_ARGUMENT');
+  // Economic failures inside the artifact runtime (FIRST/RECHECK/BYTES/BINDING
+  // stages) arrive as runtime codes and keep their own prefix; they are not
+  // re-labelled as the initial acquisition stage.
+  const artifactStage='FEE_REPORT_SOURCE_REVISION_ARTIFACT_ECON_FIRST_FROZEN_REVISION';
+  const h=harness();h.runtime.diagnose=async()=>{throw Error(artifactStage);};
+  const r=await inspectRevisionDiagnostic(h.options);
+  assert.equal(r.status,'incomplete');assert.equal(r.reasonCode,artifactStage);assert.ok(h.trace.includes('runtime-close'));assert.ok(h.trace.includes('cleanup'));
 });
 
 test('transport accepts bounded read routes and only the existing OAuth POST',async()=>{

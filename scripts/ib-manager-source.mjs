@@ -2,7 +2,7 @@
 import crypto from 'node:crypto';
 import {AsyncLocalStorage} from 'node:async_hooks';
 import {types} from 'node:util';
-import {boundedJson} from './fee-http-json.mjs';
+import {boundedJson,BoundedJsonError} from './fee-http-json.mjs';
 import {isCalendarDate,inclusiveDays} from './fee-engine.mjs';
 import {parseSourceJson,cashCents,exactNumberText} from './fee-cloud-source.mjs';
 import {ibNoncashMark,buildIbNativeNoncashProof,validateIbNativeNoncashProof,validateIbAuditEvent,validateIbAuditQuote} from './ib-manager-noncash.mjs';
@@ -10,6 +10,21 @@ import {ibNoncashMark,buildIbNativeNoncashProof,validateIbNativeNoncashProof,val
 export const IB_BASELINE_WINDOW=Object.freeze({from:'2026-08-01',asOf:'2026-10-23'});
 const API='https://api.sharesight.com',NAME='IB-HK';
 const codes=new Set(['CONFIG','BASELINE_LOCK','BASELINE_MISMATCH','SCOPE','IDENTITY','INCOMPLETE','DATE','DATE_ALIGNMENT','AMOUNT','SCHEMA','CASH_RECONCILIATION','UNRESOLVED_FLOW','UNVERIFIED_TRANSFER','NONCASH_EVIDENCE','UNSUPPORTED_CURRENCY','UNSTABLE','HISTORY_LIMIT','PAST_POINT_CHANGED','STATE','NETWORK']);
+// Extra diagnostics never alter the ordinary NETWORK/UNSTABLE/STATE contract.
+// Only fixed internal locations and the bounded helper's finite code survive;
+// source responses, URLs, credentials and exception text are never retained.
+const captureReadCodes=Object.freeze(['CONFIG','HTTP','TYPE','SIZE','BODY','JSON','ABORTED','TIMEOUT','NETWORK','REFUSED']);
+const captureReadByError=new WeakMap(),captureRecheckByError=new WeakMap();
+export const IB_CAPTURE_RECHECK_DIAGNOSTIC_CODES=Object.freeze([
+  'UNKNOWN','STATE','LOCAL_TRANSPORT','LOCAL_SCOPE','AUTH_RESPONSE','RECORD_CHANGED','CAPTURE_CHANGED',
+  ...['AUTH','READ'].flatMap(stage=>captureReadCodes.map(code=>stage+'_'+code)),
+]);
+export const ibSourceCaptureRecheckDiagnostic=error=>captureRecheckByError.get(error)||'UNKNOWN';
+function captureReadReason(error){
+  if(!error||typeof error!=='object'||types.isProxy(error)||Object.getPrototypeOf(error)!==BoundedJsonError.prototype)return 'REFUSED';
+  const descriptor=Object.getOwnPropertyDescriptor(error,'code');
+  return descriptor&&Object.hasOwn(descriptor,'value')&&captureReadCodes.includes(descriptor.value)?descriptor.value:'REFUSED';
+}
 // Fixed locations only: never attach source dates, identities, values or raw
 // exceptions. The diagnostic entry may explicitly read this field; existing
 // reason codes, source schemas and ordinary error serialization stay unchanged.
@@ -391,7 +406,11 @@ export class SharesightIbManagerReader{
         capture.records.push({method:'GET',path:p.pathname,query,body:text,sha256:crypto.createHash('sha256').update(response.bytes).digest('hex')});
       }
       return parsed;
-    }catch{fail('NETWORK');}
+    }catch(error){
+      const failure=new IbManagerSourceError('NETWORK');
+      if(this.#captureContext.getStore()?.currentCheck)captureReadByError.set(failure,captureReadReason(error));
+      throw failure;
+    }
   }
   async #read({targetDate,expectedBaselineHash,baseline,checkpoint,ownerBaseline,bootstrapCoverage}){
     day(targetDate);day(baseline.from);day(baseline.asOf);
@@ -618,26 +637,41 @@ export class SharesightIbManagerReader{
   // dates, source inputs, consumption records or business calculations change.
   async checkCapturedReadCurrent(result){
     const state=this.#capturedReads.get(result);
-    if(!state||state.revoked||this.#captureExclusive||this.#ordinaryReads)fail('STATE');
+    if(!state||state.revoked||this.#captureExclusive||this.#ordinaryReads){
+      const failure=new IbManagerSourceError('STATE');captureRecheckByError.set(failure,'STATE');throw failure;
+    }
     this.#captureExclusive=true;
     const capture={attempt:0,records:[],bytes:0,active:true,currentCheck:true,secrets:[state.transport[2],state.transport[3]]};
+    let stage='LOCAL_TRANSPORT';
     try{
-      const transport=()=>{if(this.#captureTransport().some((v,i)=>v!==state.transport[i])||this.#captureScope()!==state.scope)fail('STATE');};
+      const transport=()=>{
+        stage='LOCAL_TRANSPORT';if(this.#captureTransport().some((v,i)=>v!==state.transport[i]))fail('STATE');
+        stage='LOCAL_SCOPE';if(this.#captureScope()!==state.scope)fail('STATE');
+      };
       transport();
       await this.#captureContext.run(capture,async()=>{
+        stage='AUTH';
         const auth=await this.#json(API+'/oauth2/token',null,new URLSearchParams({grant_type:'client_credentials',client_id:state.transport[2],client_secret:state.transport[3]}).toString());
+        stage='AUTH_RESPONSE';
         if(typeof auth.access_token!=='string'||!/^[A-Za-z0-9._~+/=-]{20,16384}$/.test(auth.access_token)||String(auth.token_type).toLowerCase()!=='bearer')fail('SCOPE');
         for(const record of state.records){
           transport();
+          stage='READ';
           const u=new URL(record.path,API);for(const[k,v]of Object.entries(record.query))u.searchParams.append(k,v);
           await this.#json(u.href,auth.access_token);
+          stage='RECORD_CHANGED';
           if(ibCanonical(capture.records.at(-1))!==ibCanonical(record))fail('UNSTABLE');
         }
       });
       transport();
+      stage='CAPTURE_CHANGED';
       if(finishCapture(capture).sha256!==state.sourceSha256)fail('UNSTABLE');
       return true;
-    }catch{state.revoked=true;fail('UNSTABLE');}
+    }catch(error){
+      state.revoked=true;const failure=new IbManagerSourceError('UNSTABLE');
+      captureRecheckByError.set(failure,['AUTH','READ'].includes(stage)?stage+'_'+(captureReadByError.get(error)||'REFUSED'):stage);
+      throw failure;
+    }
     finally{capture.active=false;capture.secrets.length=0;this.#captureExclusive=false;}
   }
   consumeCapturedRead(result,request={}){

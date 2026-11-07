@@ -10,7 +10,7 @@ import {boundedJson} from './fee-http-json.mjs';
 import {dailyReportPlan} from './fee-report-period.mjs';
 import {authorizeHistoricalRevisionDiagnostic,readReportRecoveryRelease,readCurrentSyncRun} from './fee-report-producer.mjs';
 import {readPublicationState,decryptCandidate,safeProducerFailureSummary} from './fee-cloud-producer.mjs';
-import {fetchEconomicSnapshot} from './fee-economic-source.mjs';
+import {fetchEconomicSnapshot,economicSourceDiagnosticCode} from './fee-economic-source.mjs';
 import {createFeeSourceRevisionRuntime,sourceRevisionRuntimeFailureCode} from './fee-source-revision-runtime.mjs';
 
 const ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
@@ -92,6 +92,8 @@ export function revisionDiagnosticTransport({fetchImpl=globalThis.fetch,clock=Da
 }
 
 export function revisionDiagnosticFailureCode(error){
+  const economic=economicSourceDiagnosticCode(error);
+  if(economic!=='UNKNOWN')return 'FEE_REVISION_DIAGNOSTIC_ECON_INITIAL_'+economic.replace(/^SOURCE_/,'');
   const own=ERRORS.get(error);if(CODES.has(own))return 'FEE_REVISION_DIAGNOSTIC_'+own;
   const runtime=sourceRevisionRuntimeFailureCode(error);
   if(runtime!=='FEE_REPORT_SOURCE_REVISION_REFUSED')return safeProducerFailureSummary(runtime).code;

@@ -4,12 +4,12 @@ import crypto from 'node:crypto';
 import {types} from 'node:util';
 import {createLegacyPolicy} from './fee-legacy-policy.mjs';
 import {guardLegacySourceFile} from './fee-legacy-source-file.mjs';
-import {verifyEconomicSnapshot,readEconomicSnapshotBytes} from './fee-economic-source.mjs';
+import {verifyEconomicSnapshot,readEconomicSnapshotBytes,economicSourceDiagnosticCode,ECONOMIC_SOURCE_DIAGNOSTIC_CODES} from './fee-economic-source.mjs';
 import {validateHealth} from './fee-data-health.mjs';
 import {validateFeeCalculationReceiptWithEcon} from './fee-receipt-core.mjs';
 import {preserveReportMonthLocks} from './fee-report-metadata.mjs';
 import {validateIbManagerReportState,validateIbOwnerBaselineState,createIbManagerReturnConsumer,createIbManagerDrawdownConsumer} from './ib-manager-return.mjs';
-import {SharesightIbManagerReader} from './ib-manager-source.mjs';
+import {SharesightIbManagerReader,ibSourceCaptureRecheckDiagnostic,IB_CAPTURE_RECHECK_DIAGNOSTIC_CODES} from './ib-manager-source.mjs';
 import {createIbSourceRevisionPreparer,isIbSourceRevisionCandidate,ibSourceRevisionFailureCode} from './ib-manager-source-revision.mjs';
 import {sourceContractInputHash as hash} from './fee-source-contract.mjs';
 import {isRevisionGithubRead,revisionGithubFailureCode,IB_REVISION_GITHUB_FAILURE_CODES} from './fee-sync-revision-github.mjs';
@@ -20,15 +20,20 @@ export const IB_REVISION_ARTIFACT_SCOPE=Object.freeze({targetDate:'2026-11-06',c
 const instances=new WeakSet(),failures=new WeakMap(),OID=/^[a-f0-9]{40}$/,SHA=/^[a-f0-9]{64}$/;
 const OWNER='huanwujoy-crypto',REPO=OWNER+'/fee-console',parseExact=createLegacyPolicy().parseExactJson;
 const CONTRACT_MODELS=Object.freeze({'ib-source-revision-20261106-v1':'consumption-v1','ib-source-revision-20261106-sync-v2':'sync-cycle-v1',
-  'ib-source-revision-20261106-sync-v3':'sync-cycle-v1','ib-source-revision-20261106-diagnostic-v1':'sync-cycle-v1'});
+  'ib-source-revision-20261106-sync-v3':'sync-cycle-v1','ib-source-revision-20261106-diagnostic-v1':'sync-cycle-v1',
+  'ib-source-revision-20261106-diagnostic-v2':'sync-cycle-v1'});
 const DIAGNOSTIC_ROLES=Object.freeze(['BASE','CURRENT','ANCHOR']);
-const GITHUB_STEPS=Object.freeze(['MAIN','COMMIT','TREE','HISTORY','DATA','HEALTH','RUN','JOBS']);
+const GITHUB_STEPS=Object.freeze(['MAIN','COMMIT','TREE','HISTORY','DATA','HEALTH','RUN','JOBS','LOG']);
+const ECONOMIC_STAGES=Object.freeze(['FIRST','RECHECK','BYTES','BINDING']);
+const economicReason=error=>economicSourceDiagnosticCode(error).replace(/^SOURCE_/,'');
 const PREPARE_PHASES=Object.freeze(['READ','ADMISSION','ECON_BYTES','ECON_VERSION','MONTH_LOCKS','SOURCE_PREPARE','RECHECK']);
 const githubDiagnosticReason=code=>code.slice('IB_REVISION_GITHUB_'.length).replace(/^JSON_HTTP_/,'HTTP_')
   .replace(/^HTTP_UNPROCESSABLE$/,'HTTP_INVALID').replace(/^HTTP_UNAUTHORIZED$/,'HTTP_AUTH');
 // Every public suffix is made only from finite source literals. No exception
 // message, route, response, identifier or financial value becomes a diagnostic.
 export const IB_REVISION_ARTIFACT_DIAGNOSTIC_CODES=Object.freeze([
+  ...ECONOMIC_STAGES.flatMap(stage=>ECONOMIC_SOURCE_DIAGNOSTIC_CODES.map(code=>'ECON_'+stage+'_'+code.replace(/^SOURCE_/,''))),
+  ...IB_CAPTURE_RECHECK_DIAGNOSTIC_CODES.map(code=>'SOURCE_RECHECK_'+code),
   ...DIAGNOSTIC_ROLES.flatMap(role=>PREPARE_PHASES.map(phase=>'PHASE_'+role+'_'+phase)),
   ...DIAGNOSTIC_ROLES.flatMap(role=>GITHUB_STEPS.flatMap(step=>IB_REVISION_GITHUB_FAILURE_CODES
     .filter(code=>code!=='IB_REVISION_GITHUB_REFUSED').map(code=>'GITHUB_'+role+'_'+step+'_'+githubDiagnosticReason(code)))),
@@ -64,6 +69,7 @@ export function createIbRevisionArtifacts(options){
   c.dataKey=Buffer.from(c.dataKey);
   let closed=false,busy=false,record=null,candidate=null,sourceCapture=null,sourceReader=null,prepared=false,lastNow=-1,role='BASE',phase='READ';
   const at=async(name,operation)=>{const previous=phase;phase=name;const result=await operation();phase=previous;return result;};
+  const economicCheck=async(stage,operation)=>{try{return await operation();}catch(error){fail('ECON_'+stage+'_'+economicReason(error));}};
   const live=()=>{if(closed)fail('CLOSED');};
   const now=()=>{const n=c.clock();if(!Number.isSafeInteger(n)||n<0||n<lastNow)fail('CLOCK');lastNow=n;return n;};
   const active=()=>{live();if(record&&now()>=record.expiresAt)fail('EXPIRED');};
@@ -75,7 +81,7 @@ export function createIbRevisionArtifacts(options){
     const readAdmission=c.diagnosticOnly?producer.readHistoricalRevisionDiagnosticAdmission:producer.readHistoricalRevisionAdmission;
     active();if(!isAdmission(c.admission))fail('ADMISSION');
     const before=copy(readAdmission(c.admission));
-    if(c.diagnosticOnly?(before.contractId!=='ib-source-revision-20261106-diagnostic-v1'||before.purpose!=='read-only-diagnostic')
+    if(c.diagnosticOnly?(!['ib-source-revision-20261106-diagnostic-v1','ib-source-revision-20261106-diagnostic-v2'].includes(before.contractId)||before.purpose!=='read-only-diagnostic')
       :Object.hasOwn(before,'purpose'))fail('ADMISSION');
     const checked=copy(await at('ADMISSION',()=>c.admission.checkCurrent()));active();
     if(hash(before)!==hash(checked)||!Object.hasOwn(CONTRACT_MODELS,before.contractId)||before.targetDate!==IB_REVISION_ARTIFACT_SCOPE.targetDate
@@ -161,7 +167,10 @@ export function createIbRevisionArtifacts(options){
       const millis=/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(step.completed_at||'')?999:0;
       if(result.oid!==scope.candidateSha||!Number.isFinite(time(step.started_at))||!Number.isFinite(end)||end<time(step.started_at)
         ||time(step.started_at)<time(job.started_at)||end>time(job.completed_at)||time(result.at)<time(step.started_at)||time(result.at)>end+millis)fail('PRODUCER');
-    }catch(e){if(failures.has(e))throw e;fail('PRODUCER');}finally{log?.fill(0);}
+    }catch(e){if(failures.has(e))throw e;
+      const code=revisionGithubFailureCode(e);
+      if(code!=='IB_REVISION_GITHUB_REFUSED'&&IB_REVISION_GITHUB_FAILURE_CODES.includes(code))fail('GITHUB_'+role+'_LOG_'+githubDiagnosticReason(code));
+      fail('PRODUCER');}finally{log?.fill(0);}
     if(health.dataSha256!==digest(bytes))fail('HEALTH');
   };
   const validatePayload=async(payload,date,economic)=>{
@@ -179,8 +188,8 @@ export function createIbRevisionArtifacts(options){
   const check=async()=>{
     active();if(!record)fail('NOT_READ');
     const admission=await admissionCurrent();if(hash(admission)!==record.admissionSha256||await main()!==record.mainSha)fail('CHANGED');
-    try{await c.economicSnapshot.checkCurrent();}catch{fail('ECONOMIC_SOURCE');}active();
-    if((await at('ECON_VERSION',()=>c.economicSnapshot.getVersionBinding())).sha256!==record.bindings.economicRevisionSha256)fail('CHANGED');
+    await economicCheck('RECHECK',()=>c.economicSnapshot.checkCurrent());active();
+    if((await at('ECON_VERSION',()=>economicCheck('BINDING',()=>c.economicSnapshot.getVersionBinding()))).sha256!==record.bindings.economicRevisionSha256)fail('CHANGED');
     try{record.checkLegacy();}catch{fail('LEGACY_SOURCE');}active();return record.bindings;
   };
   const run=async(operation,initialPhase='READ')=>{live();if(busy)fail('BUSY');busy=true;role='BASE';phase=initialPhase;try{return await operation();}catch(e){
@@ -197,9 +206,9 @@ export function createIbRevisionArtifacts(options){
     // Start the deadline before the first artifact/financial read.
     record={expiresAt:started+300000};active();
     const head=await signed(r.mainSha),mainTree=await tree(head.commit.tree.sha);await history(r.mainSha);
-    try{await c.economicSnapshot.checkCurrent();}catch{fail('ECONOMIC_SOURCE');}active();let economicBytes;const artifacts={},payloads={};let economic,checkLegacy;
+    await economicCheck('FIRST',()=>c.economicSnapshot.checkCurrent());active();let economicBytes;const artifacts={},payloads={};let economic,checkLegacy;
     try{
-      economicBytes=await at('ECON_BYTES',()=>readEconomicSnapshotBytes(c.economicSnapshot));economic=decrypt(economicBytes,4,c.dataKey);
+      economicBytes=await at('ECON_BYTES',()=>economicCheck('BYTES',()=>readEconomicSnapshotBytes(c.economicSnapshot)));economic=decrypt(economicBytes,4,c.dataKey);
       // The existing independent-file guard remains mandatory for legacy v2.
       // An embedded old envelope or a caller-provided digest cannot replace it.
       try{checkLegacy=guardLegacySourceFile(economic,c.dataKey,c.legacySourcePath);}catch{fail('LEGACY_SOURCE');}
@@ -219,7 +228,7 @@ export function createIbRevisionArtifacts(options){
         }finally{data?.fill(0);healthBytes?.fill(0);}
       }
       role='BASE';const sync=CONTRACT_MODELS[admission.contractId]==='sync-cycle-v1';
-      const bindings=freeze({mainSha:r.mainSha,economicRevisionSha256:(await at('ECON_VERSION',()=>c.economicSnapshot.getVersionBinding())).sha256,
+      const bindings=freeze({mainSha:r.mainSha,economicRevisionSha256:(await at('ECON_VERSION',()=>economicCheck('BINDING',()=>c.economicSnapshot.getVersionBinding()))).sha256,
         ...(sync?{admissionModel:'sync-cycle-v1',executionSha256:admission.executionSha256}:{consumptionSha256:admission.consumptionSha256}),
         baseDataSha256:artifacts.current.dataSha256,baseHealthSha256:artifacts.current.healthSha256,currentSourceStateId:payloads.current.ibManagerSourceState.stateId});
       const expiresAt=started+300000,view=freeze({currentPayload:payloads.current,anchorPayload:payloads.anchor,artifacts,bindings,baselineSha256:c.baselineSha256,expiresAt:new Date(expiresAt).toISOString()});
@@ -258,7 +267,7 @@ export function createIbRevisionArtifacts(options){
     }),
     verifyCandidate:value=>run(async()=>{
       if(!candidate||value!==candidate||!isIbSourceRevisionCandidate(value)||!sourceCapture)fail('CANDIDATE');
-      await check();try{await Reflect.apply(SharesightIbManagerReader.prototype.checkCapturedReadCurrent,sourceReader,[sourceCapture]);}catch{fail('SOURCE_CHANGED');}await check();return true;
+      await check();try{await Reflect.apply(SharesightIbManagerReader.prototype.checkCapturedReadCurrent,sourceReader,[sourceCapture]);}catch(error){fail('SOURCE_RECHECK_'+ibSourceCaptureRecheckDiagnostic(error));}await check();return true;
     }),
     close(){closed=true;record=null;candidate=null;sourceCapture=null;sourceReader=null;c.dataKey.fill(0);},
   });

@@ -368,6 +368,8 @@ const WIRE_REVISION_FILES=Object.freeze([
 ].map(path=>Object.freeze({path,status:'modified'})));
 const isProductionSyncRevision=contractId=>contractId===SYNC_REVISION_CONTRACT||contractId===WIRE_REVISION_CONTRACT;
 const DIAGNOSTIC_REVISION_CONTRACT='ib-source-revision-20261106-diagnostic-v1';
+const ECONOMIC_DIAGNOSTIC_CONTRACT='ib-source-revision-20261106-diagnostic-v2';
+const isDiagnosticRevision=contractId=>contractId===DIAGNOSTIC_REVISION_CONTRACT||contractId===ECONOMIC_DIAGNOSTIC_CONTRACT;
 const DIAGNOSTIC_REVISION_PURPOSE='read-only-diagnostic';
 const DIAGNOSTIC_REVISION_FILES=Object.freeze([
   ...['.github/workflows/fee-cloud-producer.yml','.github/workflows/scripts-check.yml','security/approval-tiers.json',
@@ -376,10 +378,22 @@ const DIAGNOSTIC_REVISION_FILES=Object.freeze([
     'scripts/fee-sync-revision-github.mjs','scripts/fee-sync-revision-github.test.mjs','scripts/ib-manager-source.test.mjs'].map(path=>Object.freeze({path,status:'modified'})),
   ...['scripts/fee-source-revision-diagnostic.mjs','scripts/fee-source-revision-diagnostic.test.mjs'].map(path=>Object.freeze({path,status:'added'})),
 ]);
+const ECONOMIC_DIAGNOSTIC_FILES=Object.freeze([
+  'docs/fee-source-revision.md','scripts/fee-economic-source.mjs','scripts/fee-economic-source.test.mjs',
+  'scripts/fee-report-producer.mjs','scripts/fee-report-producer.test.mjs',
+  'scripts/fee-source-revision-diagnostic.mjs','scripts/fee-source-revision-diagnostic.test.mjs',
+  'scripts/fee-source-revision-runtime.mjs','scripts/fee-source-revision-runtime.test.mjs',
+  'scripts/fee-sync-revision-artifacts.mjs','scripts/fee-sync-revision-artifacts.test.mjs',
+  'scripts/ib-manager-source.mjs','scripts/ib-manager-source.test.mjs',
+].map(path=>Object.freeze({path,status:'modified'})));
 // Preserve each consumed contract and its evidence. Each independently reviewed
 // admission belongs only to its signed immediate successor; it neither resets
 // ordinary attempts nor grants a future target/version a retry.
 const RECOVERY_SCOPES=Object.freeze([
+ Object.freeze({contractId:ECONOMIC_DIAGNOSTIC_CONTRACT,purpose:DIAGNOSTIC_REVISION_PURPOSE,admissionModel:'sync-cycle-v1',target:'2026-11-06',
+  baseSha:'22174f04cae8ac18a071930f491598b327e315c5',repairBase:'22174f04cae8ac18a071930f491598b327e315c5',
+  baseParents:Object.freeze(['b218f264c53e914d6469ec9f43824f48ccb7af18']),fileManifest:ECONOMIC_DIAGNOSTIC_FILES,
+  uiBlob:'2bb9f66ac890ba87cec504ef72a5083c07670689'}),
  Object.freeze({contractId:WIRE_REVISION_CONTRACT,admissionModel:'sync-cycle-v1',target:'2026-11-06',
   baseSha:'b218f264c53e914d6469ec9f43824f48ccb7af18',repairBase:'b218f264c53e914d6469ec9f43824f48ccb7af18',
   baseParents:Object.freeze(['4f98318c73d1727d323febdcc72b7d5fbfb77f01']),fileManifest:WIRE_REVISION_FILES,
@@ -683,7 +697,7 @@ function syncPublicationBinding(state,{plan,expectedMain,now}){
 async function authorizeSyncRevision({release,plan,expectedMain,now,currentRunId,actionsToken,readCurrentRun,readState,clock,diagnostic=false}){
   const rr=recoveryReleaseRecords.get(release),scope=recoveryScope(plan?.accountingThrough,release);
   if(!rr||rr.scope!==scope||rr.snapshot!==hash(release)||scope?.admissionModel!=='sync-cycle-v1'
-      ||(diagnostic?release.contractId!==DIAGNOSTIC_REVISION_CONTRACT:!isProductionSyncRevision(release.contractId))
+      ||(diagnostic?!isDiagnosticRevision(release.contractId):!isProductionSyncRevision(release.contractId))
       ||(diagnostic?scope.purpose!==DIAGNOSTIC_REVISION_PURPOSE||release.purpose!==DIAGNOSTIC_REVISION_PURPOSE:scope.purpose!==undefined||release.purpose!==undefined)
       ||release.mainSha!==expectedMain||release.targetDate!==plan?.accountingThrough
       ||plan?.kind!=='daily'||plan.markets.join(',')!=='NASDAQ,NYSE')fail('RECOVERY_SCOPE');
@@ -718,13 +732,13 @@ async function authorizeSyncRevision({release,plan,expectedMain,now,currentRunId
 // the dedicated CLI must additionally validate its exact diagnostic event inputs.
 export async function authorizeHistoricalRevisionDiagnostic({plan,expectedMain,now=new Date(),currentRunId=process.env.GITHUB_RUN_ID,readRecoveryRelease=readReportRecoveryRelease,actionsToken=process.env.FEE_REPORT_ACTIONS_TOKEN,readCurrentRun=readCurrentSyncRun,readState,clock=()=>new Date()}={}){
   const release=await readRecoveryRelease(expectedMain,{targetDate:plan?.accountingThrough,actionsToken});
-  if(release?.contractId!==DIAGNOSTIC_REVISION_CONTRACT||release.purpose!==DIAGNOSTIC_REVISION_PURPOSE)fail('RECOVERY_SCOPE');
+  if(!isDiagnosticRevision(release?.contractId)||release.purpose!==DIAGNOSTIC_REVISION_PURPOSE)fail('RECOVERY_SCOPE');
   return authorizeSyncRevision({release,plan,expectedMain,now,currentRunId,actionsToken,readCurrentRun,readState,clock,diagnostic:true});
 }
 export async function authorizeReportRecovery({plan,expectedMain,now=new Date(),currentRunId=process.env.GITHUB_RUN_ID,readSourceAttempts=readPeriodSourceAttempts,readRecoveryRelease=readReportRecoveryRelease,actionsToken=process.env.FEE_REPORT_ACTIONS_TOKEN,readCurrentRun=readCurrentSyncRun,readState,clock=()=>new Date()}={}){
   let cachedRelease=null,token=actionsToken;
   const initialRelease=await readRecoveryRelease(expectedMain,{targetDate:plan?.accountingThrough,actionsToken:token});
-  if(initialRelease?.contractId===DIAGNOSTIC_REVISION_CONTRACT||initialRelease?.purpose===DIAGNOSTIC_REVISION_PURPOSE)fail('RECOVERY_SCOPE');
+  if(isDiagnosticRevision(initialRelease?.contractId)||initialRelease?.purpose===DIAGNOSTIC_REVISION_PURPOSE)fail('RECOVERY_SCOPE');
   if(isProductionSyncRevision(initialRelease.contractId))return authorizeSyncRevision({release:initialRelease,plan,expectedMain,now,currentRunId,actionsToken:token,readCurrentRun,readState,clock});
   let initialPending=true;
   const load=async(at,reuseImmutable=false,assertAdmissionActive=null)=>{
