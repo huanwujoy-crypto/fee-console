@@ -569,6 +569,7 @@ test('public reader pins both encrypted files to main and never trusts candidate
     assert.fail(route);
   };
   const result=await readPublicationState(D,`${D}T22:00:00Z`,request);
+  assert.deepEqual(result.healthBytes,Buffer.from(JSON.stringify(state.health)));
   assert.equal(result.pending,true);assert.equal(isPublishedTarget(result,D,gateNow()),false);
   assert.equal(routes.filter(r=>r==='git/ref/heads/main').length,3);
   assert.equal(routes.some(r=>r.includes('fee-cloud-producer.yml/runs')),false);

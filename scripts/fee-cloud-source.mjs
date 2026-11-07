@@ -867,12 +867,12 @@ class FixedHttp {
         || path.endsWith('/cash_account_transactions.json') || /^\/api\/v2\/payouts\/[1-9]\d{0,14}\.json$/.test(path);
       const capture=sourceCaptureContext.getStore();
       const captureThis=capture?.http===this&&url!==TOKEN_URL;
-      const includeBytes=isPrecisionSource||this.onSourceResponse&&url!==TOKEN_URL||captureThis;
+      const includeBytes=isPrecisionSource||captureThis||!capture?.currentCheck&&this.onSourceResponse&&url!==TOKEN_URL;
       const response = await boundedJson(this.fetchImpl, url, init, {
         timeoutMs: this.timeoutMs, maxBytes: MAX_BODY, requireJsonType: true, includeBytes: !!includeBytes,
       });
       const capturedBody=captureThis?captureRecord(capture,url,init,response):null;
-      if(this.onSourceResponse&&url!==TOKEN_URL){const bearer=init?.headers?.Authorization?.replace(/^Bearer /,'');if(bearer&&response.bytes.includes(Buffer.from(bearer)))fail('RESPONSE_CREDENTIAL');await this.onSourceResponse(response.bytes);}
+      if(!capture?.currentCheck&&this.onSourceResponse&&url!==TOKEN_URL){const bearer=init?.headers?.Authorization?.replace(/^Bearer /,'');if(bearer&&response.bytes.includes(Buffer.from(bearer)))fail('RESPONSE_CREDENTIAL');await this.onSourceResponse(response.bytes);}
       return isPrecisionSource ? parseSourceJson(capturedBody??new TextDecoder('utf-8', { fatal: true }).decode(response.bytes)) : includeBytes?response.json:response;
     } catch (error) {
       const code = error instanceof BoundedJsonError ? error.code : 'NETWORK';
@@ -882,6 +882,8 @@ class FixedHttp {
     }
   }
 }
+
+const FIXED_HTTP_JSON=FixedHttp.prototype.json;
 
 export class SharesightCloudReader {
   #capturing=false;#capturedReads=new WeakMap();#ownedHttp;#ordinaryReads=0;
@@ -904,10 +906,48 @@ export class SharesightCloudReader {
     const config={};for(const name of names){const d=Object.getOwnPropertyDescriptor(this,name);if(!d||!Object.hasOwn(d,'value'))fail('CONFIG');config[name]=d.value??null;}
     return captureArgument({targetDate,benchmark,config});
   }
-  verifyCapturedRead(result){return this.#capturedReads.has(result);}
+  #captureTransport(){
+    const data=(o,k)=>{const d=Object.getOwnPropertyDescriptor(o,k);if(!d||!Object.hasOwn(d,'value'))fail('CONFIG');return d.value;};
+    const http=data(this,'http');if(http!==this.#ownedHttp)fail('CONFIG');
+    for(const [o,k,expected] of [[http,'json',FIXED_HTTP_JSON],[this,'readOnce',SharesightCloudReader.prototype.readOnce],[this,'get',SharesightCloudReader.prototype.get],[this,'token',SharesightCloudReader.prototype.token]]){
+      const d=Object.getOwnPropertyDescriptor(o,k);if(d&&(!Object.hasOwn(d,'value')||d.value!==expected))fail('CONFIG');
+    }
+    return [http,data(http,'fetchImpl'),data(http,'timeoutMs'),data(http,'onSourceResponse'),data(this,'clientId'),data(this,'clientSecret')];
+  }
+  #capturePeer(){const d=Object.getOwnPropertyDescriptor(this.#ownedHttp,'peerPortfolioId');if(!d||!Object.hasOwn(d,'value'))fail('CONFIG');return d.value;}
+  verifyCapturedRead(result){const state=this.#capturedReads.get(result);return !!state&&!state.revoked;}
+  // A fresh byte comparison, not a second business calculation or a new grant.
+  // The only routes are private records from this instance's original capture.
+  // OAuth remains internal; response observers are suppressed during this check.
+  async checkCapturedReadCurrent(result){
+    const state=this.#capturedReads.get(result);
+    if(!state||state.revoked||this.#capturing||this.#ordinaryReads)fail('CONFIG');
+    this.#capturing=true;
+    const secrets=[];
+    try{
+      const transport=()=>{const now=this.#captureTransport();if(now.some((v,i)=>v!==state.transport[i])||this.#capturePeer()!==state.peerPortfolioId||sha256(this.#captureArguments(state.arguments.targetDate,state.arguments.benchmark))!==state.argumentsHash)fail('CONFIG');};
+      transport();secrets.push(state.transport[4],state.transport[5]);
+      const context={reader:this,http:this.#ownedHttp,records:[],bytes:0,secrets,currentCheck:true};
+      await sourceCaptureContext.run(context,async()=>{
+        const auth=await FIXED_HTTP_JSON.call(this.#ownedHttp,TOKEN_URL,{method:'POST',headers:{Accept:'application/json','Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({grant_type:'client_credentials',client_id:state.transport[4],client_secret:state.transport[5]}).toString()});
+        if(!object(auth)||typeof auth.access_token!=='string'||!TOKEN_RE.test(auth.access_token)||String(auth.token_type||'').toLowerCase()!=='bearer')fail('AUTH_RESPONSE');
+        const token=auth.access_token;
+        for(const record of state.records){
+          transport();
+          const u=new URL(record.path,API);for(const [k,v]of Object.entries(record.query))u.searchParams.append(k,v);
+          await FIXED_HTTP_JSON.call(this.#ownedHttp,u.href,{method:'GET',headers:{Accept:'application/json',Authorization:'Bearer '+token,'User-Agent':'fee-console-cloud-reader/1.0'}});
+          if(stable(context.records.at(-1))!==stable(record))fail('SOURCE_UNSTABLE');
+        }
+      });
+      transport();
+      if(context.records.length!==state.records.length||sha256(context.records)!==state.sourceSha256)fail('SOURCE_UNSTABLE');
+      return true;
+    }catch{state.revoked=true;fail('SOURCE_UNSTABLE');}
+    finally{secrets.length=0;this.#capturing=false;}
+  }
   consumeCapturedRead(result,targetDate,benchmark){
     const state=this.#capturedReads.get(result);
-    if(!state||state.consumed||state.argumentsHash!==sha256(this.#captureArguments(targetDate,benchmark)))fail('CONFIG');
+    if(!state||state.revoked||state.consumed||this.#capturing||state.argumentsHash!==sha256(this.#captureArguments(targetDate,benchmark)))fail('CONFIG');
     state.consumed=true;return result.input;
   }
   async token() {
@@ -1023,7 +1063,7 @@ export class SharesightCloudReader {
   async readStableWithEvidence(targetDate,benchmark){
     this.#captureGuard();if(this.#capturing||this.#ordinaryReads)fail('CONFIG');
     if(this.http!==this.#ownedHttp||this.http.json!==FixedHttp.prototype.json||this.readOnce!==SharesightCloudReader.prototype.readOnce||this.get!==SharesightCloudReader.prototype.get||this.token!==SharesightCloudReader.prototype.token)fail('CONFIG');
-    const argumentsCopy=this.#captureArguments(targetDate,benchmark),argumentsHash=sha256(argumentsCopy);
+    const argumentsCopy=this.#captureArguments(targetDate,benchmark),argumentsHash=sha256(argumentsCopy),transport=this.#captureTransport();
     const captures=[],secrets=[this.clientId,this.clientSecret];this.#capturing=true;
     try{
       const inputs=[];
@@ -1038,7 +1078,8 @@ export class SharesightCloudReader {
       if(stable(inputs[0])!==stable(inputs[1])||captures[0].sha256!==captures[1].sha256)fail('SOURCE_UNSTABLE');
       if(argumentsHash!==sha256(this.#captureArguments(targetDate,benchmark)))fail('SOURCE_UNSTABLE');
       const result=freezeCapture({input:inputs[0],evidence:{schema:'fee-console.sharesight-capture.v1',provider:'Sharesight',targetDate,captures,sourceSha256:captures[0].sha256}});
-      this.#capturedReads.set(result,{argumentsHash,consumed:false});return result;
+      if(this.#captureTransport().some((v,i)=>v!==transport[i]))fail('SOURCE_UNSTABLE');
+      this.#capturedReads.set(result,{argumentsHash,arguments:freezeCapture(argumentsCopy),transport,peerPortfolioId:this.#capturePeer(),records:captures[0].records,sourceSha256:captures[0].sha256,consumed:false,revoked:false});return result;
     }finally{secrets.length=0;this.#capturing=false;}
   }
   // Field acceptance only, not an IB TWR receipt or a baseline/coverage grant.

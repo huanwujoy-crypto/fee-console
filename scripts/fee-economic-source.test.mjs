@@ -4,7 +4,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fetchEconomicSnapshot, SourceFetchError, sourceFailureCode } from "./fee-economic-source.mjs";
+import {createHash} from 'node:crypto';
+import { fetchEconomicSnapshot, SourceFetchError, sourceFailureCode, verifyEconomicSnapshot, readEconomicSnapshotBytes } from "./fee-economic-source.mjs";
 
 const ID = "a".repeat(32), OWNER = "huanwujoy-crypto", NAME = "fee-console-db.json";
 const TOKEN = "github_pat_" + "SYNTHETIC_NOT_A_REAL_TOKEN_".repeat(3);
@@ -41,6 +42,78 @@ const rejected = (promise, code) => assert.rejects(promise, error => {
   assert.equal(error.message, code); assert.equal(error.code, code);
   assert.equal(Object.hasOwn(error, "cause"), false);
   return true;
+});
+
+test('version binding exposes only a frozen digest of actual stable source, never source identifiers or credentials',async t=>{
+  let calls=0;const snap=await run(t,async()=>{calls++;return reply();});
+  const binding=snap.getVersionBinding();
+  assert.equal(calls,2,'getting the acquired version does not claim a new remote check');
+  assert.deepEqual(Object.keys(binding).sort(),['schema','sha256']);
+  assert.equal(binding.schema,'fee-console.economic-source-version.v1');assert.match(binding.sha256,/^[a-f0-9]{64}$/);
+  const preimage=JSON.stringify({schema:binding.schema,locator:ID,contentSha256:createHash('sha256').update(envelope()).digest('hex'),revision:'b'.repeat(40),etag:'"synthetic-etag"'});
+  assert.equal(binding.sha256,createHash('sha256').update(preimage).digest('hex'));
+  for(const secret of [ID,TOKEN,envelope(),'b'.repeat(40),'synthetic-etag',snap.sourcePath])assert.equal(JSON.stringify(binding).includes(secret),false);
+  assert.equal(Object.isFrozen(binding),true);assert.throws(()=>{binding.sha256='0'.repeat(64);},TypeError);
+  assert.equal(Object.getOwnPropertyDescriptor(snap,'getVersionBinding').enumerable,false);
+  assert.equal(snap.getVersionBinding(),binding);await snap.checkCurrent();assert.equal(calls,4);assert.equal(snap.getVersionBinding(),binding);
+  snap.cleanup();assert.throws(()=>snap.getVersionBinding(),{code:'SOURCE_CLOSED'});
+});
+test('version hash preserves exact encrypted bytes and revision/opaque-tag semantics',async t=>{
+  const acquire=async mutate=>run(t,async()=>{const body=fixture();let etag='"same-tag"';etag=mutate?.(body,etag)??etag;return reply(body,etag);});
+  const base=await acquire(),tag=await acquire((_body,etag)=>'W/'+etag);
+  assert.deepEqual(tag.getVersionBinding(),base.getVersionBinding());
+  for(const mutate of [body=>{body.files[NAME].content+=' ';body.files[NAME].size++;},body=>{body.history[0].version='B'.repeat(40);},()=> '"other-tag"']){
+    const changed=await acquire(mutate);assert.notEqual(changed.getVersionBinding().sha256,base.getVersionBinding().sha256);changed.cleanup();
+  }
+  // Locator is internally bound without exposing it in the returned structure.
+  try{
+    process.env.FEE_ECON_GIST_ID='c'.repeat(32);
+    const other=await acquire(body=>{body.id='c'.repeat(32);});assert.notEqual(other.getVersionBinding().sha256,base.getVersionBinding().sha256);other.cleanup();
+  }finally{process.env.FEE_ECON_GIST_ID=ID;}
+  base.cleanup();tag.cleanup();
+});
+test('factory authentication and checked ciphertext access reject lookalikes without executing their methods',async t=>{
+  let calls=0,forgeries=0;const snap=await run(t,async()=>{calls++;return reply();});
+  assert.equal(verifyEconomicSnapshot(snap),true);
+  const fake={get checkCurrent(){forgeries++;return()=>true;},get getVersionBinding(){forgeries++;return()=>({sha256:'a'.repeat(64)});}};
+  for(const value of [fake,null,{},new Proxy(snap,{get(){forgeries++;return true;}})]){
+    assert.equal(verifyEconomicSnapshot(value),false);assert.throws(()=>readEconomicSnapshotBytes(value),{code:'SOURCE_OPTIONS'});
+  }
+  assert.equal(forgeries,0);assert.throws(()=>readEconomicSnapshotBytes(snap),{code:'SOURCE_CHANGED'});assert.equal(calls,2);
+  await snap.checkCurrent();const bytes=readEconomicSnapshotBytes(snap);assert.ok(Buffer.isBuffer(bytes));assert.equal(bytes.toString('utf8'),envelope());assert.equal(calls,4);
+  bytes.fill(0);assert.equal(readEconomicSnapshotBytes(snap).toString('utf8'),envelope());assert.equal(fs.readFileSync(snap.sourcePath,'utf8'),envelope());
+  snap.cleanup();assert.throws(()=>readEconomicSnapshotBytes(snap),{code:'SOURCE_CLOSED'});
+});
+test('failed current verification revokes binding permanently and never advances the acquired version',async t=>{
+  let mode='same',calls=0;const snap=await run(t,async()=>{calls++;const body=fixture();if(mode==='changed')body.history[0].version='c'.repeat(40);return reply(body);});
+  const before=snap.getVersionBinding();await snap.checkCurrent();mode='changed';await rejected(snap.checkCurrent(),'SOURCE_CHANGED');
+  assert.throws(()=>snap.getVersionBinding(),{code:'SOURCE_CHANGED'});assert.throws(()=>readEconomicSnapshotBytes(snap),{code:'SOURCE_CHANGED'});
+  mode='same';assert.equal(await snap.checkCurrent(),true,'legacy checkCurrent remains compatible');
+  assert.throws(()=>snap.getVersionBinding(),{code:'SOURCE_CHANGED'});assert.equal(calls,8);assert.equal(fs.readFileSync(snap.sourcePath,'utf8'),envelope());
+  assert.match(before.sha256,/^[a-f0-9]{64}$/);snap.cleanup();
+});
+test('local ciphertext or mode tampering prevents binding and remains revoked even if restored',async t=>{
+  for(const kind of ['content','mode'])await t.test(kind,async t=>{
+    let calls=0;const snap=await run(t,async()=>{calls++;return reply();});await snap.checkCurrent();
+    if(kind==='content')fs.appendFileSync(snap.sourcePath,' ');else fs.chmodSync(snap.sourcePath,0o644);
+    assert.throws(()=>snap.getVersionBinding(),{code:'SOURCE_STORAGE'});assert.equal(calls,4);
+    if(kind==='content')fs.writeFileSync(snap.sourcePath,envelope());else fs.chmodSync(snap.sourcePath,0o600);
+    assert.throws(()=>readEconomicSnapshotBytes(snap),{code:'SOURCE_CHANGED'});snap.cleanup();
+  });
+});
+test('in-flight current verification cannot be bypassed by reading the old version',async t=>{
+  let calls=0,release,entered;const paused=new Promise(r=>{entered=r;}),wait=new Promise(r=>{release=r;});
+  const snap=await run(t,async()=>{if(++calls===3){entered();await wait;}return reply();});
+  const version=snap.getVersionBinding(),pending=snap.checkCurrent();await paused;
+  assert.throws(()=>snap.getVersionBinding(),{code:'SOURCE_CHANGED'});assert.throws(()=>readEconomicSnapshotBytes(snap),{code:'SOURCE_CHANGED'});assert.equal(calls,3);
+  release();assert.equal(await pending,true);assert.equal(calls,4);assert.equal(snap.getVersionBinding(),version);snap.cleanup();
+});
+test('network or option failure revokes binding without changing original fixed failure codes',async t=>{
+  for(const kind of ['network','options'])await t.test(kind,async t=>{
+    let calls=0;const snap=await run(t,async()=>{if(++calls>2&&kind==='network')throw Error('PRIVATE_SYNTHETIC');return reply();},{attempts:1});
+    await rejected(snap.checkCurrent(kind==='options'?{callerSuppliedDigest:'a'.repeat(64)}:{}),kind==='network'?'SOURCE_NETWORK':'SOURCE_CHANGED');
+    assert.throws(()=>snap.getVersionBinding(),{code:'SOURCE_CHANGED'});assert.equal(calls,kind==='network'?3:2);snap.cleanup();
+  });
 });
 
 for (const v of [3, 4]) test(`v${v}: exact encrypted bytes, private modes, remote recheck, cleanup`, async t => {

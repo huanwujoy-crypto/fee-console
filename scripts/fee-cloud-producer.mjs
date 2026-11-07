@@ -206,7 +206,9 @@ export async function readPublicationState(targetDate, startedAt, request = publ
   let health;
   try { health = JSON.parse(healthBytes); } catch { health = null; }
   const finalMainSha = (await ref())?.object?.sha;
-  const state = { mainSha, finalMainSha, health, data, pending: false };
+  // Preserve the authenticated original bytes for consumers that bind the
+  // health artifact itself. Re-serializing parsed JSON is not the same file.
+  const state = { mainSha, finalMainSha, health, healthBytes, data, pending: false };
   if (mainSha !== finalMainSha || (!requireIb&&isPublishedTarget(state, targetDate))) return state;
   const prefix = `codex/fee-daily-${targetDate.replaceAll("-", "")}-`;
   const refs = await request(`git/matching-refs/heads/${prefix}`);
