@@ -9,8 +9,8 @@ import {validateHealth} from './fee-data-health.mjs';
 import {validateFeeCalculationReceiptWithEcon} from './fee-receipt-core.mjs';
 import {preserveReportMonthLocks} from './fee-report-metadata.mjs';
 import {validateIbManagerReportState,validateIbOwnerBaselineState,createIbManagerReturnConsumer,createIbManagerDrawdownConsumer} from './ib-manager-return.mjs';
-import {SharesightIbManagerReader,ibSourceCaptureRecheckDiagnostic,IB_CAPTURE_RECHECK_DIAGNOSTIC_CODES} from './ib-manager-source.mjs';
-import {createIbSourceRevisionPreparer,isIbSourceRevisionCandidate,ibSourceRevisionFailureCode} from './ib-manager-source-revision.mjs';
+import {SharesightIbManagerReader,ibSourceCaptureRecheckDiagnostic,IB_CAPTURE_RECHECK_DIAGNOSTIC_CODES,IB_CASH_RECONCILIATION_SITES,IB_CASH_DATE_ROLES} from './ib-manager-source.mjs';
+import {createIbSourceRevisionPreparer,isIbSourceRevisionCandidate,ibSourceRevisionFailureCode,ibSourceRevisionCashSite,ibSourceRevisionCashDateRole} from './ib-manager-source-revision.mjs';
 import {sourceContractInputHash as hash} from './fee-source-contract.mjs';
 import {isRevisionGithubRead,revisionGithubFailureCode,IB_REVISION_GITHUB_FAILURE_CODES} from './fee-sync-revision-github.mjs';
 
@@ -21,7 +21,7 @@ const instances=new WeakSet(),failures=new WeakMap(),OID=/^[a-f0-9]{40}$/,SHA=/^
 const OWNER='huanwujoy-crypto',REPO=OWNER+'/fee-console',parseExact=createLegacyPolicy().parseExactJson;
 const CONTRACT_MODELS=Object.freeze({'ib-source-revision-20261106-v1':'consumption-v1','ib-source-revision-20261106-sync-v2':'sync-cycle-v1',
   'ib-source-revision-20261106-sync-v3':'sync-cycle-v1','ib-source-revision-20261106-diagnostic-v1':'sync-cycle-v1',
-  'ib-source-revision-20261106-diagnostic-v2':'sync-cycle-v1'});
+  'ib-source-revision-20261106-diagnostic-v2':'sync-cycle-v1','ib-source-revision-20261106-diagnostic-v3':'sync-cycle-v1'});
 const DIAGNOSTIC_ROLES=Object.freeze(['BASE','CURRENT','ANCHOR']);
 const GITHUB_STEPS=Object.freeze(['MAIN','COMMIT','TREE','HISTORY','DATA','HEALTH','RUN','JOBS','LOG']);
 const ECONOMIC_STAGES=Object.freeze(['FIRST','RECHECK','BYTES','BINDING']);
@@ -39,8 +39,19 @@ export const IB_REVISION_ARTIFACT_DIAGNOSTIC_CODES=Object.freeze([
     .filter(code=>code!=='IB_REVISION_GITHUB_REFUSED').map(code=>'GITHUB_'+role+'_'+step+'_'+githubDiagnosticReason(code)))),
 ]);
 export const isIbRevisionArtifacts=value=>instances.has(value);
-function fail(code){const e=new Error('IB_REVISION_ARTIFACT_'+code);failures.set(e,code);throw Object.freeze(e);}
+function failure(code){const e=new Error('IB_REVISION_ARTIFACT_'+code);failures.set(e,code);return e;}
+function fail(code){throw Object.freeze(failure(code));}
 export const ibRevisionArtifactFailureCode=e=>'IB_REVISION_ARTIFACT_'+(failures.get(e)||'REFUSED');
+// SOURCE_CASH_RECONCILIATION keeps the reader's fixed site/date-role beside the
+// unchanged code, by error identity only. Any other error reports the defaults.
+const cashSites=new Set(IB_CASH_RECONCILIATION_SITES),cashRoles=new Set(IB_CASH_DATE_ROLES),cashSiteByError=new WeakMap(),cashRoleByError=new WeakMap();
+export const ibRevisionArtifactCashSite=e=>cashSiteByError.get(e)||'UNCLASSIFIED';
+export const ibRevisionArtifactCashDateRole=e=>cashRoleByError.get(e)||'NONE';
+function failCashSource(cashSite,cashDateRole){
+  const e=failure('SOURCE_CASH_RECONCILIATION'),site=cashSites.has(cashSite)?cashSite:'UNCLASSIFIED';
+  cashSiteByError.set(e,site);cashRoleByError.set(e,site!=='UNCLASSIFIED'&&cashRoles.has(cashDateRole)?cashDateRole:'NONE');
+  throw Object.freeze(e);
+}
 const digest=b=>crypto.createHash('sha256').update(b).digest('hex');
 const blob=b=>crypto.createHash('sha1').update('blob '+b.length+'\0').update(b).digest('hex');
 function freeze(v){if(v&&typeof v==='object'){Object.values(v).forEach(freeze);Object.freeze(v);}return v;}
@@ -81,7 +92,7 @@ export function createIbRevisionArtifacts(options){
     const readAdmission=c.diagnosticOnly?producer.readHistoricalRevisionDiagnosticAdmission:producer.readHistoricalRevisionAdmission;
     active();if(!isAdmission(c.admission))fail('ADMISSION');
     const before=copy(readAdmission(c.admission));
-    if(c.diagnosticOnly?(!['ib-source-revision-20261106-diagnostic-v1','ib-source-revision-20261106-diagnostic-v2'].includes(before.contractId)||before.purpose!=='read-only-diagnostic')
+    if(c.diagnosticOnly?(!['ib-source-revision-20261106-diagnostic-v1','ib-source-revision-20261106-diagnostic-v2','ib-source-revision-20261106-diagnostic-v3'].includes(before.contractId)||before.purpose!=='read-only-diagnostic')
       :Object.hasOwn(before,'purpose'))fail('ADMISSION');
     const checked=copy(await at('ADMISSION',()=>c.admission.checkCurrent()));active();
     if(hash(before)!==hash(checked)||!Object.hasOwn(CONTRACT_MODELS,before.contractId)||before.targetDate!==IB_REVISION_ARTIFACT_SCOPE.targetDate
@@ -195,6 +206,7 @@ export function createIbRevisionArtifacts(options){
   const run=async(operation,initialPhase='READ')=>{live();if(busy)fail('BUSY');busy=true;role='BASE';phase=initialPhase;try{return await operation();}catch(e){
     closed=true;record=null;candidate=null;sourceCapture=null;sourceReader=null;c.dataKey.fill(0);if(failures.has(e))throw e;
     const revisionCode=ibSourceRevisionFailureCode(e);
+    if(revisionCode==='IB_REVISION_SOURCE_REFUSED_IB_SOURCE_CASH_RECONCILIATION')failCashSource(ibSourceRevisionCashSite(e),ibSourceRevisionCashDateRole(e));
     if(revisionCode.startsWith('IB_REVISION_SOURCE_REFUSED_IB_SOURCE_'))fail('SOURCE_'+revisionCode.slice('IB_REVISION_SOURCE_REFUSED_IB_SOURCE_'.length));
     if(revisionCode!=='IB_REVISION_REFUSED')fail('REVISION_'+revisionCode.slice('IB_REVISION_'.length));
     fail('PHASE_'+role+'_'+phase);

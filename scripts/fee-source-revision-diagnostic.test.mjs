@@ -181,6 +181,18 @@ test('economic reasons require native provenance and never pre-empt diagnostic, 
   assert.equal(r.status,'incomplete');assert.equal(r.reasonCode,artifactStage);assert.ok(h.trace.includes('runtime-close'));assert.ok(h.trace.includes('cleanup'));
 });
 
+test('cash site and date-role appear only for a runtime-provenanced cash refusal, never from code text or fields',async()=>{
+  const code='FEE_REPORT_SOURCE_REVISION_ARTIFACT_SOURCE_CASH_RECONCILIATION';
+  for(const [thrown,expected] of [[Error(code),code],[Object.assign(Error(code),{cashSite:'DAILY_CHAIN_END',cashDateRole:'TARGET'}),code],
+    [Object.defineProperty(Error(code),'cashSite',{get(){assert.fail('getter accessed');}}),code],[new Proxy(Error(code),{}),'FEE_REVISION_DIAGNOSTIC_FAILED']]){
+    const h=harness();h.runtime.diagnose=async()=>{throw thrown;};
+    const r=await inspectRevisionDiagnostic(h.options);
+    assert.equal(r.status,'incomplete');assert.equal(r.reasonCode,expected);
+    assert.deepEqual(Object.keys(r).sort(),['publicationReady','reasonCode','reportGenerated','schema','status','targetDate']);
+  }
+  const ok=await inspectRevisionDiagnostic(harness().options);
+  assert.deepEqual(Object.keys(ok).sort(),['publicationReady','reasonCode','reportGenerated','schema','status','targetDate']);
+});
 test('transport accepts bounded read routes and only the existing OAuth POST',async()=>{
   const calls=[],t=revisionDiagnosticTransport({fetchImpl:async(url,init)=>{calls.push({url,method:init.method,signal:init.signal});return {ok:true};}});
   try{

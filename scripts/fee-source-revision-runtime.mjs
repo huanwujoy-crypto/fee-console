@@ -6,9 +6,9 @@ import {types} from 'node:util';
 import {sourceContractInputHash as hash} from './fee-source-contract.mjs';
 import {validateReportPlan,isReviewedDailyPlan} from './fee-report-period.mjs';
 import {verifyEconomicSnapshot} from './fee-economic-source.mjs';
-import {SharesightIbManagerReader} from './ib-manager-source.mjs';
+import {SharesightIbManagerReader,IB_CASH_RECONCILIATION_SITES,IB_CASH_DATE_ROLES} from './ib-manager-source.mjs';
 import {createRevisionGithubRead} from './fee-sync-revision-github.mjs';
-import {createIbRevisionArtifacts,ibRevisionArtifactFailureCode} from './fee-sync-revision-artifacts.mjs';
+import {createIbRevisionArtifacts,ibRevisionArtifactFailureCode,ibRevisionArtifactCashSite,ibRevisionArtifactCashDateRole} from './fee-sync-revision-artifacts.mjs';
 
 const PREFIX='FEE_REPORT_SOURCE_REVISION_',errors=new WeakMap();
 const CONTRACTS=Object.freeze({
@@ -17,13 +17,27 @@ const CONTRACTS=Object.freeze({
   'ib-source-revision-20261106-sync-v3':'fee-console.ib-source-revision-plan.v2',
   'ib-source-revision-20261106-diagnostic-v1':'fee-console.ib-source-revision-plan.v2',
   'ib-source-revision-20261106-diagnostic-v2':'fee-console.ib-source-revision-plan.v2',
+  'ib-source-revision-20261106-diagnostic-v3':'fee-console.ib-source-revision-plan.v2',
 }),TARGET='2026-11-06',ANCHOR='2026-11-04',PREVIOUS='2026-11-05';
-const DIAGNOSTIC_CONTRACTS=Object.freeze(['ib-source-revision-20261106-diagnostic-v1','ib-source-revision-20261106-diagnostic-v2']);
+const DIAGNOSTIC_CONTRACTS=Object.freeze(['ib-source-revision-20261106-diagnostic-v1','ib-source-revision-20261106-diagnostic-v2','ib-source-revision-20261106-diagnostic-v3']);
 const SHA=/^[a-f0-9]{64}$/,MAX_BYTES=2*1024*1024;
 const sha=bytes=>crypto.createHash('sha256').update(bytes).digest('hex');
-function fail(code){const e=new Error(PREFIX+code);errors.set(e,code);throw Object.freeze(e);}
-function artifactFailure(error,fallback){const code=ibRevisionArtifactFailureCode(error).slice('IB_REVISION_ARTIFACT_'.length);fail(code==='REFUSED'?fallback:'ARTIFACT_'+code);}
+function failure(code){const e=new Error(PREFIX+code);errors.set(e,code);return e;}
+function fail(code){throw Object.freeze(failure(code));}
 export const sourceRevisionRuntimeFailureCode=e=>PREFIX+(errors.get(e)||'REFUSED');
+// ARTIFACT_SOURCE_CASH_RECONCILIATION keeps the reader's fixed site/date-role
+// beside the unchanged code, by error identity only (defaults otherwise).
+const cashSites=new Set(IB_CASH_RECONCILIATION_SITES),cashRoles=new Set(IB_CASH_DATE_ROLES),cashSiteByError=new WeakMap(),cashRoleByError=new WeakMap();
+export const sourceRevisionRuntimeCashSite=e=>cashSiteByError.get(e)||'UNCLASSIFIED';
+export const sourceRevisionRuntimeCashDateRole=e=>cashRoleByError.get(e)||'NONE';
+function artifactFailure(error,fallback){
+  const code=ibRevisionArtifactFailureCode(error).slice('IB_REVISION_ARTIFACT_'.length);
+  if(code!=='SOURCE_CASH_RECONCILIATION')fail(code==='REFUSED'?fallback:'ARTIFACT_'+code);
+  const e=failure('ARTIFACT_'+code),site=ibRevisionArtifactCashSite(error),role=ibRevisionArtifactCashDateRole(error);
+  cashSiteByError.set(e,cashSites.has(site)?site:'UNCLASSIFIED');
+  cashRoleByError.set(e,cashSites.has(site)&&site!=='UNCLASSIFIED'&&cashRoles.has(role)?role:'NONE');
+  throw Object.freeze(e);
+}
 function frozenCopy(value){try{hash(value);const result=structuredClone(value);const freeze=v=>{if(v&&typeof v==='object'){for(const x of Object.values(v))freeze(x);Object.freeze(v);}return v;};return freeze(result);}catch{fail('CONFIG');}}
 function optionsOf(value){
   const keys=['plan','admission','economicSnapshot','sourceBytes','sourcePayload','healthBytes','githubToken','clientId','clientSecret','keyText','baselineSha256','legacySourcePath','fetchImpl','clock'];

@@ -5,9 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {spawnSync} from 'node:child_process';
-import {SharesightIbManagerReader,ibBaselineBusinessHash,IbManagerSourceError} from './ib-manager-source.mjs';
+import {SharesightIbManagerReader,ibBaselineBusinessHash,IbManagerSourceError,IB_CASH_RECONCILIATION_SITES,IB_CASH_DATE_ROLES} from './ib-manager-source.mjs';
 import {buildIbManagerReportBundle,buildIbOwnerBaseline,buildIbManagerReturnReceipt,buildIbManagerDrawdownReceipt,createIbManagerReturnConsumer} from './ib-manager-return.mjs';
-import {createIbSourceRevisionPreparer,isIbSourceRevisionCandidate,consumeIbSourceRevisionCandidate,validateIbSourceRevisionCandidate,ibSourceRevisionFailureCode,IB_SOURCE_REVISION_FAILURE_CODES} from './ib-manager-source-revision.mjs';
+import {createIbSourceRevisionPreparer,isIbSourceRevisionCandidate,consumeIbSourceRevisionCandidate,validateIbSourceRevisionCandidate,ibSourceRevisionFailureCode,IB_SOURCE_REVISION_FAILURE_CODES,ibSourceRevisionCashSite,ibSourceRevisionCashDateRole} from './ib-manager-source-revision.mjs';
 import {createSourceContractValidator,sourceContractInputHash} from './fee-source-contract.mjs';
 import {loadIbManagerReport,prepareIbManagerReport,sameIbManagerData} from './ib-manager-report.mjs';
 import {buildFeeCalculationReceipt,validateFeeCalculationReceiptWithEcon} from './fee-receipt-core.mjs';
@@ -142,6 +142,48 @@ test('diagnostic code retains a branded fixed source reason and refuses spoofed 
   assert.equal(ibSourceRevisionFailureCode(issued),'IB_REVISION_SOURCE_REFUSED_IB_SOURCE_CASH_RECONCILIATION');
   assert.ok(IB_SOURCE_REVISION_FAILURE_CODES.includes(ibSourceRevisionFailureCode(issued)));
   for(const value of [Error(issued.message),new Proxy(issued,{get(){assert.fail('proxy trap');}}),Object.defineProperty({},'message',{get(){assert.fail('getter');}}),{message:'IB_REVISION_SOURCE_REFUSED:IB_SOURCE_PRIVATE_CANARY'}])assert.equal(ibSourceRevisionFailureCode(value),'IB_REVISION_REFUSED');
+});
+test('cash-reconciliation site and date-role follow only the genuine refused source read, by identity',async()=>{
+  const refused=async read=>{const f=await fixture({read});try{await f.run();assert.fail('source failure required');}catch(e){return e;}};
+  // Genuine reader error: the public code is unchanged and the fixed site/role ride beside it.
+  const issued=await refused(()=>{throw new IbManagerSourceError('CASH_RECONCILIATION','DAILY_CHAIN_END','TARGET');});
+  assert.equal(ibSourceRevisionFailureCode(issued),'IB_REVISION_SOURCE_REFUSED_IB_SOURCE_CASH_RECONCILIATION');
+  assert.equal(issued.message,'IB_REVISION_SOURCE_REFUSED:IB_SOURCE_CASH_RECONCILIATION');
+  assert.equal(ibSourceRevisionCashSite(issued),'DAILY_CHAIN_END');assert.equal(ibSourceRevisionCashDateRole(issued),'TARGET');
+  assert.equal(JSON.stringify(issued),'{}');assert.equal(Object.hasOwn(issued,'cashSite'),false);assert.equal(Object.hasOwn(issued,'cashDateRole'),false);
+  assert.ok(Object.isFrozen(issued));assert.equal(issued.cause,undefined);
+  for(const site of IB_CASH_RECONCILIATION_SITES)for(const role of IB_CASH_DATE_ROLES){
+    const e=await refused(()=>{throw new IbManagerSourceError('CASH_RECONCILIATION',site,role);});
+    assert.equal(ibSourceRevisionCashSite(e),site);assert.equal(ibSourceRevisionCashDateRole(e),site==='UNCLASSIFIED'?'NONE':role);
+    assert.equal(ibSourceRevisionFailureCode(e),'IB_REVISION_SOURCE_REFUSED_IB_SOURCE_CASH_RECONCILIATION');
+  }
+  // Reader errors that carry no classification, or a different code, add nothing.
+  const bare=await refused(()=>{throw new IbManagerSourceError('CASH_RECONCILIATION');});
+  assert.equal(ibSourceRevisionCashSite(bare),'UNCLASSIFIED');assert.equal(ibSourceRevisionCashDateRole(bare),'NONE');
+  const other=await refused(()=>{throw new IbManagerSourceError('AMOUNT','TARGET_API_AMOUNT','TARGET');});
+  assert.equal(ibSourceRevisionFailureCode(other),'IB_REVISION_SOURCE_REFUSED_IB_SOURCE_AMOUNT');
+  assert.equal(ibSourceRevisionCashSite(other),'UNCLASSIFIED');assert.equal(ibSourceRevisionCashDateRole(other),'NONE');
+  // Forged, cloned, proxied or text-bearing errors never classify, even with the right code and properties.
+  const forged=Object.assign(Object.create(IbManagerSourceError.prototype),{code:'CASH_RECONCILIATION',cashSite:'DAILY_CHAIN_END',cashDateRole:'TARGET'});
+  let touched=0;const hostile=Object.create(IbManagerSourceError.prototype);
+  Object.defineProperty(hostile,'code',{value:'CASH_RECONCILIATION'});
+  for(const key of ['cashSite','cashDateRole','message','cause'])Object.defineProperty(hostile,key,{get(){touched++;throw Error('PRIVATE_CANARY');}});
+  const genuine=new IbManagerSourceError('CASH_RECONCILIATION','DAILY_CHAIN_END','TARGET');
+  for(const [thrown,code] of [[forged,'CASH_RECONCILIATION'],[hostile,'CASH_RECONCILIATION'],[new Proxy(genuine,{}),'NETWORK'],
+    [Object.assign(new Error('PRIVATE_CANARY account=SYNTH amount=123 date=2026-01-01'),{code:'CASH_RECONCILIATION',cashSite:'DAILY_CHAIN_END',cashDateRole:'TARGET'}),'NETWORK']]){
+    const e=await refused(()=>{throw thrown;});
+    assert.equal(ibSourceRevisionFailureCode(e),'IB_REVISION_SOURCE_REFUSED_IB_SOURCE_'+code);
+    assert.equal(ibSourceRevisionCashSite(e),'UNCLASSIFIED');assert.equal(ibSourceRevisionCashDateRole(e),'NONE');
+    assert.equal(e.message.includes('PRIVATE_CANARY'),false);
+  }
+  assert.equal(touched,0);
+  // The readers themselves inspect nothing on unknown input.
+  const revoked=Proxy.revocable({},{});revoked.revoke();
+  for(const value of [undefined,null,0,'DAILY_CHAIN_END',genuine,issued&&structuredClone({message:issued.message}),new Proxy(issued,{get(){touched++;throw Error('PRIVATE_CANARY');}}),revoked.proxy,
+    Object.defineProperty({},'cashSite',{get(){touched++;throw Error('PRIVATE_CANARY');}})]){
+    assert.equal(ibSourceRevisionCashSite(value),'UNCLASSIFIED');assert.equal(ibSourceRevisionCashDateRole(value),'NONE');
+  }
+  assert.equal(touched,0);
 });
 test('original candidate identity and single consumption bind the entire original payload, not a serialized flag',async()=>{
   const f=await fixture(),candidate=await f.run(),args={currentPayload:f.currentPayload,targetDate:T,baselineSha256:f.plan.baselineSha256,now:clock()};
