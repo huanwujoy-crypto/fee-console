@@ -343,6 +343,24 @@ function nativePayoutDateProof(p,row,portfolioId){
     grossCents:gross,taxCents:tax,netCents:net,cashId:row.cash_account_id,cashRecordId:row.id,dateTime:row.date_time};
 }
 
+// A narrowly identified synchronization memo, not independent bank evidence.
+// Sharesight remains the account-data authority. The memo's account/date/amount
+// must agree internally and with this native USD deposit; no date or cash value
+// is repaired. Ordinary, captured and historical reads all use this one parser.
+function bankWireDepositKey(row,type,businessDate,movement){
+  const text=typeof row.description==='string'?row.description:'';
+  if(!/\bIBKR\b[^\r\n]*\bbank wire\b|\bkey=ib\.manual\|[^|\r\n]+\|wire\|/i.test(text))return null;
+  if(type!=='DEPOSIT'||movement<=0||!Number.isSafeInteger(movement)
+    ||row.trade_id!=null||row.holding_id!=null||row.payout_id!=null||row.foreign_identifier!=null
+    ||text.length>512||/[\u0000-\u001f\u007f-\u009f]/.test(text))fail('UNRESOLVED_FLOW');
+  const match=/^IBKR (U[1-9]\d{4,11}) bank wire USD ((?:0|[1-9]\d{0,11}|[1-9]\d{0,2}(?:,\d{3}){1,3})(?:\.\d{2})?), received and available (\d{4}-\d{2}-\d{2}) per Transfer Status & History and IBKR notice; source bank not verified\. key=ib\.manual\|(U[1-9]\d{4,11})\|wire\|(\d{4}-\d{2}-\d{2})\|USD\|((?:0|[1-9]\d{0,11})\.\d{2})$/.exec(text);
+  if(!match||match[0]!==text||match[1]!==match[4]||!isCalendarDate(match[3])
+    ||match[3]!==match[5]||match[3]!==businessDate)fail('UNRESOLVED_FLOW');
+  const cents=value=>{const [whole,fraction='00']=value.replaceAll(',','').split('.');return BigInt(whole)*100n+BigInt(fraction);};
+  if(cents(match[2])!==BigInt(movement)||cents(match[6])!==BigInt(movement))fail('UNRESOLVED_FLOW');
+  return match[1]+'|'+businessDate+'|'+String(movement);
+}
+
 export class SharesightIbManagerReader{
   #portfolio=null;#cash=new Set();#payouts=new Set();
   #captureContext=new AsyncLocalStorage();#capturedReads=new WeakMap();#captureExclusive=false;#ordinaryReads=0;
@@ -434,7 +452,7 @@ export class SharesightIbManagerReader{
       if(foreignHoldings.has(t.holding_id))fail('UNSUPPORTED_CURRENCY');
       if(['BUY','SELL'].includes(t.description_code)&&(!Number.isFinite(t.value)||!Number.isFinite(t.quantity)||t.quantity<=0))fail('SCHEMA');
       if(t.transaction_date>baseline.asOf&&(!['BUY','SELL','SPLIT','TRANSFER_OUT'].includes(t.description_code)||(['BUY','SELL'].includes(t.description_code)&&!auditedEvent(t)&&(/transfer|in[ -]?kind|\bFOP\b|转仓/i.test(String(t.comments||''))||t.value===0))))fail('UNVERIFIED_TRANSFER');}
-    const tradeIds=new Set(trades.map(t=>t.id)),tradeById=new Map(trades.map(t=>[t.id,t])),ledger=[],seen=new Set(),flowCents={},rawCashRows=new Map(),payoutProofs=[],payoutRefs=new Map();
+    const tradeIds=new Set(trades.map(t=>t.id)),tradeById=new Map(trades.map(t=>[t.id,t])),ledger=[],seen=new Set(),wireKeys=new Set(),flowCents={},rawCashRows=new Map(),payoutProofs=[],payoutRefs=new Map();
     for(const cashId of this.#cash){
       const all=rows(await this.#json(API+'/api/v2/cash_accounts/'+cashId+'/cash_account_transactions.json?from='+from+'&to='+targetDate,token),'cash_account_transactions');
       for(const row of all){
@@ -471,7 +489,9 @@ export class SharesightIbManagerReader{
         }
         if(row.links?.portfolio&&row.links.portfolio!==API+'/api/v2/portfolios/'+this.#portfolio)fail('IDENTITY');
         const description=String(row.description||'');let external=false;
-        if(row.trade_id!=null){if(!tradeIds.has(id(row.trade_id)))fail('IDENTITY');}
+        const wireKey=bankWireDepositKey(row,type,d,movement);
+        if(wireKey!==null){if(wireKeys.has(wireKey))fail('IDENTITY');wireKeys.add(wireKey);external=true;}
+        else if(row.trade_id!=null){if(!tradeIds.has(id(row.trade_id)))fail('IDENTITY');}
         else if(row.payout_id!=null||row.holding_id!=null){if(row.holding_id!=null&&!holdingIds.has(id(row.holding_id)))fail('IDENTITY');}
         else if(['DIVIDEND','INTEREST','FEE','TAX','COMMISSION'].includes(type)){}
         else if(type==='INTEREST_PAYMENT'){if(movement<0)fail('UNRESOLVED_FLOW');}

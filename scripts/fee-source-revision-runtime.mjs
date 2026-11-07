@@ -14,6 +14,7 @@ const PREFIX='FEE_REPORT_SOURCE_REVISION_',errors=new WeakMap();
 const CONTRACTS=Object.freeze({
   'ib-source-revision-20261106-v1':'fee-console.ib-source-revision-plan.v1',
   'ib-source-revision-20261106-sync-v2':'fee-console.ib-source-revision-plan.v2',
+  'ib-source-revision-20261106-sync-v3':'fee-console.ib-source-revision-plan.v2',
   'ib-source-revision-20261106-diagnostic-v1':'fee-console.ib-source-revision-plan.v2',
 }),TARGET='2026-11-06',ANCHOR='2026-11-04',PREVIOUS='2026-11-05';
 const SHA=/^[a-f0-9]{64}$/,MAX_BYTES=2*1024*1024;

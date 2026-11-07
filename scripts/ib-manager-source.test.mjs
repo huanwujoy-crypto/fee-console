@@ -288,6 +288,81 @@ function wire({mutate=()=>{},changeSecond=false}={}){
 }
 const read=(w,extra={})=>w.reader.readStable({targetDate:baseline.asOf,expectedBaselineHash:lock(),baseline,...extra});
 const source=async()=>read(wire());
+// Canonical synchronization format with synthetic account, date and amount.
+const bankWireMemo=(display='50',keyAmount='50.00',d='2026-09-01')=>`IBKR U1000001 bank wire USD ${display}, received and available ${d} per Transfer Status & History and IBKR notice; source bank not verified. key=ib.manual|U1000001|wire|${d}|USD|${keyAmount}`;
+function bankWireFixture(change=()=>{},changeBody=()=>{}){
+  return wire({mutate:(b,c)=>{if(b.cash_account_transactions?.length){const row=b.cash_account_transactions[0];row.description=bankWireMemo();row.foreign_identifier=null;change(row,b,c);}changeBody(b,c);}});
+}
+test('canonical bank wire is an external cash flow, not investment income, and preserves the source date',async()=>{
+  const old=await source(),fresh=await read(bankWireFixture());
+  assert.deepEqual(fresh.periodReturnsInput,old.periodReturnsInput);assert.deepEqual(fresh.cashFlowByDate,old.cashFlowByDate);
+  assert.equal(fresh.cashFlowByDate['2026-09-01'],50);
+  assert.deepEqual(fresh.closingSnapshots,old.closingSnapshots);
+  const decimal=await read(bankWireFixture(r=>{r.description=bankWireMemo('50.00');}));
+  assert.deepEqual(decimal.periodReturnsInput,fresh.periodReturnsInput);
+});
+test('canonical grouped bank-wire amount agrees exactly with both native cash and memo key',async()=>{
+  const changed=input();changed.flowByDate['2026-09-01']=5000;
+  changed.points=changed.points.map(p=>({...p,tot:p.tot+(p.d>='2026-09-01'?4950:0)}));
+  const f=bankWireFixture(r=>{r.amount=5000;r.balance=5000;r.description=bankWireMemo('5,000','5000.00');},(b,c)=>{
+    if(b.report&&b.report.end_date>='2026-09-01'){b.report.value+=4950;b.report.cash_accounts[0].value+=4950;}
+    if(b.cash_accounts&&c.q.get('date')>='2026-09-01')for(const row of b.cash_accounts){row.balance+=4950;row.balance_in_portfolio_currency+=4950;}
+  });
+  const result=await read(f,{expectedBaselineHash:ibBaselineBusinessHash(changed)});
+  assert.equal(result.cashFlowByDate['2026-09-01'],5000);assert.deepEqual(result.periodReturnsInput,changed);
+});
+test('bank-wire admission requires every identifying field and rejects ambiguous or conflicting formats',async t=>{
+  for(const [name,change] of [
+    ['memo amount',r=>r.description=bankWireMemo('49.99')],
+    ['key amount',r=>r.description=bankWireMemo('50','49.99')],
+    ['native cents',r=>r.amount=50.01],
+    ['zero movement',r=>r.amount=0],
+    ['negative movement',r=>r.amount=-50],
+    ['wrong type',r=>r.cash_account_transaction_type.name='WITHDRAWAL'],
+    ['unknown type',r=>r.cash_account_transaction_type.name='UNKNOWN'],
+    ['trade pointer',r=>r.trade_id=8],
+    ['holding pointer',r=>r.holding_id=2],
+    ['payout pointer',r=>r.payout_id=13],
+    ['foreign identifier',r=>r.foreign_identifier='synthetic-source-reference'],
+    ['empty foreign identifier',r=>r.foreign_identifier=''],
+    ['memo date',r=>r.description=bankWireMemo().replace('available 2026-09-01','available 2026-09-02')],
+    ['key date',r=>r.description=bankWireMemo().replace('|2026-09-01|','|2026-09-02|')],
+    ['both dates differ',r=>r.description=bankWireMemo('50','50.00','2026-09-02')],
+    ['invalid calendar day',r=>r.description=bankWireMemo('50','50.00','2026-02-30')],
+    ['different key account',r=>r.description=bankWireMemo().replace('|U1000001|','|U1000002|')],
+    ['leading-zero account',r=>r.description=bankWireMemo().replaceAll('U1000001','U0000001')],
+    ['wrong memo currency',r=>r.description=bankWireMemo().replace('wire USD','wire CAD')],
+    ['wrong key currency',r=>r.description=bankWireMemo().replace('|USD|','|CAD|')],
+    ['bad grouping',r=>r.description=bankWireMemo('0,050')],
+    ['leading-zero key amount',r=>r.description=bankWireMemo('50','050.00')],
+    ['fraction precision',r=>r.description=bankWireMemo('50.000')],
+    ['exponent amount',r=>r.description=bankWireMemo('5e1')],
+    ['oversize amount',r=>r.description=bankWireMemo('999999999999999999999999')],
+    ['partial memo',r=>r.description='IBKR U1000001 bank wire USD 50'],
+    ['generic bank wire',r=>r.description='bank wire received'],
+    ['extra owner marker cannot rescue malformed bank memo',r=>r.description='Owner cash contribution; '+bankWireMemo('49.99')],
+    ['income conflict',r=>r.description=bankWireMemo()+' DIVIDEND'],
+    ['trade conflict',r=>r.description=bankWireMemo()+' SELL PROCEEDS'],
+    ['FX conflict',r=>r.description=bankWireMemo()+' FX'],
+    ['adjustment conflict',r=>r.description=bankWireMemo()+' AUTOMATIC ADJUSTMENT'],
+    ['newline',r=>r.description=bankWireMemo()+'\n'],
+    ['embedded control',r=>r.description=bankWireMemo().replace('received','re\u0000ceived')],
+    ['Unicode direction control',r=>r.description=bankWireMemo()+'\u202e']
+  ])await t.test(name,async()=>{
+    await assert.rejects(read(bankWireFixture(change)),e=>{assert.equal(e.message,'IB_SOURCE_UNRESOLVED_FLOW');assert.equal(JSON.stringify(e),'{"code":"UNRESOLVED_FLOW"}');return true;});
+  });
+});
+test('bank wire cannot bypass duplicate, date, portfolio, precision or balance conservation checks',async t=>{
+  for(const [name,change,code] of [
+    ['duplicate ID',(r,b)=>b.cash_account_transactions.push({...r}),/IB_SOURCE_IDENTITY/],
+    ['same key new ID',(r,b)=>b.cash_account_transactions.push({...r,id:40}),/IB_SOURCE_IDENTITY/],
+    ['wrong cash account',r=>r.cash_account_id=99,/IB_SOURCE_IDENTITY/],
+    ['wrong portfolio link',r=>r.links={portfolio:'https://api.sharesight.com/api/v2/portfolios/99'},/IB_SOURCE_IDENTITY/],
+    ['USD subcent',r=>r.amount=50.001,/IB_SOURCE_AMOUNT/],
+    ['unproved midnight day carrier',r=>r.date_time='2026-09-01T00:00:00.000Z',/IB_SOURCE_DATE_ALIGNMENT/],
+    ['balance mismatch',r=>r.balance+=0.01,/IB_SOURCE_CASH_RECONCILIATION/]
+  ])await t.test(name,async()=>{await assert.rejects(read(bankWireFixture(change)),code);});
+});
 function foreignPassive(body,{p,q}){
   const instrument={id:7,code:'SYNTH',market_code:'TSE',currency_code:'CAD'};
   if(p.endsWith('/holdings'))body.holdings[0].instrument=instrument;

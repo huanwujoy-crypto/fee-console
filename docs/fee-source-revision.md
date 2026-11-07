@@ -121,6 +121,49 @@ cash/position checks and month locks are not relaxed. Only the final period
 step may consume the handoff. Main, source bytes, economic version and admission
 are rechecked before exposing a candidate for the existing protected publisher.
 
+## Bank-wire compatibility and separately bound recovery candidate
+
+The proposed `ib-source-revision-20261106-sync-v3` uses the same single-cycle
+model and revision-plan v2 schema. Its only eligible release is the signed,
+owner-approved squash successor of
+`b218f264c53e914d6469ec9f43824f48ccb7af18` (whose parent is
+`4f98318c73d1727d323febdcc72b7d5fbfb77f01`), with the exact ten-file manifest in
+`fee-report-producer.mjs` and the unchanged UI blob. The actual merged SHA,
+approved head/tree, target and current execution must be read and bound at run
+time; none can be filled with a synthetic success claim. Old v1/v2 admissions,
+diagnostic scope and consumption records retain their original bindings.
+
+The shared Jenny reader recognizes one bounded synchronization memo grammar for
+an unlinked, positive, native USD bank-wire deposit. Two broker-account strings,
+two dates and both amounts must agree exactly with each other and the verified
+source business date and native-currency cents. Invalid dates, extra content,
+control characters, mismatched amount/account, linked trades/payouts, foreign
+identifiers and repeated wire keys remain rejected. A note claiming this wire
+format but failing its strict grammar is rejected even if it contains a legacy
+external-flow keyword. No cash tolerance, date translation, balancing entry or
+Sharesight change is introduced.
+
+This is a recorded-memo compatibility rule, not independent verification of a
+bank statement or broker wire. The portfolio/cash identity gates still establish
+account scope. The same reader is used for normal validation, synchronization
+capture and historical revision; frozen evidence preserves its original bytes.
+The available saved input reproduces the old memo rejection, but it does not
+prove that the failed cloud run used byte-identical input or that no later
+validation will fail.
+
+This local candidate neither runs a report nor grants execution. Public code
+upload and its exact signed version require the existing protected review. A
+subsequent explicitly authorized cycle must recheck the current publication,
+pending candidates, authentic historical originals, stable three-account source
+and economic version. It uses the existing protected identity and publisher.
+Report and historical-revision evidence are encrypted for the original public
+repository; anyone can retain the ciphertext and it cannot be reliably recalled.
+Plaintext, keys and temporary source files are not public outputs and must be
+cleaned up. Failure stops; uncertain dispatch/publication results are checked
+before another cycle. No old run, diagnostic capability or consumption record is
+reset or reused. No workflow, IAM, secret, schedule, retry setting or cloud image
+change is part of this batch.
+
 ## Single-cycle operation and authorization
 
 A confirmed synchronization entry validates the real owner dispatch, exact main,
