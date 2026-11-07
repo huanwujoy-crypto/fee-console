@@ -649,6 +649,9 @@
     "scripts/fee-sync-source-projection.mjs",
     "scripts/fee-sync-source-projection.test.mjs",
     "scripts/fee-sync-test-fixtures.mjs",
-    "scripts/ib-manager-report-memory.test.mjs"
+    "scripts/ib-manager-report-memory.test.mjs",
+    "scripts/fee-sync-capture-current.test.mjs",
+    "scripts/fee-sync-published-base.mjs",
+    "scripts/fee-sync-published-base.test.mjs"
   ]
 }

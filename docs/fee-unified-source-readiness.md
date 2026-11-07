@@ -84,7 +84,9 @@ Three mandatory adapters remain the trusted boundary:
    request hash is not authentication. The same adapter must verify the selected
    benchmark against the bound authentic benchmark artifact and confirm the
    applicable source/policy configuration; it receives the benchmark, target and
-   plan for that purpose. This code neither obtains keys nor decrypts data.
+   plan for that purpose. The readiness core never obtains keys or decrypts data;
+   the published-base adapter below requires its authorized runtime to supply
+   an existing in-memory key and authentic economic-source capability.
 3. `readCurrentContext` must freshly check the current sources and all bound code,
    base, economic, benchmark and policy versions before preparation, after
    validation and before report consumption. It must not return the old expected
@@ -94,6 +96,71 @@ Three mandatory adapters remain the trusted boundary:
 These adapters are supplied by reviewed integration code, never request JSON.
 The tests use explicit synthetic authentication substitutes. Passing them does
 not establish a working production authentication or conversation transport.
+
+### Local adapter implementation and remaining authority
+
+The adapter work preserves the original health-file bytes instead of hashing a
+reserialized JSON object. Published-base verification must derive the data,
+health and benchmark bindings from their actual fixed-commit bytes, decrypt only
+inside the existing authorized process, and run the original fee and IB receipt
+validators. It has no default transport or credential discovery. A caller must
+not substitute an untrusted HTTP callback for the reviewed GitHub transport.
+
+`createPublishedBaseVerifier` accepts only fixed-repository GET routes through
+that explicit transport. It verifies the actual main commit's signed owner
+identity and exact Git blob bytes. The benchmark cache retains its existing
+fixed-ref and blob validation path; its existing Actions bot commits are not
+misrepresented as owner-signed commits. Historical health is checked using its
+original time, not relabeled as a new completion receipt. The historical base
+must precede the target, stay within the existing bounded period and fit the
+ordinary daily path. Missing trading days require the separate recovery path.
+
+An authentic old base is not permission to capture new account inputs. The
+original IB history and coverage preconditions must pass before any real capture;
+their rejection must leave the source-read count at zero. A legacy-v2 embedded
+copy still needs the independent original-source guard. Until that guard has an
+authorized authentic input, this adapter refuses that case rather than treating
+the embedded copy as its own proof. These boundaries are tested with synthetic
+artifacts and do not establish compatibility with an uninspected live baseline.
+
+The economic snapshot's version binding identifies the actual stable encrypted
+bytes, revision and ETag at acquisition. It does not claim that the remote source
+is still current. The original `checkCurrent` operation remains necessary; a
+failed or changed source must not leave a reusable current-version capability.
+Only the original module's private snapshot identity can release encrypted bytes
+for an authorized in-memory validation. A similarly shaped object cannot do so.
+
+Captured Sharesight source freshness is distinct from repeating business
+reconciliation. A same-instance current check reads only the GET routes and query
+parameters privately recorded during the original validated capture and compares
+the complete original responses. It neither changes the captured date nor
+recomputes the financial result or restores a consumed handle. Source changes or
+failed verification invalidate reuse. A successful check only proves what was
+observed during that bounded read; it is not a promise that an external platform
+can never change after the check.
+
+None of these helpers authenticates a three-account synchronization conclusion.
+The existing IB daily comparison explicitly excludes historical-ledger
+verification and does not cover the other two accounts. Its completion state
+cannot be promoted into a full synchronization receipt. Likewise, a journal that
+only tracks one writer's processed trades cannot establish all historical
+changes made through another writer or the website.
+
+Before activation, identify the actual synchronization executor revision,
+generating identity, fixed private receipt location and existing read permission.
+The final receipt must cover all three accounts and bind the same capture and
+validated-input hashes. Historical evidence needs a genuine accepted boundary
+and evidence covering all relevant historical changes. A continuous,
+authenticated change record is one route; a complete official historical read
+compared with an authentic, equivalently scoped accepted snapshot is another.
+The latter can detect changes made through other writers without a new permanent
+journal, but cannot reconstruct edits that were later undone. Existing reader
+captures do not automatically prove complete historical or closed-position
+coverage. Neither a missing journal nor a missing accepted snapshot is an empty
+history. Two digests newly computed from today's data cannot manufacture a past
+acceptance. A change affecting an accepted date pauses ordinary preparation for
+the separate historical-review path. No local synthetic fixture, hash, text
+assertion or new storage path supplies that missing authority.
 
 ## History and publication remain separate
 

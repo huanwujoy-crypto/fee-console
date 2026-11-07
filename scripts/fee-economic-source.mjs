@@ -3,11 +3,13 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 
 const OWNER = "huanwujoy-crypto";
 const FILE = "fee-console-db.json";
 const MAX_BODY = 2 * 1024 * 1024;
 const MAX_FILE = 1024 * 1024;
+const snapshotCapabilities = new WeakMap();
 const CODES = new Set([
   "SOURCE_LOCATOR", "SOURCE_OPTIONS", "SOURCE_AUTH_CONFIG", "SOURCE_AUTH",
   "SOURCE_NETWORK", "SOURCE_TIMEOUT",
@@ -28,6 +30,17 @@ const fail = code => { throw new SourceFetchError(code); };
 const object = value => value !== null && typeof value === "object" && !Array.isArray(value);
 export const sourceFailureCode = error => error instanceof SourceFetchError && CODES.has(error.code)
   ? error.code : "SOURCE_RESPONSE";
+
+// Factory identity only: no duck typing, caller getters or proxy traps. This
+// does not replace checkCurrent or establish that a closed instance is usable.
+export const verifyEconomicSnapshot = snapshot => snapshotCapabilities.has(snapshot);
+// Private-runtime ciphertext access for an adapter that already holds this
+// exact factory instance. Requires a successful real checkCurrent first.
+export function readEconomicSnapshotBytes(snapshot) {
+  const capability = snapshotCapabilities.get(snapshot);
+  if (!capability) fail('SOURCE_OPTIONS');
+  return capability.readBytes();
+}
 
 async function readBody(response) {
   if (!response.body || typeof response.body.getReader !== "function") fail("SOURCE_RESPONSE");
@@ -151,6 +164,18 @@ async function stableRead(id, token, options) {
     fundProfileStable:first.fundProfileRaw===second.fundProfileRaw};
 }
 
+function economicVersionBinding(id, snapshot) {
+  const schema = 'fee-console.economic-source-version.v1';
+  // Match same(): preserve revision spelling and the opaque ETag exactly,
+  // ignoring only its optional weak marker. Bind the exact encrypted file
+  // bytes, not a parsed/re-serialized envelope. Neither preimage nor locator
+  // leaves this closure; credentials are deliberately absent from the digest.
+  const preimage = JSON.stringify({ schema, locator: id,
+    contentSha256: createHash('sha256').update(snapshot.bytes).digest('hex'),
+    revision: snapshot.revision, etag: snapshot.etag.replace(/^W\//, '') });
+  return Object.freeze({ schema, sha256: createHash('sha256').update(preimage).digest('hex') });
+}
+
 function checkedRoot(requested) {
   if (typeof requested !== "string" || !path.isAbsolute(requested)) fail("SOURCE_STORAGE");
   let root;
@@ -171,6 +196,10 @@ function checkedRoot(requested) {
  * Pass mock fetchImpl for synthetic tests. No fallback credentials or anonymous retry.
  * sourcePath is private runtime metadata, not a notification or public log field.
  * checkCurrent performs two new remote reads plus a local ciphertext integrity check.
+ * getVersionBinding returns only the fixed acquisition-version digest after a
+ * local integrity check. It does not assert remote freshness or fetch data.
+ * A failed checkCurrent/integrity check permanently revokes this new binding
+ * capability; successful rechecks never advance it to a different version.
  * This verifies acquisition/stability, NOT decryption, source business authority, or fees.
  */
 export async function fetchEconomicSnapshot(options = {}) {
@@ -188,6 +217,8 @@ export async function fetchEconomicSnapshot(options = {}) {
   if (token !== undefined && !/^github_pat_[A-Za-z0-9_]{20,255}$/.test(token)) fail("SOURCE_AUTH_CONFIG");
   const root = checkedRoot(opts.tempRoot);
   const expected = await stableRead(id, token, opts);
+  const versionBinding = economicVersionBinding(id, expected);
+  let versionUsable = true, versionChecksPending = 0, versionChecked = false;
   let directory, sourcePath, directoryIdentity, closed = false;
   const checkedDirectory = () => {
     const stat = fs.lstatSync(directory);
@@ -226,7 +257,7 @@ export async function fetchEconomicSnapshot(options = {}) {
     } catch { fail("SOURCE_STORAGE"); }
   };
   try { verifyLocal(); } catch (error) { try { cleanup(); } catch {} throw error; }
-  return Object.freeze({
+  const snapshot = {
     sourcePath,
     envelopeVersion: expected.envelopeVersion,
     managerRecipientRaw: expected.managerRecipientStable ? expected.managerRecipientRaw : null,
@@ -234,6 +265,8 @@ export async function fetchEconomicSnapshot(options = {}) {
     fundProfileStable: expected.fundProfileStable,
     fundProfileMatchesGist(value){return !closed&&typeof value==='string'&&value===id;},
     async checkCurrent(options = {}) {
+      versionChecksPending++;
+      try {
       if (!object(options) || Object.keys(options).some(k => !['requireManagerRecipient','requireFundProfile'].includes(k))
           || ['requireManagerRecipient','requireFundProfile'].some(k=>options[k]!==undefined&&options[k]!==true)) fail('SOURCE_CHANGED');
       verifyLocal();
@@ -244,8 +277,30 @@ export async function fetchEconomicSnapshot(options = {}) {
       if(options.requireFundProfile&&(!expected.fundProfileStable||!current.fundProfileStable
           ||!expected.fundProfileRaw||expected.fundProfileRaw!==current.fundProfileRaw))fail('SOURCE_CHANGED');
       verifyLocal();
+      versionChecked = true;
       return true;
+      } catch (error) {
+        versionUsable = false;
+        throw error;
+      } finally { versionChecksPending--; }
     },
     cleanup,
-  });
+  };
+  // Non-enumerable preserves the legacy enumerable/serialized result shape.
+  // This is an instance-bound closure, not caller-supplied version metadata.
+  Object.defineProperty(snapshot, 'getVersionBinding', { value() {
+    if (closed) fail('SOURCE_CLOSED');
+    if (!versionUsable || versionChecksPending) fail('SOURCE_CHANGED');
+    try { verifyLocal(); } catch (error) { versionUsable = false; throw error; }
+    return versionBinding;
+  } });
+  const frozenSnapshot = Object.freeze(snapshot);
+  snapshotCapabilities.set(frozenSnapshot, { readBytes() {
+    frozenSnapshot.getVersionBinding();
+    if (!versionChecked) fail('SOURCE_CHANGED');
+    // Never expose expected.bytes itself; mutating this copy cannot alter the
+    // pinned source, later integrity checks or the fixed version binding.
+    return Buffer.from(expected.bytes);
+  } });
+  return frozenSnapshot;
 }

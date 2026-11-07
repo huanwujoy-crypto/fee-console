@@ -366,7 +366,7 @@ export class SharesightIbManagerReader{
         if(!capture.active||p.origin!==API||p.username||p.password||p.hash)fail('SCOPE');
         const pairs=[...p.searchParams.entries()].sort(([a],[b])=>a<b?-1:a>b?1:0);
         if(new Set(pairs.map(([key])=>key)).size!==pairs.length)fail('SCOPE');
-        const query=Object.fromEntries(pairs),secrets=[token,this.clientId,this.clientSecret].filter(x=>typeof x==='string'&&x.length);
+        const query=Object.fromEntries(pairs),secrets=[token,...(capture.currentCheck?capture.secrets:[this.clientId,this.clientSecret])].filter(x=>typeof x==='string'&&x.length);
         if(secrets.some(secret=>secret.length>=8&&text.includes(secret))||captureContainsSecret(parsed,secrets))fail('SCOPE');
         capture.bytes+=response.bytes.length;
         if(capture.bytes>CAPTURE_MAX_BYTES||capture.records.length>=CAPTURE_MAX_RECORDS)fail('INCOMPLETE');
@@ -567,7 +567,8 @@ export class SharesightIbManagerReader{
   // transferable to another process. All original business checks still run.
   async readStableWithEvidence(request={}){
     const options=captureOptions(request),{targetDate,expectedBaselineHash,baseline,checkpoint,ownerBaseline,bootstrapCoverage}=options;
-    if(this.#captureExclusive||this.#ordinaryReads)fail('STATE');this.#captureExclusive=true;
+    if(this.#captureExclusive||this.#ordinaryReads)fail('STATE');
+    const transport=this.#captureTransport();this.#captureExclusive=true;
     const captures=[];
     try{
       if(!/^[a-f0-9]{64}$/.test(expectedBaselineHash||''))fail('BASELINE_LOCK');
@@ -583,13 +584,45 @@ export class SharesightIbManagerReader{
       const first=await run(1),second=await run(2);
       if(first.fingerprint!==second.fingerprint||captures[0].sha256!==captures[1].sha256)fail('UNSTABLE');
       const result=freezeCapture({input:first.source,evidence:{schema:'fee-console.sharesight-capture.v1',provider:'Sharesight',targetDate,captures,sourceSha256:captures[0].sha256}});
-      this.#capturedReads.set(result,{parametersSha256:hash(options),consumed:false});return result;
+      if(this.#captureTransport().some((v,i)=>v!==transport[i]))fail('UNSTABLE');
+      this.#capturedReads.set(result,{parametersSha256:hash(options),transport,scope:this.#captureScope(),records:captures[0].records,sourceSha256:captures[0].sha256,consumed:false,revoked:false});return result;
     }finally{this.#captureExclusive=false;}
   }
-  verifyCapturedRead(result){return this.#capturedReads.has(result);}
+  #captureTransport(){
+    const data=k=>{const d=Object.getOwnPropertyDescriptor(this,k);if(!d||!Object.hasOwn(d,'value'))fail('STATE');return d.value;};
+    return ['fetch','timeoutMs','clientId','clientSecret'].map(data);
+  }
+  #captureScope(){return hash({portfolio:this.#portfolio,cash:[...this.#cash].sort((a,b)=>a-b),payouts:[...this.#payouts].sort((a,b)=>a-b)});}
+  verifyCapturedRead(result){const state=this.#capturedReads.get(result);return !!state&&!state.revoked;}
+  // Re-read only the private GET set captured by the original validators. No
+  // dates, source inputs, consumption records or business calculations change.
+  async checkCapturedReadCurrent(result){
+    const state=this.#capturedReads.get(result);
+    if(!state||state.revoked||this.#captureExclusive||this.#ordinaryReads)fail('STATE');
+    this.#captureExclusive=true;
+    const capture={attempt:0,records:[],bytes:0,active:true,currentCheck:true,secrets:[state.transport[2],state.transport[3]]};
+    try{
+      const transport=()=>{if(this.#captureTransport().some((v,i)=>v!==state.transport[i])||this.#captureScope()!==state.scope)fail('STATE');};
+      transport();
+      await this.#captureContext.run(capture,async()=>{
+        const auth=await this.#json(API+'/oauth2/token',null,new URLSearchParams({grant_type:'client_credentials',client_id:state.transport[2],client_secret:state.transport[3]}).toString());
+        if(typeof auth.access_token!=='string'||!/^[A-Za-z0-9._~+/=-]{20,16384}$/.test(auth.access_token)||String(auth.token_type).toLowerCase()!=='bearer')fail('SCOPE');
+        for(const record of state.records){
+          transport();
+          const u=new URL(record.path,API);for(const[k,v]of Object.entries(record.query))u.searchParams.append(k,v);
+          await this.#json(u.href,auth.access_token);
+          if(ibCanonical(capture.records.at(-1))!==ibCanonical(record))fail('UNSTABLE');
+        }
+      });
+      transport();
+      if(finishCapture(capture).sha256!==state.sourceSha256)fail('UNSTABLE');
+      return true;
+    }catch{state.revoked=true;fail('UNSTABLE');}
+    finally{capture.active=false;capture.secrets.length=0;this.#captureExclusive=false;}
+  }
   consumeCapturedRead(result,request={}){
     const state=this.#capturedReads.get(result);
-    if(!state||state.consumed)fail('STATE');
+    if(!state||state.revoked||state.consumed||this.#captureExclusive)fail('STATE');
     if(hash(captureOptions(request))!==state.parametersSha256)fail('STATE');
     state.consumed=true;return result.input;
   }
