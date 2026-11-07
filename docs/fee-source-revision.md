@@ -1,8 +1,84 @@
 # Historical source revisions and shared validation
 
-Status: local, review-only candidate. No production entry, transport, credential
-lookup, publication, schedule, claim or consumption-record change is introduced.
-The existing source reader and calculation implementations are unchanged.
+Status: local integration candidate; not approved for production execution.
+The historical algorithm below remains separate from admission. The proposed
+integration uses the existing protected producer, authenticated published
+artifacts and original writer; it does not edit the economic book, change a
+schedule or reset any claim/consumption record. Code approval and an actual
+one-time recovery authorization remain separate prerequisites.
+
+## One complete recovery batch
+
+The integration is limited to extending the current published source through
+the next target date. Same-cutoff historical repair is rejected by this runtime;
+ordinary production and previous recovery scopes retain their existing rules.
+
+Before financial access, the original recovery gate checks the signed release,
+the exact approved PR tree and owner comment, the unchanged main and complete
+attempt/reservation history. A unique contract selects the new release; two
+contracts for the same date must never be selected by taking the first date
+match. Added files are permitted only in the new contract's exact reviewed
+path/status manifest. Previous failed runs remain recorded and any additional,
+unknown or in-flight source attempt prevents execution.
+After exact-head approval and all required checks, this batch must use the
+protected squash merge: one signed direct successor of the pinned main, whose
+tree exactly equals the approved head. A two-parent merge, changed base or
+additional commit is deliberately not an executable recovery release.
+
+The artifact adapter authenticates the current and earlier original encrypted
+data/health pairs, successful original producer logs and their incorporation
+into protected main. A candidate SHA or a self-reported success flag alone is
+insufficient. Both payloads still pass the original receipt, IB, owner-baseline
+and month-lock checks. Existing legacy-source guards remain mandatory; an
+embedded copy cannot stand in for a required independent original.
+
+The runtime then binds the original source bytes, economic revision, actual
+recovery admission and one bounded IB read to the historical revision
+algorithm. Only its instance-bound candidate may enter the private writer
+handoff. The handoff retains the superseded and accepted-anchor evidence and
+the revision provenance inside encrypted report data. The writer validates the
+previous IB bundle and replacement before applying it; fees, original dates,
+cash/position checks and month locks are not relaxed. Only the final period
+step may consume the handoff. Main, source bytes, economic version and admission
+are rechecked before exposing a candidate for the existing protected publisher.
+
+To execute this local candidate, the operator must separately approve the
+complete frozen public-code diff, its exact signed head, the bounded historical
+artifact/key/source reads and one additional target-specific recovery. Failure
+stops the run; it does not authorize another attempt. Fee publication and its
+authenticated readback must succeed before a separate ratio update proceeds.
+
+## Synchronization completion is a separate missing input
+
+The existing manual synchronization combines Native, browser and MCP actions.
+Its HTTP audit, a cash-only check, a chat summary or a successful writer task
+does not prove a complete three-account synchronization. The final evidence
+must come from actual tool results covering holdings, every cash currency,
+trades/funds events, unresolved tasks, pagination and post-write readback for
+the same cycle and cutoff.
+
+The current producer can perform the original deterministic validation without
+such a receipt. Skipping that work requires a real, trusted receipt and the
+exact frozen inputs validated by it; neither has been inferred from an agent's
+`complete` flag. Historical source fingerprints and limited closing snapshots
+cannot reconstruct a full earlier acceptance digest. The newly proposed
+all-history digest rule is stronger than the original producer's bounded checks;
+it is not a reason to invent evidence or rebuild a full-history audit system.
+A separate finalizer revision should bind the authentic published base, the
+original validators' explicit historical scope and actual current-cycle
+completion evidence. It must retain their cash, position, date, late-change and
+duplicate guards, and must not claim to have checked history outside that scope.
+This recovery batch does not silently change the synchronization schema.
+
+For the present external synchronization tools, no authorized transport into
+Actions has yet been verified. Existing cash-result/state objects have narrower
+account and business scopes. Reusing an existing private bucket would still
+require approval for the specific cycle/object purpose, uploader identity,
+create-only/no-overwrite access, producer read/cleanup access, generation and
+SHA binding, expiry and cleanup. No such permission or storage change is made
+by this batch. Today's bounded fee recovery can proceed independently after
+its own approval and checks; it does not certify that synchronization receipt
+automation is enabled.
 
 ## Historical revision candidate
 
@@ -37,8 +113,8 @@ must agree. Proofs that straddle U are rejected rather than discarded.
 `verifyAcceptedArtifacts` must use authenticated evidence to verify both raw
 published artifacts, their decoded payload association and the accepted history
 link between them. Returning the expected hashes or a self-authored `verified`
-flag does not prove any of these facts. The real adapter is not supplied in this
-candidate. It must also verify the original fee month-lock digests with the
+flag does not prove any of these facts. The integration's real adapter must
+also verify the original fee month-lock digests with the
 existing `preserveReportMonthLocks` function and the corresponding economic
 inputs; the local candidate checks lock shape/range and unchanged IB return
 periods/factors, not the complete fee-lock digest by itself.

@@ -657,6 +657,12 @@
     "scripts/fee-sync-github-read.test.mjs",
     "scripts/fee-sync-policy-binding.test.mjs",
     "scripts/fee-sync-source-acquisition.mjs",
-    "scripts/fee-sync-source-acquisition.test.mjs"
+    "scripts/fee-sync-source-acquisition.test.mjs",
+    "scripts/fee-sync-revision-artifacts.mjs",
+    "scripts/fee-sync-revision-artifacts.test.mjs",
+    "scripts/fee-sync-revision-github.mjs",
+    "scripts/fee-sync-revision-github.test.mjs",
+    "scripts/fee-source-revision-runtime.mjs",
+    "scripts/fee-source-revision-runtime.test.mjs"
   ]
 }

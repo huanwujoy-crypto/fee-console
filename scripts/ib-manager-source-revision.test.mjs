@@ -1,9 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import {spawnSync} from 'node:child_process';
 import {SharesightIbManagerReader,ibBaselineBusinessHash,IbManagerSourceError} from './ib-manager-source.mjs';
 import {buildIbManagerReportBundle,buildIbOwnerBaseline,buildIbManagerReturnReceipt,buildIbManagerDrawdownReceipt,createIbManagerReturnConsumer} from './ib-manager-return.mjs';
-import {createIbSourceRevisionPreparer} from './ib-manager-source-revision.mjs';
+import {createIbSourceRevisionPreparer,isIbSourceRevisionCandidate,consumeIbSourceRevisionCandidate,validateIbSourceRevisionCandidate,ibSourceRevisionFailureCode,IB_SOURCE_REVISION_FAILURE_CODES} from './ib-manager-source-revision.mjs';
 import {createSourceContractValidator,sourceContractInputHash} from './fee-source-contract.mjs';
+import {loadIbManagerReport,prepareIbManagerReport,sameIbManagerData} from './ib-manager-report.mjs';
+import {buildFeeCalculationReceipt,validateFeeCalculationReceiptWithEcon} from './fee-receipt-core.mjs';
+import {preserveReportMonthLocks} from './fee-report-metadata.mjs';
 
 // Entirely synthetic input and transport. No network, credentials or files.
 const B='2026-09-01',U='2026-09-02',P='2026-09-03',T='2026-09-04';
@@ -81,6 +89,114 @@ test('rebuilds a private revision from a real synthetic accepted checkpoint with
 test('same-cutoff revision is distinct from extending a report and never changes fee or consumption data',async()=>{
   const f=await fixture({target:P}),r=await f.run();assert.equal(r.mode,'same-cutoff');assert.equal(r.targetDate,P);
   assert.equal(r.replacement.returnReceipt.grossTwrPpm,7000);assert.deepEqual(f.currentPayload.consumedOperations,['synthetic-old-failure']);
+});
+test('diagnostic code retains a branded fixed source reason and refuses spoofed text or getter/proxy errors',async()=>{
+  const f=await fixture({read:()=>{throw new IbManagerSourceError('CASH_RECONCILIATION');}});let issued;
+  try{await f.run();assert.fail('source failure required');}catch(e){issued=e;}
+  assert.equal(ibSourceRevisionFailureCode(issued),'IB_REVISION_SOURCE_REFUSED_IB_SOURCE_CASH_RECONCILIATION');
+  assert.ok(IB_SOURCE_REVISION_FAILURE_CODES.includes(ibSourceRevisionFailureCode(issued)));
+  for(const value of [Error(issued.message),new Proxy(issued,{get(){assert.fail('proxy trap');}}),Object.defineProperty({},'message',{get(){assert.fail('getter');}}),{message:'IB_REVISION_SOURCE_REFUSED:IB_SOURCE_PRIVATE_CANARY'}])assert.equal(ibSourceRevisionFailureCode(value),'IB_REVISION_REFUSED');
+});
+test('original candidate identity and single consumption bind the entire original payload, not a serialized flag',async()=>{
+  const f=await fixture(),candidate=await f.run(),args={currentPayload:f.currentPayload,targetDate:T,baselineSha256:f.plan.baselineSha256,now:clock()};
+  assert.equal(isIbSourceRevisionCandidate(candidate),true);
+  assert.equal(isIbSourceRevisionCandidate(structuredClone(candidate)),false);
+  assert.equal(isIbSourceRevisionCandidate(new Proxy(candidate,{})),false);
+  await assert.rejects(consumeIbSourceRevisionCandidate(structuredClone(candidate),args),/CANDIDATE_IDENTITY/);
+  const result=await consumeIbSourceRevisionCandidate(candidate,args);assert.deepEqual(result,candidate);
+  assert.equal(isIbSourceRevisionCandidate(candidate),true);
+  await assert.rejects(consumeIbSourceRevisionCandidate(candidate,args),/CANDIDATE_IDENTITY/);
+  const other=await fixture(),second=await other.run();
+  await assert.rejects(consumeIbSourceRevisionCandidate(second,{...args,currentPayload:{...other.currentPayload,feeDataCanary:{changed:true}}}),/CURRENT_PAYLOAD/);
+  await assert.rejects(consumeIbSourceRevisionCandidate(second,{...args,currentPayload:other.currentPayload}),/CANDIDATE_IDENTITY/);
+});
+test('serialized private handoff validation rebuilds the business result but grants no candidate identity',async()=>{
+  const f=await fixture(),candidate=await f.run(),copy=structuredClone(candidate);
+  const args={currentPayload:f.currentPayload,targetDate:T,baselineSha256:f.plan.baselineSha256,now:clock()};
+  assert.deepEqual(await validateIbSourceRevisionCandidate(copy,args),candidate);
+  assert.equal(isIbSourceRevisionCandidate(copy),false);
+  for(const [change,options]of [
+    [c=>{c.scope='all-accounts';},{}],[c=>{c.publicationReady=true;},{}],
+    [c=>{c.replacement.returnReceipt.grossTwrPpm++;},{}],
+    [c=>{c.changedHistoricalDates=[];},{}],[c=>{c.checkedAt=T+'T12:00:01.000Z';},{}],
+    [()=>{},{now:Date.parse(f.plan.expiresAt)}],[()=>{},{targetDate:P}],
+    [()=>{},{currentPayload:{...f.currentPayload,ibManagerSourceState:{}}}],
+    [()=>{},{currentPayload:{...f.currentPayload,feeReportMonthLocks:{schema:'fee-console.report-month-locks.v1',periods:[{ym:'2026-09',digest:h('a')}]}}}]
+  ]){
+    const bad=structuredClone(candidate);change(bad);const {revisionId,...body}=bad;bad.revisionId=await core.digest(body);
+    await assert.rejects(validateIbSourceRevisionCandidate(bad,{...args,...options}));
+  }
+});
+async function privateRevisionFixture(t,{target=T}={}){
+  const f=await fixture({target}),candidate=await f.run();
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ib-revision-writer-synthetic-'));fs.chmodSync(dir,0o700);t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  const file=path.join(dir,'ib-manager-input.json'),environ={IB_MANAGER_READ_ENABLED:'true',IB_MANAGER_BASELINE_SHA256:f.plan.baselineSha256};
+  const request={schema:'fee-console.ib-manager-report-request.v2',targetDate:target,state:'verified',source:candidate.replacement.sourceState.source,
+    coverage:f.currentPayload.ibManagerCoverageState,revision:candidate,previousRevisionId:null};
+  const save=()=>fs.writeFileSync(file,JSON.stringify(request),{mode:0o600});save();
+  const previous=structuredClone(f.currentPayload),economic={v:4,settings:{start:B,mgmt:2,carry:20},accounts:[{id:'schwab',name:'Synthetic A',opening:100},{id:'webull',name:'Synthetic B',opening:100}],months:[],fees:[]};
+  const data={...structuredClone(previous),daily:[B,U,P,...(target===T?[T]:[])].map(d=>({d,schwab:100,webull:100})),flowsAuto:[],flowsUnresolved:[],status:{asOf:target,provisional:false,calibrated:false,unresolvedCount:0}};
+  data.feeCalculationReceipt=buildFeeCalculationReceipt({data,economicInput:economic});
+  return {...f,dir,file,environ,request,previous,data,economic,save,candidate,options:{environ,previousPayload:previous,clock}};
+}
+test('private writer rebuilds and binds the superseded state, changes only the new IB section and retains provenance',async t=>{
+  const f=await privateRevisionFixture(t),before=structuredClone(f.data),old=structuredClone(f.previous);
+  const loaded=await loadIbManagerReport(f.file,f.options),out=loaded.apply(f.data,T);
+  assert.equal(out.ibManagerSourceStatus.state,'verified');assert.equal(out.ibManagerSourceRevision.revisionId,f.candidate.revisionId);
+  assert.deepEqual(out.ibManagerSourceRevision.candidate.superseded.sourceState,f.previous.ibManagerSourceState);
+  assert.deepEqual(out.ibManagerSourceRevision.candidate.acceptedAnchor,f.candidate.acceptedAnchor);
+  assert.equal(out.ibManagerSourceRevision.previousRevisionId,null);assert.ok(Object.isFrozen(out.ibManagerSourceRevision));
+  assert.deepEqual(f.data,before);assert.deepEqual(f.previous,old);
+  for(const key of Object.keys(before).filter(k=>!['ibManagerReturnReceipt','ibManagerDrawdownReceipt','ibManagerSourceState'].includes(k)))assert.deepEqual(out[key],before[key]);
+  assert.equal(sameIbManagerData(out,{...out,ibManagerSourceRevision:undefined}),false);
+  assert.deepEqual(out.feeCalculationReceipt,before.feeCalculationReceipt);assert.deepEqual(out.consumedOperations,before.consumedOperations);
+});
+test('revision loader refuses altered or missing previous state, same-cutoff mode, expiry, coverage and tampered private input',async t=>{
+  for(const [name,change]of [
+    ['missing previous',f=>{delete f.options.previousPayload;}],
+    ['changed previous',f=>{f.options.previousPayload.ibManagerSourceState.stateId=h('e');}],
+    ['changed source',f=>{f.request.source={};f.save();}],
+    ['changed coverage',f=>{f.request.coverage={};f.save();}],
+    ['expiry',f=>{f.options.clock=()=>Date.parse(f.plan.expiresAt);}],
+    ['unknown prior revision',f=>{f.request.previousRevisionId=h('f');f.save();}],
+    ['public permission',f=>fs.chmodSync(f.file,0o644)]
+  ])await t.test(name,async t=>{const f=await privateRevisionFixture(t);change(f);await assert.rejects(loadIbManagerReport(f.file,f.options),/IB_REPORT_INPUT_REFUSED/);});
+  const same=await privateRevisionFixture(t,{target:P});await assert.rejects(loadIbManagerReport(same.file,same.options),/IB_REPORT_INPUT_REFUSED/);
+  const f=await privateRevisionFixture(t),loaded=await loadIbManagerReport(f.file,f.options);
+  await assert.throws(()=>loaded.apply({...f.data,ibManagerSourceStatus:{state:'pending'}},T),/IB_REPORT_INPUT_REFUSED/);
+  assert.throws(()=>loaded.apply({...f.data,feeCalculationReceipt:{}},T),/IB_REPORT_INPUT_REFUSED/);
+  fs.appendFileSync(f.file,' ');assert.throws(()=>loaded.checkCurrent(),/IB_REPORT_INPUT_REFUSED/);
+});
+test('a callback-shaped artifact object cannot create a revision handoff or silently fall back to a live reader',async t=>{
+  const f=await privateRevisionFixture(t);fs.unlinkSync(f.file);let reads=0,verifications=0;
+  await assert.rejects(prepareIbManagerReport({payload:f.previous,targetDate:T,outputDir:f.dir,environ:f.environ,clock,
+    revision:{candidate:f.candidate,artifacts:{async verifyCandidate(){verifications++;return true;}}},revisionBasePayload:f.previous,
+    reader:{readStable(){reads++;assert.fail('must not read');}}}),/IB_REPORT_INPUT_REFUSED/);
+  assert.equal(reads,0);assert.equal(verifications,0);assert.deepEqual(fs.readdirSync(f.dir),[]);
+});
+test('actual daily child writer encrypts the extension with private revision provenance and original receipt/month-lock checks',async t=>{
+  const f=await privateRevisionFixture(t),key=crypto.randomBytes(32),dataFile=path.join(f.dir,'data.json'),econFile=path.join(f.dir,'econ.json'),clockFile=path.join(f.dir,'clock.mjs');
+  const encrypt=(value,v)=>{const iv=crypto.randomBytes(12),c=crypto.createCipheriv('aes-256-gcm',key,iv);return Buffer.from(JSON.stringify({v,enc:true,data:Buffer.concat([iv,c.update(JSON.stringify(value)),c.final(),c.getAuthTag()]).toString('base64')}));};
+  const decrypt=bytes=>{const sealed=Buffer.from(JSON.parse(bytes).data,'base64'),d=crypto.createDecipheriv('aes-256-gcm',key,sealed.subarray(0,12));d.setAuthTag(sealed.subarray(-16));return JSON.parse(Buffer.concat([d.update(sealed.subarray(12,-16)),d.final()]));};
+  const previous={...f.previous,daily:f.data.daily.filter(p=>p.d<=P),flowsAuto:[],flowsUnresolved:[],feeReportMonthLocks:{schema:'fee-console.report-month-locks.v1',periods:[]},status:{asOf:P,provisional:false,calibrated:true,unresolvedCount:0,splitDelta:0,notes:[]}};
+  previous.feeCalculationReceipt=buildFeeCalculationReceipt({data:previous,economicInput:f.economic});
+  const original=encrypt(previous,3),economicBytes=encrypt(f.economic,4);
+  fs.writeFileSync(dataFile,original,{mode:0o600});fs.writeFileSync(econFile,economicBytes,{mode:0o600});
+  fs.writeFileSync(clockFile,`const Original=Date;globalThis.Date=class extends Original{constructor(...args){super(...(args.length?args:[${clock()}]));}static now(){return ${clock()};}};globalThis.fetch=()=>{throw Error('SYNTHETIC_NETWORK_FORBIDDEN');};`,{mode:0o600});
+  const argv=['--import',clockFile,new URL('./daily.mjs',import.meta.url).pathname,'--file='+dataFile,'--date='+T,
+    '--schwab=100','--webull=100','--src-schwab='+T,'--src-webull='+T,'--cash=0','--stock=200','--other=0','--ib-manager-input='+f.file];
+  const env={...process.env,...f.environ,FEE_DATA_KEY:key.toString('base64url'),FEE_ECON_FILE:econFile,FEE_STYLE_INPUT_FILE:'',FEE_MANAGEMENT_INPUT_FILE:''};
+  const run=()=>spawnSync(process.execPath,argv,{encoding:'utf8',env});
+  const success=run();assert.equal(success.status,0,success.stderr);const result=decrypt(fs.readFileSync(dataFile));
+  assert.equal(result.daily.at(-1).d,T);assert.equal(result.ibManagerReturnReceipt.asOf,T);
+  assert.equal(result.ibManagerSourceRevision.revisionId,f.candidate.revisionId);
+  assert.equal(validateFeeCalculationReceiptWithEcon(result.feeCalculationReceipt,result,f.economic).ok,true);
+  assert.deepEqual(preserveReportMonthLocks(previous,result,f.economic),previous.feeReportMonthLocks);
+  assert.deepEqual(result.consumedOperations,previous.consumedOperations);assert.deepEqual(fs.readFileSync(econFile),economicBytes);
+  const after=fs.readFileSync(dataFile),repeat=run();assert.notEqual(repeat.status,0);assert.match(repeat.stderr,/IB_REPORT_INPUT_REFUSED/);assert.deepEqual(fs.readFileSync(dataFile),after);
+  const locked={...previous,feeReportMonthLocks:{schema:'fee-console.report-month-locks.v1',periods:[{ym:'2026-09',digest:h('a')}]}};
+  const lockedBytes=encrypt(locked,3);fs.writeFileSync(dataFile,lockedBytes);const refused=run();assert.notEqual(refused.status,0);assert.deepEqual(fs.readFileSync(dataFile),lockedBytes);
+  assert.equal(decrypt(original).daily.at(-1).d,P);
 });
 test('artifact evidence mismatch and binding changes stop before source reads',async()=>{
   for(const options of [{verify:()=>({verified:true})},{check:()=>({mainSha:o('f')})}]){

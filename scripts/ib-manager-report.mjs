@@ -2,16 +2,18 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {types} from 'node:util';
 import {SharesightIbManagerReader,ibSourceFailureCode,IB_BASELINE_WINDOW,validateIbBootstrapCoverage,validateIbManagerReportInput} from './ib-manager-source.mjs';
 import {buildIbManagerReportBundle,validateIbManagerReportState,validateIbOwnerBaselineState,createIbManagerReturnConsumer,createIbManagerDrawdownConsumer} from './ib-manager-return.mjs';
 import {validateFeeCalculationReceipt} from './fee-receipt-core.mjs';
 import {isCalendarDate,inclusiveDays} from './fee-engine.mjs';
+import {isIbSourceRevisionCandidate,consumeIbSourceRevisionCandidate,validateIbSourceRevisionCandidate} from './ib-manager-source-revision.mjs';
 
 const ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const refused=()=>{throw Error('IB_REPORT_INPUT_REFUSED');};
 const outside=p=>{const r=path.relative(ROOT,p);return r==='..'||r.startsWith('..'+path.sep);};
 const exact=(o,keys)=>o&&typeof o==='object'&&!Array.isArray(o)&&Object.keys(o).sort().join(',')===[...keys].sort().join(',');
-const fields=['ibManagerReturnReceipt','ibManagerDrawdownReceipt','ibManagerSourceState','ibManagerSourceStatus','ibManagerBaselineState','ibManagerCoverageState'];
+const fields=['ibManagerReturnReceipt','ibManagerDrawdownReceipt','ibManagerSourceState','ibManagerSourceStatus','ibManagerBaselineState','ibManagerCoverageState','ibManagerSourceRevision'];
 export function sameIbManagerData(a,b){const c=createIbManagerReturnConsumer().canonical;return fields.every(k=>c(a[k]??null)===c(b[k]??null));}
 
 // Production publication includes Jenny's independent module. Missing activation
@@ -148,7 +150,50 @@ export async function prepareIbManagerReportInput({payload,targetDate,environ,re
   return {schema:'fee-console.ib-manager-report-request.v1',targetDate,...request};
 }
 
-export async function prepareIbManagerReport({payload,targetDate,outputDir,environ=process.env,reader}={}){
+async function revisionIdOf(payload){
+  const value=payload?.ibManagerSourceRevision;
+  if(value===undefined)return null;
+  if(!exact(value,['schema','revisionId','previousRevisionId','candidate'])||value.schema!=='fee-console.ib-manager-source-revision.v1'
+    ||!/^[a-f0-9]{64}$/.test(value.revisionId||'')||value.candidate?.revisionId!==value.revisionId
+    ||!(value.previousRevisionId===null||/^[a-f0-9]{64}$/.test(value.previousRevisionId||'')))refused();
+  const {revisionId,...body}=value.candidate;
+  if(await createIbManagerReturnConsumer().digest(body)!==revisionId)refused();
+  return value.revisionId;
+}
+function revisionDependencies(value){
+  if(!value||types.isProxy(value)||Object.getPrototypeOf(value)!==Object.prototype)refused();
+  const d=Object.getOwnPropertyDescriptors(value);
+  if(Reflect.ownKeys(d).sort().join(',')!=='artifacts,candidate'||Object.values(d).some(x=>!Object.hasOwn(x,'value')||!x.enumerable))refused();
+  return {candidate:d.candidate.value,artifacts:d.artifacts.value};
+}
+async function revisionRequest({payload,targetDate,environ,revision,revisionBasePayload,clock}){
+  try{
+    const {candidate,artifacts}=revisionDependencies(revision);
+    // Fixed module, loaded only for the explicitly selected recovery path.
+    // No JSON-supplied verifier or success flag may authenticate an artifact.
+    const {isIbRevisionArtifacts}=await import('./fee-sync-revision-artifacts.mjs');
+    if(!isIbRevisionArtifacts(artifacts)||!isIbSourceRevisionCandidate(candidate)
+      ||candidate.mode!=='extend-cutoff'||candidate.oldThrough>=targetDate||typeof clock!=='function')refused();
+    // One real freshness check at handoff. The work below is pure validation;
+    // the runtime performs another full source/current check after the writer.
+    if(await artifacts.verifyCandidate(candidate)!==true)refused();
+    const baselineSha256=environ.IB_MANAGER_BASELINE_SHA256;
+    const checked=await consumeIbSourceRevisionCandidate(candidate,{currentPayload:revisionBasePayload,targetDate,baselineSha256,now:clock()});
+    // A period writer may already have advanced only the fee section. Its actual
+    // prior IB bundle must still be exactly the originally superseded bundle.
+    await validateIbSourceRevisionCandidate(checked,{currentPayload:payload,targetDate,baselineSha256,now:clock()});
+    const source=checked.replacement.sourceState.source,coverage=payload.ibManagerCoverageState;
+    await validateIbManagerCoverage(coverage,targetDate,baselineSha256,coverage?.from,source,source.baselineAsOf);
+    const owner=payload.ibManagerBaselineState||payload.ibManagerSourceState?.source?.ownerBaseline;
+    if(createIbManagerReturnConsumer().canonical(owner)!==createIbManagerReturnConsumer().canonical(source.ownerBaseline))refused();
+    const now=clock();if(!Number.isSafeInteger(now)||now<Date.parse(checked.checkedAt)||now>=Date.parse(checked.plan.expiresAt))refused();
+    return {schema:'fee-console.ib-manager-report-request.v2',targetDate,state:'verified',source,coverage,
+      revision:checked,previousRevisionId:await revisionIdOf(payload)};
+  }catch{refused();}
+}
+
+export async function prepareIbManagerReport({payload,targetDate,outputDir,environ=process.env,reader,revision,revisionBasePayload,clock=Date.now}={}){
+  if(revision!==undefined&&environ.IB_MANAGER_READ_ENABLED!=='true')refused();
   if(environ.IB_MANAGER_READ_ENABLED!=='true')return null;
   if(!/^\d{4}-\d{2}-\d{2}$/.test(targetDate||''))refused();
   const dir=fs.realpathSync(outputDir),stat=fs.statSync(dir);
@@ -156,7 +201,7 @@ export async function prepareIbManagerReport({payload,targetDate,outputDir,envir
   let activeReader;
   // Preserve the original lazy construction: failed history/coverage checks do
   // not inspect source credentials or create the live reader.
-  const request=await prepareIbManagerReportInput({payload,targetDate,environ,reader:{readStable(args){
+  const request=revision!==undefined?await revisionRequest({payload,targetDate,environ,revision,revisionBasePayload,clock}):await prepareIbManagerReportInput({payload,targetDate,environ,reader:{readStable(args){
     activeReader??=reader||new SharesightIbManagerReader({clientId:environ.FEE_CLOUD_SHARESIGHT_CLIENT_ID,clientSecret:environ.FEE_CLOUD_SHARESIGHT_CLIENT_SECRET});
     return activeReader.readStable(args);
   }}});
@@ -165,25 +210,49 @@ export async function prepareIbManagerReport({payload,targetDate,outputDir,envir
   return {file,state:request.state,...(request.reasonCode?{reasonCode:request.reasonCode}:{})};
 }
 
-export async function loadIbManagerReport(file,{environ=process.env}={}){
+export async function loadIbManagerReport(file,{environ=process.env,previousPayload,clock=Date.now}={}){
   if(environ.IB_MANAGER_READ_ENABLED!=='true'||!path.isAbsolute(file)||fs.lstatSync(file).isSymbolicLink())refused();
   const real=fs.realpathSync(file),st=fs.statSync(real);
   if(!outside(real)||!st.isFile()||(st.mode&0o077)!==0||st.size<1||st.size>5*1024*1024)refused();
   const bytes=fs.readFileSync(real),request=JSON.parse(bytes);
-  const checkCurrent=()=>{if(fs.lstatSync(file).isSymbolicLink()||fs.realpathSync(file)!==real||!fs.readFileSync(real).equals(bytes)||(fs.statSync(real).mode&0o077)!==0)refused();};
+  const checkCurrent=()=>{
+    if(fs.lstatSync(file).isSymbolicLink()||fs.realpathSync(file)!==real||!fs.readFileSync(real).equals(bytes)||(fs.statSync(real).mode&0o077)!==0)refused();
+    if(request.schema==='fee-console.ib-manager-report-request.v2'){
+      if(typeof clock!=='function')refused();const now=clock(),checked=Date.parse(request.revision?.checkedAt),expires=Date.parse(request.revision?.plan?.expiresAt);
+      if(!Number.isSafeInteger(now)||!Number.isFinite(checked)||!Number.isFinite(expires)||now<checked||now>=expires)refused();
+    }
+  };
   checkCurrent();
-  if(request.schema!=='fee-console.ib-manager-report-request.v1'||!/^\d{4}-\d{2}-\d{2}$/.test(request.targetDate||''))refused();
-  let bundle=null;
+  const revision=request.schema==='fee-console.ib-manager-report-request.v2';
+  if(!['fee-console.ib-manager-report-request.v1','fee-console.ib-manager-report-request.v2'].includes(request.schema)||!/^\d{4}-\d{2}-\d{2}$/.test(request.targetDate||''))refused();
+  let bundle=null,revisionPayload=null,previousIbHash=null;
   if(request.state==='verified'){
     const future=request.targetDate>IB_BASELINE_WINDOW.asOf;
-    if(!exact(request,['schema','targetDate','state','source',...(future?['coverage']:[])]))refused();
+    if(!exact(request,['schema','targetDate','state','source',...(future||revision?['coverage']:[]),...(revision?['revision','previousRevisionId']:[])]))refused();
+    if(revision)try{
+      if(!previousPayload||typeof clock!=='function'||request.revision?.mode!=='extend-cutoff'
+        ||request.revision.oldThrough>=request.targetDate||await revisionIdOf(previousPayload)!==request.previousRevisionId)refused();
+      const candidate=await validateIbSourceRevisionCandidate(request.revision,{currentPayload:previousPayload,targetDate:request.targetDate,
+        baselineSha256:environ.IB_MANAGER_BASELINE_SHA256,now:clock()});
+      const core=createIbManagerReturnConsumer();
+      if(core.canonical(candidate.replacement.sourceState.source)!==core.canonical(request.source)
+        ||core.canonical(previousPayload.ibManagerCoverageState)!==core.canonical(request.coverage))refused();
+      previousIbHash=core.canonical(Object.fromEntries(fields.map(k=>[k,previousPayload[k]??null])));
+      revisionPayload=Object.freeze({schema:'fee-console.ib-manager-source-revision.v1',revisionId:candidate.revisionId,
+        previousRevisionId:request.previousRevisionId,candidate});
+    }catch{refused();}
     try{bundle=await buildIbManagerReportBundle(request.source,environ.IB_MANAGER_BASELINE_SHA256);}catch{refused();}
-    if(future)try{await validateIbManagerCoverage(request.coverage,request.targetDate,environ.IB_MANAGER_BASELINE_SHA256,request.coverage?.from,request.source.schema==='fee-console.ib-manager-source.v3'?request.source:null);}catch{refused();}
+    if(future||revision)try{await validateIbManagerCoverage(request.coverage,request.targetDate,environ.IB_MANAGER_BASELINE_SHA256,request.coverage?.from,request.source.schema==='fee-console.ib-manager-source.v3'?request.source:null);}catch{refused();}
     if(bundle.returnReceipt.asOf!==request.targetDate)refused();
-  }else if(request.state!=='pending'||!exact(request,['schema','targetDate','state','reasonCode'])||!/^IB_SOURCE_[A-Z_]{1,48}$/.test(request.reasonCode||''))refused();
+  }else if(revision||request.state!=='pending'||!exact(request,['schema','targetDate','state','reasonCode'])||!/^IB_SOURCE_[A-Z_]{1,48}$/.test(request.reasonCode||''))refused();
   return {checkCurrent,apply(data,targetDate){
     checkCurrent();if(request.targetDate!==targetDate)refused();
-    if(bundle&&targetDate>IB_BASELINE_WINDOW.asOf){
+    if(revision){
+      const current=createIbManagerReturnConsumer().canonical(Object.fromEntries(fields.map(k=>[k,data[k]??null])));
+      const now=clock();
+      if(current!==previousIbHash||!Number.isSafeInteger(now)||now<Date.parse(request.revision.checkedAt)||now>=Date.parse(request.revision.plan.expiresAt))refused();
+    }
+    if(bundle&&(targetDate>IB_BASELINE_WINDOW.asOf||revision)){
       const core=createIbManagerReturnConsumer();
       if(core.canonical(request.coverage)!==core.canonical(data.ibManagerCoverageState))refused();
       const stored=data.ibManagerBaselineState||data.ibManagerSourceState?.source?.ownerBaseline;
@@ -193,7 +262,9 @@ export async function loadIbManagerReport(file,{environ=process.env}={}){
     // Independent failure never changes the original fee calculation or ledger.
     const matched=bundle&&validateFeeCalculationReceipt(fee,data).ok&&bundle.returnReceipt.start===fee.start&&bundle.returnReceipt.asOf===fee.asOf;
     const out={...data,ibManagerSourceStatus:{state:matched?'verified':'pending',targetDate,...(!matched?{reasonCode:bundle?'IB_SOURCE_PERIOD_MISMATCH':request.reasonCode}:{})}};
-    if(matched)Object.assign(out,{ibManagerReturnReceipt:bundle.returnReceipt,ibManagerDrawdownReceipt:bundle.drawdownReceipt,ibManagerSourceState:bundle.sourceState});
+    if(revision&&!matched)refused();
+    if(matched)Object.assign(out,{ibManagerReturnReceipt:bundle.returnReceipt,ibManagerDrawdownReceipt:bundle.drawdownReceipt,ibManagerSourceState:bundle.sourceState,
+      ...(revision?{ibManagerSourceRevision:revisionPayload}:{})});
     return out;
   }};
 }
