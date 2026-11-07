@@ -13,13 +13,24 @@ The integration is limited to extending the current published source through
 the next target date. Same-cutoff historical repair is rejected by this runtime;
 ordinary production and previous recovery scopes retain their existing rules.
 
-Before financial access, the original recovery gate checks the signed release,
-the exact approved PR tree and owner comment, the unchanged main and complete
-attempt/reservation history. A unique contract selects the new release; two
-contracts for the same date must never be selected by taking the first date
-match. Added files are permitted only in the new contract's exact reviewed
-path/status manifest. Previous failed runs remain recorded and any additional,
-unknown or in-flight source attempt prevents execution.
+The legacy v1 recovery gate and its complete attempt/reservation evidence remain
+unchanged. The new `ib-source-revision-20261106-sync-v2` admission uses the
+owner-approved single-cycle model instead: it verifies the signed release,
+exact approved PR tree and owner comment, fixed main, the one current execution
+and the current encrypted publication/health hashes. It does not enumerate the
+complete Actions history, invent empty attempts or clear old consumption records.
+The v2 release is limited to the exact reviewed file manifest and direct signed
+successor of `50392c2fb5ec3b1b26e5515cdb0feebb48823d2d`; other versions need their
+own review. Contracts with the same target cannot substitute for one another.
+
+Before admission and on every active-context check, a same-target candidate
+blocks a new cycle unless its commit is proven to be an ancestor of fixed main.
+Changed-parent, old, unsigned or uncertain candidates are not treated as absent.
+Malformed or unavailable evidence stops the cycle. A squash-published residual
+branch without ancestry proof also remains blocked until it is resolved through
+the protected process. The existing publisher still validates its signed
+candidate, source receipts, unchanged main and fresh health before promotion.
+
 After exact-head approval and all required checks, this batch must use the
 protected squash merge: one signed direct successor of the pinned main, whose
 tree exactly equals the approved head. A two-parent merge, changed base or
@@ -42,11 +53,32 @@ cash/position checks and month locks are not relaxed. Only the final period
 step may consume the handoff. Main, source bytes, economic version and admission
 are rechecked before exposing a candidate for the existing protected publisher.
 
-To execute this local candidate, the operator must separately approve the
-complete frozen public-code diff, its exact signed head, the bounded historical
-artifact/key/source reads and one additional target-specific recovery. Failure
-stops the run; it does not authorize another attempt. Fee publication and its
-authenticated readback must succeed before a separate ratio update proceeds.
+## Single-cycle operation and authorization
+
+A confirmed synchronization entry validates the real owner dispatch, exact main,
+closed accounting/source day and source range. It reads only its known current
+run, not an Actions run collection or an attempt count. Before private access it
+rechecks main, publication hashes and pending candidates. Ordinary schedules and
+legacy recovery scopes retain their prior history rules; cron is unchanged.
+
+One explicit dispatch starts one cycle through the existing workflow concurrency
+group. Already-published targets exit. Failure stops, with existing claims and
+records preserved. After diagnosis and a fix, the operator may approve a new
+explicit dispatch for a new cycle. The first cloud confirmation's immutable
+intent is never deleted or reused. Unknown POST, publication or candidate results
+must be resolved before a new dispatch; elapsed time is not evidence of failure.
+
+Concurrency serializes executions but does not itself reject two explicitly
+queued requests after a clean failure with no candidate. The operator must send
+one request and resolve its outcome before approving the next one. This change
+adds no persistent lock, database, permission, automatic retry or account write.
+It removes a complete-history dependency, not authentication or source checks.
+
+The code diff and final signed version still require protected review. An actual
+cycle requires its own applicable execution authorization, source evidence and
+historical original reads. Local tests and code approval do not establish that a
+report was generated or published. Fee publication and authenticated readback
+must succeed before the separately authorized ratio update proceeds.
 
 ## Synchronization completion is a separate missing input
 
@@ -94,7 +126,7 @@ U < P <= T and at most nine calendar days including U. U cannot be manufactured
 by truncating current history, copying only NAV, editing a balance or resetting
 the owner-confirmed baseline.
 
-The exact `fee-console.ib-source-revision-plan.v1` contains:
+The legacy exact `fee-console.ib-source-revision-plan.v1` contains:
 
 - `anchorDate`, `targetDate`, `baselineSha256` and both source-state IDs;
 - `currentArtifact` and `anchorArtifact`, each containing raw encrypted-data
@@ -103,6 +135,15 @@ The exact `fee-console.ib-source-revision-plan.v1` contains:
   current data/health hashes and current source-state ID;
 - `expiresAt` as an exact UTC timestamp. It is a reviewed limit, not a grant of
   read, decryption, execution-budget or publication authority.
+
+The new `fee-console.ib-source-revision-plan.v2` replaces only the consumption
+hash binding with `admissionModel: sync-cycle-v1` and `executionSha256`. The latter
+binds the authenticated release (including exact owner comment), complete plan,
+current run identity/attempt and encrypted publication/health hashes. Mixing v1
+consumption fields with v2 execution fields is rejected. No private source
+values or credentials are added to public metadata. The artifact adapter still
+requires the known original successful producer runs and logs as historical
+provenance; those bounded reads are distinct from a complete run-list query.
 
 The current artifact and state must match their binding fields. Both stored
 source states, return receipts and drawdown receipts are rebuilt using the

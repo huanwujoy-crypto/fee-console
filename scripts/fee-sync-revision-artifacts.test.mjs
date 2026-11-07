@@ -26,6 +26,7 @@ const B='2026-11-03',U='2026-11-04',P='2026-11-05',T='2026-11-06';
 const h=c=>c.repeat(64),o=c=>c.repeat(40),OWNER='huanwujoy-crypto',REPO=OWNER+'/fee-console';
 const KEY=Buffer.alloc(32,7),TOKEN='synthetic-github-token-123456789',ID='a'.repeat(32),MAIN=o('a'),TREE=o('b'),APPROVED=o('c');
 const REPAIR='d617fdd25315ca09a5f89a81630b04ae19b24d1b',RUN=90000000001;
+const SYNC_REPAIR='50392c2fb5ec3b1b26e5515cdb0feebb48823d2d',SYNC_CONTRACT='ib-source-revision-20261106-sync-v2';
 const SOURCE_P='9c5ec1636e3a6f5c6f307dba9fc681e3b14d73e8',SOURCE_U='5ad072aa8eae0fd04830250d0811a080b40931b9';
 const sha=b=>crypto.createHash('sha256').update(b).digest('hex');
 const blob=b=>crypto.createHash('sha1').update('blob '+b.length+'\0').update(b).digest('hex');
@@ -57,39 +58,43 @@ function sourceWire({revised=false,state={sourceChanged:false},calls=[]}={}){
   return {fetchImpl,calls,reader:new SharesightIbManagerReader({clientId:'synthetic-client',clientSecret:'synthetic-secret',fetchImpl})};
 }
 
-// Mint the actual native admission through original release/attempt validators.
+// Mint the native admission through the original release validators and the
+// selected attempt-history or current-execution/publication-state validators.
 // Neither a self-authored permission flag nor a test-only capability is used.
-function admissionWire(state,dailyPlan){
-  const manifest=reportHistoricalRecoveryManifest(),actor={id:283054367,login:OWNER,type:'User'},ui='2bb9f66ac890ba87cec504ef72a5083c07670689';
+function admissionWire(state,dailyPlan,sync=false){
+  const manifest=reportHistoricalRecoveryManifest(sync?{contractId:SYNC_CONTRACT}:{}),actor={id:283054367,login:OWNER,type:'User'},ui='2bb9f66ac890ba87cec504ef72a5083c07670689',repairBase=sync?SYNC_REPAIR:REPAIR;
   const signed=(id,parents,tree=TREE)=>({sha:id,parents:parents.map(sha=>({sha})),author:actor,committer:{login:OWNER},commit:{tree:{sha:tree},verification:{verified:true,reason:'valid'}}});
-  const commit=signed(MAIN,[REPAIR]),repair=signed(REPAIR,['4d798c77c9a9a5d459a75af45b4239c7c9cf984a','474e7b5a20f93358193791daf84d175a22e06d9e']);
+  const commit=signed(MAIN,[repairBase]),repair=signed(repairBase,sync?[REPAIR]:['4d798c77c9a9a5d459a75af45b4239c7c9cf984a','474e7b5a20f93358193791daf84d175a22e06d9e']);
   const run=(id,head,created)=>({id,head_sha:head,head_branch:'main',path:'.github/workflows/fee-cloud-producer.yml',event:'workflow_dispatch',created_at:created,run_attempt:1,workflow_id:365873934,actor,status:id===RUN?'in_progress':'completed',conclusion:id===RUN?null:'failure'});
   const runs=[run(RUN,MAIN,'2026-11-07T01:00:00Z'),run(42309848352,'94210904dd95b2ff4496cb68dab6b49950fe4f74','2026-11-06T23:08:38Z'),run(42318324848,'2c32d695f4f2dc057920fc690046ddf3e1ccdaee','2026-11-07T00:00:00Z')];
+  state.currentRun={...runs[0],repository:{full_name:REPO}};
   const jobs=Object.fromEntries(runs.slice(1).map((r,i)=>[r.id,[{id:i?128236468656:128208373197,run_id:r.id,head_sha:r.head_sha,name:'Produce daily '+T,status:'completed',conclusion:'failure',started_at:r.created_at}]]));
   const fetchImpl=async(url,init)=>{
     assert.equal(init.method,'GET');const route=url.split('/repos/'+REPO+'/')[1];state.admissionCalls.push(route);let value;
     if(route==='git/ref/heads/main')value={object:{sha:state.main}};
     else if(route==='commits/'+MAIN+'?per_page=1')value=commit;
-    else if(route==='commits/'+REPAIR+'?per_page=1')value=repair;
-    else if(route==='commits/'+APPROVED+'?per_page=1')value=signed(APPROVED,[REPAIR]);
-    else if(route==='compare/'+REPAIR+'...'+MAIN+'?per_page=100')value={status:'ahead',ahead_by:1,behind_by:0,total_commits:1,base_commit:{sha:REPAIR},merge_base_commit:{sha:REPAIR},commits:[{sha:MAIN}],files:manifest.map(m=>({filename:m.path,status:m.status,sha:o('e')}))};
+    else if(route==='commits/'+repairBase+'?per_page=1')value=repair;
+    else if(route==='commits/'+APPROVED+'?per_page=1')value=signed(APPROVED,[repairBase]);
+    else if(route==='compare/'+repairBase+'...'+MAIN+'?per_page=100')value={status:'ahead',ahead_by:1,behind_by:0,total_commits:1,base_commit:{sha:repairBase},merge_base_commit:{sha:repairBase},commits:[{sha:MAIN}],files:manifest.map(m=>({filename:m.path,status:m.status,sha:o('e')}))};
     else if(route==='git/trees/'+TREE+'?recursive=1')value={sha:TREE,truncated:false,tree:[{path:'index.html',type:'blob',mode:'100644',sha:ui},...manifest.map(m=>({path:m.path,type:'blob',mode:'100644',sha:o('e')}))]};
     else if(route==='commits/'+MAIN+'/pulls?per_page=100')value=[{number:999}];
     else if(route==='pulls/999')value={number:999,state:'closed',merged:true,draft:false,merge_commit_sha:MAIN,user:actor,base:{ref:'main',repo:{full_name:REPO}},head:{sha:APPROVED,repo:{full_name:REPO}},commits:1,merged_at:'2026-11-07T00:50:00Z'};
     else if(['issues/999/comments?per_page=100','issues/comments/1'].includes(route)){const comment={id:1,user:actor,body:'/approve-xuan-ib-maintenance '+APPROVED,created_at:'2026-11-07T00:40:00Z',updated_at:'2026-11-07T00:40:00Z',issue_url:'https://api.github.com/repos/'+REPO+'/issues/999'};value=route==='issues/comments/1'?comment:[comment];}
-    else if(route?.startsWith('actions/workflows/fee-cloud-producer.yml/runs?'))value={total_count:runs.length,workflow_runs:state.competing?[...runs,{...runs[0],id:90000000002}]:runs};
-    else if(/^actions\/runs\/\d+\/jobs\?filter=all&per_page=100$/.test(route)){const list=jobs[Number(route.split('/')[2])];assert.ok(list);value={total_count:list.length,jobs:list};}
+    else if(!sync&&route?.startsWith('actions/workflows/fee-cloud-producer.yml/runs?'))value={total_count:runs.length,workflow_runs:state.competing?[...runs,{...runs[0],id:90000000002}]:runs};
+    else if(!sync&&/^actions\/runs\/\d+\/jobs\?filter=all&per_page=100$/.test(route)){const list=jobs[Number(route.split('/')[2])];assert.ok(list);value={total_count:list.length,jobs:list};}
     else assert.fail('unexpected synthetic admission route '+route);
     return response(url,value);
   };
-  return {readRecoveryRelease:(sha,options)=>readReportRecoveryRelease(sha,{...options,fetchImpl}),readSourceAttempts:options=>readPeriodSourceAttempts({...options,fetchImpl,actionsToken:TOKEN})};
+  return {readRecoveryRelease:(sha,options)=>readReportRecoveryRelease(sha,{...options,fetchImpl}),
+    readSourceAttempts:options=>{assert.equal(sync,false,'sync admission must not request attempt history');return readPeriodSourceAttempts({...options,fetchImpl,actionsToken:TOKEN});},
+    ...(sync?{readCurrentRun:async()=>{state.currentRunReads++;return structuredClone(state.currentRun);},
+      readState:async()=>{state.publicationReads++;return {...structuredClone(state.publication),data:Buffer.from(state.publication.data)};}}:{})};
 }
 
-async function fixture(t,{legacy=false,mutatePayload,mutateHealth,mutateEconomic}={}){
+async function fixture(t,{legacy=false,mutatePayload,mutateHealth,mutateEconomic,sync=false}={}){
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'revision-artifact-synthetic-'));fs.chmodSync(dir,0o700);t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
-  const state={now:Date.parse('2026-11-07T01:10:00.000Z'),main:MAIN,economicRevision:o('e'),sourceChanged:false,calls:[],sourceCalls:[],admissionCalls:[],mutate:null,log:null,competing:false};
+  const state={now:Date.parse('2026-11-07T01:10:00.000Z'),main:MAIN,economicRevision:o('e'),sourceChanged:false,calls:[],sourceCalls:[],admissionCalls:[],currentRunReads:0,publicationReads:0,mutate:null,log:null,competing:false};
   const clock=()=>state.now,dailyPlan=dailyReportPlan(T,['NYSE','NASDAQ'],{periodFrom:T,reviewedSyncDate:T});
-  const admission=await authorizeReportRecovery({plan:dailyPlan,expectedMain:MAIN,currentRunId:RUN,now:new Date(state.now),actionsToken:TOKEN,...admissionWire(state,dailyPlan)});
   const business={points:[{d:B,tot:1000}],openT:1000,from:B,to:B,days:1,flowByDate:{},rate:0,cr:0,cumBefore:0,hwmBefore:0},baselineSha256=ibBaselineBusinessHash(business);
   const input={schema:'fee-console.ib-manager-return-input.v1',currency:'USD',timezone:'America/New_York',flowTiming:'eod',flowsComplete:true,correctionsConfirmed:true,sourceSha256:h('c'),periodReturnsInput:business};
   const owner=await buildIbOwnerBaseline({ibManagerReturnReceipt:await buildIbManagerReturnReceipt(input),ibManagerDrawdownReceipt:await buildIbManagerDrawdownReceipt(input)},input,baselineSha256);
@@ -113,6 +118,8 @@ async function fixture(t,{legacy=false,mutatePayload,mutateHealth,mutateEconomic
   const currentPayload=await payloadOf(p,P),anchorPayload=await payloadOf(u,U),dataBytes=encrypt(currentPayload,3),anchorBytes=encrypt(anchorPayload,3);
   const health=(date,bytes,checkedAt)=>{const h={schema:'fee-console.daily-health.v1',checkedAt,targetDate:date,sourceDates:{schwab:date,webull:date,benchmark:date},outcome:'updated',dataSha256:sha(bytes),errorCode:null};mutateHealth?.(h,date);return Buffer.from(JSON.stringify(h,null,2)+'\n');};
   const healthBytes=health(P,dataBytes,'2026-11-06T01:01:00.000Z'),anchorHealth=health(U,anchorBytes,'2026-11-05T05:45:00.000Z');
+  state.publication={mainSha:MAIN,finalMainSha:MAIN,data:dataBytes,pending:false,health:JSON.parse(healthBytes)};
+  const admission=await authorizeReportRecovery({plan:dailyPlan,expectedMain:MAIN,currentRunId:RUN,now:new Date(state.now),clock:()=>new Date(state.now),actionsToken:TOKEN,...admissionWire(state,dailyPlan,sync)});
   const oldEnv={id:process.env.FEE_ECON_GIST_ID,token:process.env.FEE_ECON_GITHUB_TOKEN};process.env.FEE_ECON_GIST_ID=ID;process.env.FEE_ECON_GITHUB_TOKEN='github_pat_SYNTHETIC_NOT_A_REAL_TOKEN_123456';
   const economicFetch=async(url,init)=>{assert.equal(url,'https://api.github.com/gists/'+ID);assert.equal(init.method,'GET');return new Response(JSON.stringify({id:ID,public:false,owner:{login:OWNER},truncated:false,history:[{version:state.economicRevision}],files:{'fee-console-db.json':{filename:'fee-console-db.json',content:economicBytes.toString(),size:economicBytes.length,truncated:false}}}),{headers:{etag:'"synthetic"','content-type':'application/json'}});};
   let economicSnapshot;try{economicSnapshot=await fetchEconomicSnapshot({tempRoot:dir,attempts:1,timeoutMs:100,fetchImpl:economicFetch});}finally{for(const[k,v]of Object.entries({FEE_ECON_GIST_ID:oldEnv.id,FEE_ECON_GITHUB_TOKEN:oldEnv.token}))if(v===undefined)delete process.env[k];else process.env[k]=v;}
@@ -146,7 +153,7 @@ async function fixture(t,{legacy=false,mutatePayload,mutateHealth,mutateEconomic
   const github=createRevisionGithubRead({token:TOKEN,fetchImpl,clock}),config={github,economicSnapshot,dataKey:KEY,legacySourcePath,baselineSha256,clock,admission};
   t.after(()=>github.close());const cap=createIbRevisionArtifacts(config);t.after(()=>cap.close());
   const read=()=>cap.readVerifiedArtifacts({targetDate:T,mainSha:MAIN});
-  const planOf=v=>({schema:'fee-console.ib-source-revision-plan.v1',targetDate:T,anchorDate:U,baselineSha256,currentSourceStateId:currentPayload.ibManagerSourceState.stateId,anchorSourceStateId:anchorPayload.ibManagerSourceState.stateId,currentArtifact:v.artifacts.current,anchorArtifact:v.artifacts.anchor,bindings:v.bindings,expiresAt:v.expiresAt});
+  const planOf=v=>({schema:sync?'fee-console.ib-source-revision-plan.v2':'fee-console.ib-source-revision-plan.v1',targetDate:T,anchorDate:U,baselineSha256,currentSourceStateId:currentPayload.ibManagerSourceState.stateId,anchorSourceStateId:anchorPayload.ibManagerSourceState.stateId,currentArtifact:v.artifacts.current,anchorArtifact:v.artifacts.anchor,bindings:v.bindings,expiresAt:v.expiresAt});
   return{cap,config,read,planOf,reader:source.reader,currentPayload,anchorPayload,economic,key:KEY,dataBytes,healthBytes,dir,state,clock,baselineSha256,fetchImpl,admission,dailyPlan,files,trees,commits,runs,jobs,economicBytes};
 }
 
@@ -216,6 +223,50 @@ test('native recovery runtime authenticates original bytes, creates the real rea
   await assert.rejects(runtime.prepare(),/REUSE/);
   f.state.sourceChanged=true;await assert.rejects(runtime.checkCurrent(),/SOURCE_CHANGED/);
   await assert.rejects(runtime.checkCurrent(),/CLOSED/);assert.deepEqual(f.dataBytes,original);
+});
+
+test('sync-cycle v2 authenticates originals and the private writer without querying workflow history',async t=>{
+  const f=await fixture(t,{sync:true}),runtime=await createFeeSourceRevisionRuntime({plan:f.dailyPlan,admission:f.admission,economicSnapshot:f.config.economicSnapshot,
+    sourceBytes:f.dataBytes,sourcePayload:f.currentPayload,healthBytes:f.healthBytes,githubToken:TOKEN,clientId:'synthetic-client',clientSecret:'synthetic-secret',
+    keyText:f.key.toString('base64url'),baselineSha256:f.baselineSha256,legacySourcePath:null,fetchImpl:f.fetchImpl,clock:f.clock});
+  t.after(()=>runtime.close());const original=Buffer.from(f.dataBytes),revision=await runtime.prepare(),plan=revision.candidate.plan;
+  assert.equal(plan.schema,'fee-console.ib-source-revision-plan.v2');assert.equal(plan.bindings.admissionModel,'sync-cycle-v1');
+  assert.match(plan.bindings.executionSha256,/^[a-f0-9]{64}$/);assert.equal(Object.hasOwn(plan.bindings,'consumptionSha256'),false);
+  assert.deepEqual(Object.keys(plan.bindings).sort(),['mainSha','economicRevisionSha256','admissionModel','executionSha256','baseDataSha256','baseHealthSha256','currentSourceStateId'].sort());
+  await writeVerifiedRevision(f,revision);assert.equal(await runtime.checkCurrent(),true);
+  assert.ok(f.state.currentRunReads>1);assert.ok(f.state.publicationReads>1);
+  assert.ok(![...f.state.calls,...f.state.admissionCalls].some(p=>p.startsWith('actions/workflows/')||p.includes('filter=all')));
+  for(const role of ['current','anchor'])assert.ok(f.state.calls.includes('actions/runs/'+SCOPE[role].producerRunId));
+  await assert.rejects(runtime.prepare(),/REUSE/);assert.deepEqual(f.dataBytes,original);
+});
+
+test('sync-cycle v2 refuses changed execution or publication state before account reads',async t=>{
+  for(const[name,change]of [
+    ['current run',s=>{s.currentRun.id++;}],['rerun',s=>{s.currentRun.run_attempt=2;}],
+    ['wrong code',s=>{s.currentRun.head_sha=o('f');}],['finished execution',s=>{s.currentRun.status='completed';s.currentRun.conclusion='success';}],
+    ['pending candidate',s=>{s.publication.pending=true;}],['changed published base',s=>{s.publication.data=Buffer.from('changed');}],
+    ['changed main',s=>{s.publication.finalMainSha=o('f');}],
+  ])await t.test(name,async t=>{
+    const f=await fixture(t,{sync:true});await f.read();change(f.state);
+    await rejection(f.cap.checkCurrent(),'REFUSED');await rejection(f.cap.checkCurrent(),'CLOSED');
+    assert.equal(f.state.sourceCalls.length,0);
+  });
+});
+
+test('sync-cycle v2 artifact adapter rejects mixed schemas and bindings before source access',async t=>{
+  for(const change of [p=>{p.schema='fee-console.ib-source-revision-plan.v1';},p=>{p.bindings={...p.bindings,consumptionSha256:h('e')};},
+    p=>{p.bindings={...p.bindings,executionSha256:h('f')};},p=>{p.bindings={...p.bindings,admissionModel:'consumption-v1'};}]){
+    const f=await fixture(t,{sync:true}),v=await f.read(),plan=f.planOf(v);change(plan);
+    await rejection(f.cap.prepareCandidate({plan,reader:f.reader}),'PLAN');assert.equal(f.state.sourceCalls.length,0);
+  }
+});
+
+test('sync-cycle runtime preserves original encrypted-byte binding before new source reads',async t=>{
+  const f=await fixture(t,{sync:true}),bad=Buffer.from(f.dataBytes);bad[bad.length-1]^=1;
+  const runtime=await createFeeSourceRevisionRuntime({plan:f.dailyPlan,admission:f.admission,economicSnapshot:f.config.economicSnapshot,
+    sourceBytes:bad,sourcePayload:f.currentPayload,healthBytes:f.healthBytes,githubToken:TOKEN,clientId:'synthetic-client',clientSecret:'synthetic-secret',
+    keyText:f.key.toString('base64url'),baselineSha256:f.baselineSha256,legacySourcePath:null,fetchImpl:f.fetchImpl,clock:f.clock});
+  t.after(()=>runtime.close());await assert.rejects(runtime.prepare(),/BASE_MISMATCH/);assert.equal(f.state.sourceCalls.length,0);
 });
 
 test('runtime refuses mismatched original ciphertext before any new source reads',async t=>{

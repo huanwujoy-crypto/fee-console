@@ -19,6 +19,7 @@ export const IB_REVISION_ARTIFACT_SCOPE=Object.freeze({targetDate:'2026-11-06',c
   anchor:Object.freeze({candidateSha:'5e19be2032b575b187bd53b8e524189697b9f448',producerRunId:41975903735})});
 const instances=new WeakSet(),failures=new WeakMap(),OID=/^[a-f0-9]{40}$/,SHA=/^[a-f0-9]{64}$/;
 const OWNER='huanwujoy-crypto',REPO=OWNER+'/fee-console',parseExact=createLegacyPolicy().parseExactJson;
+const CONTRACT_MODELS=Object.freeze({'ib-source-revision-20261106-v1':'consumption-v1','ib-source-revision-20261106-sync-v2':'sync-cycle-v1'});
 export const isIbRevisionArtifacts=value=>instances.has(value);
 function fail(code){const e=new Error('IB_REVISION_ARTIFACT_'+code);failures.set(e,code);throw Object.freeze(e);}
 export const ibRevisionArtifactFailureCode=e=>'IB_REVISION_ARTIFACT_'+(failures.get(e)||'REFUSED');
@@ -58,8 +59,12 @@ export function createIbRevisionArtifacts(options){
     active();if(!isHistoricalRevisionAdmission(c.admission))fail('ADMISSION');
     const before=copy(readHistoricalRevisionAdmission(c.admission));
     const checked=copy(await c.admission.checkCurrent());active();
-    if(hash(before)!==hash(checked)||before.contractId!=='ib-source-revision-20261106-v1'||before.targetDate!==IB_REVISION_ARTIFACT_SCOPE.targetDate
-      ||!OID.test(before.mainSha)||!SHA.test(before.consumptionSha256))fail('ADMISSION');
+    if(hash(before)!==hash(checked)||!Object.hasOwn(CONTRACT_MODELS,before.contractId)||before.targetDate!==IB_REVISION_ARTIFACT_SCOPE.targetDate
+      ||!OID.test(before.mainSha))fail('ADMISSION');
+    const sync=CONTRACT_MODELS[before.contractId]==='sync-cycle-v1';
+    if(!SHA.test(sync?before.executionSha256:before.consumptionSha256)
+      ||Object.hasOwn(before,sync?'consumptionSha256':'executionSha256')
+      ||(sync?before.admissionModel!=='sync-cycle-v1':Object.hasOwn(before,'admissionModel')))fail('ADMISSION');
     return before;
   };
   const get=async route=>{active();const x=copy(await c.github.readJson(route));active();return x;};
@@ -140,7 +145,7 @@ export function createIbRevisionArtifacts(options){
   };
   const check=async()=>{
     active();if(!record)fail('NOT_READ');
-    const admission=await admissionCurrent();if(admission.mainSha!==record.mainSha||admission.consumptionSha256!==record.bindings.consumptionSha256||await main()!==record.mainSha)fail('CHANGED');
+    const admission=await admissionCurrent();if(hash(admission)!==record.admissionSha256||await main()!==record.mainSha)fail('CHANGED');
     try{await c.economicSnapshot.checkCurrent();}catch{fail('ECONOMIC_SOURCE');}active();
     if(c.economicSnapshot.getVersionBinding().sha256!==record.bindings.economicRevisionSha256)fail('CHANGED');
     try{record.checkLegacy();}catch{fail('LEGACY_SOURCE');}active();return record.bindings;
@@ -179,10 +184,12 @@ export function createIbRevisionArtifacts(options){
           artifacts[role]=freeze({...scope,dataSha256:digest(data),healthSha256:digest(healthBytes)});
         }finally{data?.fill(0);healthBytes?.fill(0);}
       }
-      const bindings=freeze({mainSha:r.mainSha,economicRevisionSha256:c.economicSnapshot.getVersionBinding().sha256,consumptionSha256:admission.consumptionSha256,
+      const sync=CONTRACT_MODELS[admission.contractId]==='sync-cycle-v1';
+      const bindings=freeze({mainSha:r.mainSha,economicRevisionSha256:c.economicSnapshot.getVersionBinding().sha256,
+        ...(sync?{admissionModel:'sync-cycle-v1',executionSha256:admission.executionSha256}:{consumptionSha256:admission.consumptionSha256}),
         baseDataSha256:artifacts.current.dataSha256,baseHealthSha256:artifacts.current.healthSha256,currentSourceStateId:payloads.current.ibManagerSourceState.stateId});
       const expiresAt=started+300000,view=freeze({currentPayload:payloads.current,anchorPayload:payloads.anchor,artifacts,bindings,baselineSha256:c.baselineSha256,expiresAt:new Date(expiresAt).toISOString()});
-      record={mainSha:r.mainSha,bindings,view,expiresAt,checkLegacy};await check();return view;
+      record={mainSha:r.mainSha,admissionSha256:hash(admission),bindings,view,expiresAt,checkLegacy};await check();return view;
     }finally{economicBytes?.fill(0);}
   };
   const api=Object.freeze({
@@ -190,7 +197,8 @@ export function createIbRevisionArtifacts(options){
     checkCurrent:()=>run(check),
     prepareCandidate:options=>run(async()=>{
       if(prepared||!record)fail('STATE');const o=shape(options,['plan','reader']),plan=copy(o.plan);prepared=true;
-      if(plan.targetDate!==IB_REVISION_ARTIFACT_SCOPE.targetDate||plan.anchorDate!==IB_REVISION_ARTIFACT_SCOPE.anchorDate||plan.baselineSha256!==c.baselineSha256
+      if(plan.schema!==(record.bindings.admissionModel==='sync-cycle-v1'?'fee-console.ib-source-revision-plan.v2':'fee-console.ib-source-revision-plan.v1')
+        ||plan.targetDate!==IB_REVISION_ARTIFACT_SCOPE.targetDate||plan.anchorDate!==IB_REVISION_ARTIFACT_SCOPE.anchorDate||plan.baselineSha256!==c.baselineSha256
         ||plan.currentSourceStateId!==record.view.currentPayload.ibManagerSourceState.stateId||plan.anchorSourceStateId!==record.view.anchorPayload.ibManagerSourceState.stateId
         ||hash(plan.currentArtifact)!==hash(record.view.artifacts.current)||hash(plan.anchorArtifact)!==hash(record.view.artifacts.anchor)
         ||hash(plan.bindings)!==hash(record.bindings)||time(plan.expiresAt)>record.expiresAt||time(plan.expiresAt)<=now())fail('PLAN');

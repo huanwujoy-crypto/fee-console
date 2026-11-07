@@ -190,8 +190,26 @@ async function publicationRequest(route, signal) {
   catch { fail('PUBLICATION_READ'); }
 }
 
-export async function readPublicationState(targetDate, startedAt, request = publicationRequest, {requireIb=false}={}) {
-  if (!isIsoDate(targetDate) || !Number.isFinite(Date.parse(startedAt))) fail("CONFIG");
+async function isCandidateOnMain(oid, mainSha, request) {
+  let comparison;
+  try { comparison = await request(`compare/${oid}...${mainSha}?per_page=1`); }
+  catch { fail("PUBLICATION_READ"); }
+  const { status, ahead_by: ahead, behind_by: behind, total_commits: total } = comparison || {};
+  const mergeBase = comparison?.merge_base_commit?.sha;
+  if (comparison?.base_commit?.sha !== oid || !OID_RE.test(mergeBase || "")
+      || ![ahead, behind, total].every(value => Number.isSafeInteger(value) && value >= 0)
+      || total !== ahead) fail("PUBLICATION_READ");
+  // The comparison is candidate...the frozen main SHA, never a moving branch.
+  // A different-parent, stale or otherwise invalid candidate must still block
+  // until ancestry proves it was incorporated. Validator status cannot do so.
+  if (status === "ahead" && ahead > 0 && behind === 0 && mergeBase === oid) return true;
+  if (status === "behind" && ahead === 0 && behind > 0 && mergeBase === mainSha) return false;
+  if (status === "diverged" && ahead > 0 && behind > 0 && mergeBase !== oid && mergeBase !== mainSha) return false;
+  fail("PUBLICATION_READ");
+}
+
+export async function readPublicationState(targetDate, startedAt, request = publicationRequest, {requireIb=false,strictCandidates=false}={}) {
+  if (!isIsoDate(targetDate) || !Number.isFinite(Date.parse(startedAt)) || typeof strictCandidates !== "boolean") fail("CONFIG");
   const ref = () => request("git/ref/heads/main");
   const mainSha = (await ref())?.object?.sha;
   if (!OID_RE.test(mainSha || "")) fail("PUBLICATION_READ");
@@ -213,11 +231,22 @@ export async function readPublicationState(targetDate, startedAt, request = publ
   const state = { mainSha, finalMainSha, health, healthBytes, data, pending: false };
   if (mainSha !== finalMainSha || (!requireIb&&isPublishedTarget(state, targetDate))) return state;
   const prefix = `codex/fee-daily-${targetDate.replaceAll("-", "")}-`;
-  const refs = await request(`git/matching-refs/heads/${prefix}`);
+  let refs;
+  try { refs = await request(`git/matching-refs/heads/${prefix}`); }
+  catch (error) { if (strictCandidates) fail("PUBLICATION_READ"); throw error; }
   if (!Array.isArray(refs) || refs.length > 32) fail("PUBLICATION_READ");
+  const seenRefs = new Set();
   for (const candidate of refs) {
     const oid = candidate?.object?.sha;
     const branch = String(candidate?.ref || "").replace(/^refs\/heads\//, "");
+    if (strictCandidates) {
+      if (!OID_RE.test(oid || "") || candidate?.object?.type !== "commit"
+          || candidate?.ref !== `refs/heads/${branch}` || !new RegExp(`^${prefix}[a-z0-9]{6}$`).test(branch)
+          || seenRefs.has(candidate.ref)) fail("PUBLICATION_READ");
+      seenRefs.add(candidate.ref);
+      if (oid !== mainSha && !await isCandidateOnMain(oid, mainSha, request)) state.pending = true;
+      continue;
+    }
     if (!OID_RE.test(oid || "") || !new RegExp(`^${prefix}[a-z0-9]{6}$`).test(branch) || oid === mainSha) continue;
     const commit = await request(`commits/${oid}`);
     if (!isEarlierCandidate(commit, branch, mainSha, targetDate, startedAt)) continue;
