@@ -1226,6 +1226,95 @@ test('November4 release requires exactly three reviewed files, immediate signed 
   const f=incomeRecoveryFixture();change(f);await assert.rejects(readReportRecoveryRelease(recoveryHead,{fetchImpl:recoveryWire(f)}),/RECOVERY_/);
  }
 });
+const fundRecordsRecoveryBase='55f2cc9d60f360944b90ff610aee814589bb7cfc';
+const fundRecordsRecoveryParents=['94210904dd95b2ff4496cb68dab6b49950fe4f74','a81d1a20e7214a96f9eafc6e65ee38d31010bc35'];
+const fundRecordsRecoveryNow=new Date('2026-11-07T00:30:00Z');
+const fundRecordsRecoveryFiles=['scripts/fee-report-producer.mjs','scripts/fee-report-producer.test.mjs'];
+function fundRecordsRecoveryFixture(){
+ const f=recoveryFixture();f.plan=dailyReportPlan('2026-11-06',['NYSE','NASDAQ'],{periodFrom:'2026-11-06',reviewedSyncDate:'2026-11-06'});
+ f.runs=[f.run(recoveryId,recoveryHead,'2026-11-07T00:25:00Z'),f.run(42309848352,fundRecordsRecoveryParents[0],'2026-11-06T23:08:38Z')];
+ f.jobs={42309848352:[{...f.job(f.runs[1],128208373197,'Produce daily 2026-11-06'),started_at:'2026-11-06T23:08:55Z'}]};
+ f.commit.parents=[{sha:fundRecordsRecoveryBase}];f.supportCommit.sha=fundRecordsRecoveryBase;
+ f.supportCommit.parents=fundRecordsRecoveryParents.map(sha=>({sha}));
+ f.comparison.base_commit.sha=f.comparison.merge_base_commit.sha=fundRecordsRecoveryBase;
+ f.comparison.files=fundRecordsRecoveryFiles.map(filename=>({filename,status:'modified',sha:'b'.repeat(40)}));
+ f.tree.tree[0].sha='2bb9f66ac890ba87cec504ef72a5083c07670689';return f;
+}
+test('November6 recovery alone admits one reviewed source entry and preserves the failed run and ordinary two-attempt ceiling',async()=>{
+ const f=fundRecordsRecoveryFixture(),before=JSON.stringify(f),readers=recoveryReaders(f),args={plan:f.plan,now:fundRecordsRecoveryNow,currentRunId:recoveryId,...readers};
+ const budget=await readers.readSourceAttempts({...args,recoveryMain:recoveryHead});assert.equal(budget.attempts,1);assert.equal(budget.inProgress,false);
+ assert.deepEqual(budget.recoveryEvidence.entries.map(x=>[x.runId,x.jobId,x.head]),[[42309848352,128208373197,fundRecordsRecoveryParents[0]]]);
+ await authorizeReportRecovery({...args,expectedMain:recoveryHead});assert.equal(JSON.stringify(f),before);
+ const old=state(dailyReportPlan('2026-11-05',['NYSE','NASDAQ']),'2026-11-06T01:00:41.982Z');old.mainSha=old.finalMainSha=recoveryHead;
+ const options={...args,ibEnabled:false,runAttempt:'1',reviewedSyncDate:'2026-11-06',readState:async()=>old};
+ assert.equal((await nativeReportPreflight(options)).reasonCode,'REPORT_DAILY_SOURCE_ALREADY_ATTEMPTED');
+ assert.equal((await nativeReportPreflight({...options,recoveryMain:recoveryHead})).outcome,'produce');
+ assert.equal((await nativeReportPreflight({...options,readSourceAttempts:async()=>({attempts:2,inProgress:false})})).reasonCode,'REPORT_SOURCE_ATTEMPT_BUDGET_EXHAUSTED');
+ assert.equal((await nativeReportPreflight({...options,recoveryMain:recoveryHead,runAttempt:'2'})).reasonCode,'REPORT_SOURCE_RERUN_NOT_ALLOWED');
+ assert.equal(JSON.stringify(f),before);
+});
+test('November6 pending, published, changed main and unknown history never admit another source read',async()=>{
+ const f=fundRecordsRecoveryFixture(),readers=recoveryReaders(f),old=state(dailyReportPlan('2026-11-05',['NYSE','NASDAQ']),'2026-11-06T01:00:41.982Z');old.mainSha=old.finalMainSha=recoveryHead;
+ const options={plan:f.plan,now:fundRecordsRecoveryNow,currentRunId:recoveryId,ibEnabled:false,reviewedSyncDate:'2026-11-06',recoveryMain:recoveryHead,...readers,readState:async()=>old};
+ const noBudget=()=>assert.fail('pending or published must not request recovery admission');
+ assert.equal((await nativeReportPreflight({...options,readState:async()=>({...old,pending:true}),readSourceAttempts:noBudget})).outcome,'candidate-pending');
+ const published=state(f.plan,'2026-11-07T00:20:00Z');published.mainSha=published.finalMainSha=recoveryHead;
+ assert.equal((await nativeReportPreflight({...options,readState:async()=>published,readSourceAttempts:noBudget})).outcome,'already-published');
+ await assert.rejects(nativeReportPreflight({...options,readState:async()=>({...old,mainSha:fundRecordsRecoveryBase,finalMainSha:fundRecordsRecoveryBase})}),/RECOVERY_RELEASE/);
+ await assert.rejects(nativeReportPreflight({...options,readSourceAttempts:async()=>{throw Error('unknown');}}),/RECOVERY_METADATA/);
+ const f2=fundRecordsRecoveryFixture(),wire=recoveryWire(f2);
+ await assert.rejects(readPeriodSourceAttempts({plan:f2.plan,now:fundRecordsRecoveryNow,currentRunId:recoveryId,recoveryMain:recoveryHead,fetchImpl:async(url,init)=>{
+  if(url.includes('/actions/'))return new Response('{}',{status:403});return wire(url,init);
+ }}),/HTTP_403/);
+});
+test('November6 recovery rejects changed failure, identity, attempt counts, in-flight source and old scopes',async()=>{
+ const f=fundRecordsRecoveryFixture(),readers=recoveryReaders(f),budget=await readers.readSourceAttempts({plan:f.plan,now:fundRecordsRecoveryNow,currentRunId:recoveryId,recoveryMain:recoveryHead});
+ const good={plan:f.plan,expectedMain:recoveryHead,currentRunId:recoveryId,budget,release:await readers.readRecoveryRelease(recoveryHead)};
+ for(const change of [x=>x.budget.attempts=0,x=>x.budget.attempts=2,x=>x.budget.attempts=3,x=>x.budget.inProgress=true,x=>x.budget.recoveryEvidence.otherSourceActive=true,
+  x=>x.budget.recoveryEvidence.entries.pop(),x=>x.budget.recoveryEvidence.entries[0].runId++,x=>x.budget.recoveryEvidence.entries[0].jobId++,x=>x.budget.recoveryEvidence.entries[0].head=recoveryHead,
+  x=>x.budget.recoveryEvidence.entries[0].attempt=2,x=>x.budget.recoveryEvidence.entries[0].runStatus='in_progress',x=>x.budget.recoveryEvidence.entries[0].runConclusion='cancelled',x=>x.budget.recoveryEvidence.entries[0].conclusion='success',
+  x=>x.budget.recoveryEvidence.currentRun=null,x=>x.budget.recoveryEvidence.currentRun.attempt=2,x=>x.budget.recoveryEvidence.currentRun.actorId=1,x=>x.budget.recoveryEvidence.currentRun.workflowId=1,x=>x.budget.recoveryEvidence.currentRun.event='schedule',x=>x.budget.recoveryEvidence.currentRun.head=fundRecordsRecoveryBase,
+  x=>x.release.parent=fundRecordsRecoveryParents[0],x=>x.release.signatureVerified=false]){
+  const x=structuredClone(good);change(x);assert.throws(()=>validateReportRecoveryEvidence(x),/RECOVERY_/);
+ }
+ for(const target of ['2026-10-28','2026-10-30','2026-11-04','2026-11-05','2026-11-09'])assert.throws(()=>validateReportRecoveryEvidence({...good,plan:dailyReportPlan(target,['NYSE','NASDAQ'],{reviewedSyncDate:target})}),/RECOVERY_SCOPE/);
+ for(const conclusion of ['success','cancelled',null]){
+  const bad=fundRecordsRecoveryFixture();bad.runs[1].conclusion=conclusion;
+  await assert.rejects(authorizeReportRecovery({plan:bad.plan,expectedMain:recoveryHead,now:fundRecordsRecoveryNow,currentRunId:recoveryId,...recoveryReaders(bad)}),/RECOVERY_PRIOR_RUNS/);
+ }
+});
+test('November6 queued or terminated prior admission consumes recovery and cannot be reset or retried',async()=>{
+ for(const head of [fundRecordsRecoveryBase,recoveryHead])for(const [status,conclusion]of [['queued',null],['completed','cancelled'],['completed','skipped'],['completed','failure']]){
+  const f=fundRecordsRecoveryFixture(),r=f.run(90000000002,head,'2026-11-07T00:15:00Z');Object.assign(r,{status,conclusion});f.runs.push(r);
+  f.jobs[r.id]=[{...f.job(r,90000000003,'period',status,conclusion),started_at:null}];
+  await assert.rejects(authorizeReportRecovery({plan:f.plan,expectedMain:recoveryHead,currentRunId:recoveryId,now:fundRecordsRecoveryNow,...recoveryReaders(f)}),/RECOVERY_CONSUMED/);
+ }
+ for(const status of ['in_progress','completed']){
+  const f=fundRecordsRecoveryFixture(),r=f.run(90000000002,recoveryHead,'2026-11-07T00:15:00Z');r.status=status;r.conclusion=status==='completed'?'failure':null;f.runs.push(r);
+  f.jobs[r.id]=[f.job(r,90000000003,'Produce daily 2026-11-06',status,r.conclusion)];
+  await assert.rejects(authorizeReportRecovery({plan:f.plan,expectedMain:recoveryHead,currentRunId:recoveryId,now:fundRecordsRecoveryNow,...recoveryReaders(f)}),/RECOVERY_CONSUMED/);
+ }
+});
+test('November6 release pins the exact two-parent repair base, signed single successor, two modified files and deployed UI',async()=>{
+ for(const change of [f=>f.commit.parents=[{sha:recoveryHead}],f=>f.commit.parents.push({sha:fundRecordsRecoveryBase}),f=>f.supportCommit.parents=[],
+  f=>f.supportCommit.parents.reverse(),f=>f.supportCommit.parents.pop(),f=>f.supportCommit.parents[1].sha='e'.repeat(40),
+  f=>f.commit.commit.verification.verified=false,f=>f.commit.author.id=1,f=>f.supportCommit.commit.verification.verified=false,f=>f.supportCommit.author.id=1,f=>f.ref.object.sha='e'.repeat(40),
+  f=>f.comparison.ahead_by=2,f=>f.comparison.behind_by=1,f=>f.comparison.total_commits=2,f=>f.comparison.commits.push({sha:'e'.repeat(40)}),
+  f=>f.comparison.files.pop(),f=>f.comparison.files[0].filename='data.json',f=>f.comparison.files[0].status='added',f=>f.comparison.files[0].status='renamed',f=>f.comparison.files[0].previous_filename='old.mjs',
+  f=>f.comparison.files.push({filename:'scripts/fee-ratio-fee-publication.mjs',status:'added',sha:'b'.repeat(40)}),f=>f.tree.tree[0].sha='e'.repeat(40),f=>f.tree.truncated=true]){
+  const f=fundRecordsRecoveryFixture();change(f);await assert.rejects(readReportRecoveryRelease(recoveryHead,{fetchImpl:recoveryWire(f)}),/RECOVERY_/);
+ }
+});
+test('November6 recovery confirmation retains the owner event and never accepts an old target or run replay',()=>{
+ const args={mode:'preflight','report-kind':'daily','report-target':'2026-11-06','manual-sync-completed-for':'2026-11-06','recovery-main':recoveryHead};
+ const env={GITHUB_ACTIONS:'true',GITHUB_EVENT_NAME:'workflow_dispatch',GITHUB_RUN_ATTEMPT:'1',GITHUB_REF:'refs/heads/main',GITHUB_SHA:recoveryHead,GITHUB_REPOSITORY:'huanwujoy-crypto/fee-console',GITHUB_ACTOR_ID:'283054367',GITHUB_RUN_ID:String(recoveryId)};
+ const event={inputs:{run_reviewed_once:'true',report_kind:'daily',report_target:'2026-11-06',manual_sync_completed_for:'2026-11-06',recovery_main:recoveryHead,source_plan_check_only:'false',source_acceptance_once:'false'},sender:{id:283054367},repository:{full_name:'huanwujoy-crypto/fee-console'}};
+ assert.equal(reviewedRecoveryConfirmation(args,{env,readEvent:()=>event}),recoveryHead);
+ for(const change of [v=>v.env.GITHUB_RUN_ATTEMPT='2',v=>v.env.GITHUB_SHA=fundRecordsRecoveryBase,v=>v.env.GITHUB_ACTOR_ID='1',v=>v.event.sender.id=1,
+  v=>v.event.inputs.recovery_main=fundRecordsRecoveryBase,v=>v.args['manual-sync-completed-for']='2026-11-05',v=>v.args['report-target']='2026-11-04',v=>v.event.inputs.source_acceptance_once='true']){
+  const v=structuredClone({args,env,event});change(v);assert.throws(()=>reviewedRecoveryConfirmation(v.args,{env:v.env,readEvent:()=>v.event}),/RECOVERY_CONFIRMATION/);
+ }
+});
 test('both admission checks use the existing ephemeral read token without extending other workflow steps or permissions',()=>{
  const wf=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8');
  const produce=wf.split('\n  produce:\n')[1].split('\n  once-finish:\n')[0];
