@@ -6,7 +6,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import {nyDate} from './daily-core.mjs';
-import {SharesightIbManagerReader,IbManagerSourceError,ibBaselineBusinessHash,ibSourceFailureCode,validateIbBootstrapCoverage,validateIbManagerReportInput} from './ib-manager-source.mjs';
+import {SharesightIbManagerReader,IbManagerSourceError,IB_CASH_RECONCILIATION_SITES,IB_CASH_DATE_ROLES,ibSourceCashSite,ibSourceCashDateRole,ibBaselineBusinessHash,ibSourceFailureCode,validateIbBootstrapCoverage,validateIbManagerReportInput} from './ib-manager-source.mjs';
 import {buildIbManagerReportBundle,validateIbManagerReportState,buildIbOwnerBaseline,validateIbOwnerBaselineState,buildIbManagerReturnReceipt,buildIbManagerDrawdownReceipt,createIbManagerReturnConsumer,createIbManagerDrawdownConsumer} from './ib-manager-return.mjs';
 import {prepareIbManagerReport,loadIbManagerReport,sameIbManagerData,validateIbManagerCoverage,assertIbManagerConfiguration,assertIbManagerPublication,IB_PUBLICATION_DIAGNOSTIC_PREFIX,validateIbPublicationDiagnostic} from './ib-manager-report.mjs';
 import {safeProducerFailureSummary} from './fee-cloud-producer.mjs';
@@ -19,18 +19,114 @@ const input=()=>({points:[{d:'2026-08-31',tot:100},{d:'2026-09-01',tot:150},{d:'
 const lock=()=>ibBaselineBusinessHash(input());
 const add=d=>new Date(Date.parse(d+'T00:00:00Z')+86400000).toISOString().slice(0,10);
 
+function cashFailure(site,role){return error=>{
+  assert.equal(error.message,'IB_SOURCE_CASH_RECONCILIATION');assert.equal(error.code,'CASH_RECONCILIATION');
+  assert.equal(ibSourceCashSite(error),site);assert.equal(ibSourceCashDateRole(error),role);
+  assert.equal(error.cashSite,site);assert.equal(error.cashDateRole,role);
+  assert.equal(JSON.stringify(error),'{"code":"CASH_RECONCILIATION"}');return true;
+};}
+test('cash diagnostic locations are immutable fixed labels and do not alter ordinary errors or serialization',()=>{
+  assert.ok(Object.isFrozen(IB_CASH_RECONCILIATION_SITES));assert.ok(Object.isFrozen(IB_CASH_DATE_ROLES));
+  assert.equal(new Set(IB_CASH_RECONCILIATION_SITES).size,IB_CASH_RECONCILIATION_SITES.length);
+  for(const site of IB_CASH_RECONCILIATION_SITES)for(const role of IB_CASH_DATE_ROLES){
+    assert.match(site,/^[A-Z_]+$/);const error=new IbManagerSourceError('CASH_RECONCILIATION',site,role);
+    cashFailure(site,site==='UNCLASSIFIED'?'NONE':role)(error);
+    assert.throws(()=>{error.cashSite='PRIVATE_CANARY';},TypeError);
+    assert.throws(()=>Object.defineProperty(error,'cashDateRole',{value:'PRIVATE_CANARY'}),TypeError);
+    assert.deepEqual({...error},{code:'CASH_RECONCILIATION'});
+  }
+  const error=new IbManagerSourceError('AMOUNT','TARGET_API_AMOUNT','TARGET');
+  assert.equal(ibSourceFailureCode(error),'IB_SOURCE_AMOUNT');assert.equal(Object.hasOwn(error,'cashSite'),false);
+  assert.equal(ibSourceCashSite(error),'UNCLASSIFIED');assert.equal(ibSourceCashDateRole(error),'NONE');
+});
+test('cash diagnostic extraction ignores unknown fields, forged exceptions and hostile getters without exposing source text',()=>{
+  let touched=0;const hostile={get cashSite(){touched++;throw Error('PRIVATE_CANARY');},get cashDateRole(){touched++;throw Error('PRIVATE_CANARY');},toString(){touched++;throw Error('PRIVATE_CANARY');}};
+  const revoked=Proxy.revocable({},{});revoked.revoke();
+  for(const value of [undefined,null,0,'PRIVATE_CANARY',hostile,revoked.proxy,new Proxy({}, {get(){touched++;throw Error('PRIVATE_CANARY');}}),
+    {code:'CASH_RECONCILIATION',cashSite:'TARGET_API_AMOUNT',cashDateRole:'TARGET'},
+    Object.assign(Object.create(IbManagerSourceError.prototype),{code:'CASH_RECONCILIATION',cashSite:'TARGET_API_AMOUNT',cashDateRole:'TARGET'}),
+    new Error('PRIVATE_CANARY account=SYNTH amount=123 date=2026-01-01')]){
+    assert.equal(ibSourceCashSite(value),'UNCLASSIFIED');assert.equal(ibSourceCashDateRole(value),'NONE');
+  }
+  for(const value of ['PRIVATE_CANARY','TARGET_API_AMOUNT\nPRIVATE_CANARY',hostile,revoked.proxy,null]){
+    cashFailure('UNCLASSIFIED','NONE')(new IbManagerSourceError('CASH_RECONCILIATION',value,'TARGET'));
+    cashFailure('TARGET_API_AMOUNT','NONE')(new IbManagerSourceError('CASH_RECONCILIATION','TARGET_API_AMOUNT',value));
+  }
+  assert.equal(touched,0);
+});
+test('every cash rejection has a literal allowlisted site, including separate balance-chain and dated API checks',()=>{
+  const text=fs.readFileSync(new URL('./ib-manager-source.mjs',import.meta.url),'utf8');
+  const calls=[...text.matchAll(/fail\('CASH_RECONCILIATION','([A-Z_]+)'/g)].map(m=>m[1]);
+  assert.equal(text.match(/fail\('CASH_RECONCILIATION'/g).length,calls.length);
+  assert.deepEqual([...new Set(calls)].sort(),IB_CASH_RECONCILIATION_SITES.filter(x=>x!=='UNCLASSIFIED').sort());
+});
+test('target cash mismatch remains rejected at one cent with only a target role',async()=>{
+  const w=wire({mutate:b=>{if(b.cash_accounts)b.cash_accounts[0].balance_in_portfolio_currency+=0.01;}});
+  await assert.rejects(read(w),cashFailure('TARGET_API_AMOUNT','TARGET'));
+  assert.equal(w.calls.filter(c=>c.method==='POST').length,1);
+});
+test('dated cash failures distinguish count, identity, converted amount, native USD and date role',async t=>{
+  for(const [name,date,change,site,role] of [
+    ['missing anchor cash','2026-08-30',b=>b.cash_accounts.pop(),'DATED_API_COUNT','ANCHOR'],
+    ['wrong window identity','2026-09-01',b=>b.cash_accounts[0].portfolio_id=99,'DATED_API_IDENTITY','WINDOW'],
+    ['wrong window currency value','2026-09-01',b=>b.cash_accounts[1].balance_in_portfolio_currency+=0.01,'DATED_API_AMOUNT','WINDOW'],
+    ['wrong target native USD','2026-09-02',b=>b.cash_accounts[0].balance+=0.01,'DATED_API_USD_NATIVE','TARGET']
+  ])await t.test(name,async()=>{
+    const w=cadWire((b,{p,q})=>{if(p==='/api/v2/portfolios/1/cash_accounts.json'&&q.get('date')===date)change(b);});
+    await assert.rejects(w.reader.readStable({targetDate:baseline.asOf,baseline,expectedBaselineHash:ibBaselineBusinessHash(cadBusiness())}),cashFailure(site,role));
+  });
+});
+test('cash chain diagnostics distinguish disconnected rows from an invalid endpoint without relaxing conservation',async()=>{
+  await assert.rejects(read(wire({mutate:b=>{if(b.cash_account_transactions?.length)b.cash_account_transactions[0].balance++;}})),cashFailure('DAILY_CHAIN_LENGTH','WINDOW'));
+  const f=await incomeFixture({dividend:false,change:b=>{if(b.cash_account_transactions?.length){const row=b.cash_account_transactions[0];b.cash_account_transactions=[{...row,id:21,amount:1,balance:51},{...row,id:22,amount:2,balance:52}];}}});
+  await assert.rejects(f.run(),cashFailure('DAILY_CHAIN_END','TARGET'));
+  const mismatch=await incomeFixture({dividend:false,change:b=>{if(b.cash_account_transactions?.length)b.cash_account_transactions[0].amount-=0.01;}});
+  await assert.rejects(mismatch.run(),cashFailure('TRADE_NORMALIZATION_SCOPE','PROOF'));
+});
+test('historical income proof failures carry only a proof role and keep original guards',async t=>{
+  const f=await earlyIncomeFixture(),valid=await f.run();
+  for(const [name,change,site] of [
+    ['schema',p=>p.extra='PRIVATE_CANARY','INCOME_PROOF_SCHEMA'],
+    ['payout cents',p=>p.payout.netCents++,'INCOME_PROOF_PAYOUT'],
+    ['cash keys',p=>p.rawAnchor.cashCurrency[99]='USD','SNAPSHOT_CASH_KEYS'],
+    ['cash leg identity',p=>p.cashLegs[0].cashId=99,'INCOME_PROOF_LEG_SCHEMA'],
+    ['payout balance',p=>p.cashLegs.find(x=>x.type==='PAYOUT').balanceCents++,'INCOME_PROOF_PAYOUT_LEG'],
+    ['unsupported companion',p=>p.cashLegs.find(x=>x.type!=='PAYOUT').type='FEE','INCOME_PROOF_OTHER_LEG'],
+    ['missing companion',p=>p.cashLegs=p.cashLegs.filter(x=>x.type==='PAYOUT'),'INCOME_PROOF_MOVEMENT'],
+    ['disconnected companion',p=>p.cashLegs.find(x=>x.type!=='PAYOUT').balanceCents++,'INCOME_PROOF_CHAIN_LENGTH'],
+    ['proof hash',p=>p.proofId='a'.repeat(64),'INCOME_PROOF_HASH']
+  ])await t.test(name,()=>{const bad=structuredClone(valid);change(bad.incomeDateNormalizations[0]);assert.throws(()=>validateIbManagerReportInput(bad,f.expected),cashFailure(site,'PROOF'));});
+  assert.deepEqual(validateIbManagerReportInput(valid,f.expected),valid);
+  assert.equal(JSON.stringify(valid).includes('cashSite'),false);assert.equal(JSON.stringify(valid).includes('cashDateRole'),false);
+  const external=await earlyIncomeFixture({change:b=>{if(b.cash_account_transactions?.length)Object.assign(b.cash_account_transactions[0],{cash_account_transaction_type:{name:'DEPOSIT'},description:'Owner capital contribution'});}});
+  await assert.rejects(external.run(),cashFailure('INCOME_NORMALIZATION_EXTERNAL','PROOF'));
+});
+test('historical trade proof failures preserve strict identities, boundaries and cent checks',async t=>{
+  const f=await cashDateFixture(),valid=await f.run();
+  for(const [name,change,site] of [
+    ['schema',p=>p.extra=true,'TRADE_PROOF_SCHEMA'],
+    ['leg schema',p=>p.cashLeg.id=0,'TRADE_PROOF_LEG_SCHEMA'],
+    ['cash amount',p=>p.cashLeg.amountCents++,'TRADE_PROOF_LINK'],
+    ['boundary',p=>p.cashLeg.balanceCents++,'TRADE_PROOF_BOUNDARY'],
+    ['proof hash',p=>p.proofId='a'.repeat(64),'TRADE_PROOF_HASH']
+  ])await t.test(name,()=>{const bad=structuredClone(valid);change(bad.cashDateNormalizations[0]);assert.throws(()=>validateIbManagerReportInput(bad,f.expected),cashFailure(site,'PROOF'));});
+  assert.deepEqual(validateIbManagerReportInput(valid,f.expected),valid);
+  assert.equal(JSON.stringify(valid).includes('cashSite'),false);assert.equal(JSON.stringify(valid).includes('cashDateRole'),false);
+});
+
 test('one-off diagnostic validates real reader receipts without applying, writing or exposing the report',async t=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ib-readonly-test-'));fs.chmodSync(dir,0o700);t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
   const b=await buildIbManagerReportBundle(await source(),lock());
   const payload={...feeData(),ibManagerReturnReceipt:b.returnReceipt,ibManagerDrawdownReceipt:b.drawdownReceipt,ibManagerSourceState:b.sourceState,ibManagerSourceStatus:{state:'verified',targetDate:baseline.asOf}};
   const original=structuredClone(payload),environ={IB_MANAGER_READ_ENABLED:'true',IB_MANAGER_BASELINE_SHA256:lock()};
-  const w=wire({mutate:b=>{if(b.portfolios)b.portfolios.push({id:999,name:'Other synthetic account',currency_code:'USD'});}}),transport=ibDiagnosticTransport({fetchImpl:w.fetchImpl,anchor:baseline.asOf,target:add(baseline.asOf)});
+  const w=wire({mutate:b=>{if(b.portfolios)b.portfolios.push({id:999,name:'Other synthetic account',currency_code:'USD'});}}),transport=ibDiagnosticTransport({fetchImpl:w.fetchImpl,anchor:baseline.asOf,target:add(baseline.asOf),now:()=>Date.parse(IB_DIAGNOSTIC_PLAN.from)+60000});
   const boundedReader=new SharesightIbManagerReader({clientId:'synthetic-client',clientSecret:'synthetic-secret',fetchImpl:transport.fetch});
   const result=await inspectIbDiagnostic({payload,anchorDate:baseline.asOf,targetDate:add(baseline.asOf),outputDir:dir,environ,reader:boundedReader});transport.stop();
   assert.equal(result.status,'source-and-receipts-verified');assert.equal(result.fullReportVerified,false);assert.equal(result.publicationReady,false);assert.equal(result.temporaryInputsCleaned,true);
   assert.equal(w.calls.filter(c=>c.method==='POST').length,2);assert.equal(w.calls.some(c=>c.url.includes('/999/')),false);assert.equal(transport.counts().oauthGrants,2);assert.deepEqual(payload,original);assert.deepEqual(fs.readdirSync(dir),[]);
-  for(const [reader,expected] of [[{async readStable(){throw new IbManagerSourceError('CASH_RECONCILIATION');}},'IB_SOURCE_CASH_RECONCILIATION'],[{async readStable(){throw Error('PRIVATE_CANARY amount=123456');}},'IB_SOURCE_NETWORK']]){
-    const r=await inspectIbDiagnostic({payload,anchorDate:baseline.asOf,targetDate:add(baseline.asOf),outputDir:dir,environ,reader});assert.equal(r.status,'incomplete');assert.equal(r.reasonCode,expected);assert.equal(r.temporaryInputsCleaned,true);assert.equal(JSON.stringify(r).includes('PRIVATE_CANARY'),false);assert.deepEqual(payload,original);
+  for(const [error,expected,site,role] of [[new IbManagerSourceError('CASH_RECONCILIATION','DAILY_CHAIN_END','TARGET'),'IB_SOURCE_CASH_RECONCILIATION','DAILY_CHAIN_END','TARGET'],[new IbManagerSourceError('CASH_RECONCILIATION','PRIVATE_CANARY','PRIVATE_CANARY'),'IB_SOURCE_CASH_RECONCILIATION','UNCLASSIFIED','NONE'],[new Error('PRIVATE_CANARY amount=123456'),'IB_SOURCE_NETWORK','UNCLASSIFIED','NONE']]){
+    let reads=0;const reader={async readStable(){reads++;throw error;}};
+    const r=await inspectIbDiagnostic({payload,anchorDate:baseline.asOf,targetDate:add(baseline.asOf),outputDir:dir,environ,reader});assert.equal(reads,1);assert.equal(r.status,'incomplete');assert.equal(r.reasonCode,expected);assert.equal(r.cashSite,site);assert.equal(r.cashDateRole,role);assert.equal(r.temporaryInputsCleaned,true);assert.equal(JSON.stringify(r).includes('PRIVATE_CANARY'),false);assert.deepEqual(payload,original);assert.deepEqual(fs.readdirSync(dir),[]);
   }
   for(const change of [p=>delete p.ibManagerSourceState,p=>p.ibManagerSourceState.stateId='e'.repeat(64)]){
     const p=structuredClone(payload);change(p);const r=await inspectIbDiagnostic({payload:p,anchorDate:baseline.asOf,targetDate:add(baseline.asOf),outputDir:dir,environ,reader:{readStable:()=>assert.fail('bad baseline must not read Sharesight')}});assert.equal(r.status,'incomplete');assert.equal(r.phase,'BASE_STATE');
@@ -38,29 +134,102 @@ test('one-off diagnostic validates real reader receipts without applying, writin
 });
 
 test('diagnostic transport restricts exact dates, methods and budgets before external IO',async()=>{
-  let calls=0,clock=0;const transport=ibDiagnosticTransport({fetchImpl:async()=>{calls++;return {};},now:()=>clock});
+  let calls=0,clock=Date.parse(IB_DIAGNOSTIC_PLAN.from)+60000;const transport=ibDiagnosticTransport({fetchImpl:async()=>{calls++;return new Response(JSON.stringify({portfolios:[{id:1,name:'IB-HK',currency_code:'USD'}]}));},now:()=>clock});
   const base='https://api.sharesight.com',get={method:'GET'};
-  for(const [url,init] of [[base+'/api/v2/portfolios.json',{method:'POST',body:'PRIVATE'}],[base+'/api/v2/portfolios.json?extra=1',get],['https://example.invalid/api/v2/portfolios.json',get],[base+'/api/v3/portfolios/1/trades.json?consolidated=false&start_date=2026-11-03&end_date=2026-11-04',get],[base+'/api/v2/portfolios/1/cash_accounts.json?date=2026-11-05',get],[base+'/api/v2/cash_accounts/3/cash_account_transactions.json?from=2026-11-03&to=2026-11-04',get]])await assert.rejects(transport.fetch(url,init),/ROUTE/);
+  for(const [url,init] of [[base+'/api/v2/portfolios.json',{method:'POST',body:'PRIVATE'}],[base+'/api/v2/portfolios.json?extra=1',get],['https://example.invalid/api/v2/portfolios.json',get],[base+'/api/v3/portfolios/1/trades.json?consolidated=false&start_date=2026-11-03&end_date=2026-11-04',get],[base+'/api/v2/portfolios/1/cash_accounts.json?date=2026-11-04',get],[base+'/api/v2/cash_accounts/3/cash_account_transactions.json?from=2026-11-03&to=2026-11-04',get]])await assert.rejects(transport.fetch(url,init),/ROUTE/);
   assert.equal(calls,0);
-  for(let i=0;i<32;i++)await transport.fetch(base+'/api/v2/portfolios.json',get);
-  await assert.rejects(transport.fetch(base+'/api/v2/portfolios.json',get),/BUDGET/);assert.equal(calls,32);
-  for(let i=0;i<2;i++)await transport.fetch(base+'/oauth2/token',{method:'POST',body:'synthetic'});
-  await assert.rejects(transport.fetch(base+'/oauth2/token',{method:'POST'}),/BUDGET/);assert.deepEqual(transport.counts(),{sourceGets:32,oauthGrants:2});
+  for(let i=0;i<IB_DIAGNOSTIC_PLAN.maxGets;i++)await transport.fetch(base+'/api/v2/portfolios.json',get);
+  await assert.rejects(transport.fetch(base+'/api/v2/portfolios.json',get),/BUDGET/);assert.equal(calls,IB_DIAGNOSTIC_PLAN.maxGets);assert.equal(transport.refusal(),'BUDGET');
+  for(let i=0;i<IB_DIAGNOSTIC_PLAN.maxGrants;i++)await transport.fetch(base+'/oauth2/token',{method:'POST',body:'synthetic'});
+  await assert.rejects(transport.fetch(base+'/oauth2/token',{method:'POST'}),/BUDGET/);assert.deepEqual(transport.counts(),{sourceGets:IB_DIAGNOSTIC_PLAN.maxGets,oauthGrants:IB_DIAGNOSTIC_PLAN.maxGrants});
   transport.stop();await assert.rejects(transport.fetch(base+'/api/v2/portfolios.json',get),/ROUTE/);
-  const expired=ibDiagnosticTransport({fetchImpl:()=>assert.fail('expired transport'),now:()=>clock});clock=14*60000+1;await assert.rejects(expired.fetch(base+'/api/v2/portfolios.json',get),/ROUTE/);
+  const expired=ibDiagnosticTransport({fetchImpl:()=>assert.fail('expired transport'),now:()=>clock});clock+=14*60000+1;await assert.rejects(expired.fetch(base+'/api/v2/portfolios.json',get),/EXPIRED/);assert.equal(expired.refusal(),'EXPIRED');expired.stop();
+});
+
+function diagnosticWire(change=()=>{}){
+  const calls=[],base='https://api.sharesight.com',target=IB_DIAGNOSTIC_PLAN.target;
+  const transport=ibDiagnosticTransport({now:()=>Date.parse(IB_DIAGNOSTIC_PLAN.from)+60000,fetchImpl:async(url,init)=>{
+    calls.push({url,method:init.method});const u=new URL(url),p=u.pathname,q=u.searchParams;
+    let body=p==='/api/v2/portfolios.json'?{portfolios:[{id:1,name:'IB-HK',currency_code:'USD'},{id:999,name:'Other synthetic account',currency_code:'USD'}]}:
+      p==='/api/v2/portfolios/1/cash_accounts.json'?{cash_accounts:[{id:3,portfolio_id:1,date:q.get('date')}]}:
+      p==='/api/v3/portfolios/1/performance'?{report:{portfolio_id:1,end_date:q.get('end_date'),cash_accounts:[{id:3,portfolio:{id:1}}]}}:
+      p==='/api/v2/cash_accounts/3/cash_account_transactions.json'?{cash_account_transactions:[{id:4,cash_account_id:3,cash_account_transaction_type:{name:'Payout'},trade_id:null,holding_id:2,payout_id:13,date_time:target+'T00:00:00.000Z'}]}:{};
+    change(body,{p,q,calls});const response=new Response(JSON.stringify(body),{headers:{'content-type':'application/json'}});Object.defineProperty(response,'url',{value:url});return response;
+  }});
+  return {calls,transport,get:route=>transport.fetch(base+route,{method:'GET'})};
+}
+test('diagnostic routes require this read portfolio, cash account and exact target payout references',async()=>{
+  const f=diagnosticWire(),target=IB_DIAGNOSTIC_PLAN.target,anchor=IB_DIAGNOSTIC_PLAN.anchor;
+  try{
+    await assert.rejects(f.get('/api/v3/portfolios/1/holdings?consolidated=false'),/ROUTE/);assert.equal(f.calls.length,0);
+    await f.get('/api/v2/portfolios.json');
+    await assert.rejects(f.get('/api/v3/portfolios/999/holdings?consolidated=false'),/ROUTE/);
+    await assert.rejects(f.get('/api/v2/cash_accounts/3/cash_account_transactions.json?from='+target+'&to='+target),/ROUTE/);
+    await f.get('/api/v2/portfolios/1/cash_accounts.json?date='+anchor);
+    await f.get('/api/v2/portfolios/1/cash_accounts.json?date='+target);
+    await assert.rejects(f.get('/api/v2/cash_accounts/99/cash_account_transactions.json?from='+target+'&to='+target),/ROUTE/);
+    await assert.rejects(f.get('/api/v2/payouts/13.json'),/ROUTE/);
+    await f.get('/api/v2/cash_accounts/3/cash_account_transactions.json?from='+target+'&to='+target);
+    await f.get('/api/v2/payouts/13.json');await assert.rejects(f.get('/api/v2/payouts/99.json'),/ROUTE/);
+    await assert.rejects(f.get('/api/v2/payouts/13.json?extra=1'),/ROUTE/);
+    await assert.rejects(f.get('/api/v2/cash_accounts/3/cash_account_transactions.json?from='+anchor+'&to='+target),/ROUTE/);
+    await f.get('/api/v2/portfolios.json');
+    await assert.rejects(f.get('/api/v2/payouts/13.json'),/ROUTE/);
+    await assert.rejects(f.get('/api/v2/cash_accounts/3/cash_account_transactions.json?from='+target+'&to='+target),/ROUTE/);
+    assert.equal(f.calls.some(c=>/\/999\/|\/99\//.test(c.url)),false);
+    const query=new URLSearchParams({consolidated:'false',end_date:anchor,grouping:'investment_type',include_limited:'false',include_sales:'false',report_combined:'false',start_date:anchor});
+    await f.get('/api/v3/portfolios/1/performance?'+query);
+    await f.get('/api/v2/cash_accounts/3/cash_account_transactions.json?from='+target+'&to='+target);
+  }finally{f.transport.stop();}
+});
+test('diagnostic identity responses and payout aliases cannot broaden the read boundary',async t=>{
+  const target=IB_DIAGNOSTIC_PLAN.target;
+  for(const [name,change,route] of [
+    ['ambiguous IB identity',b=>{if(b.portfolios)b.portfolios.push({id:2,name:'IB-HK',currency_code:'USD'});},'/api/v2/portfolios.json'],
+    ['wrong cash portfolio',b=>{if(b.cash_accounts)b.cash_accounts[0].portfolio_id=999;},'/api/v2/portfolios/1/cash_accounts.json?date='+target],
+    ['wrong cash date',b=>{if(b.cash_accounts)b.cash_accounts[0].date=IB_DIAGNOSTIC_PLAN.anchor;},'/api/v2/portfolios/1/cash_accounts.json?date='+target],
+    ['wrong row account',b=>{if(b.cash_account_transactions)b.cash_account_transactions[0].cash_account_id=999;},'/api/v2/cash_accounts/3/cash_account_transactions.json?from='+target+'&to='+target]
+  ])await t.test(name,async()=>{
+    const f=diagnosticWire(change);try{
+      if(route!=='/api/v2/portfolios.json')await f.get('/api/v2/portfolios.json');
+      if(route.includes('/cash_account_transactions.json'))await f.get('/api/v2/portfolios/1/cash_accounts.json?date='+target);
+      await assert.rejects(f.get(route),/ROUTE/);assert.equal(f.transport.refusal(),'ROUTE');
+    }finally{f.transport.stop();}
+  });
+  for(const [name,change] of [
+    ['wrong day',r=>r.date_time=IB_DIAGNOSTIC_PLAN.anchor+'T00:00:00.000Z'],
+    ['nonmidnight',r=>r.date_time=target+'T01:00:00.000Z'],
+    ['trade linked',r=>r.trade_id=9],['no holding',r=>r.holding_id=null],
+    ['unsafe ID',r=>r.payout_id=Number.MAX_SAFE_INTEGER+1],['wrong type',r=>r.cash_account_transaction_type.name='PAYOUT_EXTRA']
+  ])await t.test(name,async()=>{
+    const f=diagnosticWire(b=>{if(b.cash_account_transactions)change(b.cash_account_transactions[0]);});try{
+      await f.get('/api/v2/portfolios.json');await f.get('/api/v2/portfolios/1/cash_accounts.json?date='+target);
+      await f.get('/api/v2/cash_accounts/3/cash_account_transactions.json?from='+target+'&to='+target);
+      const count=f.calls.length;await assert.rejects(f.get('/api/v2/payouts/13.json'),/ROUTE/);assert.equal(f.calls.length,count);
+    }finally{f.transport.stop();}
+  });
+});
+test('diagnostic absolute deadline and response size fail closed before any following request',async()=>{
+  const route='https://api.sharesight.com/api/v2/portfolios.json',get={method:'GET'},expires=Date.parse(IB_DIAGNOSTIC_PLAN.expires);
+  let clock=expires,calls=0;const before=ibDiagnosticTransport({now:()=>clock,fetchImpl:async()=>{calls++;return new Response('{}');}});
+  await assert.rejects(before.fetch(route,get),/EXPIRED/);assert.equal(calls,0);before.stop();
+  clock=expires-1;const after=ibDiagnosticTransport({now:()=>clock,fetchImpl:async()=>{calls++;clock=expires;return new Response('{}');}});
+  await assert.rejects(after.fetch(route,get),/EXPIRED/);assert.equal(calls,1);assert.equal(after.refusal(),'EXPIRED');after.stop();
+  const large=ibDiagnosticTransport({now:()=>Date.parse(IB_DIAGNOSTIC_PLAN.from)+60000,fetchImpl:async()=>new Response(' '.repeat(2*1024*1024+1))});
+  await assert.rejects(large.fetch(route,get),/ROUTE/);assert.equal(large.counts().sourceGets,1);large.stop();
 });
 
 test('diagnostic event and metadata reject mixed modes, reruns, duplicates and changed heads',async()=>{
-  const head='a'.repeat(40),now=new Date('2026-11-05T03:00:00Z'),id='50000000000';
+  const head='a'.repeat(40),now=new Date(Date.parse(IB_DIAGNOSTIC_PLAN.from)+3600000),id='50000000000';
   const env={GITHUB_ACTIONS:'true',GITHUB_REPOSITORY:'huanwujoy-crypto/fee-console',GITHUB_REF:'refs/heads/main',GITHUB_SHA:head,GITHUB_EVENT_NAME:'workflow_dispatch',GITHUB_ACTOR_ID:'283054367',GITHUB_RUN_ATTEMPT:'1',GITHUB_RUN_ID:id,FEE_IB_DIAGNOSTIC_ACTIONS_TOKEN:'synthetic-token-not-a-secret'};
   const event={inputs:{ib_diagnostic_once:'true',ib_diagnostic_main:head}};
   validateIbDiagnosticEvent({env,event,expectedMain:head,now});
   validateIbDiagnosticEvent({env,event:{inputs:{...event.inputs,confirmed_main:''}},expectedMain:head,now});
   for(const confirmed_main of [head,null,false,0])assert.throws(()=>validateIbDiagnosticEvent({env,event:{inputs:{...event.inputs,confirmed_main}},expectedMain:head,now}),/ARGUMENT/);
   for(const [k,v] of [['GITHUB_RUN_ATTEMPT','2'],['GITHUB_EVENT_NAME','schedule'],['GITHUB_ACTOR_ID','1'],['GITHUB_REF','refs/heads/other'],['GITHUB_SHA','b'.repeat(40)]])assert.throws(()=>validateIbDiagnosticEvent({env:{...env,[k]:v},event,expectedMain:head,now}),/ENVIRONMENT/);
-  for(const [k,v] of [['ratio_plan','{}'],['run_reviewed_once','true'],['source_acceptance_once','true'],['report_target','2026-11-04'],['unknown','x']])assert.throws(()=>validateIbDiagnosticEvent({env,event:{inputs:{...event.inputs,[k]:v}},expectedMain:head,now}),/ARGUMENT/);
-  assert.throws(()=>validateIbDiagnosticEvent({env,event,expectedMain:head,now:new Date('2026-11-06T00:00:00Z')}),/EXPIRED/);
-  const current={id:Number(id),head_sha:head,head_branch:'main',path:'.github/workflows/fee-cloud-producer.yml',event:'workflow_dispatch',actor:{id:283054367},run_attempt:1,status:'in_progress',conclusion:null,display_title:IB_DIAGNOSTIC_PLAN.name,created_at:'2026-11-05T02:59:00Z'};
+  for(const [k,v] of [['ratio_plan','{}'],['run_reviewed_once','true'],['source_acceptance_once','true'],['report_target',IB_DIAGNOSTIC_PLAN.target],['unknown','x']])assert.throws(()=>validateIbDiagnosticEvent({env,event:{inputs:{...event.inputs,[k]:v}},expectedMain:head,now}),/ARGUMENT/);
+  for(const at of [Date.parse(IB_DIAGNOSTIC_PLAN.from)-1,Date.parse(IB_DIAGNOSTIC_PLAN.expires)+1])assert.throws(()=>validateIbDiagnosticEvent({env,event,expectedMain:head,now:new Date(at)}),/EXPIRED/);
+  const current={id:Number(id),head_sha:head,head_branch:'main',path:'.github/workflows/fee-cloud-producer.yml',event:'workflow_dispatch',actor:{id:283054367},run_attempt:1,status:'in_progress',conclusion:null,display_title:IB_DIAGNOSTIC_PLAN.name,created_at:new Date(now.getTime()-60000).toISOString()};
   const wire=(mutate=()=>{})=>async(url,init)=>{assert.equal(init.method,'GET');assert.equal(init.redirect,'error');let value=url.endsWith('/git/ref/heads/main')?{object:{sha:head}}:url.includes('/commits/')?{sha:head,author:{id:283054367},commit:{verification:{verified:true}}}:url.includes('/actions/runs?')?{total_count:1,workflow_runs:[structuredClone(current)]}:structuredClone(current);mutate(value,url);const r=new Response(JSON.stringify(value));Object.defineProperty(r,'url',{value:url});return r;};
   await verifyIbDiagnosticRun({env,expectedMain:head,now,fetchImpl:wire()});
   for(const [change,reason] of [[v=>{if(v.object)v.object.sha='b'.repeat(40);},/HEAD/],[v=>{if(v.verification)v.verification.verified=false;if(v.commit)v.commit.verification.verified=false;},/HEAD/],[v=>{if(v.run_attempt)v.run_attempt=2;},/RUN/],[v=>{if(v.workflow_runs){v.workflow_runs.unshift({...current,id:Number(id)-1,status:'completed',conclusion:'failure'});v.total_count++;}},/DUPLICATE/],[v=>{if(v.workflow_runs)v.total_count++;},/METADATA/]])await assert.rejects(verifyIbDiagnosticRun({env,expectedMain:head,now,fetchImpl:wire(change)}),reason);

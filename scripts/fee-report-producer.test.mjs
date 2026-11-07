@@ -731,6 +731,23 @@ test('the exact read-only IB diagnostic leaves production attempts unchanged but
  for(const change of [x=>x.event='schedule',x=>x.display_title='other',x=>x.actor.id=1,x=>x.run_attempt=2]){const bad=structuredClone(r);change(bad);await assert.rejects(readPeriodSourceAttempts({plan:budgetPlan,now:budgetNow,fetchImpl:budgetWire([bad],[j])}),/SOURCE_ATTEMPT_METADATA/);}
  const active={...j,status:'in_progress',conclusion:null};assert.deepEqual(await readPeriodSourceAttempts({plan:budgetPlan,now:budgetNow,fetchImpl:budgetWire([r],[active])}),{attempts:0,inProgress:false});
 });
+test('Nov6 read-only diagnostic preserves ordinary budgets and still counts every real source job',async()=>{
+ const name='IB diagnostic 2026-11-06',r={...budgetRun(),event:'workflow_dispatch',display_title:name,actor:{id:283054367},run_attempt:1},j=budgetJob(r,31,name);
+ const read=jobs=>readPeriodSourceAttempts({plan:budgetPlan,now:budgetNow,fetchImpl:budgetWire([r],jobs)});
+ for(const conclusion of ['failure','success','timed_out','cancelled'])assert.deepEqual(await read([{...j,conclusion}]),{attempts:0,inProgress:false});
+ assert.deepEqual(await read([{...j,status:'in_progress',conclusion:null}]),{attempts:0,inProgress:false});
+ assert.deepEqual(await read([j,budgetJob(r)]),{attempts:1,inProgress:false});
+ assert.deepEqual(await read([j,budgetJob(r),budgetJob(r,11,'produce')]),{attempts:2,inProgress:false});
+ assert.deepEqual(await read([j,{...budgetJob(r),status:'in_progress',conclusion:null}]),{attempts:1,inProgress:true});
+});
+test('Nov6 diagnostic allowance rejects unknown names and retains all run and job identity checks',async()=>{
+ const name='IB diagnostic 2026-11-06',r={...budgetRun(),event:'workflow_dispatch',display_title:name,actor:{id:283054367},run_attempt:1},j=budgetJob(r,31,name);
+ for(const change of [x=>x.event='schedule',x=>x.display_title='IB diagnostic 2026-11-04',x=>x.actor.id=1,x=>x.actor=null,x=>x.run_attempt=2,x=>delete x.run_attempt,x=>x.head_branch='other',x=>x.path='other']){
+  const bad=structuredClone(r);change(bad);await assert.rejects(readPeriodSourceAttempts({plan:budgetPlan,now:budgetNow,fetchImpl:budgetWire([bad],[j])}),/SOURCE_ATTEMPT_METADATA/);
+ }
+ for(const name of ['IB diagnostic 2026-11-05','IB diagnostic 2026-11-07','IB diagnostic 2026-11-06 ','ib diagnostic 2026-11-06','IB diagnostic 2026-11-06 extra'])await assert.rejects(readPeriodSourceAttempts({plan:budgetPlan,now:budgetNow,fetchImpl:budgetWire([{...r,display_title:name}],[{...j,name}])}),/SOURCE_ATTEMPT_METADATA/);
+ for(const jobs of [[{...j,run_id:99}],[{...j,head_sha:'b'.repeat(40)}],[{...j,id:0}],[j,{...j}],[{...j,status:'unknown'}]])await assert.rejects(readPeriodSourceAttempts({plan:budgetPlan,now:budgetNow,fetchImpl:budgetWire([r],jobs)}),/SOURCE_ATTEMPT_METADATA/);
+});
 function budgetWire(runs,jobs,mutate=()=>{}){return async(url,init)=>{assert.equal(init.method,'GET');assert.equal(init.redirect,'error');assert.equal(init.headers.Authorization,undefined);assert.ok(!url.includes('/logs'));let value;if(url.includes('/workflows/fee-cloud-producer.yml/runs?'))value={total_count:runs.length,workflow_runs:runs};else{assert.match(url,/\/runs\/\d+\/jobs\?filter=all&per_page=100$/);value={total_count:jobs.length,jobs};}value=structuredClone(value);mutate(value,url);const r=new Response(JSON.stringify(value),{headers:{'content-type':'application/json'}});Object.defineProperty(r,'url',{value:url});return r;};}
 test('source budget counts all source job attempts, ignores public and once-control jobs and other cutoff, and excludes current run',async()=>{const r=budgetRun(),p={...budgetJob(r,12,'period'),conclusion:'success'},different=budgetJob(r,13,'Produce monthly 2026-10-31'),controls=['once-admit','once-finish','ratio-preflight','ratio'].map((name,i)=>({...budgetJob(r,20+i,name),conclusion:'success'}));assert.deepEqual(await readPeriodSourceAttempts({plan:budgetPlan,now:budgetNow,fetchImpl:budgetWire([r],[p,different,...controls,budgetJob(r)])}),{attempts:1,inProgress:false});assert.deepEqual(await readPeriodSourceAttempts({plan:budgetPlan,now:budgetNow,currentRunId:1,fetchImpl:budgetWire([r],[])}),{attempts:0,inProgress:false});});
 test('a rerun with two failed source jobs consumes two attempts, and an old unlabelled source is conservatively counted',async()=>{const r=budgetRun();assert.deepEqual(await readPeriodSourceAttempts({plan:budgetPlan,now:budgetNow,fetchImpl:budgetWire([r],[budgetJob(r),budgetJob(r,11,'produce')])}),{attempts:2,inProgress:false});});

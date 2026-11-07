@@ -7,16 +7,16 @@ import {execFileSync} from 'node:child_process';
 import {boundedJson} from './fee-http-json.mjs';
 import {decryptCandidate} from './fee-cloud-producer.mjs';
 import {validateHealth} from './fee-data-health.mjs';
-import {SharesightIbManagerReader} from './ib-manager-source.mjs';
+import {SharesightIbManagerReader,ibSourceCashSite,ibSourceCashDateRole} from './ib-manager-source.mjs';
 import {validateIbManagerReportState} from './ib-manager-return.mjs';
 import {assertIbManagerPublication,prepareIbManagerReport,loadIbManagerReport,validateIbPublicationDiagnostic} from './ib-manager-report.mjs';
 
 export const IB_DIAGNOSTIC_PLAN=Object.freeze({
-  target:'2026-11-04',anchor:'2026-11-03',name:'IB diagnostic 2026-11-04',
-  baselineMain:'5923e40afcf4fa17e91a4be8d05aedce0fe8cc28',
-  dataSha256:'4243a6e8dacf8b6aec886c8553796285977b6ed15df5aee70bb5a399de0e8f1b',
-  dataBlob:'61db90d958fc1bb82cccd37b65ced0d661b0d84a',healthBlob:'45da95da07ff036b7c5fd6aa45694d9db40fe59d',
-  from:'2026-11-05T00:00:00Z',expires:'2026-11-05T15:59:59Z',maxGets:32,maxGrants:2,
+  target:'2026-11-06',anchor:'2026-11-05',name:'IB diagnostic 2026-11-06',
+  baselineMain:'2c32d695f4f2dc057920fc690046ddf3e1ccdaee',
+  dataSha256:'99a3e10e3b2108b0eeaa2812e69bbdc7a4d97b0e870380d4aeb25387a1f1b10d',
+  dataBlob:'96f82464de31f0a33a5b6306805782c4b38b9067',healthBlob:'47cbcc9c05d459211de45620db8727384cc5308b',
+  from:'2026-11-07T00:00:00Z',expires:'2026-11-07T12:59:59Z',maxGets:32,maxGrants:2,
 });
 const ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const REPO='huanwujoy-crypto/fee-console',WORKFLOW='.github/workflows/fee-cloud-producer.yml';
@@ -33,34 +33,66 @@ const summary=(status,phase,reasonCode)=>({schema:'fee-console.ib-readonly-diagn
 
 // The original reader resolves IB-HK and enforces its portfolio/cash identities.
 // This additional boundary restricts methods, dates, duration and call counts.
-export function ibDiagnosticTransport({fetchImpl=globalThis.fetch,anchor=IB_DIAGNOSTIC_PLAN.anchor,target=IB_DIAGNOSTIC_PLAN.target,now=()=>Date.now()}={}){
-  const controller=new AbortController(),started=now();let gets=0,grants=0,closed=false;
+export function ibDiagnosticTransport({fetchImpl=globalThis.fetch,anchor=IB_DIAGNOSTIC_PLAN.anchor,target=IB_DIAGNOSTIC_PLAN.target,now=()=>Date.now(),expires=Date.parse(IB_DIAGNOSTIC_PLAN.expires)}={}){
+  const controller=new AbortController(),started=now();let gets=0,grants=0,closed=false,refusal='NONE',portfolio=null;
+  const cashIds=new Set(),payoutIds=new Set();
+  const reject=code=>{refusal=code;fail(code);};
+  const positive=v=>Number.isSafeInteger(v)&&v>0;
+  const remaining=Math.min(14*60000,expires-started);
+  const timer=setTimeout(()=>{closed=true;refusal='EXPIRED';controller.abort();},Math.max(0,remaining));timer.unref?.();
   const fetch=async(url,init={})=>{
     const u=new URL(url),q=u.searchParams,p=u.pathname,grant=u.href==='https://api.sharesight.com/oauth2/token';
-    if(closed||now()-started>14*60000||u.origin!=='https://api.sharesight.com'||u.username||u.password||u.hash)fail('ROUTE');
+    if(now()>=expires||now()-started>14*60000)reject('EXPIRED');
+    if(closed||u.origin!=='https://api.sharesight.com'||u.username||u.password||u.hash)reject('ROUTE');
     const keys=expected=>[...q.keys()].length===expected.length&&expected.every(k=>q.has(k));
+    const portfolioRoute=portfolio!==null&&p.startsWith('/api/v3/portfolios/'+portfolio+'/');
     let allowed=false;
     if(grant)allowed=init.method==='POST';
     else if(init.method==='GET'&&!init.body){
       if(p==='/api/v2/portfolios.json')allowed=keys([]);
-      else if(/^\/api\/v3\/portfolios\/[1-9]\d*\/holdings$/.test(p))allowed=keys(['consolidated'])&&q.get('consolidated')==='false';
-      else if(/^\/api\/v3\/portfolios\/[1-9]\d*\/performance$/.test(p))allowed=keys(['consolidated','end_date','grouping','include_limited','include_sales','report_combined','start_date'])&&[anchor,target].includes(q.get('end_date'))&&q.get('start_date')===q.get('end_date')&&q.get('grouping')==='investment_type'&&['consolidated','include_limited','include_sales','report_combined'].every(k=>q.get(k)==='false');
-      else if(/^\/api\/v3\/portfolios\/[1-9]\d*\/trades\.json$/.test(p))allowed=keys(['consolidated','start_date','end_date'])&&q.get('consolidated')==='false'&&q.get('start_date')===target&&q.get('end_date')===target;
-      else if(/^\/api\/v2\/portfolios\/[1-9]\d*\/cash_accounts\.json$/.test(p))allowed=keys(['date'])&&[anchor,target].includes(q.get('date'));
-      else if(/^\/api\/v2\/cash_accounts\/[1-9]\d*\/cash_account_transactions\.json$/.test(p))allowed=keys(['from','to'])&&q.get('from')===target&&q.get('to')===target;
+      else if(portfolioRoute&&p==='/api/v3/portfolios/'+portfolio+'/holdings')allowed=keys(['consolidated'])&&q.get('consolidated')==='false';
+      else if(portfolioRoute&&p==='/api/v3/portfolios/'+portfolio+'/performance')allowed=keys(['consolidated','end_date','grouping','include_limited','include_sales','report_combined','start_date'])&&[anchor,target].includes(q.get('end_date'))&&q.get('start_date')===q.get('end_date')&&q.get('grouping')==='investment_type'&&['consolidated','include_limited','include_sales','report_combined'].every(k=>q.get(k)==='false');
+      else if(portfolioRoute&&p==='/api/v3/portfolios/'+portfolio+'/trades.json')allowed=keys(['consolidated','start_date','end_date'])&&q.get('consolidated')==='false'&&q.get('start_date')===target&&q.get('end_date')===target;
+      else if(portfolio!==null&&p==='/api/v2/portfolios/'+portfolio+'/cash_accounts.json')allowed=keys(['date'])&&[anchor,target].includes(q.get('date'));
+      else if(/^\/api\/v2\/cash_accounts\/[1-9]\d*\/cash_account_transactions\.json$/.test(p))allowed=cashIds.has(Number(p.split('/')[4]))&&keys(['from','to'])&&q.get('from')===target&&q.get('to')===target;
+      else if(/^\/api\/v2\/payouts\/[1-9]\d*\.json$/.test(p))allowed=payoutIds.has(Number(p.split('/')[4].replace('.json','')))&&keys([]);
     }
-    if(!allowed)fail('ROUTE');
-    if(grant?grants>=IB_DIAGNOSTIC_PLAN.maxGrants:gets>=IB_DIAGNOSTIC_PLAN.maxGets)fail('BUDGET');
+    if(!allowed)reject('ROUTE');
+    if(grant?grants>=IB_DIAGNOSTIC_PLAN.maxGrants:gets>=IB_DIAGNOSTIC_PLAN.maxGets)reject('BUDGET');
     if(grant)grants++;else gets++;
-    return fetchImpl(url,{...init,redirect:'error',signal:init.signal?AbortSignal.any([init.signal,controller.signal]):controller.signal});
+    const response=await fetchImpl(url,{...init,redirect:'error',signal:init.signal?AbortSignal.any([init.signal,controller.signal]):controller.signal});
+    if(now()>=expires||now()-started>14*60000)reject('EXPIRED');
+    if(!grant){
+      // Only identities observed in this same scoped read can unlock a route.
+      // No source payload, URL, identifier or amount leaves the transport.
+      let body;try{
+        const reader=response.clone().body.getReader(),chunks=[];let size=0;
+        for(;;){const chunk=await reader.read();if(chunk.done)break;size+=chunk.value.byteLength;if(size>2*1024*1024){controller.abort();void reader.cancel().catch(()=>{});reject('ROUTE');}chunks.push(Buffer.from(chunk.value));}
+        body=JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      }catch{reject(now()>=expires||refusal==='EXPIRED'?'EXPIRED':'ROUTE');}
+      if(now()>=expires||now()-started>14*60000)reject('EXPIRED');
+      if(p==='/api/v2/portfolios.json'){
+        const found=Array.isArray(body?.portfolios)?body.portfolios.filter(x=>x?.name==='IB-HK'&&x?.currency_code==='USD'&&positive(x?.id)):[];
+        if(found.length!==1||portfolio!==null&&portfolio!==found[0].id)reject('ROUTE');portfolio=found[0].id;cashIds.clear();payoutIds.clear();
+      }else if(p==='/api/v3/portfolios/'+portfolio+'/performance'){
+        const report=body?.report;if(report?.portfolio_id!==portfolio||report.end_date!==q.get('end_date')||!Array.isArray(report.cash_accounts))reject('ROUTE');
+        for(const c of report.cash_accounts){if(!positive(c?.id)||c.portfolio?.id!==portfolio)reject('ROUTE');cashIds.add(c.id);}
+      }else if(p==='/api/v2/portfolios/'+portfolio+'/cash_accounts.json'){
+        if(!Array.isArray(body?.cash_accounts))reject('ROUTE');for(const c of body.cash_accounts){if(!positive(c?.id)||c.portfolio_id!==portfolio||c.date!==q.get('date'))reject('ROUTE');cashIds.add(c.id);}
+      }else if(p.includes('/cash_account_transactions.json')){
+        if(!Array.isArray(body?.cash_account_transactions))reject('ROUTE');const cashId=Number(p.split('/')[4]);
+        for(const row of body.cash_account_transactions){if(row?.cash_account_id!==cashId)reject('ROUTE');const type=row.cash_account_transaction_type?.name;if(typeof type==='string'&&type.toUpperCase()==='PAYOUT'&&row.trade_id==null&&positive(row.holding_id)&&positive(row.payout_id)&&row.date_time===target+'T00:00:00.000Z')payoutIds.add(row.payout_id);}
+      }
+    }
+    return response;
   };
-  return {fetch,counts:()=>({sourceGets:gets,oauthGrants:grants}),stop(){closed=true;controller.abort();}};
+  return {fetch,counts:()=>({sourceGets:gets,oauthGrants:grants}),refusal:()=>refusal,stop(){closed=true;clearTimeout(timer);controller.abort();}};
 }
 
 // Pure dependency-injected inspection for synthetic tests; the CLI below pins
 // dates, bytes, identity and the reader before using any real credential.
 export async function inspectIbDiagnostic({payload,anchorDate,targetDate,outputDir,environ,reader}={}){
-  let phase='BASE_STATE',result;const input=path.join(outputDir,'ib-manager-input.json');
+  let phase='BASE_STATE',result,cashSite='UNCLASSIFIED',cashDateRole='NONE';const input=path.join(outputDir,'ib-manager-input.json');
   const st=fs.lstatSync(outputDir),relative=path.relative(ROOT,fs.realpathSync(outputDir));
   if(st.isSymbolicLink()||!st.isDirectory()||st.uid!==process.getuid()||(st.mode&0o777)!==0o700||!(relative==='..'||relative.startsWith('..'+path.sep))||fs.readdirSync(outputDir).length)fail('ENVIRONMENT');
   try{
@@ -70,7 +102,7 @@ export async function inspectIbDiagnostic({payload,anchorDate,targetDate,outputD
     phase='SOURCE_PREPARE';
     const boundedReader={async readStable(options){
       if(options.targetDate!==targetDate||options.checkpoint?.sourceAsOf!==anchorDate||options.ownerBaseline||options.bootstrapCoverage)fail('WINDOW');
-      return reader.readStable(options);
+      try{return await reader.readStable(options);}catch(error){cashSite=ibSourceCashSite(error);cashDateRole=ibSourceCashDateRole(error);throw error;}
     }};
     const prepared=await prepareIbManagerReport({payload,targetDate,outputDir,environ,reader:boundedReader});
     if(prepared?.state==='pending')result=summary('incomplete',phase,sourceReason(prepared.reasonCode));
@@ -84,7 +116,7 @@ export async function inspectIbDiagnostic({payload,anchorDate,targetDate,outputD
     try{if(fs.existsSync(input)){const s=fs.lstatSync(input);if(s.isSymbolicLink()||!s.isFile())fail('CLEANUP');fs.unlinkSync(input);}if(fs.readdirSync(outputDir).length)fail('CLEANUP');}
     catch{result=summary('incomplete','CLEANUP','IB_DIAGNOSTIC_CLEANUP');}
   }
-  return {...result,temporaryInputsCleaned:result.phase!=='CLEANUP'};
+  return {...result,cashSite,cashDateRole,temporaryInputsCleaned:result.phase!=='CLEANUP'};
 }
 
 export function validateIbDiagnosticEvent({env,event,expectedMain,now=new Date()}={}){
@@ -145,7 +177,7 @@ async function main(){
     result=await inspectIbDiagnostic({payload,anchorDate:IB_DIAGNOSTIC_PLAN.anchor,targetDate:IB_DIAGNOSTIC_PLAN.target,outputDir:output,environ:env,reader});
   }catch(error){result={...summary('incomplete','PREFLIGHT',safeReason(error)),temporaryInputsCleaned:false};}
   finally{transport.stop();try{if(fs.readdirSync(output).length===0){fs.rmdirSync(output);result.temporaryInputsCleaned=true;}else result={...summary('incomplete','CLEANUP','IB_DIAGNOSTIC_CLEANUP'),temporaryInputsCleaned:false};}catch{result={...summary('incomplete','CLEANUP','IB_DIAGNOSTIC_CLEANUP'),temporaryInputsCleaned:false};}}
-  console.log(JSON.stringify({...result,...transport.counts()}));
+  console.log(JSON.stringify({...result,transportReason:transport.refusal(),...transport.counts()}));
   if(result.status!=='source-and-receipts-verified')process.exitCode=1;
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url))main().catch(error=>{console.error(JSON.stringify({...summary('incomplete','PREFLIGHT',safeReason(error)),sourceGets:0,oauthGrants:0}));process.exitCode=1;});

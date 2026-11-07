@@ -1,5 +1,5 @@
 name: Fee console cloud producer
-run-name: ${{ inputs.ib_diagnostic_once && 'IB diagnostic 2026-11-04' || (inputs.ratio_plan != '' || inputs.ratio_main != '') && 'Manual ratio snapshot' || github.workflow }}
+run-name: ${{ inputs.ib_diagnostic_once && 'IB diagnostic 2026-11-06' || (inputs.ratio_plan != '' || inputs.ratio_main != '') && 'Manual ratio snapshot' || github.workflow }}
 
 on:
   schedule:
@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       ib_diagnostic_once:
-        description: Separately approved read-only Jenny diagnostic for 2026-11-04; no production or publication
+        description: Separately approved read-only Jenny diagnostic for 2026-11-06; no production or publication
         type: boolean
         required: false
         default: false
@@ -583,7 +583,7 @@ jobs:
           retention-days: 7
 
   ib-diagnostic:
-    name: IB diagnostic 2026-11-04
+    name: IB diagnostic 2026-11-06
     if: ${{ !inputs.confirmed_main && inputs.ib_diagnostic_once && inputs.ib_diagnostic_main == github.sha && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor_id == '283054367' && github.run_attempt == 1 }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
