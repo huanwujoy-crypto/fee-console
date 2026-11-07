@@ -15,7 +15,7 @@ import {SourceFetchError} from './fee-economic-source.mjs';
 import {dailyReportPlan,weeklyReportPlan,monthlyReportPlan,reportAddDays} from './fee-report-period.mjs';
 import {HEALTH_SCHEMA,validateHealth} from './fee-data-health.mjs';
 import {CLOUD_ONCE,cloudOnceWindow,cloudOnceRequest,admitCloudOnce,confirmCloudOnce,recordCloudOnceCandidate,cloudOnceStatus,pauseCloudOnce,cloudOnceControl,scheduledDailyContext} from './fee-report-producer.mjs';
-import {reviewedMainConfirmation,confirmReviewedMainBeforeSource,confirmReviewedRecoveryBeforeSource,isHistoricalRevisionAdmission,readHistoricalRevisionAdmission,reportHistoricalRecoveryManifest} from './fee-report-producer.mjs';
+import {reviewedMainConfirmation,confirmReviewedMainBeforeSource,confirmReviewedRecoveryBeforeSource,isHistoricalRevisionAdmission,readHistoricalRevisionAdmission,reportHistoricalRecoveryManifest,readCurrentSyncRun} from './fee-report-producer.mjs';
 
 function cloudOnceFixture(){
  const main='a'.repeat(40),candidate='b'.repeat(40),runId=1001,now=new Date('2026-11-03T02:00:10Z');
@@ -839,6 +839,11 @@ test('manual sync flag binds existing reviewed dispatch, main, first attempt and
  }
 });
 
+function syntheticSyncRun(head='a'.repeat(40),id=1001,created='2026-11-03T23:00:00Z'){
+ return {id,workflow_id:365873934,path:'.github/workflows/fee-cloud-producer.yml',head_branch:'main',head_sha:head,
+  actor:{id:283054367},triggering_actor:{id:283054367},repository:{full_name:'huanwujoy-crypto/fee-console'},
+  event:'workflow_dispatch',run_attempt:1,status:'in_progress',conclusion:null,created_at:created};
+}
 function confirmedDailyFixture(){
  const target='2026-11-03',head='a'.repeat(40);
  const args={mode:'preflight','report-kind':'daily','report-target':target,'manual-sync-completed-for':target,'confirmed-main':head};
@@ -864,15 +869,15 @@ test('confirmed main binds the real event, dispatch head, owner, target and firs
  }
  for(const name of ['recovery-main','report-markets'])assert.throws(()=>check({...f,args:{...f.args,[name]:'nonempty'}}),/CONFIRMED_MAIN_SCOPE/);
 });
-test('cloud confirmed payload reaches the same reviewed head-bound admission and retains the used-source refusal',async()=>{
+test('cloud confirmed payload uses one known execution without full history or attempt counting',async()=>{
  const result=spawnSync('python3',['-c',"import json; from runtime import Github\nclass H:\n def request(self,url,**kw):\n  print(json.dumps(kw['body'])); return 204,None\nGithub(http=H(),read_token=lambda:'synthetic-only').dispatch_confirmed({'targetDate':'2026-11-03','confirmedAt':'2026-11-03T23:00:00Z','requestId':'synthetic-only','expectedMain':'a'*40})"],{cwd:new URL('../cloud/fee-clock/',import.meta.url),encoding:'utf8',env:{PATH:process.env.PATH,PYTHONDONTWRITEBYTECODE:'1'}});
  assert.equal(result.status,0,result.stderr);const body=JSON.parse(result.stdout),f=confirmedDailyFixture();assert.equal(body.ref,'main');f.event.inputs=body.inputs;
  assert.deepEqual(body.inputs,{run_reviewed_once:'true',report_kind:'daily',report_target:f.target,manual_sync_completed_for:f.target,confirmed_main:f.head});
  assert.equal(reviewedMainConfirmation(f.args,{env:f.env,readEvent:()=>f.event}),f.head);
  assert.equal(reviewedSyncConfirmation(f.args,{env:f.env,readEvent:()=>f.event}),f.target);
  const prior=state(dailyReportPlan('2026-11-02',['NYSE','NASDAQ']),'2026-11-03T01:00:00Z');
- const outcome=await dailyPublicationPreflight({targetDate:f.target,reviewedSyncDate:f.target,confirmedMain:f.head,now:new Date('2026-11-04T07:00:00+08:00'),markets:['NYSE','NASDAQ'],ibEnabled:false,runAttempt:'1',readState:async()=>prior,readSourceAttempts:async()=>({attempts:1,inProgress:false})});
- assert.equal(outcome.reasonCode,'REPORT_DAILY_SOURCE_ALREADY_ATTEMPTED');
+ const outcome=await dailyPublicationPreflight({targetDate:f.target,reviewedSyncDate:f.target,confirmedMain:f.head,now:new Date('2026-11-04T07:00:00+08:00'),markets:['NYSE','NASDAQ'],ibEnabled:false,runAttempt:'1',currentRunId:1001,readCurrentRun:async()=>syntheticSyncRun(),readState:async()=>prior,readSourceAttempts:async()=>assert.fail('confirmed entry must not list history')});
+ assert.equal(outcome.outcome,'produce');
 });
 test('empty confirmed main preserves ordinary, reviewed, automatic and one-off compatibility',async()=>{
  const f=confirmedDailyFixture();delete f.args['confirmed-main'];f.event.inputs.confirmed_main='';
@@ -886,8 +891,8 @@ test('empty confirmed main preserves ordinary, reviewed, automatic and one-off c
 });
 test('confirmed preflight rejects changed public main before querying source attempts',async()=>{
  const f=confirmedDailyFixture(),old=state(dailyReportPlan('2026-11-02',['NYSE','NASDAQ']),'2026-11-03T01:00:00Z');let attempts=0;
- const args={targetDate:f.target,reviewedSyncDate:f.target,confirmedMain:f.head,now:new Date('2026-11-04T07:00:00+08:00'),markets:['NYSE','NASDAQ'],ibEnabled:false,runAttempt:'1',readState:async()=>old,readSourceAttempts:async()=>{attempts++;return {attempts:0,inProgress:false};}};
- assert.equal((await dailyPublicationPreflight(args)).outcome,'produce');assert.equal(attempts,1);
+ const args={targetDate:f.target,reviewedSyncDate:f.target,confirmedMain:f.head,now:new Date('2026-11-04T07:00:00+08:00'),markets:['NYSE','NASDAQ'],ibEnabled:false,runAttempt:'1',currentRunId:1001,readCurrentRun:async()=>syntheticSyncRun(),readState:async()=>old,readSourceAttempts:async()=>{attempts++;return {attempts:0,inProgress:false};}};
+ assert.equal((await dailyPublicationPreflight(args)).outcome,'produce');assert.equal(attempts,0);
  for(const changed of [{mainSha:'b'.repeat(40)},{finalMainSha:'b'.repeat(40)},{mainSha:'b'.repeat(40),finalMainSha:'b'.repeat(40)}]){
   attempts=0;await assert.rejects(dailyPublicationPreflight({...args,readState:async()=>({...old,...changed})}),/CONFIRMED_MAIN_CHANGED/);assert.equal(attempts,0);
  }
@@ -897,7 +902,8 @@ test('confirmed preflight rejects changed public main before querying source att
 test('confirmed source recheck requires frozen checkout and current main before any financial step',async()=>{
  const f=confirmedDailyFixture(),args={...f.args,mode:'produce'};let reads=0;
  const fetchImpl=async(url,init)=>{reads++;assert.equal(url,'https://api.github.com/repos/huanwujoy-crypto/fee-console/git/ref/heads/main');assert.equal(init.method,'GET');assert.equal(init.redirect,'error');assert.equal(init.headers.Authorization,undefined);const r=new Response(JSON.stringify({ref:'refs/heads/main',object:{type:'commit',sha:f.head}}));Object.defineProperty(r,'url',{value:url});return r;};
- const options={env:f.env,readEvent:()=>f.event,checkedOutMain:f.head,fetchImpl};
+ const plan=dailyReportPlan(f.target,['NYSE','NASDAQ'],{reviewedSyncDate:f.target});f.env.REPORT_PLAN=JSON.stringify(plan);
+ const options={env:f.env,readEvent:()=>f.event,checkedOutMain:f.head,fetchImpl,now:new Date('2026-11-04T00:00:00Z'),readCurrentRun:async()=>syntheticSyncRun(),readState:async()=>state(dailyReportPlan('2026-11-02',['NYSE','NASDAQ']),'2026-11-03T01:00:00Z')};
  assert.equal(await confirmReviewedMainBeforeSource(args,options),f.head);assert.equal(reads,1);
  await assert.rejects(confirmReviewedMainBeforeSource(args,{...options,checkedOutMain:'b'.repeat(40),fetchImpl:()=>assert.fail('wrong checkout must stop before metadata')}),/CONFIRMED_MAIN_CHANGED/);
  await assert.rejects(confirmReviewedMainBeforeSource(args,{...options,env:{...f.env,PLANNED_MAIN:'b'.repeat(40)},fetchImpl:()=>assert.fail('wrong frozen main must stop before metadata')}),/CONFIRMED_MAIN_SCOPE/);
@@ -1620,4 +1626,131 @@ test('actual period CLI and workflow summary carry the scoped token and safe fai
   const received=spawnSync(process.execPath,['--input-type=module','-',run.stdout],{cwd,input:receiver,encoding:'utf8',env:{PATH:process.env.PATH,GITHUB_OUTPUT:output,GITHUB_STEP_SUMMARY:summary},timeout:10000});assert.equal(received.status,0,received.stderr);
   const saved=fs.readFileSync(summary,'utf8');assert.doesNotMatch(saved+received.stdout+received.stderr,/private-canary|synthetic-ephemeral-token-canary/);if(expected){assert.match(saved,new RegExp('Metadata result: '+expected));assert.equal(fs.readFileSync(output,'utf8'),'outcome=waiting\n');}else{assert.match(saved,/Decision: produce/);assert.match(fs.readFileSync(output,'utf8'),/target=2026-11-03/);}
  }
+});
+
+
+const syncRevisionContract='ib-source-revision-20261106-sync-v2',syncRevisionBase='50392c2fb5ec3b1b26e5515cdb0feebb48823d2d';
+function syncRevisionFixture(){
+ const f=sourceRevisionRecoveryFixture(),manifest=reportHistoricalRecoveryManifest({contractId:syncRevisionContract});
+ f.commit.parents=[{sha:syncRevisionBase}];f.supportCommit.sha=syncRevisionBase;f.supportCommit.parents=[{sha:revisionRecoveryBase}];
+ f.comparison.base_commit.sha=f.comparison.merge_base_commit.sha=syncRevisionBase;
+ f.comparison.files=manifest.map(m=>({filename:m.path,status:m.status,sha:'b'.repeat(40)}));
+ f.tree.tree=[f.tree.tree[0],...manifest.map(m=>({path:m.path,type:'blob',mode:'100644',sha:'b'.repeat(40)}))];
+ f.reviewedCommit.parents=[{sha:syncRevisionBase}];
+ f.currentRun=syntheticSyncRun(recoveryHead,recoveryId,'2026-11-07T00:40:00Z');
+ f.publication=state(dailyReportPlan('2026-11-05',['NYSE','NASDAQ']),'2026-11-06T01:00:00Z');
+ f.publication.mainSha=f.publication.finalMainSha=recoveryHead;f.clock=revisionRecoveryNow;
+ return f;
+}
+function syncRevisionReaders(f,trace=[]){
+ const wire=sourceRevisionWire(f,trace),fetchImpl=async(url,init)=>{
+  const route=url.split('/fee-console/')[1];
+  if(route==='actions/runs/'+recoveryId){
+   trace.push(route);assert.equal(init.method,'GET');assert.equal(init.headers.Authorization,'Bearer '+revisionActionsToken);
+   const r=new Response(JSON.stringify(f.currentRun));Object.defineProperty(r,'url',{value:url});return r;
+  }
+  assert(!route?.startsWith('actions/'),'no full Actions listing or fabricated history');return wire(url,init);
+ };
+ return {readRecoveryRelease:(sha,options)=>readReportRecoveryRelease(sha,{...options,fetchImpl,actionsToken:revisionActionsToken}),
+  readCurrentRun:options=>readCurrentSyncRun({...options,fetchImpl,actionsToken:revisionActionsToken}),
+  readState:async()=>({...f.publication,data:Buffer.from(f.publication.data)}),clock:()=>f.clock,
+  readSourceAttempts:()=>assert.fail('v2 may not count source attempts')};
+}
+const syncAdmission=(f,readers=syncRevisionReaders(f))=>authorizeReportRecovery({plan:f.plan,expectedMain:recoveryHead,currentRunId:recoveryId,now:revisionRecoveryNow,actionsToken:revisionActionsToken,...readers});
+test('sync revision binds real owner release, target, current execution and publication without inventing consumption',async()=>{
+ const f=syncRevisionFixture(),trace=[],admission=await syncAdmission(f,syncRevisionReaders(f,trace));
+ const binding=readHistoricalRevisionAdmission(admission);assert.equal(binding.contractId,syncRevisionContract);
+ assert.equal(binding.admissionModel,'sync-cycle-v1');assert.match(binding.executionSha256,/^[a-f0-9]{64}$/);
+ assert.equal(binding.consumptionSha256,undefined);assert.equal(binding.currentRunId,recoveryId);assert.equal(binding.approvedHead,revisionReviewedHead);
+ assert.deepEqual(await admission.checkCurrent(),binding);assert.equal(trace.filter(x=>x==='actions/runs/'+recoveryId).length,2);
+ assert(!trace.some(x=>x.includes('/runs?')||x.includes('/jobs')));assert.equal(isHistoricalRevisionAdmission({...admission}),false);
+ const release=await syncRevisionReaders(f).readRecoveryRelease(recoveryHead,{actionsToken:revisionActionsToken});
+ await assert.rejects(readPeriodSourceAttempts({plan:f.plan,now:revisionRecoveryNow,currentRunId:recoveryId,recoveryMain:recoveryHead,recoveryRelease:release}),/RECOVERY_SCOPE/);
+ assert.throws(()=>validateReportRecoveryEvidence({plan:f.plan,expectedMain:recoveryHead,currentRunId:recoveryId,release,budget:{attempts:0,recoveryEvidence:{entries:[],reservations:[]}}}),/RECOVERY_SCOPE/);
+ admission.close();await assert.rejects(admission.checkCurrent(),/RECOVERY_CONSUMED/);
+});
+test('new revision release requires exact complete manifest, real approval and unique direct successor',async()=>{
+ for(const change of [f=>f.commit.parents.push({sha:revisionRecoveryBase}),f=>f.supportCommit.parents[0].sha='f'.repeat(40),
+  f=>f.comparison.files.pop(),f=>f.comparison.files[0].status='added',f=>f.tree.tree[1].mode='120000',
+  f=>f.comments=[],f=>f.comments[0].user.id=1,f=>f.reviewedCommit.commit.tree.sha='f'.repeat(40),f=>f.commit.commit.verification.verified=false]){
+  const f=syncRevisionFixture();change(f);await assert.rejects(syncAdmission(f),/RECOVERY_/);
+ }
+ const f=syncRevisionFixture(),readers=syncRevisionReaders(f),real=readers.readRecoveryRelease;
+ await assert.rejects(syncAdmission(f,{...readers,readRecoveryRelease:async(...a)=>structuredClone(await real(...a))}),/RECOVERY_SCOPE/);
+});
+test('sync revision stops on changed publication, run identity, approval, timing or source base and revokes capability',async()=>{
+ const mutations=[f=>f.currentRun.id++,f=>f.currentRun.head_sha=revisionRecoveryBase,f=>f.currentRun.actor.id=1,
+  f=>f.currentRun.triggering_actor.id=1,f=>f.currentRun.run_attempt=2,f=>f.currentRun.event='schedule',f=>f.currentRun.path='other',
+  f=>f.currentRun.repository.full_name='other/repo',f=>f.currentRun.status='completed',f=>f.currentRun.conclusion='failure',
+  f=>f.currentRun.created_at='2026-11-08T00:00:00Z',f=>f.publication.pending=true,f=>f.publication.finalMainSha=revisionRecoveryBase,
+  f=>f.publication.health.targetDate='2026-11-06',f=>f.publication.data=Buffer.from('changed'),f=>f.publication.health.checkedAt='bad',
+  f=>f.comments[0].body+=' changed',f=>f.ref.object.sha=revisionRecoveryBase,f=>f.plan.periodFrom='2026-11-05',f=>f.clock=new Date('2026-11-12T00:00:00Z')];
+ for(const mutate of mutations){
+  const f=syncRevisionFixture(),admission=await syncAdmission(f);mutate(f);
+  await assert.rejects(admission.checkCurrent(),/RECOVERY_/);assert.equal(isHistoricalRevisionAdmission(admission),false);
+  await assert.rejects(admission.checkCurrent(),/RECOVERY_CONSUMED/);
+ }
+});
+test('confirmed entry preserves published, pending, rerun and current execution identity gates without any history call',async()=>{
+ const f=confirmedDailyFixture(),prior=state(dailyReportPlan('2026-11-02',['NYSE','NASDAQ']),'2026-11-03T01:00:00Z'),now=new Date('2026-11-04T00:00:00Z');
+ const args={targetDate:f.target,reviewedSyncDate:f.target,confirmedMain:f.head,now,markets:['NYSE','NASDAQ'],ibEnabled:false,runAttempt:'1',currentRunId:1001,
+  readState:async()=>prior,readCurrentRun:async()=>syntheticSyncRun(),readSourceAttempts:()=>assert.fail('no history query')};
+ assert.equal((await dailyPublicationPreflight({...args,readState:async()=>({...prior,pending:true}),readCurrentRun:()=>assert.fail('pending stops first')})).outcome,'candidate-pending');
+ assert.equal((await dailyPublicationPreflight({...args,runAttempt:'2',readCurrentRun:()=>assert.fail('rerun stops first')})).reasonCode,'REPORT_SOURCE_RERUN_NOT_ALLOWED');
+ const published=state(dailyReportPlan(f.target,args.markets),'2026-11-04T01:00:00Z');
+ assert.equal((await dailyPublicationPreflight({...args,now:new Date('2026-11-04T02:00:00Z'),readState:async()=>published,readCurrentRun:()=>assert.fail('published stops first')})).outcome,'already-published');
+ for(const change of [r=>r.actor.id=1,r=>r.head_sha='b'.repeat(40),r=>r.run_attempt=2,r=>r.repository.full_name='other/repo',r=>r.event='schedule',r=>r.status='completed']){
+  const run=syntheticSyncRun();change(run);await assert.rejects(dailyPublicationPreflight({...args,readCurrentRun:async()=>run}),/RECOVERY_RUN/);
+ }
+ await assert.rejects(dailyPublicationPreflight({...args,readCurrentRun:async()=>{throw Error('synthetic unavailable');}}));
+});
+test('before financial access confirmed publication and current run are rechecked, including pending and already-published',async()=>{
+ const f=confirmedDailyFixture(),plan=dailyReportPlan(f.target,['NYSE','NASDAQ'],{reviewedSyncDate:f.target}),prior=state(dailyReportPlan('2026-11-02',['NYSE','NASDAQ']),'2026-11-03T01:00:00Z');
+ const args={...f.args,mode:'produce'},options={env:{...f.env,REPORT_PLAN:JSON.stringify(plan)},readEvent:()=>f.event,now:new Date('2026-11-04T00:00:00Z'),
+  readCurrentRun:async()=>syntheticSyncRun(),readState:async()=>prior,fetchImpl:async url=>{const r=new Response(JSON.stringify({ref:'refs/heads/main',object:{type:'commit',sha:f.head}}));Object.defineProperty(r,'url',{value:url});return r;}};
+ for(const changed of [{pending:true},{finalMainSha:'b'.repeat(40)},{health:{...prior.health,targetDate:f.target}},{data:Buffer.from('changed')}]){
+  await assert.rejects(confirmReviewedMainBeforeSource(args,{...options,readState:async()=>({...prior,...changed})}),/RECOVERY_SCOPE/);
+ }
+});
+
+test('real confirmed CLI and pre-WIF entry use only bound run and public publication reads',t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'fee-sync-cycle-cli-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+ const f=confirmedDailyFixture(),plan=dailyReportPlan(f.target,['NYSE','NASDAQ'],{reviewedSyncDate:f.target});
+ const old=state(dailyReportPlan('2026-11-02',['NYSE','NASDAQ']),'2026-11-03T01:00:00Z');
+ const eventFile=path.join(dir,'event.json'),trace=path.join(dir,'routes.json'),preload=path.join(dir,'synthetic-only.mjs');
+ fs.writeFileSync(eventFile,JSON.stringify(f.event));
+ const token='synthetic-single-current-run-token';
+ fs.writeFileSync(preload,`import fs from 'node:fs';
+ const D=Date,now=D.parse('2026-11-04T00:00:00Z');globalThis.Date=class extends D{constructor(...a){super(...(a.length?a:[now]));}static now(){return now;}};
+ const main=${JSON.stringify(f.head)},token=${JSON.stringify(token)},routes=[],trace=${JSON.stringify(trace)};
+ const originals={'data.json':${JSON.stringify(old.data.toString())},'fee-data-health.json':${JSON.stringify(JSON.stringify(old.health))}};
+ const originalRead=fs.readFileSync;fs.readFileSync=function(p,...args){if(String(p)===${JSON.stringify(new URL('../data.json',import.meta.url).pathname)})throw Error('private source access forbidden by synthetic test');return originalRead.call(this,p,...args);};
+ globalThis.fetch=async(url,init)=>{
+  const prefix='https://api.github.com/repos/huanwujoy-crypto/fee-console/';if(!url.startsWith(prefix)||!['GET',undefined].includes(init.method))throw Error('non-public operation forbidden');
+  const route=url.slice(prefix.length);routes.push(route);fs.writeFileSync(trace,JSON.stringify(routes));let value;
+  if(route==='git/ref/heads/main')value={ref:'refs/heads/main',object:{type:'commit',sha:main}};
+  else if(route.startsWith('contents/')){const name=route.slice(9).split('?')[0],bytes=Buffer.from(originals[name]||'');if(!bytes.length||!route.endsWith('?ref='+main))throw Error('bad artifact');value={type:'file',encoding:'base64',size:bytes.length,content:bytes.toString('base64')};}
+  else if(route==='git/matching-refs/heads/codex/fee-daily-20261103-')value=[];
+  else if(route==='actions/runs/1001'){if(init.headers.Authorization!=='Bearer '+token)throw Error('wrong scoped token');value=${JSON.stringify(syntheticSyncRun())};}
+  else throw Error('collection queries forbidden');
+  const r=new Response(JSON.stringify(value));Object.defineProperty(r,'url',{value:url});return r;
+ };`);
+ const env={PATH:process.env.PATH,...f.env,GITHUB_EVENT_PATH:eventFile,FEE_REPORT_ACTIONS_TOKEN:token,REPORT_PLAN:JSON.stringify(plan),FEE_REPORT_MARKETS:'NYSE,NASDAQ'};
+ const cli=Object.entries(f.args).map(([k,v])=>'--'+k+'='+v),file=new URL('./fee-report-producer.mjs',import.meta.url).pathname;
+ const preflight=spawnSync(process.execPath,['--import',preload,file,...cli],{env,encoding:'utf8',timeout:10000});
+ assert.equal(preflight.status,0,preflight.stderr);assert.equal(JSON.parse(preflight.stdout).outcome,'produce');assert(!preflight.stdout.includes(token));
+ const gate=spawnSync(process.execPath,['--import',preload,'--input-type=module','-e',`import {confirmReviewedMainBeforeSource} from ${JSON.stringify(new URL('./fee-report-producer.mjs',import.meta.url).href)};await confirmReviewedMainBeforeSource(${JSON.stringify({...f.args,mode:'produce'})},{checkedOutMain:process.env.PLANNED_MAIN});console.log('verified');`],{env,encoding:'utf8',timeout:10000});
+ assert.equal(gate.status,0,gate.stderr);assert.equal(gate.stdout.trim(),'verified');
+ const calls=JSON.parse(fs.readFileSync(trace));assert(calls.includes('actions/runs/1001'));assert(calls.includes('git/matching-refs/heads/codex/fee-daily-20261103-'));
+ assert(!calls.some(x=>x.includes('/runs?')||x.includes('/jobs')||x.includes('sharesight')));
+});
+
+
+test('closing sync admission during current-run IO stops before the next publication read',async()=>{
+ const f=syncRevisionFixture(),readers=syncRevisionReaders(f);let runReads=0,publicationReads=0,releaseRun,enteredRun;
+ const entered=new Promise(resolve=>enteredRun=resolve),blocked=new Promise(resolve=>releaseRun=resolve);
+ const admission=await syncAdmission(f,{...readers,readCurrentRun:async args=>{if(++runReads===2){enteredRun();await blocked;}return readers.readCurrentRun(args);},
+  readState:async(...args)=>{publicationReads++;return readers.readState(...args);}});
+ const checking=admission.checkCurrent();await entered;admission.close();releaseRun();
+ await assert.rejects(checking,/RECOVERY_CONSUMED/);assert.equal(publicationReads,1);assert.equal(isHistoricalRevisionAdmission(admission),false);
 });

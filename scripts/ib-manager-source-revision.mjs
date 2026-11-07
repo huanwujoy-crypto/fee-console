@@ -43,12 +43,17 @@ function artifact(v){
 }
 function planInput(p){
   if(!exact(p,['schema','targetDate','anchorDate','baselineSha256','currentSourceStateId','anchorSourceStateId','currentArtifact','anchorArtifact','bindings','expiresAt'])
-    ||p.schema!=='fee-console.ib-source-revision-plan.v1'||![p.targetDate,p.anchorDate].every(isCalendarDate)
+    ||!['fee-console.ib-source-revision-plan.v1','fee-console.ib-source-revision-plan.v2'].includes(p.schema)||![p.targetDate,p.anchorDate].every(isCalendarDate)
     ||p.anchorDate>=p.targetDate||inclusiveDays(p.anchorDate,p.targetDate)>9
     ||![p.baselineSha256,p.currentSourceStateId,p.anchorSourceStateId].every(sha)
-    ||!artifact(p.currentArtifact)||!artifact(p.anchorArtifact)
-    ||!exact(p.bindings,['mainSha','economicRevisionSha256','consumptionSha256','baseDataSha256','baseHealthSha256','currentSourceStateId'])||!oid(p.bindings.mainSha)
-    ||![p.bindings.economicRevisionSha256,p.bindings.consumptionSha256,p.bindings.baseDataSha256,p.bindings.baseHealthSha256,p.bindings.currentSourceStateId].every(sha)
+    ||!artifact(p.currentArtifact)||!artifact(p.anchorArtifact))fail('PLAN');
+  // The two admission models are deliberately disjoint. An execution binding
+  // cannot stand in for the v1 consumption proof, or vice versa.
+  const sync=p.schema==='fee-console.ib-source-revision-plan.v2';
+  if(!exact(p.bindings,['mainSha','economicRevisionSha256',...(sync?['admissionModel','executionSha256']:['consumptionSha256']),
+      'baseDataSha256','baseHealthSha256','currentSourceStateId'])||!oid(p.bindings.mainSha)
+    ||sync&&p.bindings.admissionModel!=='sync-cycle-v1'
+    ||![p.bindings.economicRevisionSha256,sync?p.bindings.executionSha256:p.bindings.consumptionSha256,p.bindings.baseDataSha256,p.bindings.baseHealthSha256,p.bindings.currentSourceStateId].every(sha)
     ||p.bindings.baseDataSha256!==p.currentArtifact.dataSha256||p.bindings.baseHealthSha256!==p.currentArtifact.healthSha256
     ||p.bindings.currentSourceStateId!==p.currentSourceStateId||!iso(p.expiresAt))fail('PLAN');
 }

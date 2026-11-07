@@ -586,6 +586,127 @@ test('public reader pins both encrypted files to main and never trusts candidate
   }),/PUBLICATION_CANDIDATE_FAILED/);
 });
 
+function strictPublicationFixture() {
+  const state=publicationFixture(),candidate='b'.repeat(40),branch='codex/fee-daily-20260923-abcdef',routes=[];
+  state.health.targetDate='2026-09-22';
+  const fixture={state,candidate,branch,routes,
+    refs:[{ref:`refs/heads/${branch}`,object:{type:'commit',sha:candidate}}],
+    comparison:{base_commit:{sha:candidate},merge_base_commit:{sha:'c'.repeat(40)},status:'diverged',ahead_by:2,behind_by:1,total_commits:2}};
+  fixture.request=async route=>{
+    routes.push(route);
+    if(route==='git/ref/heads/main')return {object:{sha:state.mainSha}};
+    if(route.startsWith('contents/')){
+      assert.match(route,new RegExp(`ref=${state.mainSha}$`));
+      const bytes=route.includes('data.json?')?state.data:Buffer.from(JSON.stringify(state.health));
+      return {type:'file',encoding:'base64',size:bytes.length,content:bytes.toString('base64')};
+    }
+    if(route==='git/matching-refs/heads/codex/fee-daily-20260923-')return fixture.refs;
+    if(route===`compare/${candidate}...${state.mainSha}?per_page=1`)return fixture.comparison;
+    assert.fail(`unexpected strict publication read: ${route}`);
+  };
+  return fixture;
+}
+
+test('strict candidate read blocks divergent and unpromoted refs without Actions or commit eligibility metadata',async()=>{
+  for(const status of ['diverged','behind']){
+    const f=strictPublicationFixture();
+    if(status==='behind')f.comparison={base_commit:{sha:f.candidate},merge_base_commit:{sha:f.state.mainSha},status,ahead_by:0,behind_by:1,total_commits:0};
+    const result=await readPublicationState(D,`${D}T22:00:00Z`,f.request,{strictCandidates:true});
+    assert.equal(result.pending,true);
+    assert.deepEqual(result.healthBytes,Buffer.from(JSON.stringify(f.state.health)));
+    assert.equal(f.routes.filter(route=>route==='git/ref/heads/main').length,3);
+    assert.equal(f.routes.filter(route=>route.startsWith('compare/')).length,1);
+    assert.equal(f.routes.some(route=>/^(actions|commits)\//.test(route)),false);
+  }
+});
+
+test('strict candidates remain pending when old eligibility rules would discard them',async()=>{
+  const cases=[['different parent',c=>c.parents[0].sha='c'.repeat(40)],
+    ['expired',c=>c.commit.committer.date='2026-09-20T22:00:00Z'],
+    ['after start',c=>c.commit.committer.date=`${D}T23:00:00Z`],
+    ['unsigned',c=>c.commit.verification.verified=false],
+    ['unexpected files',c=>c.files.push({filename:'scripts/other.mjs',status:'added'})],
+    ['invalid message',c=>c.commit.message='other'],
+    ['commit metadata unavailable',null]];
+  for(const [name,mutate] of cases){
+    const f=strictPublicationFixture(),commit=earlierCandidateFixture();
+    if(mutate)mutate(commit);
+    const request=async route=>{
+      if(route.startsWith('commits/')){if(!mutate)throw new Error('metadata unavailable');return commit;}
+      if(route.startsWith('actions/'))throw new Error('validator unavailable');
+      return f.request(route);
+    };
+    assert.equal((await readPublicationState(D,`${D}T22:00:00Z`,request,{strictCandidates:true})).pending,true,name);
+    if(mutate)assert.equal((await readPublicationState(D,`${D}T22:00:00Z`,request)).pending,false,`${name}: legacy behavior unchanged`);
+  }
+});
+
+test('strict candidate read excludes only current-main or proven main-ancestor residual refs',async()=>{
+  const f=strictPublicationFixture();
+  f.refs.push({ref:'refs/heads/codex/fee-daily-20260923-ghijkl',object:{type:'commit',sha:f.state.mainSha}});
+  f.comparison={base_commit:{sha:f.candidate},merge_base_commit:{sha:f.candidate},status:'ahead',ahead_by:14,behind_by:0,total_commits:14};
+  const result=await readPublicationState(D,`${D}T22:00:00Z`,f.request,{strictCandidates:true});
+  assert.equal(result.pending,false);
+  assert.equal(f.routes.filter(route=>route.startsWith('compare/')).length,1);
+  assert.equal(f.refs.length,2,'residual refs are not deleted');
+});
+
+test('strict candidate read rejects unavailable or inconsistent ancestry evidence',async()=>{
+  const changes=[f=>f.comparison=null,f=>f.comparison.base_commit.sha='d'.repeat(40),
+    f=>f.comparison.merge_base_commit.sha='invalid',f=>f.comparison.status='unknown',
+    f=>f.comparison.status='identical',f=>f.comparison.ahead_by='2',f=>f.comparison.behind_by=-1,
+    f=>f.comparison.total_commits=1,f=>f.comparison.ahead_by=Number.MAX_SAFE_INTEGER+1,
+    f=>f.comparison.merge_base_commit.sha=f.candidate,
+    f=>{f.comparison.status='ahead';f.comparison.behind_by=0;},
+    f=>{f.comparison.status='behind';f.comparison.ahead_by=0;f.comparison.total_commits=0;}];
+  for(const change of changes){
+    const f=strictPublicationFixture();change(f);
+    await assert.rejects(readPublicationState(D,`${D}T22:00:00Z`,f.request,{strictCandidates:true}),/FEE_CLOUD_PUBLICATION_READ/);
+  }
+  for(const prefix of ['compare/','git/matching-refs/']){
+    const f=strictPublicationFixture();
+    await assert.rejects(readPublicationState(D,`${D}T22:00:00Z`,async route=>{
+      if(route.startsWith(prefix))throw new Error('unavailable metadata');return f.request(route);
+    },{strictCandidates:true}),/FEE_CLOUD_PUBLICATION_READ/);
+  }
+});
+
+test('strict candidate read rejects malformed refs rather than interpreting them as absent',async()=>{
+  const changes=[f=>f.refs=null,f=>f.refs=[null],f=>f.refs[0].object.sha='invalid',
+    f=>delete f.refs[0].object.type,f=>f.refs[0].object.type='tag',
+    f=>f.refs[0].ref=f.branch,f=>f.refs[0].ref='refs/heads/codex/fee-daily-20260922-abcdef',
+    f=>f.refs[0].ref+='-extra',f=>f.refs.push(structuredClone(f.refs[0])),
+    f=>f.refs=Array.from({length:33},(_,i)=>({ref:`refs/heads/codex/fee-daily-20260923-${String(i).padStart(6,'0')}`,object:{type:'commit',sha:f.candidate}}))];
+  for(const change of changes){
+    const f=strictPublicationFixture();change(f);
+    await assert.rejects(readPublicationState(D,`${D}T22:00:00Z`,f.request,{strictCandidates:true}),/FEE_CLOUD_PUBLICATION_READ/);
+  }
+  const f=strictPublicationFixture();f.refs=[];
+  assert.equal((await readPublicationState(D,`${D}T22:00:00Z`,f.request,{strictCandidates:true})).pending,false);
+  assert.equal(f.routes.some(route=>route.startsWith('compare/')),false);
+});
+
+test('strict candidate mode preserves publication integrity, independent IB checks and final main readback',async()=>{
+  const f=strictPublicationFixture(),now=new Date().toISOString();
+  f.state.health.checkedAt=now;
+  f.state.health.targetDate=D;
+  assert.equal(isPublishedTarget(f.state,D),true);
+  const published=await readPublicationState(D,now,f.request,{strictCandidates:true});
+  assert.equal(published.pending,false);
+  assert.equal(f.routes.some(route=>route.startsWith('git/matching-refs/')),false);
+  assert.equal((await readPublicationState(D,now,f.request,{strictCandidates:true,requireIb:true})).pending,true);
+  f.state.health.dataSha256='f'.repeat(64);
+  assert.equal((await readPublicationState(D,now,f.request,{strictCandidates:true})).pending,true);
+  let mainReads=0;
+  const moved=await readPublicationState(D,now,async route=>{
+    if(route==='git/ref/heads/main'&&++mainReads===3)return {object:{sha:'d'.repeat(40)}};
+    return f.request(route);
+  },{strictCandidates:true});
+  assert.equal(moved.mainSha,'a'.repeat(40));assert.equal(moved.finalMainSha,'d'.repeat(40));
+  assert.equal(isPublishedTarget(moved,D),false);
+  for(const value of [null,1,'true'])await assert.rejects(readPublicationState(D,now,()=>assert.fail('invalid options must not read'),{strictCandidates:value}),/FEE_CLOUD_CONFIG/);
+});
+
 test('workflow gates all credential, source and candidate steps before authentication and preserves old health', () => {
   const workflow=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8');
   const gate=workflow.slice(workflow.indexOf('  period:'),workflow.indexOf('  produce:'));

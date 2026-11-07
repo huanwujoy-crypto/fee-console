@@ -45,7 +45,7 @@ existing holiday contract: a holiday target remains pending in the producer
 until real source/benchmark evidence passes. It never substitutes an older close
 or adds a holiday carry point.
 
-Launch first reads complete same-HKT-day workflow runs and complete status-filtered
+Scheduled `launch` first reads complete same-HKT-day workflow runs and complete status-filtered
 unfinished lists, including previous-day occupied runs. Missing, malformed or
 truncated metadata blocks dispatch. An existing schedule/manual request is reused;
 an earlier unfinished run blocks launch rather than adding another queued request.
@@ -53,17 +53,56 @@ an earlier unfinished run blocks launch rather than adding another queued reques
 Before the sole POST, launch atomically creates an immutable intent in the new
 dedicated metadata-only bucket using `ifGenerationMatch=0`, keyed by target date.
 A conflict does not resend. The intent survives a crash, timeout, unknown HTTP
-result or failure to write the result receipt. A second pre-POST run check narrows
-the natural-cron race, and the slot/target are checked again before POST. There
+result or failure to write the result receipt. Scheduled `launch` retains its
+second pre-POST run check to narrow the natural-cron race; every launch checks
+its slot/target again before POST. There
 is no automatic retry, lease expiry, deletion or takeover path in the program.
 Manual investigation is required after an unknown result; it must not erase an
 intent merely to retry. Bucket lifecycle expiration at 90 days cannot make an
-old target dispatchable because the runtime accepts only the current 10:00 slot.
+old target dispatchable because the runtime accepts only its current slot/target.
 
 The immutable intent guarantees at most one attempt by this cloud clock for a
 target while retained. Scheduler delivery is at least once. A GitHub natural run
 can still race after the final GET; existing concurrency and publication preflight
 handle that race. This is not an exactly-once promise across GitHub and Google.
+
+### Confirmed-sync first request
+
+`launch-confirmed` is the existing bounded entry for an operator who has checked
+this round's three-account synchronization and has the required authorization.
+It accepts only `targetDate`, `confirmedAt`, `requestId` and `expectedMain`; these
+fields bind the request, not proof of human approval or source completeness.
+The workflow must be active, the current target must have passed its real New
+York close (and month-end accounting boundary), and main must match the supplied
+SHA both before claiming and immediately before dispatch. The confirmation must
+belong to the current Hong Kong day. The producer independently validates its
+actual current run, source data, historical evidence and publication state.
+
+This entry does not call either complete run-history check or list jobs. It
+does not substitute an empty list or assert that no prior run exists. It uses
+the existing immutable, target-date intent shared with scheduled `launch`; an
+existing claim, including one left by failure or an unknown POST result, returns
+`intent-already-exists` without another POST. It never deletes, overwrites,
+expires or takes over a claim. A failed claim write also stops before dispatch.
+
+This gives the cloud entry at most one dispatch attempt per retained target
+claim. A natural request or another explicitly approved direct dispatch can
+still be queued. The producer's shared concurrency serializes execution; its
+already-published exit and unresolved-candidate gate prevent proceeding past
+those states. Serial execution alone does not prevent a second explicit request
+from reading sources after the first failed without a candidate. Accordingly,
+after a failure the operator first resolves the failure; a deliberately approved
+next round enters the same protected workflow through direct `workflow_dispatch`,
+without resetting the old cloud claim. An unknown outcome must be resolved
+before any new round. A dispatch acceptance is never publication evidence.
+
+Only this confirmed-sync entry omits history queries. Scheduled `launch` and
+`check-start` retain their original observation and fail-closed behavior. This
+change does not edit the 09:00/09:05 cloud schedule, GitHub's 09:00/11:30/14:00
+fallback slots, scheduler retry policy, IAM, credentials or runtime adapters.
+The cloud image still requires reviewed release/deployment and real end-to-end
+acceptance; local tests do not prove that this entry is deployed or that a report
+has been generated or published.
 
 Check-start never dispatches and receives no GitHub secret. It reads the actual
 `produce` job's `started_at`; a workflow timestamp, queue, environment wait,

@@ -355,10 +355,16 @@ const REVISION_RECOVERY_FILES=Object.freeze([
   {path:'security/approval-tiers.json',status:'modified'},
 ].map(Object.freeze));
 // END REVISION_RECOVERY_FILES
+const SYNC_REVISION_CONTRACT='ib-source-revision-20261106-sync-v2';
+const SYNC_REVISION_FILES=Object.freeze(["cloud/fee-clock/clock.py", "cloud/fee-clock/test_clock.py", "docs/fee-independent-clock.md", "docs/fee-source-revision.md", "scripts/fee-cloud-producer.mjs", "scripts/fee-cloud-source.test.mjs", "scripts/fee-report-producer.mjs", "scripts/fee-report-producer.test.mjs", "scripts/fee-source-revision-runtime.mjs", "scripts/fee-source-revision-runtime.test.mjs", "scripts/fee-sync-revision-artifacts.mjs", "scripts/fee-sync-revision-artifacts.test.mjs", "scripts/ib-manager-source-revision.mjs", "scripts/ib-manager-source-revision.test.mjs"].map(path=>Object.freeze({path,status:'modified'})));
 // Preserve each consumed contract and its evidence. Each independently reviewed
 // admission belongs only to its signed immediate successor; it neither resets
 // ordinary attempts nor grants a future target/version a retry.
 const RECOVERY_SCOPES=Object.freeze([
+ Object.freeze({contractId:SYNC_REVISION_CONTRACT,admissionModel:'sync-cycle-v1',target:'2026-11-06',
+  baseSha:'50392c2fb5ec3b1b26e5515cdb0feebb48823d2d',repairBase:'50392c2fb5ec3b1b26e5515cdb0feebb48823d2d',
+  baseParents:Object.freeze(['d617fdd25315ca09a5f89a81630b04ae19b24d1b']),
+  fileManifest:SYNC_REVISION_FILES,uiBlob:'2bb9f66ac890ba87cec504ef72a5083c07670689'}),
  Object.freeze({target:RECOVERY_TARGET,baseSha:RECOVERY_BASE,repairBase:RECOVERY_REPAIR_BASE,files:RECOVERY_REPAIR_FILES,failures:RECOVERY_FAILED_RUNS,uiBlob:RECOVERY_UI_BLOB}),
  Object.freeze({target:'2026-10-30',baseSha:'2ba1e968e7a5401c9bb90aac967f4e57e34a7078',repairBase:'2ba1e968e7a5401c9bb90aac967f4e57e34a7078',
   baseParents:Object.freeze(['7048510f1138b44113089b37ac112de30d95e105','7171c1a028e6557ae37529655c4d01c6fa9d817c']),
@@ -408,13 +414,14 @@ function recoveryFileManifest(scope){
   const files=scope.fileManifest;
   if(!Array.isArray(files)||!files.length||files.length>64||new Set(files.map(f=>f?.path)).size!==files.length
       ||files.some(f=>!f||Object.keys(f).sort().join(',')!=='path,status'||typeof f.path!=='string'
-        ||!/^(?:scripts|docs|security|\.github\/workflows)\/[A-Za-z0-9._/-]+$/.test(f.path)
+        ||!/^(?:scripts|docs|security|cloud\/fee-clock|\.github\/workflows)\/[A-Za-z0-9._/-]+$/.test(f.path)
         ||f.path.split('/').some(x=>!x||x==='.'||x==='..')||!['added','modified'].includes(f.status)))fail('RECOVERY_RELEASE');
   return files;
 }
 // Public code/configuration only; this cannot create an admission capability.
-export function reportHistoricalRecoveryManifest(){
-  const scope=RECOVERY_SCOPES.find(s=>s.contractId==='ib-source-revision-20261106-v1');
+export function reportHistoricalRecoveryManifest({contractId='ib-source-revision-20261106-v1'}={}){
+  const scope=RECOVERY_SCOPES.find(s=>s.contractId===contractId);
+  if(!scope?.contractId)fail('RECOVERY_SCOPE');
   return Object.freeze(recoveryFileManifest(scope).map(f=>Object.freeze({...f})));
 }
 export async function readPeriodSourceAttempts({plan,now,currentRunId=null,recoveryMain=null,recoveryRelease=null,actionsToken=process.env.FEE_REPORT_ACTIONS_TOKEN,fetchImpl=globalThis.fetch,assertAdmissionActive=null}={}){
@@ -422,6 +429,7 @@ export async function readPeriodSourceAttempts({plan,now,currentRunId=null,recov
   if(assertAdmissionActive!==null&&typeof assertAdmissionActive!=='function')fail('RECOVERY_METADATA');
   if(recoveryMain!==null&&!/^[a-f0-9]{40}$/.test(recoveryMain))fail('RECOVERY_METADATA');
   const scope=recoveryScope(plan.accountingThrough,recoveryRelease);
+  if(scope?.admissionModel==='sync-cycle-v1')fail('RECOVERY_SCOPE');
   if(recoveryRelease!==null&&(recoveryMain===null||recoveryRelease.mainSha!==recoveryMain||!scope))fail('RECOVERY_METADATA');
   const root='https://api.github.com/repos/huanwujoy-crypto/fee-console/actions',from=new Date(sourceAttemptWindowStart(plan)).toISOString();
   const query=new URLSearchParams({branch:'main',created:from+'..'+now.toISOString(),per_page:'100'});
@@ -593,6 +601,7 @@ async function refreshHistoricalRelease(release){
 }
 export function validateReportRecoveryEvidence({plan,expectedMain,currentRunId,budget,release}={}){
   const e=budget?.recoveryEvidence,c=e?.currentRun,scope=recoveryScope(plan?.accountingThrough,release);
+  if(scope?.admissionModel==='sync-cycle-v1')fail('RECOVERY_SCOPE');
   if(!validateReportPlan(plan)||!isReviewedDailyPlan(plan)||!scope||plan.kind!=='daily'||plan.markets.join(',')!=='NASDAQ,NYSE'
       ||!/^[a-f0-9]{40}$/.test(expectedMain||'')||expectedMain===scope.baseSha||release?.mainSha!==expectedMain||release.baseSha!==scope.baseSha
       ||release.repairBaseSha!==scope.repairBase||release.parent!==scope.repairBase||expectedMain===scope.repairBase||release.uiBlob!==scope.uiBlob||release.signatureVerified!==true)fail('RECOVERY_SCOPE');
@@ -610,13 +619,76 @@ export function validateReportRecoveryEvidence({plan,expectedMain,currentRunId,b
       ||new Set(e.entries.map(x=>x.runId)).size!==scope.failures.length||new Set(e.entries.map(x=>x.jobId)).size!==scope.failures.length)fail('RECOVERY_PRIOR_RUNS');
   return true;
 }
-export async function authorizeReportRecovery({plan,expectedMain,now=new Date(),currentRunId=process.env.GITHUB_RUN_ID,readSourceAttempts=readPeriodSourceAttempts,readRecoveryRelease=readReportRecoveryRelease,actionsToken=process.env.FEE_REPORT_ACTIONS_TOKEN}={}){
+// One known execution is checked, never a fabricated empty history. Production
+// callers first validate the owner event and exact dispatch inputs. The existing
+// workflow concurrency group serializes source work; pending publication blocks
+// every new cycle until its outcome is resolved.
+export async function readCurrentSyncRun({currentRunId,actionsToken=process.env.FEE_REPORT_ACTIONS_TOKEN,fetchImpl=globalThis.fetch}={}){
+  if(!Number.isSafeInteger(Number(currentRunId))||Number(currentRunId)<=0||!/^\d+$/.test(String(currentRunId))||!actionsToken)fail('RECOVERY_RUN');
+  try{return await recoveryMetadataGet(fetchImpl,actionsToken).get('actions/runs/'+currentRunId);}
+  catch{fail('RECOVERY_METADATA');}
+}
+function currentSyncRunBinding(run,{currentRunId,expectedMain,now}){
+  if(!Number.isFinite(now?.getTime())||!Number.isSafeInteger(Number(currentRunId))||Number(currentRunId)<=0
+      ||run?.id!==Number(currentRunId)||run.workflow_id!==365873934||run.path!=='.github/workflows/fee-cloud-producer.yml'
+      ||run.head_branch!=='main'||run.head_sha!==expectedMain||run.actor?.id!==RECOVERY_OWNER
+      ||run.triggering_actor!==undefined&&run.triggering_actor?.id!==RECOVERY_OWNER
+      ||run.repository?.full_name!==ONCE_REPO||run.event!=='workflow_dispatch'||run.run_attempt!==1
+      ||run.status!=='in_progress'||run.conclusion!==null||!Number.isFinite(Date.parse(run.created_at))
+      ||Date.parse(run.created_at)>now.getTime()+300000)fail('RECOVERY_RUN');
+  return Object.freeze({id:run.id,workflowId:run.workflow_id,mainSha:run.head_sha,actorId:run.actor.id,
+    attempt:run.run_attempt,event:run.event,createdAt:run.created_at,repository:run.repository.full_name});
+}
+function syncPublicationBinding(state,{plan,expectedMain,now}){
+  if(!validateReportPlan(plan)||!isReviewedDailyPlan(plan)||reportPlanReadiness(plan,now).state!=='due'||!freshTarget(plan,now)
+      ||state?.mainSha!==expectedMain||state.finalMainSha!==expectedMain||!Buffer.isBuffer(state.data)||!state.data.length
+      ||state.data.length>=2*1024*1024||validateHealth(state.health,{now:new Date(state.health?.checkedAt)}).length
+      ||Date.parse(state.health.checkedAt)>now.getTime()+300000||state.health.dataSha256!==hash(state.data)
+      ||state.health.targetDate>=plan.accountingThrough||plan.periodFrom!==reportAddDays(state.health.targetDate,1)
+      ||state.pending!==false)fail('RECOVERY_SCOPE');
+  return Object.freeze({mainSha:expectedMain,dataSha256:hash(state.data),healthSha256:hash(state.health),publishedTarget:state.health.targetDate});
+}
+async function authorizeSyncRevision({release,plan,expectedMain,now,currentRunId,actionsToken,readCurrentRun,readState,clock}){
+  const rr=recoveryReleaseRecords.get(release),scope=recoveryScope(plan?.accountingThrough,release);
+  if(!rr||rr.scope!==scope||rr.snapshot!==hash(release)||scope?.admissionModel!=='sync-cycle-v1'
+      ||release.contractId!==SYNC_REVISION_CONTRACT||release.mainSha!==expectedMain||release.targetDate!==plan?.accountingThrough
+      ||plan?.kind!=='daily'||plan.markets.join(',')!=='NASDAQ,NYSE')fail('RECOVERY_SCOPE');
+  readState||=((target,start)=>readPublicationState(target,start,undefined,{requireIb:true,strictCandidates:true}));
+  const planHash=hash(plan);let active=true,checking=false,token=actionsToken;
+  const assertActive=()=>{if(!active||typeof rr.get!=='function')fail('RECOVERY_CONSUMED');};
+  const load=async at=>{
+    assertActive();
+    await refreshHistoricalRelease(release);assertActive();
+    const run=currentSyncRunBinding(await readCurrentRun({currentRunId,actionsToken:token}),{currentRunId,expectedMain,now:at});assertActive();
+    const publication=syncPublicationBinding(await readState(plan.accountingThrough,at.toISOString()),{plan,expectedMain,now:at});
+    if(!active||hash(plan)!==planHash)fail('RECOVERY_CONSUMED');
+    return hash({schema:'fee-console.sync-execution.v1',release,plan,run,publication});
+  };
+  const executionSha256=await load(now),bindings=Object.freeze({contractId:release.contractId,admissionModel:'sync-cycle-v1',
+    targetDate:release.targetDate,mainSha:expectedMain,repairBaseSha:release.repairBaseSha,
+    approvedHead:release.approvedHead,approvedTree:release.approvedTree,currentRunId:Number(currentRunId),executionSha256});
+  const record={bindings,active:true};
+  const close=()=>{active=false;record.active=false;token=null;rr.get=null;};
+  const admission=Object.freeze({async checkCurrent(){
+    if(!active||checking)fail('RECOVERY_CONSUMED');checking=true;
+    try{if(await load(clock())!==executionSha256)fail('RECOVERY_CONSUMED');return bindings;}
+    catch(error){close();const codes=['RECOVERY_SCOPE','RECOVERY_RELEASE','RECOVERY_METADATA','RECOVERY_RUN','RECOVERY_CONSUMED'];
+      let message;try{message=Object.getOwnPropertyDescriptor(error,'message')?.value;}catch{}
+      fail(codes.find(c=>message==='FEE_REPORT_'+c)||'RECOVERY_METADATA');
+    }finally{checking=false;}
+  },close,readMetadataCounts(){return Object.freeze({...rr.counts});}});
+  historicalAdmissions.set(admission,record);return admission;
+}
+export async function authorizeReportRecovery({plan,expectedMain,now=new Date(),currentRunId=process.env.GITHUB_RUN_ID,readSourceAttempts=readPeriodSourceAttempts,readRecoveryRelease=readReportRecoveryRelease,actionsToken=process.env.FEE_REPORT_ACTIONS_TOKEN,readCurrentRun=readCurrentSyncRun,readState,clock=()=>new Date()}={}){
   let cachedRelease=null,token=actionsToken;
+  const initialRelease=await readRecoveryRelease(expectedMain,{targetDate:plan?.accountingThrough,actionsToken:token});
+  if(initialRelease.contractId===SYNC_REVISION_CONTRACT)return authorizeSyncRevision({release:initialRelease,plan,expectedMain,now,currentRunId,actionsToken:token,readCurrentRun,readState,clock});
+  let initialPending=true;
   const load=async(at,reuseImmutable=false,assertAdmissionActive=null)=>{
     let budget,release;
     try{
       assertAdmissionActive?.();
-      release=reuseImmutable?await refreshHistoricalRelease(cachedRelease):await readRecoveryRelease(expectedMain,{targetDate:plan?.accountingThrough,actionsToken:token});
+      release=reuseImmutable?await refreshHistoricalRelease(cachedRelease):initialPending?initialRelease:await readRecoveryRelease(expectedMain,{targetDate:plan?.accountingThrough,actionsToken:token});initialPending=false;
       assertAdmissionActive?.();
       budget=await readSourceAttempts({plan,now:at,currentRunId,recoveryMain:expectedMain,recoveryRelease:release,actionsToken:token,assertAdmissionActive});
       assertAdmissionActive?.();
@@ -676,8 +748,8 @@ export function reportPreflightSummary(result){
   const metadata=result.reasonCode==='REPORT_SOURCE_ATTEMPT_METADATA_UNVERIFIED'&&METADATA_ERRORS.has(result.metadataCode)?result.metadataCode:null;
   return `## Fee report period\n\n- Decision: ${result.outcome}\n- Reason: ${reason}\n- Accounting cutoff: ${date(result.plan?.accountingThrough)}\n- Price cutoff: ${date(result.plan?.priceThrough)}\n${metadata?'- Metadata stage: SOURCE_ATTEMPTS\n- Metadata result: '+metadata+'\n':''}\nNo financial source or encrypted economic book is read by this gate.\n`;
 }
-export async function reportPublicationPreflight({now=new Date(),plan=null,reviewedSyncDate=null,confirmedMain=null,recoveryMain=null,scheduledDaily=false,ibEnabled=process.env.IB_MANAGER_READ_ENABLED==='true',currentRunId=process.env.GITHUB_RUN_ID,runAttempt=process.env.GITHUB_RUN_ATTEMPT,readRetryRuns=readPeriodRetryRuns,readSourceAttempts=readPeriodSourceAttempts,readRecoveryRelease=readReportRecoveryRelease,readState}={}){
-  readState||=((target,start)=>readPublicationState(target,start,undefined,{requireIb:ibEnabled}));
+export async function reportPublicationPreflight({now=new Date(),plan=null,reviewedSyncDate=null,confirmedMain=null,recoveryMain=null,scheduledDaily=false,ibEnabled=process.env.IB_MANAGER_READ_ENABLED==='true',currentRunId=process.env.GITHUB_RUN_ID,runAttempt=process.env.GITHUB_RUN_ATTEMPT,readRetryRuns=readPeriodRetryRuns,readSourceAttempts=readPeriodSourceAttempts,readRecoveryRelease=readReportRecoveryRelease,readCurrentRun=readCurrentSyncRun,readState}={}){
+  readState||=((target,start)=>readPublicationState(target,start,undefined,{requireIb:ibEnabled,strictCandidates:confirmedMain!==null||recoveryMain!==null}));
   const plans=plan?[plan]:reportPlansAround(now);
   if(!plans.length)return {schema:'fee-console.report-preflight.v1',outcome:'not-due',plan:null};
   if(plans.some(p=>!validateReportPlan(p)))fail('PLAN');
@@ -720,7 +792,11 @@ export async function reportPublicationPreflight({now=new Date(),plan=null,revie
   if(runAttempt!==undefined&&String(runAttempt)!=='1')return {schema:'fee-console.report-preflight.v1',outcome:'waiting',reasonCode:'REPORT_SOURCE_RERUN_NOT_ALLOWED',plan:next,mainSha:state.mainSha};
   if(recoveryMain!==null){
     if(state.mainSha!==recoveryMain)fail('RECOVERY_RELEASE');
-    await authorizeReportRecovery({plan:next,expectedMain:recoveryMain,now,currentRunId,readSourceAttempts,readRecoveryRelease});
+    await authorizeReportRecovery({plan:next,expectedMain:recoveryMain,now,currentRunId,readSourceAttempts,readRecoveryRelease,readCurrentRun,readState});
+    return {schema:'fee-console.report-preflight.v1',outcome:'produce',plan:next,mainSha:state.mainSha};
+  }
+  if(confirmedMain!==null){
+    currentSyncRunBinding(await readCurrentRun({currentRunId}),{currentRunId,expectedMain:confirmedMain,now});
     return {schema:'fee-console.report-preflight.v1',outcome:'produce',plan:next,mainSha:state.mainSha};
   }
   try{
@@ -745,7 +821,7 @@ export async function dailyPublicationPreflight({now=new Date(),targetDate=null,
   if(sessions.state==='closed')return {...base,outcome:'not-due',reasonCode:'ALL_RELEVANT_MARKETS_CLOSED'};
   const initial=dailyReportPlan(target,markets,{reviewedSyncDate}),readiness=reportPlanReadiness(initial,now);
   if(reviewedSyncDate!==null&&readiness.state!=='due'||reviewedSyncDate===null&&now.getTime()<Date.parse(initial.scheduledAt))return {...base,outcome:'waiting',reasonCode:readiness.reasonCode};
-  readState||=((target,start)=>readPublicationState(target,start,undefined,{requireIb:options.ibEnabled??process.env.IB_MANAGER_READ_ENABLED==='true'}));
+  readState||=((target,start)=>readPublicationState(target,start,undefined,{requireIb:options.ibEnabled??process.env.IB_MANAGER_READ_ENABLED==='true',strictCandidates:options.confirmedMain!=null||options.recoveryMain!=null}));
   const state=await readState(target,now.toISOString());
   if(options.confirmedMain!=null&&(state.mainSha!==options.confirmedMain||state.finalMainSha!==options.confirmedMain))fail('CONFIRMED_MAIN_CHANGED');
   if(!state.health||state.health.targetDate>target)fail('HISTORY_AHEAD_OF_TARGET');
@@ -974,7 +1050,7 @@ export function reviewedMainConfirmation(args,{env=process.env,readEvent}={}){
     return value;
   }catch{fail('CONFIRMED_MAIN_SCOPE');}
 }
-export async function confirmReviewedMainBeforeSource(args,{env=process.env,readEvent,checkedOutMain,fetchImpl=globalThis.fetch}={}){
+export async function confirmReviewedMainBeforeSource(args,{env=process.env,readEvent,checkedOutMain,fetchImpl=globalThis.fetch,readCurrentRun=readCurrentSyncRun,readState,now=new Date()}={}){
   const value=reviewedMainConfirmation(args,{env,readEvent});
   if(value===null)return null;
   if(args.mode!=='produce'||checkedOutMain!==undefined&&checkedOutMain!==value)fail('CONFIRMED_MAIN_CHANGED');
@@ -983,6 +1059,11 @@ export async function confirmReviewedMainBeforeSource(args,{env=process.env,read
     {method:'GET',headers:{Accept:'application/vnd.github+json'}},{timeoutMs:5000,maxBytes:64*1024});}
   catch{fail('CONFIRMED_MAIN_METADATA');}
   if(ref?.ref!=='refs/heads/main'||ref.object?.type!=='commit'||ref.object?.sha!==value)fail('CONFIRMED_MAIN_CHANGED');
+  let plan;try{plan=JSON.parse(env.REPORT_PLAN||args['report-plan']);}catch{fail('PLAN');}
+  if(plan?.accountingThrough!==args['report-target'])fail('PLAN');
+  currentSyncRunBinding(await readCurrentRun({currentRunId:env.GITHUB_RUN_ID,actionsToken:env.FEE_REPORT_ACTIONS_TOKEN,fetchImpl}),{currentRunId:env.GITHUB_RUN_ID,expectedMain:value,now});
+  readState||=((target,start)=>readPublicationState(target,start,undefined,{requireIb:true,strictCandidates:true}));
+  syncPublicationBinding(await readState(plan.accountingThrough,now.toISOString()),{plan,expectedMain:value,now});
   return value;
 }
 async function main(){

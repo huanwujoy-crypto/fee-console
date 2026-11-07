@@ -31,6 +31,8 @@ class FakeGithub:
         self.post_count = 0
         self.read_count = 0
         self.query_count = 0
+        self.run_queries = []
+        self.job_queries = []
         self.post_error = None
         self.result = 41
         self.lock = threading.Lock()
@@ -49,6 +51,7 @@ class FakeGithub:
 
     def runs(self, created=None, status=None):
         with self.lock:
+            self.run_queries.append({'created': created, 'status': status})
             if created is not None:
                 self.query_count += 1
                 if self.query_count == 2 and self.after_claim:
@@ -57,6 +60,7 @@ class FakeGithub:
         return {'total_count': len(rows) + int(self.incomplete), 'workflow_runs': rows}
 
     def jobs(self, run_id):
+        self.job_queries.append(run_id)
         rows = copy.deepcopy(self.job.get(run_id, []))
         return {'total_count': len(rows), 'jobs': rows}
 
@@ -158,6 +162,13 @@ class ClockTests(unittest.TestCase):
         self.assertEqual(self.go()['runId'], 41)
         self.assertEqual(self.go()['outcome'], 'intent-already-exists')
         self.assertEqual(self.github.post_count, 1)
+
+    def test_scheduled_launch_keeps_both_complete_run_checks(self):
+        self.assertEqual(self.go()['outcome'], 'dispatch-accepted')
+        self.assertEqual(self.github.query_count, 2)
+        self.assertEqual(len(self.github.run_queries), 12)
+        for status in ('queued', 'in_progress', 'waiting', 'pending', 'requested'):
+            self.assertEqual(sum(row['status'] == status for row in self.github.run_queries), 2)
 
     def test_concurrent_cloud_executions_share_one_claim(self):
         results = []
@@ -312,6 +323,32 @@ class ConfirmedClockTests(unittest.TestCase):
         with self.assertRaisesRegex(ClockError, '^FEE_CLOCK_' + code + '$'):
             self.go(**kwargs)
 
+    def assert_no_history_reads(self):
+        self.assertEqual(self.github.run_queries, [])
+        self.assertEqual(self.github.job_queries, [])
+
+    def test_first_confirmed_request_does_not_read_runs_or_jobs(self):
+        self.github.incomplete = True
+        self.assertEqual(self.go()['outcome'], 'dispatch-accepted')
+        self.assertEqual(self.github.post_count, 1)
+        self.assert_no_history_reads()
+        original_intent = copy.deepcopy(self.store.intents)
+        self.request['requestId'] = 'synthetic-next-round'
+        self.assertEqual(self.go()['outcome'], 'intent-already-exists')
+        self.assertEqual(self.github.post_count, 1)
+        self.assertEqual(self.store.intents, original_intent)
+        self.assert_no_history_reads()
+
+    def test_confirmed_entry_still_requires_active_workflow_and_valid_main(self):
+        self.github.state = 'disabled_manually'
+        self.error('WORKFLOW_NOT_ACTIVE')
+        self.github.state = 'active'
+        self.github.main_sha = 'not-a-sha'
+        self.error('METADATA_INVALID')
+        self.assertFalse(self.store.intents)
+        self.assertEqual(self.github.post_count, 0)
+        self.assert_no_history_reads()
+
     def test_confirmed_arguments_claim_receipt_and_nine_am_share_one_intent(self):
         args = ['launch-confirmed', self.request['targetDate'], self.request['confirmedAt'],
                 self.request['requestId'], self.request['expectedMain']]
@@ -394,6 +431,7 @@ class ConfirmedClockTests(unittest.TestCase):
         self.assertEqual(self.github.post_count, 0)
         self.request['expectedMain'] = 'b' * 40
         self.assertEqual(self.go()['outcome'], 'intent-already-exists')
+        self.assert_no_history_reads()
 
     def test_request_cannot_mutate_during_adapter_calls(self):
         original = copy.deepcopy(self.request)
@@ -424,6 +462,7 @@ class ConfirmedClockTests(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(results.count('dispatch-accepted'), 1)
         self.assertEqual(self.github.post_count, 1)
+        self.assert_no_history_reads()
 
     def test_existing_normal_intent_is_not_replaced_by_confirmation(self):
         run_clock('launch', NOW, self.github, self.store, enabled=True)
@@ -473,11 +512,14 @@ class ConfirmedClockTests(unittest.TestCase):
                 self.setUp()
                 self.github.post_error, self.store.result_error = post_error, result_error
                 self.error(post_error or 'NETWORK_OR_RESPONSE')
+                original_intent = copy.deepcopy(self.store.intents)
                 self.assertEqual(self.go()['outcome'], 'intent-already-exists')
+                self.assertEqual(self.store.intents, original_intent)
+                self.assert_no_history_reads()
                 self.assertEqual(run_clock('launch', NOW, self.github, self.store, enabled=True)['outcome'], 'intent-already-exists')
                 self.assertEqual(self.github.post_count, 1)
 
-    def test_failed_or_inflight_existing_run_blocks_early_dispatch(self):
+    def test_confirmed_request_does_not_infer_outcomes_from_history(self):
         for status in ('queued', 'in_progress', 'completed'):
             with self.subTest(status=status):
                 self.setUp()
@@ -486,23 +528,28 @@ class ConfirmedClockTests(unittest.TestCase):
                     {'id': 21, 'run_id': 11, 'name': 'period', 'status': 'completed', 'conclusion': 'success'},
                     {'id': 22, 'run_id': 11, 'name': 'Produce daily 2026-10-13',
                      'status': status, 'conclusion': 'failure' if status == 'completed' else None}]
-                self.assertEqual(self.go()['outcome'], 'already-requested')
-                self.assertEqual(self.github.post_count, 0)
-                self.assertFalse(self.store.intents)
+                result = self.go()
+                self.assertEqual(result['outcome'], 'dispatch-accepted')
+                self.assertFalse(result['publicationVerified'])
+                self.assertEqual(self.github.post_count, 1)
+                self.assertTrue(self.store.intents)
+                self.assert_no_history_reads()
 
-    def test_natural_race_after_confirmed_claim_blocks_post_and_keeps_shared_intent(self):
-        self.github.after_claim = [run_row(event='schedule', created='2026-10-13T23:30:00Z')]
-        self.assertEqual(self.go()['outcome'], 'natural-request-visible')
+    def test_natural_race_after_confirmed_claim_defers_to_producer_gates(self):
+        self.store.after_claim = lambda: setattr(self.github, 'day', [
+            run_row(event='schedule', created='2026-10-13T23:30:00Z')])
+        result = self.go()
+        self.assertEqual(result['outcome'], 'dispatch-accepted')
+        self.assertFalse(result['publicationVerified'])
         self.assertTrue(self.store.intents)
-        self.assertEqual(self.github.post_count, 0)
+        self.assertEqual(self.github.post_count, 1)
+        self.assert_no_history_reads()
 
-    def test_unknown_metadata_or_claim_error_never_dispatches(self):
-        self.github.incomplete = True
-        self.error('LIST_INCOMPLETE')
-        self.github.incomplete = False
+    def test_unknown_claim_result_never_dispatches(self):
         self.store.error = 'NETWORK_OR_RESPONSE'
         self.error('NETWORK_OR_RESPONSE')
         self.assertEqual(self.github.post_count, 0)
+        self.assert_no_history_reads()
 
     def test_confirmed_payload_is_forbidden_on_normal_slots(self):
         for mode in ('launch', 'check-start'):

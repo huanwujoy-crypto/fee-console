@@ -11,7 +11,10 @@ import {createRevisionGithubRead} from './fee-sync-revision-github.mjs';
 import {createIbRevisionArtifacts,ibRevisionArtifactFailureCode} from './fee-sync-revision-artifacts.mjs';
 
 const PREFIX='FEE_REPORT_SOURCE_REVISION_',errors=new WeakMap();
-const CONTRACT='ib-source-revision-20261106-v1',TARGET='2026-11-06',ANCHOR='2026-11-04',PREVIOUS='2026-11-05';
+const CONTRACTS=Object.freeze({
+  'ib-source-revision-20261106-v1':'fee-console.ib-source-revision-plan.v1',
+  'ib-source-revision-20261106-sync-v2':'fee-console.ib-source-revision-plan.v2',
+}),TARGET='2026-11-06',ANCHOR='2026-11-04',PREVIOUS='2026-11-05';
 const SHA=/^[a-f0-9]{64}$/,MAX_BYTES=2*1024*1024;
 const sha=bytes=>crypto.createHash('sha256').update(bytes).digest('hex');
 function fail(code){const e=new Error(PREFIX+code);errors.set(e,code);throw Object.freeze(e);}
@@ -64,7 +67,11 @@ export async function createFeeSourceRevisionRuntime(options){
     if(!isHistoricalRevisionAdmission(c.admission))fail('ADMISSION');
     admissionVerified=true;
     const admitted=readHistoricalRevisionAdmission(c.admission);
-    if(admitted.contractId!==CONTRACT||admitted.targetDate!==TARGET)fail('SCOPE');
+    if(!Object.hasOwn(CONTRACTS,admitted.contractId)||admitted.targetDate!==TARGET)fail('SCOPE');
+    const schema=CONTRACTS[admitted.contractId],sync=schema==='fee-console.ib-source-revision-plan.v2';
+    if(!SHA.test(sync?admitted.executionSha256:admitted.consumptionSha256)
+      ||Object.hasOwn(admitted,sync?'consumptionSha256':'executionSha256')
+      ||(sync?admitted.admissionModel!=='sync-cycle-v1':Object.hasOwn(admitted,'admissionModel')))fail('ADMISSION');
     live();
     github=createRevisionGithubRead({token:c.githubToken,fetchImpl:c.fetchImpl,clock:c.clock});
     artifacts=createIbRevisionArtifacts({github,economicSnapshot:c.economicSnapshot,dataKey:c.key,
@@ -86,7 +93,7 @@ export async function createFeeSourceRevisionRuntime(options){
             ||view.currentPayload.feeCalculationReceipt?.asOf!==PREVIOUS
             ||view.anchorPayload.feeCalculationReceipt?.asOf!==ANCHOR)fail('BASE_MISMATCH');
           // These are authenticated source state identifiers, never request claims.
-          const plan=frozenCopy({schema:'fee-console.ib-source-revision-plan.v1',targetDate:TARGET,anchorDate:ANCHOR,
+          const plan=frozenCopy({schema,targetDate:TARGET,anchorDate:ANCHOR,
             baselineSha256:c.baselineSha256,currentSourceStateId:view.currentPayload.ibManagerSourceState?.stateId,
             anchorSourceStateId:view.anchorPayload.ibManagerSourceState?.stateId,currentArtifact:view.artifacts.current,
             anchorArtifact:view.artifacts.anchor,bindings:view.bindings,expiresAt:view.expiresAt});

@@ -51,7 +51,7 @@ function wire({revised=false,change=()=>{},unstable=false,early=false}={}){
   return {calls,reader:new SharesightIbManagerReader({clientId:'synthetic-client',clientSecret:'synthetic-secret',fetchImpl})};
 }
 const payload=b=>({ibManagerReturnReceipt:b.returnReceipt,ibManagerDrawdownReceipt:b.drawdownReceipt,ibManagerSourceState:b.sourceState,ibManagerCoverageState:b.sourceState.source.bootstrapCoverage,feeDataCanary:{untouched:true},consumedOperations:['synthetic-old-failure']});
-async function fixture({target=T,transport={},verify,check,read,now=clock}={}){
+async function fixture({target=T,transport={},verify,check,read,now=clock,sync=false}={}){
   const business={points:[{d:B,tot:1000}],openT:1000,from:B,to:B,days:1,flowByDate:{},rate:0,cr:0,cumBefore:0,hwmBefore:0};
   const hash=ibBaselineBusinessHash(business),input={schema:'fee-console.ib-manager-return-input.v1',currency:'USD',timezone:'America/New_York',flowTiming:'eod',flowsComplete:true,correctionsConfirmed:true,sourceSha256:h('c'),periodReturnsInput:business};
   const owner=await buildIbOwnerBaseline({ibManagerReturnReceipt:await buildIbManagerReturnReceipt(input),ibManagerDrawdownReceipt:await buildIbManagerDrawdownReceipt(input)},input,hash);
@@ -61,9 +61,10 @@ async function fixture({target=T,transport={},verify,check,read,now=clock}={}){
   const b=await wire().reader.readStable({targetDate:P,expectedBaselineHash:hash,baseline,checkpoint:a});
   const anchorPayload=payload(await buildIbManagerReportBundle(a,hash)),currentPayload=payload(await buildIbManagerReportBundle(b,hash));
   const artifact=(id,c)=>({dataSha256:h(c),healthSha256:h(c),producerRunId:id,candidateSha:o(c)});
-  const plan={schema:'fee-console.ib-source-revision-plan.v1',targetDate:target,anchorDate:U,baselineSha256:hash,
+  const plan={schema:sync?'fee-console.ib-source-revision-plan.v2':'fee-console.ib-source-revision-plan.v1',targetDate:target,anchorDate:U,baselineSha256:hash,
     currentSourceStateId:currentPayload.ibManagerSourceState.stateId,anchorSourceStateId:anchorPayload.ibManagerSourceState.stateId,
-    currentArtifact:artifact(2,'a'),anchorArtifact:artifact(1,'b'),bindings:{mainSha:o('a'),economicRevisionSha256:h('d'),consumptionSha256:h('e'),
+    currentArtifact:artifact(2,'a'),anchorArtifact:artifact(1,'b'),bindings:{mainSha:o('a'),economicRevisionSha256:h('d'),
+      ...(sync?{admissionModel:'sync-cycle-v1',executionSha256:h('e')}:{consumptionSha256:h('e')}),
       baseDataSha256:h('a'),baseHealthSha256:h('a'),currentSourceStateId:currentPayload.ibManagerSourceState.stateId},expiresAt:T+'T12:05:00.000Z'};
   const w=wire({revised:true,...transport});let reads=0,checks=0,artifactChecks=0;
   const api=createIbSourceRevisionPreparer({clock:now,
@@ -89,6 +90,51 @@ test('rebuilds a private revision from a real synthetic accepted checkpoint with
 test('same-cutoff revision is distinct from extending a report and never changes fee or consumption data',async()=>{
   const f=await fixture({target:P}),r=await f.run();assert.equal(r.mode,'same-cutoff');assert.equal(r.targetDate,P);
   assert.equal(r.replacement.returnReceipt.grossTwrPpm,7000);assert.deepEqual(f.currentPayload.consumedOperations,['synthetic-old-failure']);
+});
+test('sync-cycle v2 keeps exact execution and source bindings through preparation and serialized validation',async()=>{
+  const f=await fixture({sync:true}),before=structuredClone(f.currentPayload),candidate=await f.run();
+  assert.equal(candidate.plan.schema,'fee-console.ib-source-revision-plan.v2');
+  assert.deepEqual(candidate.plan.bindings,f.plan.bindings);
+  assert.equal(candidate.plan.bindings.admissionModel,'sync-cycle-v1');
+  assert.equal(Object.hasOwn(candidate.plan.bindings,'consumptionSha256'),false);
+  assert.equal(candidate.replacement.returnReceipt.grossTwrPpm,7000);
+  assert.deepEqual(candidate.changedHistoricalDates,[P]);assert.deepEqual(f.currentPayload,before);
+  assert.deepEqual(await validateIbSourceRevisionCandidate(structuredClone(candidate),{
+    currentPayload:f.currentPayload,targetDate:T,baselineSha256:f.plan.baselineSha256,now:clock()}),candidate);
+  assert.equal(f.counts().reads,1);assert.equal(candidate.executionAuthorized,false);
+});
+test('v1 and v2 plan fields cannot be substituted, mixed, inferred or silently downgraded',async t=>{
+  const cases=[
+    ['v1 carrying v2 bindings',true,p=>{p.schema='fee-console.ib-source-revision-plan.v1';}],
+    ['v2 carrying v1 bindings',false,p=>{p.schema='fee-console.ib-source-revision-plan.v2';}],
+    ['unknown version',true,p=>{p.schema='fee-console.ib-source-revision-plan.v3';}],
+    ['mixed hashes',true,p=>{p.bindings.consumptionSha256=h('e');}],
+    ['legacy with execution hash',false,p=>{p.bindings.executionSha256=h('e');}],
+    ['legacy with model',false,p=>{p.bindings.admissionModel='sync-cycle-v1';}],
+    ['missing model',true,p=>{delete p.bindings.admissionModel;}],
+    ['unknown model',true,p=>{p.bindings.admissionModel='sync-cycle-v2';}],
+    ['missing execution hash',true,p=>{delete p.bindings.executionSha256;}],
+    ['malformed execution hash',true,p=>{p.bindings.executionSha256='e'.repeat(63);}],
+    ['caller execution flag',true,p=>{p.bindings.executionAuthorized=true;}],
+  ];
+  for(const[name,sync,change]of cases)await t.test(name,async()=>{
+    const f=await fixture({sync});change(f.plan);await assert.rejects(f.run(),/IB_REVISION_PLAN/);
+    assert.equal(f.counts().reads,0);assert.equal(f.counts().artifactChecks,0);
+  });
+});
+test('sync-cycle v2 refuses changes to every binding after the source read',async()=>{
+  for(const key of ['mainSha','economicRevisionSha256','admissionModel','executionSha256','baseDataSha256','baseHealthSha256','currentSourceStateId']){
+    const f=await fixture({sync:true,check:(n,p)=>({...p.bindings,...(n===2?{[key]:key==='mainSha'?o('f'):key==='admissionModel'?'consumption-v1':h('f')}:{})})});
+    await assert.rejects(f.run(),/IB_REVISION_BINDINGS/);assert.equal(f.counts().reads,1);
+  }
+});
+test('sync-cycle v2 retains original artifact, month-lock and unknown-flow refusals',async()=>{
+  const badArtifact=await fixture({sync:true,verify:()=>({verified:true})});
+  await assert.rejects(badArtifact.run(),/IB_REVISION_ARTIFACT/);assert.equal(badArtifact.counts().reads,0);
+  const locked=await fixture({sync:true});locked.currentPayload.feeReportMonthLocks={schema:'fee-console.report-month-locks.v1',periods:[{ym:'2026-09',digest:h('a')}]};
+  await assert.rejects(locked.run(),/IB_REVISION_MONTH_LOCK/);assert.equal(locked.counts().reads,0);
+  const unknown=await fixture({sync:true,transport:{change:b=>{if(b.cash_account_transactions?.length)b.cash_account_transactions[1].cash_account_transaction_type.name='UNKNOWN';}}});
+  await assert.rejects(unknown.run(),/IB_REVISION_SOURCE_REFUSED:IB_SOURCE_UNRESOLVED_FLOW/);assert.equal(unknown.counts().reads,1);
 });
 test('diagnostic code retains a branded fixed source reason and refuses spoofed text or getter/proxy errors',async()=>{
   const f=await fixture({read:()=>{throw new IbManagerSourceError('CASH_RECONCILIATION');}});let issued;

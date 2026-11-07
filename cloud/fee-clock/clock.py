@@ -232,28 +232,33 @@ def run_clock(mode, now, github, store, enabled=False, current_time=None, confir
     if (metadata.get('id') != WORKFLOW_ID or metadata.get('path') != '.github/workflows/' + WORKFLOW
             or metadata.get('state') != 'active'):
         fail('WORKFLOW_NOT_ACTIVE')
-    runs, busy = inspect_runs(github, selected, current_time)
-    if mode == 'check-start':
-        with ThreadPoolExecutor(max_workers=8) as pool:
-            evidence = list(pool.map(lambda row: started_job(github.jobs(row['id']), row, selected, current_time()), runs))
-        actual = [row for row in evidence if row is not None]
-        if actual:
-            if any(row['conclusion'] in ('failure', 'timed_out', 'cancelled', 'action_required', 'startup_failure') for row in actual):
-                fail('PRODUCER_FAILED_AFTER_START')
-            return {'event': 'FEE_CLOCK', 'outcome': 'started', **safe, 'starts': actual,
-                    'publicationVerified': False}
+    # The confirmed-sync entry makes its first target-bound request without a
+    # complete Actions history. Its immutable claim prevents a second clock
+    # POST; the producer retains serial execution and publication/source gates.
+    # Scheduled launch and observation keep their original full-list checks.
+    if mode != 'launch-confirmed':
+        runs, busy = inspect_runs(github, selected, current_time)
+        if mode == 'check-start':
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                evidence = list(pool.map(lambda row: started_job(github.jobs(row['id']), row, selected, current_time()), runs))
+            actual = [row for row in evidence if row is not None]
+            if actual:
+                if any(row['conclusion'] in ('failure', 'timed_out', 'cancelled', 'action_required', 'startup_failure') for row in actual):
+                    fail('PRODUCER_FAILED_AFTER_START')
+                return {'event': 'FEE_CLOCK', 'outcome': 'started', **safe, 'starts': actual,
+                        'publicationVerified': False}
+            if runs:
+                fail('REQUESTED_NOT_STARTED')
+            intent = store.read_intent(selected['targetDate'])
+            if intent is not None:
+                valid_intent(intent, selected)
+                fail('DISPATCH_NOT_OBSERVED')
+            fail('NOT_REQUESTED')
         if runs:
-            fail('REQUESTED_NOT_STARTED')
-        intent = store.read_intent(selected['targetDate'])
-        if intent is not None:
-            valid_intent(intent, selected)
-            fail('DISPATCH_NOT_OBSERVED')
-        fail('NOT_REQUESTED')
-    if runs:
-        return {'event': 'FEE_CLOCK', 'outcome': 'already-requested', **safe,
-                'runIds': sorted(row['id'] for row in runs)}
-    if busy:
-        fail('PRODUCER_BUSY')
+            return {'event': 'FEE_CLOCK', 'outcome': 'already-requested', **safe,
+                    'runIds': sorted(row['id'] for row in runs)}
+        if busy:
+            fail('PRODUCER_BUSY')
     main = github.main()
     if not re.fullmatch(r'[0-9a-f]{40}', main.get('object', {}).get('sha', '')):
         fail('METADATA_INVALID')
@@ -272,12 +277,14 @@ def run_clock(mode, now, github, store, enabled=False, current_time=None, confir
     if not store.claim(intent):
         valid_intent(store.read_intent(selected['targetDate']), selected)
         return {'event': 'FEE_CLOCK', 'outcome': 'intent-already-exists', **safe}
-    # Narrow the natural-cron race after acquiring the cloud claim. GitHub may
-    # still race after this GET; its original concurrency/preflight remain.
-    runs, busy = inspect_runs(github, selected, current_time)
-    if runs or busy:
-        store.result({**intent, 'outcome': 'natural-request-visible'})
-        return {'event': 'FEE_CLOCK', 'outcome': 'natural-request-visible', **safe}
+    if mode != 'launch-confirmed':
+        # Scheduled launch still narrows the natural-cron race after claiming.
+        # The confirmed entry relies on the same producer concurrency and
+        # publication preflight even when another request is already queued.
+        runs, busy = inspect_runs(github, selected, current_time)
+        if runs or busy:
+            store.result({**intent, 'outcome': 'natural-request-visible'})
+            return {'event': 'FEE_CLOCK', 'outcome': 'natural-request-visible', **safe}
     still_in_slot()
     context = {}
     if mode == 'launch-confirmed':
