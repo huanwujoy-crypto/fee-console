@@ -228,6 +228,30 @@ separately reviewed change for explicit key paths only.
 comment, owner actor, event and `run_attempt == 1`; it cannot see another
 dispatch on the same main, and no run-history query, lock or store is added.
 
+A refused GitHub verification still reports `FEE_REPORT_RECOVERY_METADATA`.
+The envelope entry adds, from the producer's fixed list and by error identity
+only, `metadataStage` (the call site), `metadataRequest` (the fixed request
+class) and `metadataCategory` (fixed HTTP status classes, `TIMEOUT`, `SIZE`,
+`JSON`, `FETCH_REJECTED`, `TOKEN_FORMAT`, ... or `UNKNOWN`), plus
+`transportRefusal` (`ROUTE`/`EXPIRED`) when the entry's own boundary refused.
+For a concurrent batch the request is the one whose rejection settled first;
+its siblings may also have been sent. No URL, query, header, token, body,
+stack or exception text is kept. This adds visibility only: requests, limits,
+authentication and every refusal are unchanged, and it does not identify the
+cause of an earlier run.
+
+That change has its own release binding: contract
+`ib-source-revision-20261106-envelope-evidence-v2`, same purpose, window and
+14-request limit, pinned to the real main `c64b41a` (parent `08bb15e`,
+unchanged `index.html` blob) and its exact five modified files
+(`docs/fee-source-revision.md`, `scripts/fee-report-producer.mjs` and its test,
+`scripts/ib-v3-envelope-evidence.mjs` and its test). The admission accepts only
+v2; the v1 binding remains for history and is refused. Neither contract
+records or consumes a run: a v2 run still needs the owner's exact-head approval
+comment, passing required checks, a protected squash merge onto `c64b41a`, and
+a new, separately approved single dispatch. The earlier v1 authorization is not
+reused.
+
 ## One complete recovery batch
 
 The integration is limited to extending the current published source through

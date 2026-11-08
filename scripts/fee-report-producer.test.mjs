@@ -17,7 +17,7 @@ import {HEALTH_SCHEMA,validateHealth} from './fee-data-health.mjs';
 import {CLOUD_ONCE,cloudOnceWindow,cloudOnceRequest,admitCloudOnce,confirmCloudOnce,recordCloudOnceCandidate,cloudOnceStatus,pauseCloudOnce,cloudOnceControl,scheduledDailyContext} from './fee-report-producer.mjs';
 import {reviewedMainConfirmation,confirmReviewedMainBeforeSource,confirmReviewedRecoveryBeforeSource,isHistoricalRevisionAdmission,readHistoricalRevisionAdmission,reportHistoricalRecoveryManifest,readCurrentSyncRun} from './fee-report-producer.mjs';
 import {isHistoricalRevisionDiagnosticAdmission,readHistoricalRevisionDiagnosticAdmission,authorizeHistoricalRevisionDiagnostic} from './fee-report-producer.mjs';
-import {authorizeEnvelopeEvidence,isEnvelopeEvidenceAdmission} from './fee-report-producer.mjs';
+import {authorizeEnvelopeEvidence,isEnvelopeEvidenceAdmission,recoveryMetadataDiagnostic,RECOVERY_METADATA_STAGES,RECOVERY_METADATA_REQUESTS,RECOVERY_METADATA_CATEGORIES} from './fee-report-producer.mjs';
 
 function cloudOnceFixture(){
  const main='a'.repeat(40),candidate='b'.repeat(40),runId=1001,now=new Date('2026-11-03T02:00:10Z');
@@ -2122,14 +2122,18 @@ test('income-boundary diagnostic rejects old release bindings and a four-file-on
 });
 
 // ---- response-envelope evidence release (read-only, its own purpose) ----
-const envelopeContract='ib-source-revision-20261106-envelope-evidence-v1',envelopeBase='08bb15e1f78ee067cfa8be96e1cfe14018410f0e';
-function envelopeFixture(){
- const f=syncRevisionFixture(),manifest=reportHistoricalRecoveryManifest({contractId:envelopeContract});
- f.commit.parents=[{sha:envelopeBase}];f.supportCommit.sha=envelopeBase;f.supportCommit.parents=[{sha:catalogEvidenceDiagnosticBase}];
- f.comparison.base_commit.sha=f.comparison.merge_base_commit.sha=envelopeBase;
+// The admission accepts only the current v2 release (base c64b41a); v1 (base
+// 08bb15e) keeps its binding for history and is refused.
+const envelopeV1Contract='ib-source-revision-20261106-envelope-evidence-v1',envelopeV1Base='08bb15e1f78ee067cfa8be96e1cfe14018410f0e';
+const envelopeContract='ib-source-revision-20261106-envelope-evidence-v2',envelopeBase='c64b41a16ede36e1fadc2a57e231118a5921899a';
+function envelopeFixture(version='v2'){
+ const v1=version==='v1',contractId=v1?envelopeV1Contract:envelopeContract,base=v1?envelopeV1Base:envelopeBase;
+ const f=syncRevisionFixture(),manifest=reportHistoricalRecoveryManifest({contractId});
+ f.commit.parents=[{sha:base}];f.supportCommit.sha=base;f.supportCommit.parents=[{sha:v1?catalogEvidenceDiagnosticBase:envelopeV1Base}];
+ f.comparison.base_commit.sha=f.comparison.merge_base_commit.sha=base;
  f.comparison.files=manifest.map(m=>({filename:m.path,status:m.status,sha:'b'.repeat(40)}));
  f.tree.tree=[f.tree.tree[0],...manifest.map(m=>({path:m.path,type:'blob',mode:'100644',sha:'b'.repeat(40)}))];
- f.reviewedCommit.parents=[{sha:envelopeBase}];f.currentRun.display_title='IB diagnostic 2026-11-06';
+ f.reviewedCommit.parents=[{sha:base}];f.currentRun.display_title='IB diagnostic 2026-11-06';
  return f;
 }
 const envelopeAdmission=(f,readers=syncRevisionReaders(f))=>authorizeEnvelopeEvidence({expectedMain:recoveryHead,currentRunId:recoveryId,now:revisionRecoveryNow,
@@ -2141,7 +2145,7 @@ test('envelope evidence release is pinned to the real main 08bb15e with its own 
    'scripts/fee-source-revision-diagnostic.mjs','security/approval-tiers.json'].map(path=>({path,status:'modified'})),
   ...['scripts/ib-v3-envelope-evidence.mjs','scripts/ib-v3-envelope-evidence.test.mjs'].map(path=>({path,status:'added'})),
  ];
- const manifest=reportHistoricalRecoveryManifest({contractId:envelopeContract});
+ const manifest=reportHistoricalRecoveryManifest({contractId:envelopeV1Contract});
  assert.deepEqual(manifest,expected);assert.equal(manifest.length,10);assert(Object.isFrozen(manifest));assert(manifest.every(Object.isFrozen));
  assert.equal(reportHistoricalRecoveryManifest({contractId:catalogEvidenceDiagnosticContract}).length,13);
 });
@@ -2239,4 +2243,100 @@ test('envelope admission runs through the entry own outer transport with its def
   assert.equal(isEnvelopeEvidenceAdmission(admission),true);assert.equal((await admission.checkCurrent()).contractId,envelopeContract);admission.close();
   assert(trace.length>=8);assert(!trace.some(x=>x.startsWith('contents/')||x.includes('/jobs')||x.includes('/runs?')));
  }finally{transport.close();}
+});
+
+// ---- fixed GitHub-verification sub-location (synthetic faults only) ----
+const metadataCanary='private-canary-'+'Z'.repeat(12);
+function envelopeFaultFetch(f,fault){
+ const wire=sourceRevisionWire(f),seen=new Map();
+ return async(url,init)=>{
+  const p=url.split('/fee-console/')[1],n=(seen.get(p)||0)+1;seen.set(p,n);
+  if(fault?.match(p,n))return fault.respond(url,init);
+  if(p==='actions/runs/'+recoveryId){const r=new Response(JSON.stringify(f.currentRun));Object.defineProperty(r,'url',{value:url});return r;}
+  return wire(url,init);
+ };
+}
+const faultResponse=(url,{status=200,body=JSON.stringify({message:metadataCanary}),headers={},responseUrl=url}={})=>{
+ const r=new Response(body,{status,headers:{'content-type':'application/json',...headers}});Object.defineProperty(r,'url',{value:responseUrl});return r;
+};
+const faultyEnvelope=(fault,options={})=>{const f=envelopeFixture();return authorizeEnvelopeEvidence({expectedMain:recoveryHead,currentRunId:recoveryId,now:revisionRecoveryNow,
+ actionsToken:revisionActionsToken,fetchImpl:envelopeFaultFetch(f,fault),clock:()=>revisionRecoveryNow,...options});};
+async function metadataFailure(promise){
+ let error;try{await promise;}catch(e){error=e;}
+ assert(error,'expected a refusal');assert.equal(error.message,'FEE_REPORT_RECOVERY_METADATA');
+ const d=recoveryMetadataDiagnostic(error);assert(d&&Object.isFrozen(d));assert.deepEqual(Object.keys(d).sort(),['category','request','stage']);
+ assert(RECOVERY_METADATA_STAGES.includes(d.stage)&&RECOVERY_METADATA_REQUESTS.includes(d.request)&&RECOVERY_METADATA_CATEGORIES.includes(d.category));
+ assert.doesNotMatch(JSON.stringify(d)+String(error.stack).split('\n')[0],/canary|https?:|Bearer|synthetic-revision|9001|9002|[a-f0-9]{40}/);
+ return {...d};
+}
+test('each GitHub verification stage reports its fixed request and category; the code itself is unchanged',async()=>{
+ const at=(path,nth=1)=>(p,n)=>p===path&&n===nth;
+ const cases=[
+  [at('git/ref/heads/main'),url=>faultResponse(url,{status:403}),['RELEASE_MAIN_COMMIT','MAIN_REF','HTTP_403']],
+  [at('commits/'+recoveryHead+'?per_page=1'),url=>faultResponse(url,{status:500}),['RELEASE_MAIN_COMMIT','COMMIT','HTTP_5XX']],
+  [at('commits/'+envelopeBase+'?per_page=1'),url=>faultResponse(url,{status:429}),['RELEASE_BASE_COMPARE_TREE','COMMIT','HTTP_429']],
+  [at('compare/'+envelopeBase+'...'+recoveryHead+'?per_page=100'),url=>faultResponse(url,{status:404}),['RELEASE_BASE_COMPARE_TREE','COMPARE','HTTP_404']],
+  [at('git/trees/'+'a'.repeat(40)+'?recursive=1'),url=>faultResponse(url,{headers:{'content-length':String(600*1024)}}),['RELEASE_BASE_COMPARE_TREE','TREE','SIZE']],
+  [at('commits/'+recoveryHead+'/pulls?per_page=100'),()=>{throw Error(metadataCanary+' https://x');},['RELEASE_PR_ASSOCIATION','PR_ASSOCIATION','FETCH_REJECTED']],
+  [at('pulls/9001'),url=>faultResponse(url,{status:302}),['RELEASE_PR_COMMENTS','PR','HTTP_3XX']],
+  [at('issues/9001/comments?per_page=100'),url=>faultResponse(url,{body:'not json '+metadataCanary}),['RELEASE_PR_COMMENTS','PR_COMMENTS','JSON']],
+  [at('commits/'+revisionReviewedHead+'?per_page=1'),url=>faultResponse(url,{status:401}),['RELEASE_REVIEWED_HEAD','COMMIT','HTTP_401']],
+  [at('git/ref/heads/main',2),url=>faultResponse(url,{responseUrl:url+'?moved'}),['RELEASE_MAIN_RECHECK','MAIN_REF','RESPONSE_URL']],
+  [at('issues/comments/9002'),url=>faultResponse(url,{status:418}),['REFRESH_MAIN_COMMENT','COMMENT','HTTP_4XX']],
+  [at('git/ref/heads/main',3),url=>faultResponse(url,{status:204,body:null}),['REFRESH_MAIN_COMMENT','MAIN_REF','HTTP_OTHER']],
+  [at('actions/runs/'+recoveryId),url=>{const body=new ReadableStream({start(c){c.error(Error(metadataCanary));}});const r=new Response(body,{headers:{'content-type':'application/json'}});Object.defineProperty(r,'url',{value:url});return r;},['CURRENT_RUN','RUN','STREAM_FAILED']],
+ ];
+ for(const [match,respond,[stage,request,category]] of cases)
+  assert.deepEqual(await metadataFailure(faultyEnvelope({match,respond})),{stage,request,category},stage+' '+request);
+ assert.deepEqual(await metadataFailure(faultyEnvelope(null,{actionsToken:'t'.repeat(4097),fetchImpl:()=>assert.fail('no request with a refused token')})),
+  {stage:'RELEASE_SETUP',request:'NONE',category:'TOKEN_FORMAT'});
+});
+test('a recheck failure after admission keeps its own sub-location, then the admission is consumed',async()=>{
+ const admission=await faultyEnvelope({match:(p,n)=>p==='actions/runs/'+recoveryId&&n===2,respond:url=>faultResponse(url,{status:503})});
+ assert.deepEqual(await metadataFailure(admission.checkCurrent()),{stage:'CURRENT_RUN',request:'RUN',category:'HTTP_5XX'});
+ await assert.rejects(admission.checkCurrent(),/^Error: FEE_REPORT_RECOVERY_CONSUMED$/);
+ const comment=await faultyEnvelope({match:(p,n)=>p==='issues/comments/9002'&&n===2,respond:()=>{throw Error(metadataCanary);}});
+ assert.deepEqual(await metadataFailure(comment.checkCurrent()),{stage:'REFRESH_MAIN_COMMENT',request:'COMMENT',category:'FETCH_REJECTED'});
+});
+test('a GitHub timeout is a fixed TIMEOUT at its stage, with no retry',async()=>{
+ let calls=0;
+ assert.deepEqual(await metadataFailure(faultyEnvelope({match:(p,n)=>p==='git/ref/heads/main'&&n===1&&++calls,respond:()=>new Promise(()=>{})})),
+  {stage:'RELEASE_MAIN_COMMIT',request:'MAIN_REF',category:'TIMEOUT'});
+ assert.equal(calls,1);
+});
+test('version, approval and run refusals are unchanged and carry no metadata sub-location',async()=>{
+ for(const change of [f=>f.reviewedCommit.commit.tree.sha='f'.repeat(40),f=>f.comparison.files.pop(),f=>f.comments[0].user.id=1,f=>f.currentRun.run_attempt=2]){
+  const f=envelopeFixture();change(f);let error;
+  try{await authorizeEnvelopeEvidence({expectedMain:recoveryHead,currentRunId:recoveryId,now:revisionRecoveryNow,actionsToken:revisionActionsToken,fetchImpl:envelopeFaultFetch(f,null),clock:()=>revisionRecoveryNow});}catch(e){error=e;}
+  assert.match(error?.message,/^FEE_REPORT_RECOVERY_(RELEASE|RUN)$/);assert.equal(recoveryMetadataDiagnostic(error),null);
+ }
+ const ok=await faultyEnvelope(null);assert.equal(isEnvelopeEvidenceAdmission(ok),true);assert.equal((await ok.checkCurrent()).contractId,envelopeContract);ok.close();
+ assert.equal(recoveryMetadataDiagnostic(new Error('FEE_REPORT_RECOVERY_METADATA')),null);assert.equal(recoveryMetadataDiagnostic(null),null);
+});
+
+test('envelope v2 release is pinned to the real main c64b41a with its own exact five-file manifest; v1 is refused',async()=>{
+ const manifest=reportHistoricalRecoveryManifest({contractId:envelopeContract});
+ assert.deepEqual(manifest,['docs/fee-source-revision.md','scripts/fee-report-producer.mjs','scripts/fee-report-producer.test.mjs',
+  'scripts/ib-v3-envelope-evidence.mjs','scripts/ib-v3-envelope-evidence.test.mjs'].map(path=>({path,status:'modified'})));
+ assert(Object.isFrozen(manifest)&&manifest.every(Object.isFrozen));assert.equal(reportHistoricalRecoveryManifest({contractId:envelopeV1Contract}).length,10);
+ // The real v1 release (parent 08bb15e) still selects its own scope, but the admission refuses it.
+ const old=envelopeFixture('v1'),oldRelease=await syncRevisionReaders(old).readRecoveryRelease(recoveryHead,{targetDate:'2026-11-06',actionsToken:revisionActionsToken});
+ assert.equal(oldRelease.contractId,envelopeV1Contract);assert.equal(oldRelease.repairBaseSha,envelopeV1Base);
+ await assert.rejects(envelopeAdmission(old),/^Error: FEE_REPORT_RECOVERY_SCOPE$/);
+ const f=envelopeFixture(),release=await syncRevisionReaders(f).readRecoveryRelease(recoveryHead,{targetDate:'2026-11-06',actionsToken:revisionActionsToken});
+ assert.deepEqual([release.contractId,release.purpose,release.repairBaseSha,release.parent,release.targetDate],[envelopeContract,'read-only-envelope-evidence',envelopeBase,envelopeBase,'2026-11-06']);
+ const admission=await envelopeAdmission(f);assert.equal((await admission.checkCurrent()).repairBaseSha,envelopeBase);admission.close();
+ // Exact base, base parents, manifest, tree and reviewed-head parent stay strict for v2.
+ for(const change of [x=>x.supportCommit.parents=[{sha:catalogEvidenceDiagnosticBase}],x=>x.comparison.files.push({filename:'scripts/fee-cloud-source.mjs',status:'modified',sha:'b'.repeat(40)}),
+  x=>x.comparison.files[0].status='added',x=>x.comparison.files.pop(),x=>x.reviewedCommit.parents=[{sha:envelopeV1Base}],x=>x.tree.tree[1].sha='c'.repeat(40),
+  x=>x.supportCommit.commit.verification.verified=false,x=>x.comparison.ahead_by=2]){
+  const v=envelopeFixture();change(v);await assert.rejects(envelopeAdmission(v),/^Error: FEE_REPORT_RECOVERY_(RELEASE|METADATA)$/);
+ }
+ // A main whose parent is no pinned release selects nothing.
+ const stray=envelopeFixture();stray.commit.parents=[{sha:'e'.repeat(40)}];await assert.rejects(envelopeAdmission(stray),/^Error: FEE_REPORT_RECOVERY_RELEASE$/);
+ // Purpose isolation holds for v2: diagnostic, recovery and budget paths refuse it.
+ await assert.rejects(diagnosticAdmission(f,syncRevisionReaders(f)),/RECOVERY_SCOPE/);
+ await assert.rejects(syncAdmission(f,syncRevisionReaders(f)),/RECOVERY_SCOPE/);
+ await assert.rejects(readPeriodSourceAttempts({plan:f.plan,now:revisionRecoveryNow,currentRunId:recoveryId,recoveryMain:recoveryHead,recoveryRelease:release,actionsToken:revisionActionsToken}),/RECOVERY_SCOPE/);
+ assert.throws(()=>validateReportRecoveryEvidence({plan:f.plan,expectedMain:recoveryHead,currentRunId:recoveryId,release,budget:{attempts:0,recoveryEvidence:{entries:[],reservations:[]}}}),/RECOVERY_SCOPE/);
 });
