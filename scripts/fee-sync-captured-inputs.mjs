@@ -6,7 +6,7 @@ import {SharesightCloudReader,CLOUD_ACCOUNTS} from './fee-cloud-source.mjs';
 import {SharesightIbManagerReader} from './ib-manager-source.mjs';
 import {sourceContractInputHash} from './fee-source-contract.mjs';
 import {projectSharesightSyncAccount} from './fee-sync-source-projection.mjs';
-import {lexicalBatchesEquivalent,lexicalBodiesCanonical} from './fee-source-lexical.mjs';
+import {lexicalBatchesEquivalent,IB_UNORDERED_ID_ARRAYS} from './fee-source-lexical.mjs';
 
 const PREFIX='FEE_SYNC_CAPTURE_',failures=new WeakMap();
 const canonical=v=>Array.isArray(v)?'['+v.map(canonical).join(',')+']':v&&typeof v==='object'?'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canonical(v[k])).join(',')+'}':JSON.stringify(v);
@@ -92,8 +92,14 @@ export function projectCapturedSharesightAccount(request){
     // identical bytes, or the shared strict lexical rule over both whole batches
     // and over both selected projections. The original first round's bodies and
     // byte hash remain the projected input and captureSourceSha256.
-    if(e.sourceSha256!==e.captures[0].sha256||!lexicalBatchesEquivalent(e.captures[0],e.captures[1])
-      ||canonical(raw)!==canonical(other)&&lexicalBodiesCanonical(raw)!==lexicalBodiesCanonical(other))fail('BATCH');
+    // The IB role uses the same route-bound unordered-id contract as its reader;
+    // the two-account fee capture keeps the stricter ordered rule. Equivalent
+    // whole batches with an identical selected route/key shape imply each
+    // selected body is equivalent, since bodies are selected by exact route.
+    const contract=s.role==='ib-manager'?IB_UNORDERED_ID_ARRAYS:null;
+    const shape=v=>canonical(JSON.parse(JSON.stringify(v,(k,x)=>typeof x==='string'?true:x)));
+    if(e.sourceSha256!==e.captures[0].sha256||!lexicalBatchesEquivalent(e.captures[0],e.captures[1],contract)
+      ||canonical(raw)!==canonical(other)&&shape(raw)!==shape(other))fail('BATCH');
     if(s.role==='ib-manager'){
       if(captured.input?.scope!=='ib-manager'||captured.input.sourceAsOf!==s.targetDate
         ||captured.input.portfolioIdentityHash!==digest({name:s.name,id:s.portfolioId,currency:'USD'}))fail('IDENTITY');

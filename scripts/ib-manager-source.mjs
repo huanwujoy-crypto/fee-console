@@ -5,7 +5,7 @@ import {types} from 'node:util';
 import {boundedJson,BoundedJsonError} from './fee-http-json.mjs';
 import {isCalendarDate,inclusiveDays} from './fee-engine.mjs';
 import {parseSourceJson,cashCents,exactNumberText} from './fee-cloud-source.mjs';
-import {SOURCE_CAPTURE_UNSTABLE_CODES,lexicalRecordsSha256 as sharedLexicalRecordsSha256,lexicalRecordEquivalent} from './fee-source-lexical.mjs';
+import {SOURCE_CAPTURE_UNSTABLE_CODES,SOURCE_RECORDS_SITES,IB_UNORDERED_ID_ARRAYS,classifyRecordsDifference,lexicalRecordsSha256 as sharedLexicalRecordsSha256,lexicalRecordEquivalent} from './fee-source-lexical.mjs';
 import {ibNoncashMark,buildIbNativeNoncashProof,validateIbNativeNoncashProof,validateIbAuditEvent,validateIbAuditQuote} from './ib-manager-noncash.mjs';
 
 export const IB_BASELINE_WINDOW=Object.freeze({from:'2026-08-01',asOf:'2026-10-23'});
@@ -29,9 +29,14 @@ export const ibSourceCaptureRecheckDiagnostic=error=>captureRecheckByError.get(e
 export const IB_CAPTURE_UNSTABLE_DIAGNOSTIC_CODES=SOURCE_CAPTURE_UNSTABLE_CODES;
 const captureUnstableCodes=new Set(IB_CAPTURE_UNSTABLE_DIAGNOSTIC_CODES),captureUnstableByError=new WeakMap();
 export const ibSourceCaptureUnstableDiagnostic=error=>captureUnstableByError.get(error)||'UNCLASSIFIED';
-const failCaptureUnstable=site=>{
+// RECORDS sub-location (route class + difference kind), fixed literals only.
+export const IB_CAPTURE_RECORDS_SITES=SOURCE_RECORDS_SITES;
+const recordsSites=new Set(SOURCE_RECORDS_SITES),recordsSiteByError=new WeakMap();
+export const ibSourceCaptureRecordsSite=error=>recordsSiteByError.get(error)||null;
+const failCaptureUnstable=(site,recordsSite=null)=>{
   const failure=new IbManagerSourceError('UNSTABLE');
   captureUnstableByError.set(failure,captureUnstableCodes.has(site)&&site!=='UNCLASSIFIED'?site:'UNCLASSIFIED');
+  if(site==='RECORDS'&&recordsSites.has(recordsSite))recordsSiteByError.set(failure,recordsSite);
   throw failure;
 };
 function captureReadReason(error){
@@ -122,7 +127,10 @@ function finishCapture(capture){
 }
 // Strict lexical equivalence lives in the shared rule (fee-source-lexical.mjs)
 // so every capture layer accepts exactly the same, and only the same, change.
-const lexicalRecordsSha256=sharedLexicalRecordsSha256,lexicalRecordCurrent=lexicalRecordEquivalent;
+// The IB reader opts in to the route-bound unordered-id contract: it already
+// refuses duplicate ids in these arrays and keys their rows by id.
+const lexicalRecordsSha256=records=>sharedLexicalRecordsSha256(records,IB_UNORDERED_ID_ARRAYS);
+const lexicalRecordCurrent=(current,original)=>lexicalRecordEquivalent(current,original,IB_UNORDERED_ID_ARRAYS);
 const object=v=>v&&typeof v==='object'&&!Array.isArray(v);
 const exact=(v,keys)=>object(v)&&Object.keys(v).sort().join(',')===[...keys].sort().join(',');
 const day=d=>{if(!isCalendarDate(d))fail('DATE');return d;};
@@ -693,7 +701,8 @@ export class SharesightIbManagerReader{
       // capture are still the delivered and recorded proof.
       if(first.fingerprint!==second.fingerprint)failCaptureUnstable('FINGERPRINT');
       const lexicalSha256=lexicalRecordsSha256(captures[0].records);
-      if(captures[0].sha256!==captures[1].sha256&&lexicalSha256!==lexicalRecordsSha256(captures[1].records))failCaptureUnstable('RECORDS');
+      if(captures[0].sha256!==captures[1].sha256&&lexicalSha256!==lexicalRecordsSha256(captures[1].records))
+        failCaptureUnstable('RECORDS',classifyRecordsDifference(captures[0].records,captures[1].records,IB_UNORDERED_ID_ARRAYS));
       const result=freezeCapture({input:first.source,evidence:{schema:'fee-console.sharesight-capture.v1',provider:'Sharesight',targetDate,captures,sourceSha256:captures[0].sha256}});
       if(this.#captureTransport().some((v,i)=>v!==transport[i]))failCaptureUnstable('TRANSPORT');
       this.#capturedReads.set(result,{parametersSha256:hash(options),transport,scope:this.#captureScope(),records:captures[0].records,sourceSha256:captures[0].sha256,sourceLexicalSha256:lexicalSha256,consumed:false,revoked:false});return result;

@@ -51,6 +51,16 @@ escapes, array order, unknown members, leading/trailing whitespace, routes and
 query windows stay strict; duplicate members or unparsable bodies fall back to
 bytes. The projection re-derives this from the evidence, never from the
 reader's verdict, and keeps the first attempt's original bodies and byte hash.
+Rule v2 adds one opt-in contract used only by the IB reader and the IB
+projection: for an exact GET route with its exact query shape, the listed
+response root arrays (portfolios, holdings catalog, dated performance holdings
+and cash accounts, cash accounts list, trades, cash transactions) compare as
+id-keyed sets when every row is an object with a unique positive integer `id`,
+which the reader itself enforces. Row content, lexemes, count, nested arrays,
+other arrays and other routes stay ordered and strict; a batch reading a route
+twice compares by bytes only. The two-account fee capture keeps the ordered rule.
+Row order is not claimed to be guaranteed or random by Sharesight; this only
+stops treating an order the reader ignores as a source change.
 Future China sync-date accounting (`scripts/fee-sync-date-policy.mjs`) is
 OFF unless a gate with an explicit `effectiveFromChinaDate` is passed as
 `syncDatePolicy`; no production caller passes one. On or after that cutover the
