@@ -9,7 +9,7 @@ import {validateHealth} from './fee-data-health.mjs';
 import {validateFeeCalculationReceiptWithEcon} from './fee-receipt-core.mjs';
 import {preserveReportMonthLocks} from './fee-report-metadata.mjs';
 import {validateIbManagerReportState,validateIbOwnerBaselineState,createIbManagerReturnConsumer,createIbManagerDrawdownConsumer} from './ib-manager-return.mjs';
-import {SharesightIbManagerReader,ibSourceCaptureRecheckDiagnostic,IB_CAPTURE_RECHECK_DIAGNOSTIC_CODES,IB_CASH_RECONCILIATION_SITES,IB_CASH_DATE_ROLES} from './ib-manager-source.mjs';
+import {SharesightIbManagerReader,ibSourceCaptureRecheckDiagnostic,IB_CAPTURE_RECHECK_DIAGNOSTIC_CODES,ibSourceCaptureUnstableDiagnostic,IB_CAPTURE_UNSTABLE_DIAGNOSTIC_CODES,IB_CASH_RECONCILIATION_SITES,IB_CASH_DATE_ROLES} from './ib-manager-source.mjs';
 import {createIbSourceRevisionPreparer,isIbSourceRevisionCandidate,ibSourceRevisionFailureCode,ibSourceRevisionCashSite,ibSourceRevisionCashDateRole} from './ib-manager-source-revision.mjs';
 import {sourceContractInputHash as hash} from './fee-source-contract.mjs';
 import {isRevisionGithubRead,revisionGithubFailureCode,IB_REVISION_GITHUB_FAILURE_CODES} from './fee-sync-revision-github.mjs';
@@ -22,7 +22,7 @@ const OWNER='huanwujoy-crypto',REPO=OWNER+'/fee-console',parseExact=createLegacy
 const CONTRACT_MODELS=Object.freeze({'ib-source-revision-20261106-v1':'consumption-v1','ib-source-revision-20261106-sync-v2':'sync-cycle-v1',
   'ib-source-revision-20261106-sync-v3':'sync-cycle-v1','ib-source-revision-20261106-diagnostic-v1':'sync-cycle-v1',
   'ib-source-revision-20261106-diagnostic-v2':'sync-cycle-v1','ib-source-revision-20261106-diagnostic-v3':'sync-cycle-v1',
-  'ib-source-revision-20261106-diagnostic-v4':'sync-cycle-v1'});
+  'ib-source-revision-20261106-diagnostic-v4':'sync-cycle-v1','ib-source-revision-20261106-diagnostic-v5':'sync-cycle-v1'});
 const DIAGNOSTIC_ROLES=Object.freeze(['BASE','CURRENT','ANCHOR']);
 const GITHUB_STEPS=Object.freeze(['MAIN','COMMIT','TREE','HISTORY','DATA','HEALTH','RUN','JOBS','LOG']);
 const ECONOMIC_STAGES=Object.freeze(['FIRST','RECHECK','BYTES','BINDING']);
@@ -35,6 +35,7 @@ const githubDiagnosticReason=code=>code.slice('IB_REVISION_GITHUB_'.length).repl
 export const IB_REVISION_ARTIFACT_DIAGNOSTIC_CODES=Object.freeze([
   ...ECONOMIC_STAGES.flatMap(stage=>ECONOMIC_SOURCE_DIAGNOSTIC_CODES.map(code=>'ECON_'+stage+'_'+code.replace(/^SOURCE_/,''))),
   ...IB_CAPTURE_RECHECK_DIAGNOSTIC_CODES.map(code=>'SOURCE_RECHECK_'+code),
+  ...IB_CAPTURE_UNSTABLE_DIAGNOSTIC_CODES.filter(code=>code!=='UNCLASSIFIED').map(code=>'SOURCE_CAPTURE_'+code),
   ...DIAGNOSTIC_ROLES.flatMap(role=>PREPARE_PHASES.map(phase=>'PHASE_'+role+'_'+phase)),
   ...DIAGNOSTIC_ROLES.flatMap(role=>GITHUB_STEPS.flatMap(step=>IB_REVISION_GITHUB_FAILURE_CODES
     .filter(code=>code!=='IB_REVISION_GITHUB_REFUSED').map(code=>'GITHUB_'+role+'_'+step+'_'+githubDiagnosticReason(code)))),
@@ -93,7 +94,7 @@ export function createIbRevisionArtifacts(options){
     const readAdmission=c.diagnosticOnly?producer.readHistoricalRevisionDiagnosticAdmission:producer.readHistoricalRevisionAdmission;
     active();if(!isAdmission(c.admission))fail('ADMISSION');
     const before=copy(readAdmission(c.admission));
-    if(c.diagnosticOnly?(!['ib-source-revision-20261106-diagnostic-v1','ib-source-revision-20261106-diagnostic-v2','ib-source-revision-20261106-diagnostic-v3','ib-source-revision-20261106-diagnostic-v4'].includes(before.contractId)||before.purpose!=='read-only-diagnostic')
+    if(c.diagnosticOnly?(!['ib-source-revision-20261106-diagnostic-v1','ib-source-revision-20261106-diagnostic-v2','ib-source-revision-20261106-diagnostic-v3','ib-source-revision-20261106-diagnostic-v4','ib-source-revision-20261106-diagnostic-v5'].includes(before.contractId)||before.purpose!=='read-only-diagnostic')
       :Object.hasOwn(before,'purpose'))fail('ADMISSION');
     const checked=copy(await at('ADMISSION',()=>c.admission.checkCurrent()));active();
     if(hash(before)!==hash(checked)||!Object.hasOwn(CONTRACT_MODELS,before.contractId)||before.targetDate!==IB_REVISION_ARTIFACT_SCOPE.targetDate
@@ -271,7 +272,15 @@ export function createIbRevisionArtifacts(options){
         verifyAcceptedArtifacts:async x=>localCheck(async()=>{await check();if(hash(x.currentPayload)!==hash(record.view.currentPayload)||hash(x.anchorPayload)!==hash(record.view.anchorPayload)||hash(x.expected)!==hash(record.view.artifacts))fail('ARTIFACT');return record.view.artifacts;}),
         readStable:async args=>{
           await localCheck(async()=>{await check();if(sourceCapture||args.targetDate!==plan.targetDate||hash(args.checkpoint)!==hash(record.view.anchorPayload.ibManagerSourceState.source))fail('SCOPE');});
-          sourceCapture=await Reflect.apply(SharesightIbManagerReader.prototype.readStableWithEvidence,sourceReader,[args]);
+          // The capture gate's own fixed subdivision replaces the undivided
+          // SOURCE_UNSTABLE suffix. Any other reader failure keeps the original
+          // source classifier; no source value, route or text is retained.
+          try{sourceCapture=await Reflect.apply(SharesightIbManagerReader.prototype.readStableWithEvidence,sourceReader,[args]);}
+          catch(error){
+            const site=ibSourceCaptureUnstableDiagnostic(error);
+            if(site!=='UNCLASSIFIED')localDiagnostic='SOURCE_CAPTURE_'+site;
+            throw error;
+          }
           await localCheck(check);return sourceCapture.input;}});
       let result;
       try{result=await at('SOURCE_PREPARE',()=>preparer.prepare({plan,currentPayload:record.view.currentPayload,anchorPayload:record.view.anchorPayload}));}

@@ -6,6 +6,7 @@ import {SharesightCloudReader,CLOUD_ACCOUNTS} from './fee-cloud-source.mjs';
 import {SharesightIbManagerReader} from './ib-manager-source.mjs';
 import {sourceContractInputHash} from './fee-source-contract.mjs';
 import {projectSharesightSyncAccount} from './fee-sync-source-projection.mjs';
+import {lexicalBatchesEquivalent,lexicalBodiesCanonical} from './fee-source-lexical.mjs';
 
 const PREFIX='FEE_SYNC_CAPTURE_',failures=new WeakMap();
 const canonical=v=>Array.isArray(v)?'['+v.map(canonical).join(',')+']':v&&typeof v==='object'?'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canonical(v[k])).join(',')+'}':JSON.stringify(v);
@@ -87,7 +88,12 @@ export function projectCapturedSharesightAccount(request){
     if(e.schema!=='fee-console.sharesight-capture.v1'||e.provider!=='Sharesight'||e.targetDate!==s.targetDate
       ||!Array.isArray(e.captures)||e.captures.length!==2)fail('BATCH');
     const raw=mapping(e.captures[0],1,s),other=mapping(e.captures[1],2,s);
-    if(e.captures[0].sha256!==e.captures[1].sha256||e.sourceSha256!==e.captures[0].sha256||canonical(raw)!==canonical(other))fail('BATCH');
+    // Re-derived here from the evidence itself, never from the reader's verdict:
+    // identical bytes, or the shared strict lexical rule over both whole batches
+    // and over both selected projections. The original first round's bodies and
+    // byte hash remain the projected input and captureSourceSha256.
+    if(e.sourceSha256!==e.captures[0].sha256||!lexicalBatchesEquivalent(e.captures[0],e.captures[1])
+      ||canonical(raw)!==canonical(other)&&lexicalBodiesCanonical(raw)!==lexicalBodiesCanonical(other))fail('BATCH');
     if(s.role==='ib-manager'){
       if(captured.input?.scope!=='ib-manager'||captured.input.sourceAsOf!==s.targetDate
         ||captured.input.portfolioIdentityHash!==digest({name:s.name,id:s.portfolioId,currency:'USD'}))fail('IDENTITY');

@@ -3,12 +3,16 @@
 import {types} from 'node:util';
 import {createSourceContractValidator,sourceContractInputHash,sourceContractFailureCode} from './fee-source-contract.mjs';
 import {projectSharesightSyncAccount} from './fee-sync-source-projection.mjs';
+import {isSyncDatePolicyGate,syncDateFailureCode,SYNC_DATE_RECEIPT_SCHEMA} from './fee-sync-date-policy.mjs';
 
 const PREFIX='FEE_SYNC_READY_',errors=new WeakMap();
 const ROLES=['ib-manager','schwab','webull'];
 const HASH=/^[a-f0-9]{64}$/,CYCLE=/^[A-Za-z0-9_.:-]{1,128}$/;
 function fail(code){const e=new Error(PREFIX+code);errors.set(e,code);throw Object.freeze(e);}
 export const syncReadinessFailureCode=e=>PREFIX+(errors.get(e)||'REFUSED');
+// Fixed evidence item names only (never values) for a WAITING sync-date admission.
+const waitingEvidence=new WeakMap();
+export const syncReadinessMissingEvidence=e=>waitingEvidence.get(e)||null;
 function freeze(v){if(v&&typeof v==='object'){for(const x of Object.values(v))freeze(x);Object.freeze(v);}return v;}
 function copy(v){
   // The existing bounded copier rejects getters/proxies, symbols, non-JSON
@@ -53,15 +57,17 @@ export function createUnifiedSourceReadiness(options){
   try{
     if(!options||types.isProxy(options)||![Object.prototype,null].includes(Object.getPrototypeOf(options)))fail('CONFIG');
     const d=Object.getOwnPropertyDescriptors(options),keys=Reflect.ownKeys(d);
-    const allowed=['executionId','validatorDependencyHash','clock','maxAgeMs','verifySynchronization','validateOriginalSources','readCurrentContext'];
+    const allowed=['executionId','validatorDependencyHash','clock','maxAgeMs','verifySynchronization','validateOriginalSources','readCurrentContext','syncDatePolicy'];
     if(keys.some(k=>typeof k!=='string'||!allowed.includes(k)||!Object.hasOwn(d[k],'value')||!d[k].enumerable))fail('CONFIG');
     config=Object.fromEntries(keys.map(k=>[k,d[k].value]));
     for(const key of ['verifySynchronization','validateOriginalSources','readCurrentContext'])
       if(typeof config[key]!=='function'||types.isProxy(config[key]))fail('CONFIG');
+    // Optional future sync-date gate; absent means the unchanged v1 contract.
+    if(Object.hasOwn(config,'syncDatePolicy')&&!isSyncDatePolicyGate(config.syncDatePolicy))fail('CONFIG');
     config.clock??=Date.now.bind(Date);config.maxAgeMs??=300000;
     if(typeof config.clock!=='function'||types.isProxy(config.clock)||!Number.isSafeInteger(config.maxAgeMs)||config.maxAgeMs<1||config.maxAgeMs>900000)fail('CONFIG');
   }catch(e){if(errors.has(e))throw e;fail('CONFIG');}
-  const {executionId,validatorDependencyHash,clock,maxAgeMs,verifySynchronization,validateOriginalSources,readCurrentContext}=config;
+  const {executionId,validatorDependencyHash,clock,maxAgeMs,verifySynchronization,validateOriginalSources,readCurrentContext,syncDatePolicy=null}=config;
   const validated=new WeakMap(),handles=new WeakMap();
   const checkNow=()=>{let n;try{n=clock();}catch{fail('CLOCK');}if(!Number.isSafeInteger(n)||n<0)fail('CLOCK');return n;};
   const validate=async c=>{
@@ -80,8 +86,11 @@ export function createUnifiedSourceReadiness(options){
     // receipt and its immutable published history. Input JSON cannot supply or
     // select this verifier. A self-authored matched:true is never sufficient.
     let receipt;try{receipt=copy(await verifySynchronization(freeze({cycleId:x.cycleId,targetDate:c.targetDate,sourceSet:c.sourceSet,bindings:c.bindings})));}catch{fail('SYNC_EVIDENCE');}
-    exact(receipt,['schema','cycleId','targetDate','completedAt','accounts','publishedHistory'],'SYNC_EVIDENCE');
-    if(receipt.schema!=='fee-console.verified-sync.v1'||receipt.cycleId!==x.cycleId||receipt.targetDate!==c.targetDate)fail('SYNC_EVIDENCE');
+    // A target on/after an explicit cutover requires the v2 receipt with its
+    // China sync sessions; every other target keeps the v1 receipt unchanged.
+    const dated=syncDatePolicy?.appliesTo(c.targetDate)===true;
+    exact(receipt,['schema','cycleId','targetDate','completedAt','accounts','publishedHistory',...(dated?['syncSession']:[])],'SYNC_EVIDENCE');
+    if(receipt.schema!==(dated?SYNC_DATE_RECEIPT_SCHEMA:'fee-console.verified-sync.v1')||receipt.cycleId!==x.cycleId||receipt.targetDate!==c.targetDate)fail('SYNC_EVIDENCE');
     const now=checkNow(),completed=utc(receipt.completedAt);
     if(completed>now||now-completed>maxAgeMs)fail('SYNC_EXPIRED');
     const accepted=roles(receipt.accounts);
@@ -101,11 +110,20 @@ export function createUnifiedSourceReadiness(options){
     // accepted digests, not two copies selected by a request. Any disagreement
     // stops ordinary admission; no automatic revision module is called.
     if(!same(history(x.publishedHistory,c.targetDate),history(receipt.publishedHistory,c.targetDate)))fail('HISTORY_CHANGED');
+    let syncDate=null;
+    if(dated){
+      try{syncDate=await syncDatePolicy.check({targetDate:c.targetDate,receiptSession:receipt.syncSession,projections,
+        publishedHistory:receipt.publishedHistory,capturedAt:c.capturedAt,now})}
+      catch(e){
+        const code=syncDateFailureCode(e),out=new Error(PREFIX+'SYNC_DATE_'+(code||'SCHEMA'));errors.set(out,'SYNC_DATE_'+(code||'SCHEMA'));
+        if(Array.isArray(e?.missingEvidence))waitingEvidence.set(out,Object.freeze([...e.missingEvidence]));throw Object.freeze(out);
+      }
+    }
     let prepared;
     try{prepared=copy(await validateOriginalSources(freeze({...c,projections})));}catch{fail('ORIGINAL_VALIDATION');}
     exact(prepared,['schema','targetDate','inputSha256','calculationInputs'],'ORIGINAL_VALIDATION');
     if(prepared.schema!=='fee-console.prepared-sources.v1'||prepared.targetDate!==c.targetDate||prepared.inputSha256!==c.inputSha256)fail('ORIGINAL_VALIDATION');
-    validated.set(c.inputs,prepared);return true;
+    validated.set(c.inputs,syncDate?freeze({...prepared,syncDateAdmission:syncDate}):prepared);return true;
   };
   try{createSourceContractValidator({executionId,validatorDependencyHash,clock,maxAgeMs,validate});}catch{fail('CONFIG');}
   const current=async expected=>{
@@ -116,15 +134,16 @@ export function createUnifiedSourceReadiness(options){
     try{
     const r=copy(request),expected=currentFor(r,executionId,validatorDependencyHash);
     await current(expected);
-    let handle,inputs,reason;
+    let handle,inputs,reason,waiting=null;
     // Per-admission closure preserves fixed business reasons without placing
     // raw validation exceptions in the generic capability or sharing mutable
     // error state between simultaneous admissions.
     const contract=createSourceContractValidator({executionId,validatorDependencyHash,clock,maxAgeMs,validate:async c=>{
-      try{return await validate(c);}catch(e){reason=errors.get(e)||'ORIGINAL_VALIDATION';throw e;}
+      try{return await validate(c);}catch(e){reason=errors.get(e)||'ORIGINAL_VALIDATION';waiting=waitingEvidence.get(e)||null;throw e;}
     }});
     try{handle=await contract.validateInputs(r);inputs=contract.consumeValidatedInputs(handle,await current(expected));}
-    catch(e){if(errors.has(e))throw e;if(reason)fail(reason);const code=sourceContractFailureCode(e);fail(code==='FEE_SOURCE_CONTRACT_EXPIRED'?'EXPIRED':'VALIDATION');}
+    catch(e){if(errors.has(e))throw e;
+      if(reason){const out=new Error(PREFIX+reason);errors.set(out,reason);if(waiting)waitingEvidence.set(out,waiting);throw Object.freeze(out);}const code=sourceContractFailureCode(e);fail(code==='FEE_SOURCE_CONTRACT_EXPIRED'?'EXPIRED':'VALIDATION');}
     const prepared=validated.get(inputs);if(!prepared)fail('ORIGINAL_VALIDATION');
     handles.set(handle,{expected,prepared,contract});return handle;
     }catch(e){if(errors.has(e))throw e;fail('SCHEMA');}

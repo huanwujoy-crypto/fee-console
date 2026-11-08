@@ -773,3 +773,115 @@ test('original producer log transport errors preserve role and fixed transport r
     assert.equal(f.state.sourceCalls.length,0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// SOURCE_UNSTABLE end to end. The revised synthetic day carries a dividend and
+// an owner transfer together; only the serialization of those same in-memory
+// responses is varied. No account, credential, report or network is read.
+// ---------------------------------------------------------------------------
+const reorderDeep=v=>Array.isArray(v)?v.map(reorderDeep)
+  :v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().reverse().map(k=>[k,reorderDeep(v[k])])):v;
+// Per-attempt raw rewriting of the same synthetic bodies. The attempt counter
+// advances only on the source's own authentication request.
+function sourceRounds(f,rewrite){
+  let attempt=0;
+  f.reader.fetch=async(url,init)=>{
+    const u=new URL(url);if(u.pathname==='/oauth2/token')attempt++;
+    const original=await f.fetchImpl(url,init);
+    if(u.pathname==='/oauth2/token')return original;
+    const text=await original.text(),next=rewrite(text,{path:u.pathname,attempt});
+    const out=new Response(next??text,{headers:{'content-type':'application/json'}});
+    Object.defineProperty(out,'url',{value:url});return out;
+  };
+  return ()=>attempt;
+}
+const sourceJson=(f,match,change)=>{f.reader.fetch=async(url,init)=>{
+  const original=await f.fetchImpl(url,init);if(!url.includes(match))return original;
+  const body=await original.json();change(body);return response(url,body);
+};};
+
+test('revised history binds a coexisting dividend and owner transfer to their own dates and amounts',async t=>{
+  const f=await fixture(t),v=await f.read();
+  const candidate=await f.cap.prepareCandidate({plan:f.planOf(v),reader:f.reader});
+  const source=candidate.replacement.sourceState.source;
+  // The owner transfer is the only external flow, on exactly its own date. The
+  // dividend is income and never becomes a flow, yet both must reconcile cash.
+  assert.deepEqual(source.cashFlowByDate,{[P]:300});
+  assert.deepEqual(source.periodReturnsInput.flowByDate,{[P]:300});
+  assert.equal(source.periodReturnsInput.points.find(x=>x.d===P).tot,1307);
+  assert.equal(source.periodReturnsInput.points.find(x=>x.d===T).tot,1307);
+  assert.deepEqual(candidate.changedHistoricalDates,[P]);
+  assert.equal(await f.cap.verifyCandidate(candidate),true);
+});
+
+test('a real dividend, transfer, member or duplicate change is still refused by its original validator',async t=>{
+  for(const [name,match,change] of [
+    ['dividend cash amount','cash_account_transactions',b=>{b.cash_account_transactions[0].amount=8;}],
+    ['dividend proof reference','cash_account_transactions',b=>{b.cash_account_transactions[0].payout_id=null;}],
+    ['transfer amount','cash_account_transactions',b=>{b.cash_account_transactions[1].amount=301;}],
+    ['transfer date','cash_account_transactions',b=>{b.cash_account_transactions[1].date_time=U+'T05:00:00.000Z';}],
+    ['transfer removed','cash_account_transactions',b=>{b.cash_account_transactions.splice(1,1);}],
+    ['duplicate cash member','cash_account_transactions',b=>{b.cash_account_transactions.push({...b.cash_account_transactions[0]});}],
+    ['payout paid date','/payouts/13.json',b=>{b.paid_on=U;}],
+    ['payout net amount','/payouts/13.json',b=>{b.amount=8;}],
+    ['payout gross amount','/payouts/13.json',b=>{b.gross_amount=11;}],
+  ])await t.test(name,async()=>{
+    const f=await fixture(t),v=await f.read();sourceJson(f,match,change);
+    await assert.rejects(f.cap.prepareCandidate({plan:f.planOf(v),reader:f.reader}),error=>{
+      const code=ibRevisionArtifactFailureCode(error);
+      assert.match(code,/^IB_REVISION_ARTIFACT_[A-Z_]+$/);
+      assert.equal(code.startsWith('IB_REVISION_ARTIFACT_SOURCE_CAPTURE_'),false,'a real change is never a formatting difference');
+      assert.equal(error.cause,undefined);return true;
+    });
+  });
+});
+
+test('a purely re-serialized second source round no longer fails the historical revision',async t=>{
+  const f=await fixture(t),v=await f.read();
+  const attempts=sourceRounds(f,(text,{attempt})=>attempt===2?JSON.stringify(reorderDeep(JSON.parse(text)),null,2):null);
+  const candidate=await f.cap.prepareCandidate({plan:f.planOf(v),reader:f.reader});
+  assert.equal(candidate.mode,'extend-cutoff');assert.deepEqual(candidate.changedHistoricalDates,[P]);
+  assert.deepEqual(candidate.replacement.sourceState.source.cashFlowByDate,{[P]:300});
+  assert.equal(attempts(),2,'no extra authenticated source attempt');
+  assert.equal(await f.cap.verifyCandidate(candidate),true);
+});
+
+test('each capture gate now reports its own fixed public code instead of one undivided SOURCE_UNSTABLE',async t=>{
+  for(const [name,suffix,rewrite] of [
+    ['business fingerprint','SOURCE_CAPTURE_FINGERPRINT',(text,{path,attempt})=>path.endsWith('/cash_account_transactions.json')&&attempt===2
+      ?text.replace('Owner cash contribution','Owner capital contribution'):null],
+    ['raw records','SOURCE_CAPTURE_RECORDS',(text,{path,attempt})=>path.endsWith('/performance')&&attempt===2?text+' ':null],
+  ])await t.test(name,async()=>{
+    const f=await fixture(t),v=await f.read();sourceRounds(f,rewrite);
+    const code='FEE_REPORT_SOURCE_REVISION_ARTIFACT_'+suffix;
+    assert.ok(IB_REVISION_ARTIFACT_DIAGNOSTIC_CODES.includes(suffix));
+    assert.equal(safeProducerFailureSummary(code+'\n').code,code);
+    assert.notEqual(code,'FEE_REPORT_SOURCE_REVISION_ARTIFACT_SOURCE_UNSTABLE');
+    await rejection(f.cap.prepareCandidate({plan:f.planOf(v),reader:f.reader}),suffix);
+  });
+});
+
+test('the native recovery runtime carries the raw records gate to its exact safe public code',async t=>{
+  const f=await fixture(t);let attempt=0;
+  const fetchImpl=async(url,init)=>{
+    if(!url.startsWith('https://api.sharesight.com/'))return f.fetchImpl(url,init);
+    const u=new URL(url);if(u.pathname==='/oauth2/token'){attempt++;return f.fetchImpl(url,init);}
+    const original=await f.fetchImpl(url,init),text=await original.text();
+    const next=u.pathname.endsWith('/performance')&&attempt===2?text+' ':text;
+    const out=new Response(next,{headers:{'content-type':'application/json'}});
+    Object.defineProperty(out,'url',{value:url});return out;
+  };
+  const runtime=await createFeeSourceRevisionRuntime({plan:f.dailyPlan,admission:f.admission,economicSnapshot:f.config.economicSnapshot,
+    sourceBytes:f.dataBytes,sourcePayload:f.currentPayload,healthBytes:f.healthBytes,githubToken:TOKEN,clientId:'synthetic-client',clientSecret:'synthetic-secret',
+    keyText:f.key.toString('base64url'),baselineSha256:f.baselineSha256,legacySourcePath:null,fetchImpl,clock:f.clock});
+  t.after(()=>runtime.close());
+  const expected='FEE_REPORT_SOURCE_REVISION_ARTIFACT_SOURCE_CAPTURE_RECORDS';
+  const original=Buffer.from(f.dataBytes);
+  await assert.rejects(runtime.prepare(),error=>{
+    assert.equal(sourceRevisionRuntimeFailureCode(error),expected);
+    assert.equal(error.message,expected);assert.equal(safeProducerFailureSummary(error.message+'\n').code,expected);
+    assert.equal(error.cause,undefined);assert(!JSON.stringify(error).includes('PRIVATE'));return true;
+  });
+  assert.deepEqual(f.dataBytes,original,'a refused capture never writes');
+  await assert.rejects(runtime.prepare(),/REUSE|CLOSED/);
+});

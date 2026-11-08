@@ -5,6 +5,7 @@ import {types} from 'node:util';
 import {boundedJson,BoundedJsonError} from './fee-http-json.mjs';
 import {isCalendarDate,inclusiveDays} from './fee-engine.mjs';
 import {parseSourceJson,cashCents,exactNumberText} from './fee-cloud-source.mjs';
+import {SOURCE_CAPTURE_UNSTABLE_CODES,lexicalRecordsSha256 as sharedLexicalRecordsSha256,lexicalRecordEquivalent} from './fee-source-lexical.mjs';
 import {ibNoncashMark,buildIbNativeNoncashProof,validateIbNativeNoncashProof,validateIbAuditEvent,validateIbAuditQuote} from './ib-manager-noncash.mjs';
 
 export const IB_BASELINE_WINDOW=Object.freeze({from:'2026-08-01',asOf:'2026-10-23'});
@@ -20,6 +21,19 @@ export const IB_CAPTURE_RECHECK_DIAGNOSTIC_CODES=Object.freeze([
   ...['AUTH','READ'].flatMap(stage=>captureReadCodes.map(code=>stage+'_'+code)),
 ]);
 export const ibSourceCaptureRecheckDiagnostic=error=>captureRecheckByError.get(error)||'UNKNOWN';
+// The two-attempt capture gate used to report one undivided UNSTABLE for three
+// different facts. The fixed subdivision below is a location, never a source
+// value: FINGERPRINT is the normalized business re-read, RECORDS the raw GET
+// batch and TRANSPORT the local fetch/credential object identity. Carried by
+// error identity only, so a forged, cloned or proxied error reports UNCLASSIFIED.
+export const IB_CAPTURE_UNSTABLE_DIAGNOSTIC_CODES=SOURCE_CAPTURE_UNSTABLE_CODES;
+const captureUnstableCodes=new Set(IB_CAPTURE_UNSTABLE_DIAGNOSTIC_CODES),captureUnstableByError=new WeakMap();
+export const ibSourceCaptureUnstableDiagnostic=error=>captureUnstableByError.get(error)||'UNCLASSIFIED';
+const failCaptureUnstable=site=>{
+  const failure=new IbManagerSourceError('UNSTABLE');
+  captureUnstableByError.set(failure,captureUnstableCodes.has(site)&&site!=='UNCLASSIFIED'?site:'UNCLASSIFIED');
+  throw failure;
+};
 function captureReadReason(error){
   if(!error||typeof error!=='object'||types.isProxy(error)||Object.getPrototypeOf(error)!==BoundedJsonError.prototype)return 'REFUSED';
   const descriptor=Object.getOwnPropertyDescriptor(error,'code');
@@ -106,6 +120,9 @@ function finishCapture(capture){
   if(!records.length)fail('INCOMPLETE');
   return {attempt:capture.attempt,records,sha256:hash(records)};
 }
+// Strict lexical equivalence lives in the shared rule (fee-source-lexical.mjs)
+// so every capture layer accepts exactly the same, and only the same, change.
+const lexicalRecordsSha256=sharedLexicalRecordsSha256,lexicalRecordCurrent=lexicalRecordEquivalent;
 const object=v=>v&&typeof v==='object'&&!Array.isArray(v);
 const exact=(v,keys)=>object(v)&&Object.keys(v).sort().join(',')===[...keys].sort().join(',');
 const day=d=>{if(!isCalendarDate(d))fail('DATE');return d;};
@@ -670,10 +687,16 @@ export class SharesightIbManagerReader{
         }finally{capture.active=false;}
       };
       const first=await run(1),second=await run(2);
-      if(first.fingerprint!==second.fingerprint||captures[0].sha256!==captures[1].sha256)fail('UNSTABLE');
+      // Three independent facts, three fixed diagnostics. Differing raw bytes
+      // are accepted only when the two batches are strictly lexically
+      // equivalent; the first round's original evidence and every original
+      // capture are still the delivered and recorded proof.
+      if(first.fingerprint!==second.fingerprint)failCaptureUnstable('FINGERPRINT');
+      const lexicalSha256=lexicalRecordsSha256(captures[0].records);
+      if(captures[0].sha256!==captures[1].sha256&&lexicalSha256!==lexicalRecordsSha256(captures[1].records))failCaptureUnstable('RECORDS');
       const result=freezeCapture({input:first.source,evidence:{schema:'fee-console.sharesight-capture.v1',provider:'Sharesight',targetDate,captures,sourceSha256:captures[0].sha256}});
-      if(this.#captureTransport().some((v,i)=>v!==transport[i]))fail('UNSTABLE');
-      this.#capturedReads.set(result,{parametersSha256:hash(options),transport,scope:this.#captureScope(),records:captures[0].records,sourceSha256:captures[0].sha256,consumed:false,revoked:false});return result;
+      if(this.#captureTransport().some((v,i)=>v!==transport[i]))failCaptureUnstable('TRANSPORT');
+      this.#capturedReads.set(result,{parametersSha256:hash(options),transport,scope:this.#captureScope(),records:captures[0].records,sourceSha256:captures[0].sha256,sourceLexicalSha256:lexicalSha256,consumed:false,revoked:false});return result;
     }finally{this.#captureExclusive=false;}
   }
   #captureTransport(){
@@ -709,12 +732,16 @@ export class SharesightIbManagerReader{
           const u=new URL(record.path,API);for(const[k,v]of Object.entries(record.query))u.searchParams.append(k,v);
           await this.#json(u.href,auth.access_token);
           stage='RECORD_CHANGED';
-          if(ibCanonical(capture.records.at(-1))!==ibCanonical(record))fail('UNSTABLE');
+          const current=capture.records.at(-1);
+          // Same bounded treatment as acquisition: identical bytes, or a strict
+          // lexical equivalent of the originally captured record.
+          if(ibCanonical(current)!==ibCanonical(record)&&!lexicalRecordCurrent(current,record))fail('UNSTABLE');
         }
       });
       transport();
       stage='CAPTURE_CHANGED';
-      if(finishCapture(capture).sha256!==state.sourceSha256)fail('UNSTABLE');
+      const finished=finishCapture(capture);
+      if(finished.sha256!==state.sourceSha256&&lexicalRecordsSha256(finished.records)!==state.sourceLexicalSha256)fail('UNSTABLE');
       return true;
     }catch(error){
       state.revoked=true;const failure=new IbManagerSourceError('UNSTABLE');

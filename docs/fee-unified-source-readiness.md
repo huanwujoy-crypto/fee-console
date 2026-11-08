@@ -43,6 +43,26 @@ not fabricate a missing payout pointer or turn a historical anchor into a target
 snapshot. The projection hash binds the selected raw responses; the separate
 full capture hash binds all source evidence, including catalogs, earlier daily
 points and indirectly linked payouts.
+Capture stability uses one shared rule, `scripts/fee-source-lexical.mjs`, in
+the IB reader, the two-account fee reader and this projection: two attempts
+match when their bytes are identical or when every record differs only in
+object member order and whitespace between JSON tokens. Number lexemes, string
+escapes, array order, unknown members, leading/trailing whitespace, routes and
+query windows stay strict; duplicate members or unparsable bodies fall back to
+bytes. The projection re-derives this from the evidence, never from the
+reader's verdict, and keeps the first attempt's original bodies and byte hash.
+Future China sync-date accounting (`scripts/fee-sync-date-policy.mjs`) is
+OFF unless a gate with an explicit `effectiveFromChinaDate` is passed as
+`syncDatePolicy`; no production caller passes one. On or after that cutover the
+receipt must be `fee-console.verified-sync.v2` with closed China sync sessions
+for every date after the published history, each newly projected event declared
+once under (account, kind, id) with its unchanged event digest, linked trade and
+payout cash counted once, every holding and native currency accepted, no
+backfill, and no already-published target. `accountingEffectiveDate`,
+`sourceCapturedAt`, the valuation basis and the report period are separate
+fields. Before New York has closed the effective date it returns WAITING with
+named missing official evidence; even with that evidence the pre-close writer
+path is not implemented. Non-USD cash movement keeps its existing stop.
 The validated-input hash also binds the original reader's actual calculation
 result. Raw GET bytes alone do not bind benchmark values or normalization policy
 inputs. Both hashes must match the authenticated synchronization receipt and the

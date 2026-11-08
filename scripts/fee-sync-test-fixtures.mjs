@@ -8,11 +8,11 @@ import {buildIbManagerReturnReceipt,buildIbManagerDrawdownReceipt,buildIbOwnerBa
 const D='2026-09-02',B={spy:100,qqq:100};
 const instrument={id:8,code:'SYNTH',market_code:'NYSE',currency_code:'USD'};
 function response(url,body){const r=new Response(body,{headers:{'content-type':'application/json'}});Object.defineProperty(r,'url',{value:url});return r;}
-function cloudFixture({extraListing=false,quantity='1.0000000000000001',catalogNote='synthetic catalog'}={}){
-  const calls=[],bodies=new Map(),token='synthetic-capture-token-123456';let reader,extra=false;
+function cloudFixture({extraListing=false,quantity='1.0000000000000001',catalogNote='synthetic catalog',rewrite=null}={}){
+  const calls=[],bodies=new Map(),token='synthetic-capture-token-123456';let reader,extra=false,attempt=0;
   const fetchImpl=async(url,init)=>{
     calls.push({url,method:init.method});const u=new URL(url),p=u.pathname,q=u.searchParams;let data;
-    if(p==='/oauth2/token')data={access_token:token,token_type:'bearer'};
+    if(p==='/oauth2/token'){attempt++;data={access_token:token,token_type:'bearer'};}
     else{
       assert.equal(init.method,'GET');assert.equal(init.redirect,'error');
       if(p==='/api/v2/portfolios.json')data={portfolios:Object.values(CLOUD_ACCOUNTS).map(x=>({id:x.portfolioId,name:x.name,currency_code:'USD'}))};
@@ -27,7 +27,9 @@ function cloudFixture({extraListing=false,quantity='1.0000000000000001',catalogN
         else assert.fail('unexpected synthetic route');
       }
     }
-    const body=JSON.stringify(data).replace(/"quantity":1/g,'"quantity":'+quantity);bodies.set(url,body);return response(url,body);
+    let body=JSON.stringify(data).replace(/"quantity":1/g,'"quantity":'+quantity);
+    if(rewrite&&p!=='/oauth2/token')body=rewrite(body,{path:p,attempt})??body;
+    bodies.set(url,body);return response(url,body);
   };
   const onSourceResponse=extraListing?async bytes=>{
     if(!extra&&JSON.parse(bytes).portfolios){extra=true;try{await reader.get('https://api.sharesight.com/api/v2/portfolios.json',token);}finally{extra=false;}}
@@ -35,25 +37,32 @@ function cloudFixture({extraListing=false,quantity='1.0000000000000001',catalogN
   reader=new SharesightCloudReader({clientId:'synthetic-client',clientSecret:'synthetic-secret',fetchImpl,sourceMode:'sharesight-reference',onSourceResponse});
   return {reader,calls,bodies,scope:role=>({role,...CLOUD_ACCOUNTS[role],targetDate:D,fromDate:D})};
 }
-function ibFixture({nativePayout=false}={}){
-  const calls=[],baseline={from:'2026-09-01',asOf:D},business={points:[{d:'2026-09-01',tot:150},{d:D,tot:nativePayout?157:150}],openT:150,from:'2026-09-01',to:D,days:2,flowByDate:{},rate:0,cr:0,cumBefore:0,hwmBefore:0};
+// ownerTransfer adds an owner DEPOSIT on the same day as the native payout, so a
+// dividend (income) and a transfer (external flow) coexist in one cash account.
+function ibFixture({nativePayout=false,ownerTransfer=false,rewrite=null}={}){
+  const transfer=ownerTransfer?300:0,payout=nativePayout?7:0,cashAtD=50+payout+transfer;let attempt=0;
+  const calls=[],baseline={from:'2026-09-01',asOf:D},business={points:[{d:'2026-09-01',tot:150},{d:D,tot:100+cashAtD}],openT:150,from:'2026-09-01',to:D,days:2,flowByDate:transfer?{[D]:transfer}:{},rate:0,cr:0,cumBefore:0,hwmBefore:0};
   const args={targetDate:D,baseline,expectedBaselineHash:ibBaselineBusinessHash(business)},scope={role:'ib-manager',name:'IB-HK',portfolioId:1,targetDate:D,fromDate:baseline.from};
   const fetchImpl=async(url,init)=>{
     calls.push({url,method:init.method});const p=new URL(url).pathname,q=new URL(url).searchParams;let data;
     const portfolio={id:1,name:'IB-HK'},holding={id:2,portfolio,valid_position:true,instrument,instrument_currency:{code:'USD'},quantity:1,value:100};
-    if(p==='/oauth2/token')data={access_token:'synthetic-capture-token-123456',token_type:'bearer'};
+    if(p==='/oauth2/token'){attempt++;data={access_token:'synthetic-capture-token-123456',token_type:'bearer'};}
     else{
       assert.equal(init.method,'GET');assert.equal(init.redirect,'error');
       if(p==='/api/v2/portfolios.json')data={portfolios:[{id:1,name:'IB-HK',currency_code:'USD'}]};
       else if(p.endsWith('/holdings'))data={holdings:[holding]};
-      else if(p.endsWith('/performance')){const cash=nativePayout&&q.get('end_date')===D?57:50;data={report:{portfolio_id:1,start_date:q.get('start_date'),end_date:q.get('end_date'),include_sales:false,currency:{code:'USD'},portfolio_tz_name:'America/New_York',value:100+cash,holdings:[holding],cash_accounts:[{id:3,portfolio,currency:{code:'USD'},value:cash}]}};}
-      else if(p.endsWith('/cash_accounts.json')){const cash=nativePayout&&q.get('date')===D?57:50;data={cash_accounts:[{id:3,portfolio_id:1,portfolio_currency:'USD',currency:'USD',date:q.get('date'),balance:cash,balance_in_portfolio_currency:cash}]};}
+      else if(p.endsWith('/performance')){const cash=q.get('end_date')===D?cashAtD:50;data={report:{portfolio_id:1,start_date:q.get('start_date'),end_date:q.get('end_date'),include_sales:false,currency:{code:'USD'},portfolio_tz_name:'America/New_York',value:100+cash,holdings:[holding],cash_accounts:[{id:3,portfolio,currency:{code:'USD'},value:cash}]}};}
+      else if(p.endsWith('/cash_accounts.json')){const cash=q.get('date')===D?cashAtD:50;data={cash_accounts:[{id:3,portfolio_id:1,portfolio_currency:'USD',currency:'USD',date:q.get('date'),balance:cash,balance_in_portfolio_currency:cash}]};}
       else if(p.endsWith('/trades.json'))data={trades:[]};
-      else if(p.endsWith('/cash_account_transactions.json'))data={cash_account_transactions:nativePayout?[{id:12,cash_account_id:3,date_time:D+'T00:00:00.000Z',amount:7,balance:57,cash_account_transaction_type:{name:'PAYOUT'},trade_id:null,holding_id:2,payout_id:13}]:[]};
+      else if(p.endsWith('/cash_account_transactions.json'))data={cash_account_transactions:[
+        ...(nativePayout?[{id:12,cash_account_id:3,date_time:D+'T00:00:00.000Z',amount:7,balance:57,cash_account_transaction_type:{name:'PAYOUT'},trade_id:null,holding_id:2,payout_id:13}]:[]),
+        ...(ownerTransfer?[{id:14,cash_account_id:3,date_time:D+'T05:00:00.000Z',amount:300,balance:cashAtD,cash_account_transaction_type:{name:'DEPOSIT'},description:'Owner cash contribution',trade_id:null,holding_id:null,payout_id:null}]:[])]};
       else if(p==='/api/v2/payouts/13.json')data={id:13,portfolio_id:1,holding_id:2,currency:'USD',paid_on:D,confirmed:true,state:'confirmed',non_taxable:false,gross_amount:10,resident_withholding_tax:3,amount:7,tax_credit:0};
       else assert.fail('unexpected synthetic IB route');
     }
-    return response(url,JSON.stringify(data));
+    let body=JSON.stringify(data);
+    if(rewrite&&p!=='/oauth2/token')body=rewrite(body,{path:p,attempt})??body;
+    return response(url,body);
   };
   return {reader:new SharesightIbManagerReader({clientId:'synthetic-client',clientSecret:'synthetic-secret',fetchImpl}),calls,args,scope};
 }
