@@ -36,6 +36,7 @@ const DIAGNOSTIC_REPAIR='4f98318c73d1727d323febdcc72b7d5fbfb77f01',DIAGNOSTIC_CO
 const DIAGNOSTIC_V2_REPAIR='22174f04cae8ac18a071930f491598b327e315c5',DIAGNOSTIC_V2_CONTRACT='ib-source-revision-20261106-diagnostic-v2';
 const DIAGNOSTIC_V3_REPAIR='f1d4454d25849e1908ba508f8c7f140389e425bb',DIAGNOSTIC_V3_CONTRACT='ib-source-revision-20261106-diagnostic-v3';
 const DIAGNOSTIC_V4_REPAIR='e30015d7260e43622f8ad63a119b0efbef35acb4',DIAGNOSTIC_V4_CONTRACT='ib-source-revision-20261106-diagnostic-v4';
+const DIAGNOSTIC_V8_REPAIR='860387709b954fdfc97f040031791258b9fa5b15',DIAGNOSTIC_V8_CONTRACT='ib-source-revision-20261106-diagnostic-v8';
 const SYNC_V3_REPAIR='b218f264c53e914d6469ec9f43824f48ccb7af18',SYNC_V3_CONTRACT='ib-source-revision-20261106-sync-v3';
 const SOURCE_P='9c5ec1636e3a6f5c6f307dba9fc681e3b14d73e8',SOURCE_U='5ad072aa8eae0fd04830250d0811a080b40931b9';
 const sha=b=>crypto.createHash('sha256').update(b).digest('hex');
@@ -77,11 +78,11 @@ function sourceWire({revised=false,state={sourceChanged:false},calls=[],bankWire
 // Mint the native admission through the original release validators and the
 // selected attempt-history or current-execution/publication-state validators.
 // Neither a self-authored permission flag nor a test-only capability is used.
-function admissionWire(state,dailyPlan,sync=false,diagnostic=false,syncV3=false,diagnosticV2=false,diagnosticV3=false,diagnosticV4=false){
-  diagnostic=diagnostic||diagnosticV2||diagnosticV3||diagnosticV4;sync=sync||diagnostic||syncV3;
-  const manifest=reportHistoricalRecoveryManifest(sync?{contractId:diagnosticV4?DIAGNOSTIC_V4_CONTRACT:diagnosticV3?DIAGNOSTIC_V3_CONTRACT:diagnosticV2?DIAGNOSTIC_V2_CONTRACT:diagnostic?DIAGNOSTIC_CONTRACT:syncV3?SYNC_V3_CONTRACT:SYNC_CONTRACT}:{}),actor={id:283054367,login:OWNER,type:'User'},ui='2bb9f66ac890ba87cec504ef72a5083c07670689',repairBase=diagnosticV4?DIAGNOSTIC_V4_REPAIR:diagnosticV3?DIAGNOSTIC_V3_REPAIR:diagnosticV2?DIAGNOSTIC_V2_REPAIR:diagnostic?DIAGNOSTIC_REPAIR:syncV3?SYNC_V3_REPAIR:sync?SYNC_REPAIR:REPAIR;
+function admissionWire(state,dailyPlan,sync=false,diagnostic=false,syncV3=false,diagnosticV2=false,diagnosticV3=false,diagnosticV4=false,diagnosticV8=false){
+  diagnostic=diagnostic||diagnosticV2||diagnosticV3||diagnosticV4||diagnosticV8;sync=sync||diagnostic||syncV3;
+  const manifest=reportHistoricalRecoveryManifest(sync?{contractId:diagnosticV8?DIAGNOSTIC_V8_CONTRACT:diagnosticV4?DIAGNOSTIC_V4_CONTRACT:diagnosticV3?DIAGNOSTIC_V3_CONTRACT:diagnosticV2?DIAGNOSTIC_V2_CONTRACT:diagnostic?DIAGNOSTIC_CONTRACT:syncV3?SYNC_V3_CONTRACT:SYNC_CONTRACT}:{}),actor={id:283054367,login:OWNER,type:'User'},ui='2bb9f66ac890ba87cec504ef72a5083c07670689',repairBase=diagnosticV8?DIAGNOSTIC_V8_REPAIR:diagnosticV4?DIAGNOSTIC_V4_REPAIR:diagnosticV3?DIAGNOSTIC_V3_REPAIR:diagnosticV2?DIAGNOSTIC_V2_REPAIR:diagnostic?DIAGNOSTIC_REPAIR:syncV3?SYNC_V3_REPAIR:sync?SYNC_REPAIR:REPAIR;
   const signed=(id,parents,tree=TREE)=>({sha:id,parents:parents.map(sha=>({sha})),author:actor,committer:{login:OWNER},commit:{tree:{sha:tree},verification:{verified:true,reason:'valid'}}});
-  const commit=signed(MAIN,[repairBase]),repair=signed(repairBase,diagnosticV4?[DIAGNOSTIC_V3_REPAIR]:diagnosticV3?[DIAGNOSTIC_V2_REPAIR]:diagnosticV2?[SYNC_V3_REPAIR]:diagnostic?[SYNC_REPAIR]:syncV3?[DIAGNOSTIC_REPAIR]:sync?[REPAIR]:['4d798c77c9a9a5d459a75af45b4239c7c9cf984a','474e7b5a20f93358193791daf84d175a22e06d9e']);
+  const commit=signed(MAIN,[repairBase]),repair=signed(repairBase,diagnosticV8?['97101f6f75f7e5295acd232f7d69c32594ec4044']:diagnosticV4?[DIAGNOSTIC_V3_REPAIR]:diagnosticV3?[DIAGNOSTIC_V2_REPAIR]:diagnosticV2?[SYNC_V3_REPAIR]:diagnostic?[SYNC_REPAIR]:syncV3?[DIAGNOSTIC_REPAIR]:sync?[REPAIR]:['4d798c77c9a9a5d459a75af45b4239c7c9cf984a','474e7b5a20f93358193791daf84d175a22e06d9e']);
   const run=(id,head,created)=>({id,head_sha:head,head_branch:'main',path:'.github/workflows/fee-cloud-producer.yml',event:'workflow_dispatch',created_at:created,run_attempt:1,workflow_id:365873934,actor,status:id===RUN?'in_progress':'completed',conclusion:id===RUN?null:'failure'});
   const runs=[run(RUN,MAIN,'2026-11-07T01:00:00Z'),run(42309848352,'94210904dd95b2ff4496cb68dab6b49950fe4f74','2026-11-06T23:08:38Z'),run(42318324848,'2c32d695f4f2dc057920fc690046ddf3e1ccdaee','2026-11-07T00:00:00Z')];
   state.currentRun={...runs[0],repository:{full_name:REPO},...(diagnostic?{display_title:'IB diagnostic '+T}:{})};
@@ -108,8 +109,8 @@ function admissionWire(state,dailyPlan,sync=false,diagnostic=false,syncV3=false,
       readState:async()=>{state.publicationReads++;return {...structuredClone(state.publication),data:Buffer.from(state.publication.data)};}}:{})};
 }
 
-async function fixture(t,{legacy=false,mutatePayload,mutateHealth,mutateEconomic,sync=false,diagnostic=false,syncV3=false,diagnosticV2=false,diagnosticV3=false,diagnosticV4=false,lockedMonth=false,bankWire=false,mutateCashRows}={}){
-  diagnostic=diagnostic||diagnosticV2||diagnosticV3||diagnosticV4;sync=sync||diagnostic||syncV3;
+async function fixture(t,{legacy=false,mutatePayload,mutateHealth,mutateEconomic,sync=false,diagnostic=false,syncV3=false,diagnosticV2=false,diagnosticV3=false,diagnosticV4=false,diagnosticV8=false,lockedMonth=false,bankWire=false,mutateCashRows}={}){
+  diagnostic=diagnostic||diagnosticV2||diagnosticV3||diagnosticV4||diagnosticV8;sync=sync||diagnostic||syncV3;
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'revision-artifact-synthetic-'));fs.chmodSync(dir,0o700);t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
   const state={now:Date.parse('2026-11-07T01:10:00.000Z'),main:MAIN,economicRevision:o('e'),sourceChanged:false,calls:[],sourceCalls:[],admissionCalls:[],currentRunReads:0,publicationReads:0,mutate:null,log:null,competing:false};
   const clock=()=>state.now,dailyPlan=dailyReportPlan(T,['NYSE','NASDAQ'],{periodFrom:T,reviewedSyncDate:T});
@@ -142,7 +143,7 @@ async function fixture(t,{legacy=false,mutatePayload,mutateHealth,mutateEconomic
   const health=(date,bytes,checkedAt)=>{const h={schema:'fee-console.daily-health.v1',checkedAt,targetDate:date,sourceDates:{schwab:date,webull:date,benchmark:date},outcome:'updated',dataSha256:sha(bytes),errorCode:null};mutateHealth?.(h,date);return Buffer.from(JSON.stringify(h,null,2)+'\n');};
   const healthBytes=health(P,dataBytes,'2026-11-06T01:01:00.000Z'),anchorHealth=health(U,anchorBytes,'2026-11-05T05:45:00.000Z');
   state.publication={mainSha:MAIN,finalMainSha:MAIN,data:dataBytes,pending:false,health:JSON.parse(healthBytes)};
-  const admission=await (diagnostic?authorizeHistoricalRevisionDiagnostic:authorizeReportRecovery)({plan:dailyPlan,expectedMain:MAIN,currentRunId:RUN,now:new Date(state.now),clock:()=>new Date(state.now),actionsToken:TOKEN,...admissionWire(state,dailyPlan,sync,diagnostic,syncV3,diagnosticV2,diagnosticV3,diagnosticV4)});
+  const admission=await (diagnostic?authorizeHistoricalRevisionDiagnostic:authorizeReportRecovery)({plan:dailyPlan,expectedMain:MAIN,currentRunId:RUN,now:new Date(state.now),clock:()=>new Date(state.now),actionsToken:TOKEN,...admissionWire(state,dailyPlan,sync,diagnostic,syncV3,diagnosticV2,diagnosticV3,diagnosticV4,diagnosticV8)});
   const oldEnv={id:process.env.FEE_ECON_GIST_ID,token:process.env.FEE_ECON_GITHUB_TOKEN};process.env.FEE_ECON_GIST_ID=ID;process.env.FEE_ECON_GITHUB_TOKEN='github_pat_SYNTHETIC_NOT_A_REAL_TOKEN_123456';
   const economicFetch=async(url,init)=>{assert.equal(url,'https://api.github.com/gists/'+ID);assert.equal(init.method,'GET');state.economicReads=(state.economicReads||0)+1;const override=await state.economicTransport?.(url,init);if(override!==undefined)return override;return new Response(JSON.stringify({id:ID,public:false,owner:{login:OWNER},truncated:false,history:[{version:state.economicRevision}],files:{'fee-console-db.json':{filename:'fee-console-db.json',content:economicBytes.toString(),size:economicBytes.length,truncated:false}}}),{headers:{etag:'"synthetic"','content-type':'application/json'}});};
   let economicSnapshot;try{economicSnapshot=await fetchEconomicSnapshot({tempRoot:dir,attempts:1,timeoutMs:100,fetchImpl:economicFetch});}finally{for(const[k,v]of Object.entries({FEE_ECON_GIST_ID:oldEnv.id,FEE_ECON_GITHUB_TOKEN:oldEnv.token}))if(v===undefined)delete process.env[k];else process.env[k]=v;}
@@ -648,6 +649,63 @@ test('runtime and public summary preserve only the finite artifact diagnostics e
 const diagnosticRuntimeOptions=f=>({diagnosticOnly:true,plan:f.dailyPlan,admission:f.admission,economicSnapshot:f.config.economicSnapshot,
   sourceBytes:f.dataBytes,sourcePayload:f.currentPayload,healthBytes:f.healthBytes,githubToken:TOKEN,clientId:'synthetic-client',clientSecret:'synthetic-secret',
   keyText:f.key.toString('base64url'),baselineSha256:f.baselineSha256,legacySourcePath:null,fetchImpl:f.fetchImpl,clock:f.clock});
+
+// Native reader/runtime/artifact chain, with synthetic per-response metadata.
+const metadataDiagnosticFetch=(f,typeDrift=false)=>{
+  let round=0,responseId=0;
+  return async(url,init)=>{
+    if(url==='https://api.sharesight.com/oauth2/token')round++;
+    const r=await f.fetchImpl(url,init);
+    if(!url.startsWith('https://api.sharesight.com/api/v3/'))return r;
+    const body=JSON.parse(await r.text());
+    body.api_transaction={id:typeDrift&&round>=2?'synthetic-wrong-type':++responseId,timestamp:'synthetic-response-'+responseId};
+    return response(url,body);
+  };
+};
+test('diagnostic v8 reaches native runtime/artifacts with lexical v4 metadata values and no writer handoff',async t=>{
+  const f=await fixture(t,{diagnosticV8:true,lockedMonth:true});
+  assert.equal(isHistoricalRevisionAdmission(f.admission),false);assert.equal(isIbRevisionArtifacts(f.cap),false);
+  const before={data:Buffer.from(f.dataBytes),health:Buffer.from(f.healthBytes),econ:fs.readFileSync(f.config.economicSnapshot.sourcePath),files:fs.readdirSync(f.dir).sort()};
+  const runtime=await createFeeSourceRevisionRuntime({...diagnosticRuntimeOptions(f),fetchImpl:metadataDiagnosticFetch(f)});
+  assert.deepEqual(Object.keys(runtime).sort(),['close','diagnose']);
+  const result=await runtime.diagnose(),marker=['ALLOWED_ROOT_TRANSACTION_METADATA'];
+  assert.deepEqual(result,{schema:'fee-console.source-revision-diagnostic-result.v1',status:'verified',targetDate:T,
+    sourceEvidence:{capture:{HOLD:marker,PERF:marker,TRADE:marker},currentness:{HOLD:marker,PERF:marker,TRADE:marker},currentnessCoverage:'ALL_RECORDS'}});
+  assert.equal(isHistoricalRevisionDiagnosticAdmission(f.admission),false);
+  assert.deepEqual(f.dataBytes,before.data);assert.deepEqual(f.healthBytes,before.health);
+  assert.deepEqual(fs.readFileSync(f.config.economicSnapshot.sourcePath),before.econ);assert.deepEqual(fs.readdirSync(f.dir).sort(),before.files);
+  assert(f.state.sourceCalls.every(c=>c.method==='GET'||c.method==='POST'&&c.p==='/oauth2/token'));
+  assert(![...f.state.calls,...f.state.admissionCalls].some(p=>p.startsWith('actions/workflows/')||p.includes('filter=all')));
+  await assert.rejects(runtime.diagnose(),/REUSE|CLOSED/);
+});
+test('diagnostic v8 artifacts cannot enter the actual writer or either production capability',async t=>{
+  const f=await fixture(t,{diagnosticV8:true}),view=await f.read(),candidate=await f.cap.prepareCandidate({plan:f.planOf(view),reader:f.reader});
+  await assert.rejects(prepareIbManagerReport({payload:f.currentPayload,targetDate:T,outputDir:f.dir,
+    environ:{IB_MANAGER_READ_ENABLED:'true',IB_MANAGER_BASELINE_SHA256:f.baselineSha256},clock:f.clock,
+    revision:{candidate,artifacts:f.cap},revisionBasePayload:view.currentPayload}),/IB_REPORT_INPUT_REFUSED/);
+  assert.equal(isIbRevisionArtifacts(f.cap),false);assert(!fs.existsSync(path.join(f.dir,'ib-manager-input.json')));
+  const options=diagnosticRuntimeOptions(f);delete options.diagnosticOnly;
+  const calls=f.state.calls.length,sourceCalls=f.state.sourceCalls.length;
+  await assert.rejects(createFeeSourceRevisionRuntime(options),/ADMISSION/);
+  const config={...f.config};delete config.diagnosticOnly;const production=createIbRevisionArtifacts(config);t.after(()=>production.close());
+  await rejection(production.readVerifiedArtifacts({targetDate:T,mainSha:MAIN}),'ADMISSION');
+  assert.equal(f.state.calls.length,calls);assert.equal(f.state.sourceCalls.length,sourceCalls);
+});
+test('diagnostic v8 preserves metadata type refusal and the exact five-minute artifact expiry',async t=>{
+  for(const kind of ['metadata-type','expiry'])await t.test(kind,async t=>{
+    const f=await fixture(t,{diagnosticV8:true}),options=diagnosticRuntimeOptions(f);
+    if(kind==='metadata-type')options.fetchImpl=metadataDiagnosticFetch(f,true);
+    else{let calls=0;f.state.transport=()=>{if(++calls===2)f.state.now+=300000;};}
+    const runtime=await createFeeSourceRevisionRuntime(options);
+    await assert.rejects(runtime.diagnose(),e=>{
+      const code=sourceRevisionRuntimeFailureCode(e);
+      assert.match(code,kind==='metadata-type'?/^FEE_REPORT_SOURCE_REVISION_ARTIFACT_SOURCE_CAPTURE_RECORDS_/:/EXPIRED$/);
+      assert.doesNotMatch(JSON.stringify(e),/synthetic-wrong-type|api_transaction/);return true;
+    });
+    assert.equal(isHistoricalRevisionDiagnosticAdmission(f.admission),false);
+    await assert.rejects(runtime.diagnose(),/REUSE|CLOSED/);
+  });
+});
 
 test('diagnostic runtime has no writer handoff, closes its separate admission and leaves original bytes unchanged',async t=>{
   const f=await fixture(t,{diagnostic:true,lockedMonth:true});

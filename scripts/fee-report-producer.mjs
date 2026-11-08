@@ -383,6 +383,16 @@ const RECORD_ORDER_DIAGNOSTIC_CONTRACT='ib-source-revision-20261106-diagnostic-v
 // pinned to the real main 4d569f5. Not the consumed v6 admission; grants nothing
 // until owner approval, merge and an owner-started run. Once is procedural only.
 const CATALOG_EVIDENCE_DIAGNOSTIC_CONTRACT='ib-source-revision-20261106-diagnostic-v7';
+// Rebind the original diagnostic after the lexical v4 repair. Same target,
+// artifact history and read-only purpose; no recovery, envelope or publication
+// admission. Exact-head owner approval, merge and separate run authorization
+// are still required. Once remains procedural, with no new attempt budget.
+const ROOT_METADATA_DIAGNOSTIC_CONTRACT='ib-source-revision-20261106-diagnostic-v8';
+const ROOT_METADATA_DIAGNOSTIC_FILES=Object.freeze([
+  'scripts/fee-report-producer.mjs','scripts/fee-report-producer.test.mjs',
+  'scripts/fee-source-revision-runtime.mjs','scripts/fee-source-revision-runtime.test.mjs',
+  'scripts/fee-sync-revision-artifacts.mjs','scripts/fee-sync-revision-artifacts.test.mjs',
+].map(path=>Object.freeze({path,status:'modified'})));
 // Response-envelope evidence release: same 2026-11-06 window, its own purpose,
 // pinned to the real main 08bb15e. It reads only the IB v3 envelope, decides no
 // stability and has no writer; no diagnostic or recovery path accepts it and
@@ -403,7 +413,7 @@ const ENVELOPE_EVIDENCE_FILES=Object.freeze([
     'scripts/fee-source-revision-diagnostic.mjs','security/approval-tiers.json'].map(path=>Object.freeze({path,status:'modified'})),
   ...['scripts/ib-v3-envelope-evidence.mjs','scripts/ib-v3-envelope-evidence.test.mjs'].map(path=>Object.freeze({path,status:'added'})),
 ]);
-const isDiagnosticRevision=contractId=>contractId===DIAGNOSTIC_REVISION_CONTRACT||contractId===ECONOMIC_DIAGNOSTIC_CONTRACT||contractId===CASH_DIAGNOSTIC_CONTRACT||contractId===INCOME_BOUNDARY_DIAGNOSTIC_CONTRACT||contractId===SOURCE_STABILITY_DIAGNOSTIC_CONTRACT||contractId===RECORD_ORDER_DIAGNOSTIC_CONTRACT||contractId===CATALOG_EVIDENCE_DIAGNOSTIC_CONTRACT;
+const isDiagnosticRevision=contractId=>contractId===DIAGNOSTIC_REVISION_CONTRACT||contractId===ECONOMIC_DIAGNOSTIC_CONTRACT||contractId===CASH_DIAGNOSTIC_CONTRACT||contractId===INCOME_BOUNDARY_DIAGNOSTIC_CONTRACT||contractId===SOURCE_STABILITY_DIAGNOSTIC_CONTRACT||contractId===RECORD_ORDER_DIAGNOSTIC_CONTRACT||contractId===CATALOG_EVIDENCE_DIAGNOSTIC_CONTRACT||contractId===ROOT_METADATA_DIAGNOSTIC_CONTRACT;
 const DIAGNOSTIC_REVISION_PURPOSE='read-only-diagnostic';
 const DIAGNOSTIC_REVISION_FILES=Object.freeze([
   ...['.github/workflows/fee-cloud-producer.yml','.github/workflows/scripts-check.yml','security/approval-tiers.json',
@@ -495,6 +505,10 @@ const SOURCE_STABILITY_DIAGNOSTIC_FILES=Object.freeze([
 // admission belongs only to its signed immediate successor; it neither resets
 // ordinary attempts nor grants a future target/version a retry.
 const RECOVERY_SCOPES=Object.freeze([
+ Object.freeze({contractId:ROOT_METADATA_DIAGNOSTIC_CONTRACT,purpose:DIAGNOSTIC_REVISION_PURPOSE,admissionModel:'sync-cycle-v1',target:'2026-11-06',
+  baseSha:'860387709b954fdfc97f040031791258b9fa5b15',repairBase:'860387709b954fdfc97f040031791258b9fa5b15',
+  baseParents:Object.freeze(['97101f6f75f7e5295acd232f7d69c32594ec4044']),fileManifest:ROOT_METADATA_DIAGNOSTIC_FILES,
+  uiBlob:'2bb9f66ac890ba87cec504ef72a5083c07670689'}),
  Object.freeze({contractId:ENVELOPE_EVIDENCE_CONTRACT,purpose:ENVELOPE_EVIDENCE_PURPOSE,admissionModel:'envelope-evidence-v1',target:'2026-11-06',
   baseSha:'c64b41a16ede36e1fadc2a57e231118a5921899a',repairBase:'c64b41a16ede36e1fadc2a57e231118a5921899a',
   baseParents:Object.freeze(['08bb15e1f78ee067cfa8be96e1cfe14018410f0e']),fileManifest:ENVELOPE_EVIDENCE_V2_FILES,
