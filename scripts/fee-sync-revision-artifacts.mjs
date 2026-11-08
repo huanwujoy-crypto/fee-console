@@ -22,7 +22,7 @@ const OWNER='huanwujoy-crypto',REPO=OWNER+'/fee-console',parseExact=createLegacy
 const CONTRACT_MODELS=Object.freeze({'ib-source-revision-20261106-v1':'consumption-v1','ib-source-revision-20261106-sync-v2':'sync-cycle-v1',
   'ib-source-revision-20261106-sync-v3':'sync-cycle-v1','ib-source-revision-20261106-diagnostic-v1':'sync-cycle-v1',
   'ib-source-revision-20261106-diagnostic-v2':'sync-cycle-v1','ib-source-revision-20261106-diagnostic-v3':'sync-cycle-v1',
-  'ib-source-revision-20261106-diagnostic-v4':'sync-cycle-v1','ib-source-revision-20261106-diagnostic-v5':'sync-cycle-v1','ib-source-revision-20261106-diagnostic-v6':'sync-cycle-v1','ib-source-revision-20261106-diagnostic-v7':'sync-cycle-v1'});
+  'ib-source-revision-20261106-diagnostic-v4':'sync-cycle-v1','ib-source-revision-20261106-diagnostic-v5':'sync-cycle-v1','ib-source-revision-20261106-diagnostic-v6':'sync-cycle-v1','ib-source-revision-20261106-diagnostic-v7':'sync-cycle-v1','ib-source-revision-20261106-diagnostic-v8':'sync-cycle-v1'});
 const DIAGNOSTIC_ROLES=Object.freeze(['BASE','CURRENT','ANCHOR']);
 const GITHUB_STEPS=Object.freeze(['MAIN','COMMIT','TREE','HISTORY','DATA','HEALTH','RUN','JOBS','LOG']);
 const ECONOMIC_STAGES=Object.freeze(['FIRST','RECHECK','BYTES','BINDING']);
@@ -102,7 +102,7 @@ export function createIbRevisionArtifacts(options){
     const readAdmission=c.diagnosticOnly?producer.readHistoricalRevisionDiagnosticAdmission:producer.readHistoricalRevisionAdmission;
     active();if(!isAdmission(c.admission))fail('ADMISSION');
     const before=copy(readAdmission(c.admission));
-    if(c.diagnosticOnly?(!['ib-source-revision-20261106-diagnostic-v1','ib-source-revision-20261106-diagnostic-v2','ib-source-revision-20261106-diagnostic-v3','ib-source-revision-20261106-diagnostic-v4','ib-source-revision-20261106-diagnostic-v5','ib-source-revision-20261106-diagnostic-v6','ib-source-revision-20261106-diagnostic-v7'].includes(before.contractId)||before.purpose!=='read-only-diagnostic')
+    if(c.diagnosticOnly?(!['ib-source-revision-20261106-diagnostic-v1','ib-source-revision-20261106-diagnostic-v2','ib-source-revision-20261106-diagnostic-v3','ib-source-revision-20261106-diagnostic-v4','ib-source-revision-20261106-diagnostic-v5','ib-source-revision-20261106-diagnostic-v6','ib-source-revision-20261106-diagnostic-v7','ib-source-revision-20261106-diagnostic-v8'].includes(before.contractId)||before.purpose!=='read-only-diagnostic')
       :Object.hasOwn(before,'purpose'))fail('ADMISSION');
     const checked=copy(await at('ADMISSION',()=>c.admission.checkCurrent()));active();
     if(hash(before)!==hash(checked)||!Object.hasOwn(CONTRACT_MODELS,before.contractId)||before.targetDate!==IB_REVISION_ARTIFACT_SCOPE.targetDate

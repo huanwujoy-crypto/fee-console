@@ -1790,10 +1790,12 @@ const recordOrderDiagnosticContract='ib-source-revision-20261106-diagnostic-v6';
 const recordOrderDiagnosticBase='05731b04e8a0728a38ae773ea46194879c20fcc4';
 const catalogEvidenceDiagnosticContract='ib-source-revision-20261106-diagnostic-v7';
 const catalogEvidenceDiagnosticBase='4d569f5c4aacbe4b75a760805de3ca1b5b3d5f6d';
+const rootMetadataDiagnosticContract='ib-source-revision-20261106-diagnostic-v8';
+const rootMetadataDiagnosticBase='860387709b954fdfc97f040031791258b9fa5b15';
 function diagnosticRevisionFixture(contractId=diagnosticRevisionContract){
- const catalog=contractId===catalogEvidenceDiagnosticContract,order=contractId===recordOrderDiagnosticContract,stability=contractId===sourceStabilityDiagnosticContract,boundary=contractId===incomeBoundaryDiagnosticContract,cash=contractId===cashDiagnosticContract,economic=contractId===economicDiagnosticContract,base=catalog?catalogEvidenceDiagnosticBase:order?recordOrderDiagnosticBase:stability?sourceStabilityDiagnosticBase:boundary?incomeBoundaryDiagnosticBase:cash?cashDiagnosticBase:economic?economicDiagnosticBase:diagnosticRevisionBase;
+ const metadata=contractId===rootMetadataDiagnosticContract,catalog=contractId===catalogEvidenceDiagnosticContract,order=contractId===recordOrderDiagnosticContract,stability=contractId===sourceStabilityDiagnosticContract,boundary=contractId===incomeBoundaryDiagnosticContract,cash=contractId===cashDiagnosticContract,economic=contractId===economicDiagnosticContract,base=metadata?rootMetadataDiagnosticBase:catalog?catalogEvidenceDiagnosticBase:order?recordOrderDiagnosticBase:stability?sourceStabilityDiagnosticBase:boundary?incomeBoundaryDiagnosticBase:cash?cashDiagnosticBase:economic?economicDiagnosticBase:diagnosticRevisionBase;
  const f=syncRevisionFixture(),manifest=reportHistoricalRecoveryManifest({contractId});
- f.commit.parents=[{sha:base}];f.supportCommit.sha=base;f.supportCommit.parents=[{sha:catalog?recordOrderDiagnosticBase:order?sourceStabilityDiagnosticBase:stability?incomeBoundaryDiagnosticBase:boundary?cashDiagnosticBase:cash?economicDiagnosticBase:economic?wireRevisionBase:syncRevisionBase}];
+ f.commit.parents=[{sha:base}];f.supportCommit.sha=base;f.supportCommit.parents=[{sha:metadata?'97101f6f75f7e5295acd232f7d69c32594ec4044':catalog?recordOrderDiagnosticBase:order?sourceStabilityDiagnosticBase:stability?incomeBoundaryDiagnosticBase:boundary?cashDiagnosticBase:cash?economicDiagnosticBase:economic?wireRevisionBase:syncRevisionBase}];
  f.comparison.base_commit.sha=f.comparison.merge_base_commit.sha=base;
  f.comparison.files=manifest.map(m=>({filename:m.path,status:m.status,sha:'b'.repeat(40)}));
  f.tree.tree=[f.tree.tree[0],...manifest.map(m=>({path:m.path,type:'blob',mode:'100644',sha:'b'.repeat(40)}))];
@@ -1802,6 +1804,41 @@ function diagnosticRevisionFixture(contractId=diagnosticRevisionContract){
 }
 const diagnosticAdmission=(f,readers=syncRevisionReaders(f))=>authorizeHistoricalRevisionDiagnostic({plan:f.plan,expectedMain:recoveryHead,
  currentRunId:recoveryId,now:revisionRecoveryNow,actionsToken:revisionActionsToken,...readers});
+
+test('metadata diagnostic v8 binds only the six reviewed code/test files after lexical v4',()=>{
+ const expected=['scripts/fee-report-producer.mjs','scripts/fee-report-producer.test.mjs',
+  'scripts/fee-source-revision-runtime.mjs','scripts/fee-source-revision-runtime.test.mjs',
+  'scripts/fee-sync-revision-artifacts.mjs','scripts/fee-sync-revision-artifacts.test.mjs'];
+ const manifest=reportHistoricalRecoveryManifest({contractId:rootMetadataDiagnosticContract});
+ assert.deepEqual(manifest,expected.map(path=>({path,status:'modified'})));
+ assert(Object.isFrozen(manifest));assert(manifest.every(Object.isFrozen));
+ assert(!manifest.some(x=>/lexical|envelope|workflow|security|data\.json/.test(x.path)));
+ assert.equal(reportHistoricalRecoveryManifest({contractId:catalogEvidenceDiagnosticContract}).length,13);
+});
+test('metadata diagnostic v8 rejects duplicate or drifted release evidence before current-run reads',async()=>{
+ for(const change of [
+  f=>f.comparison.files[1]={...f.comparison.files[0]},f=>f.tree.tree.push({...f.tree.tree[0]}),
+  f=>f.tree.tree[0].sha='f'.repeat(40),f=>f.comparison.files[0].sha='f'.repeat(40),
+  f=>f.commit.author.id=1,f=>f.supportCommit.author.id=1,f=>f.supportCommit.commit.verification.verified=false,
+  f=>f.reviewedCommit.parents[0].sha='97101f6f75f7e5295acd232f7d69c32594ec4044',
+  f=>f.comments[0].body='explanation\n'+f.comments[0].body,
+ ]){
+  const f=diagnosticRevisionFixture(rootMetadataDiagnosticContract);change(f);
+  await assert.rejects(diagnosticAdmission(f,{...syncRevisionReaders(f),readCurrentRun:()=>assert.fail('release must reject before run reads')}),/RECOVERY_/);
+ }
+});
+test('metadata diagnostic v8 retains the original four-day UTC target limit',async()=>{
+ const f=diagnosticRevisionFixture(rootMetadataDiagnosticContract),readers=syncRevisionReaders(f);
+ f.clock=new Date('2026-11-10T23:59:59.999Z');
+ const admission=await authorizeHistoricalRevisionDiagnostic({plan:f.plan,expectedMain:recoveryHead,currentRunId:recoveryId,
+  now:f.clock,actionsToken:revisionActionsToken,...readers});
+ assert.equal(isHistoricalRevisionDiagnosticAdmission(admission),true);
+ f.clock=new Date('2026-11-11T00:00:00.000Z');
+ await assert.rejects(admission.checkCurrent(),/RECOVERY_SCOPE/);
+ assert.equal(isHistoricalRevisionDiagnosticAdmission(admission),false);
+ await assert.rejects(authorizeHistoricalRevisionDiagnostic({plan:f.plan,expectedMain:recoveryHead,currentRunId:recoveryId,
+  now:f.clock,actionsToken:revisionActionsToken,...syncRevisionReaders(f)}),/RECOVERY_SCOPE/);
+});
 
 test('read-only revision release has its own exact fifteen-file manifest and preserves older scopes',()=>{
  const expected=[
@@ -1959,7 +1996,7 @@ test('source-stability diagnostic v5 is pinned to the real released main and its
  // The consumed v4 admission keeps its own unchanged manifest and base.
  assert.equal(reportHistoricalRecoveryManifest({contractId:incomeBoundaryDiagnosticContract}).length,10);
 });
-for(const contractId of [diagnosticRevisionContract,economicDiagnosticContract,cashDiagnosticContract,incomeBoundaryDiagnosticContract,sourceStabilityDiagnosticContract,recordOrderDiagnosticContract,catalogEvidenceDiagnosticContract]){
+for(const contractId of [diagnosticRevisionContract,economicDiagnosticContract,cashDiagnosticContract,incomeBoundaryDiagnosticContract,sourceStabilityDiagnosticContract,recordOrderDiagnosticContract,catalogEvidenceDiagnosticContract,rootMetadataDiagnosticContract]){
 test(contractId+' diagnostic admission is authentic, read-only, execution-bound and never a production admission',async()=>{
  const f=diagnosticRevisionFixture(contractId),before=JSON.stringify(f),trace=[],readers=syncRevisionReaders(f,trace),admission=await diagnosticAdmission(f,readers);
  assert.equal(isHistoricalRevisionDiagnosticAdmission(admission),true);assert.equal(isHistoricalRevisionAdmission(admission),false);
@@ -1967,7 +2004,7 @@ test(contractId+' diagnostic admission is authentic, read-only, execution-bound 
  assert.throws(()=>readHistoricalRevisionAdmission(admission),/RECOVERY_SCOPE/);
  const binding=readHistoricalRevisionDiagnosticAdmission(admission);assert.equal(binding.contractId,contractId);
  assert.equal(binding.purpose,'read-only-diagnostic');assert.equal(binding.admissionModel,'sync-cycle-v1');assert.equal(binding.mainSha,recoveryHead);
- assert.equal(binding.repairBaseSha,contractId===catalogEvidenceDiagnosticContract?catalogEvidenceDiagnosticBase:contractId===recordOrderDiagnosticContract?recordOrderDiagnosticBase:contractId===sourceStabilityDiagnosticContract?sourceStabilityDiagnosticBase:contractId===incomeBoundaryDiagnosticContract?incomeBoundaryDiagnosticBase:contractId===cashDiagnosticContract?cashDiagnosticBase:contractId===economicDiagnosticContract?economicDiagnosticBase:diagnosticRevisionBase);assert.equal(binding.targetDate,'2026-11-06');assert.equal(binding.currentRunId,recoveryId);
+ assert.equal(binding.repairBaseSha,contractId===rootMetadataDiagnosticContract?rootMetadataDiagnosticBase:contractId===catalogEvidenceDiagnosticContract?catalogEvidenceDiagnosticBase:contractId===recordOrderDiagnosticContract?recordOrderDiagnosticBase:contractId===sourceStabilityDiagnosticContract?sourceStabilityDiagnosticBase:contractId===incomeBoundaryDiagnosticContract?incomeBoundaryDiagnosticBase:contractId===cashDiagnosticContract?cashDiagnosticBase:contractId===economicDiagnosticContract?economicDiagnosticBase:diagnosticRevisionBase);assert.equal(binding.targetDate,'2026-11-06');assert.equal(binding.currentRunId,recoveryId);
  assert.equal(binding.approvedHead,revisionReviewedHead);assert.match(binding.executionSha256,/^[a-f0-9]{64}$/);assert.equal(Object.hasOwn(binding,'consumptionSha256'),false);
  assert(Object.isFrozen(binding));assert.deepEqual(await admission.checkCurrent(),binding);assert.equal(JSON.stringify(f),before);
  assert.equal(trace.filter(x=>x==='actions/runs/'+recoveryId).length,2);
@@ -2185,7 +2222,7 @@ test('envelope release and the diagnostic, recovery and budget paths refuse each
  assert.equal(release.purpose,'read-only-envelope-evidence');assert.equal(release.contractId,envelopeContract);
  await assert.rejects(readPeriodSourceAttempts({plan:f.plan,now:revisionRecoveryNow,currentRunId:recoveryId,recoveryMain:recoveryHead,recoveryRelease:release,actionsToken:revisionActionsToken}),/RECOVERY_SCOPE/);
  assert.throws(()=>validateReportRecoveryEvidence({plan:f.plan,expectedMain:recoveryHead,currentRunId:recoveryId,release,budget:{attempts:0,recoveryEvidence:{entries:[],reservations:[]}}}),/RECOVERY_SCOPE/);
- for(const contractId of [catalogEvidenceDiagnosticContract,recordOrderDiagnosticContract]){
+ for(const contractId of [catalogEvidenceDiagnosticContract,recordOrderDiagnosticContract,rootMetadataDiagnosticContract]){
   const d=diagnosticRevisionFixture(contractId);await assert.rejects(envelopeAdmission(d),/RECOVERY_SCOPE/);
  }
  await assert.rejects(envelopeAdmission(syncRevisionFixture()),/RECOVERY_SCOPE/);
