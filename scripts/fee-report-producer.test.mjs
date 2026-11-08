@@ -260,10 +260,9 @@ test('read-only promotion inspection does not attempt a write on metadata failur
 // Default fetch is forbidden for the entire suite. Individual wire mocks may
 // replace it temporarily, but a forgotten injection must fail even if product
 // code catches the error. No real request is sent by this tripwire.
-const originalDefaultFetch=globalThis.fetch;
 let unmockedFetchAttempts=0;
 globalThis.fetch=async()=>{unmockedFetchAttempts++;throw Error('OFFLINE_UNMOCKED_FETCH_FORBIDDEN');};
-after(()=>{globalThis.fetch=originalDefaultFetch;assert.equal(unmockedFetchAttempts,0,'every network dependency must have an explicit offline mock');});
+after(()=>assert.equal(unmockedFetchAttempts,0,'every network dependency must have an explicit offline mock'));
 
 test('period diagnostics retain only literal noncash failures and fixed stages',()=>{
  const module=fs.readFileSync(new URL('./fee-sharesight-transfers.mjs',import.meta.url),'utf8');
@@ -1649,10 +1648,11 @@ test('actual period CLI and workflow summary carry the scoped token and safe fai
 const syncRevisionContract='ib-source-revision-20261106-sync-v2',syncRevisionBase='50392c2fb5ec3b1b26e5515cdb0feebb48823d2d';
 const wireRevisionContract='ib-source-revision-20261106-sync-v3',wireRevisionBase='b218f264c53e914d6469ec9f43824f48ccb7af18';
 const metadataRevisionContract='ib-source-revision-20261106-sync-v4',metadataRevisionBase='ea6ce4dcc6784979a4e5bd526d2a13ac0282ae2e';
+const publicationRevisionContract='ib-source-revision-20261106-sync-v5',publicationRevisionBase='2e890aea0ddc14d99b38dd6d525279dfc966624e';
 function syncRevisionFixture(contractId=syncRevisionContract){
- const metadata=contractId===metadataRevisionContract,wire=contractId===wireRevisionContract,base=metadata?metadataRevisionBase:wire?wireRevisionBase:syncRevisionBase;
+ const publication=contractId===publicationRevisionContract,metadata=contractId===metadataRevisionContract,wire=contractId===wireRevisionContract,base=publication?publicationRevisionBase:metadata?metadataRevisionBase:wire?wireRevisionBase:syncRevisionBase;
  const f=sourceRevisionRecoveryFixture(),manifest=reportHistoricalRecoveryManifest({contractId});
- f.commit.parents=[{sha:base}];f.supportCommit.sha=base;f.supportCommit.parents=[{sha:metadata?'860387709b954fdfc97f040031791258b9fa5b15':wire?'4f98318c73d1727d323febdcc72b7d5fbfb77f01':revisionRecoveryBase}];
+ f.commit.parents=[{sha:base}];f.supportCommit.sha=base;f.supportCommit.parents=[{sha:publication?metadataRevisionBase:metadata?'860387709b954fdfc97f040031791258b9fa5b15':wire?'4f98318c73d1727d323febdcc72b7d5fbfb77f01':revisionRecoveryBase}];
  f.comparison.base_commit.sha=f.comparison.merge_base_commit.sha=base;
  f.comparison.files=manifest.map(m=>({filename:m.path,status:m.status,sha:'b'.repeat(40)}));
  f.tree.tree=[f.tree.tree[0],...manifest.map(m=>({path:m.path,type:'blob',mode:'100644',sha:'b'.repeat(40)}))];
@@ -1677,6 +1677,111 @@ function syncRevisionReaders(f,trace=[]){
   readSourceAttempts:()=>assert.fail('sync admission may not count source attempts')};
 }
 const syncAdmission=(f,readers=syncRevisionReaders(f))=>authorizeReportRecovery({plan:f.plan,expectedMain:recoveryHead,currentRunId:recoveryId,now:revisionRecoveryNow,actionsToken:revisionActionsToken,...readers});
+function defaultSyncPublicationFixture(t,contractId=metadataRevisionContract){
+
+ const f=syncRevisionFixture(contractId),wire=sourceRevisionWire(f),root='https://api.github.com/repos/huanwujoy-crypto/fee-console/';
+ const previous={fetch:globalThis.fetch,token:process.env.FEE_REPORT_ACTIONS_TOKEN,ambient:process.env.GITHUB_TOKEN};
+ delete process.env.GITHUB_TOKEN;process.env.FEE_REPORT_ACTIONS_TOKEN=revisionActionsToken;
+ f.publicationCalls=[];f.failedPublicationCalls=0;f.unauthenticatedPublicationCalls=0;f.refs=[];
+ globalThis.fetch=async(url,init={})=>{
+  assert(url.startsWith(root));const route=url.slice(root.length);
+  const publication=route.startsWith('contents/')||route.startsWith('git/matching-refs/')||route.startsWith('compare/')&&!route.endsWith('per_page=100')
+   ||route==='git/ref/heads/main'&&init.headers?.['X-GitHub-Api-Version']==='2022-11-28';
+  if(publication){
+   f.publicationCalls.push(route);assert.equal(init.method||'GET','GET');assert.equal(init.redirect,'error');
+   if(init.headers.Authorization!=='Bearer '+revisionActionsToken)f.unauthenticatedPublicationCalls++;
+   assert.equal(init.headers.Authorization,'Bearer '+revisionActionsToken,'publication uses only the admitted Actions token');
+   if(f.publicationFailure){f.failedPublicationCalls++;throw Error('PRIVATE_PUBLICATION_CANARY');}
+   if(f.beforePublicationResponse)await f.beforePublicationResponse(route);
+   let value;
+   if(route==='git/ref/heads/main')value={object:{sha:f.publication.mainSha}};
+   else if(route==='git/matching-refs/heads/codex/fee-daily-20261106-')value=f.refs;
+   else if(route==='compare/'+'e'.repeat(40)+'...'+recoveryHead+'?per_page=1')value=f.comparedCandidate;
+   else{
+    assert(['contents/data.json?ref='+recoveryHead,'contents/fee-data-health.json?ref='+recoveryHead].includes(route));
+    const bytes=route.startsWith('contents/data.')?f.publication.data:Buffer.from(JSON.stringify(f.publication.health));
+    value={type:'file',encoding:'base64',size:bytes.length,content:bytes.toString('base64')};
+   }
+   const r=new Response(JSON.stringify(value));Object.defineProperty(r,'url',{value:url});return r;
+  }
+  if(route==='actions/runs/'+recoveryId){
+   assert.equal(init.method,'GET');assert.equal(init.headers.Authorization,'Bearer '+revisionActionsToken);
+   const r=new Response(JSON.stringify(f.currentRun));Object.defineProperty(r,'url',{value:url});return r;
+  }
+  return wire(url,init);
+ };
+ t.after(()=>{globalThis.fetch=previous.fetch;for(const[k,v]of Object.entries({FEE_REPORT_ACTIONS_TOKEN:previous.token,GITHUB_TOKEN:previous.ambient}))if(v===undefined)delete process.env[k];else process.env[k]=v;});
+ // Real release, current-run and publication readers; no readState injection.
+ f.admit=()=>authorizeReportRecovery({plan:f.plan,expectedMain:recoveryHead,currentRunId:recoveryId,now:f.clock,clock:()=>f.clock});
+ f.candidate=()=>{f.refs=[{ref:'refs/heads/codex/fee-daily-20261106-abcdef',object:{type:'commit',sha:'e'.repeat(40)}}];
+  f.comparedCandidate={status:'behind',ahead_by:0,behind_by:1,total_commits:0,base_commit:{sha:'e'.repeat(40)},merge_base_commit:{sha:recoveryHead}};};
+ return f;
+}
+test('sync default publication transport authenticates actual readState without GITHUB_TOKEN',async t=>{
+ const f=defaultSyncPublicationFixture(t);let admission;
+ try{admission=await f.admit();}finally{assert.equal(f.unauthenticatedPublicationCalls,0,'publication GET must carry the scoped Actions token');}
+ t.after(()=>admission.close());
+ const binding=readHistoricalRevisionAdmission(admission);assert.deepEqual(await admission.checkCurrent(),binding);
+ assert.equal(process.env.GITHUB_TOKEN,undefined);assert.equal(f.publicationCalls.length,12);
+ f.candidate();f.comparedCandidate={status:'ahead',ahead_by:1,behind_by:0,total_commits:1,base_commit:{sha:'e'.repeat(40)},merge_base_commit:{sha:'e'.repeat(40)}};
+ assert.deepEqual(await admission.checkCurrent(),binding,'incorporated candidate does not block');
+ assert(f.publicationCalls.includes('compare/'+'e'.repeat(40)+'...'+recoveryHead+'?per_page=1'));
+ assert(f.publicationCalls.every(route=>!route.startsWith('actions/')));
+});
+test('sync default publication transport never falls back to ambient or malformed credentials',async t=>{
+ const f=defaultSyncPublicationFixture(t);process.env.GITHUB_TOKEN='synthetic-other-token-must-not-be-used';
+ const admission=await f.admit();await admission.checkCurrent();admission.close();
+ delete process.env.FEE_REPORT_ACTIONS_TOKEN;
+ for(const token of [undefined,'','short','synthetic token with whitespace']){
+  const fixture=syncRevisionFixture(),readers=syncRevisionReaders(fixture);let publications=0;
+  const old=globalThis.fetch;globalThis.fetch=async()=>{publications++;throw Error('PRIVATE_TOKEN_CANARY');};
+  try{await assert.rejects(authorizeReportRecovery({plan:fixture.plan,expectedMain:recoveryHead,currentRunId:recoveryId,
+   now:fixture.clock,actionsToken:token,readRecoveryRelease:readers.readRecoveryRelease,readCurrentRun:readers.readCurrentRun}),/RECOVERY_METADATA/);}
+  finally{globalThis.fetch=old;}
+  assert.equal(publications,0);
+ }
+});
+test('sync default publication transport fails once and revokes on network uncertainty',async t=>{
+ const f=defaultSyncPublicationFixture(t);f.publicationFailure=true;
+ await assert.rejects(f.admit(),e=>e.message==='FEE_CLOUD_PUBLICATION_READ');assert.equal(f.failedPublicationCalls,1);
+ f.publicationFailure=false;const admission=await f.admit();f.publicationFailure=true;
+ await assert.rejects(admission.checkCurrent(),e=>e.message==='FEE_REPORT_RECOVERY_METADATA');
+ assert.equal(f.failedPublicationCalls,2);assert.equal(isHistoricalRevisionAdmission(admission),false);
+ const before=f.publicationCalls.length;await assert.rejects(admission.checkCurrent(),/RECOVERY_CONSUMED/);assert.equal(f.publicationCalls.length,before);
+});
+test('sync default publication transport revokes changed main, comment, run, bytes, health and pending state',async t=>{
+ for(const [name,change]of [
+  ['main',f=>f.ref.object.sha='e'.repeat(40)],['comment',f=>f.comments[0].body+=' changed'],
+  ['run',f=>f.currentRun.run_attempt=2],['bytes',f=>{f.publication.data=Buffer.from('synthetic-new-bytes');f.publication.health.dataSha256=crypto.createHash('sha256').update(f.publication.data).digest('hex');}],
+  ['health',f=>f.publication.health.checkedAt='2026-11-06T01:01:00Z'],['pending',f=>f.candidate()],
+  ['publication-main',f=>f.publication.mainSha='e'.repeat(40)],['expiry',f=>f.clock=new Date('2026-11-11T00:00:00Z')],
+ ])await t.test(name,async t=>{
+  const f=defaultSyncPublicationFixture(t,publicationRevisionContract),admission=await f.admit();change(f);
+  await assert.rejects(admission.checkCurrent(),/RECOVERY_/);assert.equal(isHistoricalRevisionAdmission(admission),false);
+  const before=f.publicationCalls.length;await assert.rejects(admission.checkCurrent(),/RECOVERY_CONSUMED/);assert.equal(f.publicationCalls.length,before);
+  assert(!f.publicationCalls.some(route=>route.startsWith('contents/')&&!route.endsWith('?ref='+recoveryHead)));
+ });
+});
+test('sync default publication transport rejects late responses after admission closure',async t=>{
+ const f=defaultSyncPublicationFixture(t),admission=await f.admit();let entered,release;
+ const started=new Promise(resolve=>entered=resolve),blocked=new Promise(resolve=>release=resolve);
+ f.beforePublicationResponse=async()=>{entered();await blocked;};
+ const pending=admission.checkCurrent();await started;admission.close();const before=f.publicationCalls.length;release();
+ await assert.rejects(pending,/RECOVERY_CONSUMED/);assert.equal(isHistoricalRevisionAdmission(admission),false);assert.equal(f.publicationCalls.length,before);
+});
+test('production sync-v5 binds all six transport and registry files to one exact release',async t=>{
+ assert.deepEqual(reportHistoricalRecoveryManifest({contractId:publicationRevisionContract}),reportHistoricalRecoveryManifest({contractId:metadataRevisionContract}));
+ const f=defaultSyncPublicationFixture(t,publicationRevisionContract),admission=await f.admit(),binding=readHistoricalRevisionAdmission(admission);
+ assert.equal(binding.contractId,publicationRevisionContract);assert.equal(binding.repairBaseSha,publicationRevisionBase);
+ assert.equal(Object.hasOwn(binding,'purpose'),false);assert.equal(isHistoricalRevisionDiagnosticAdmission(admission),false);assert.equal(isEnvelopeEvidenceAdmission(admission),false);
+ admission.close();
+ for(const change of [f=>f.supportCommit.parents[0].sha=syncRevisionBase,f=>f.comparison.files.pop(),f=>f.comments[0].body='/approve-xuan-ib-maintenance '+'f'.repeat(40)]){
+  const g=syncRevisionFixture(publicationRevisionContract);change(g);await assert.rejects(syncAdmission(g),/RECOVERY_/);
+ }
+ const g=syncRevisionFixture(publicationRevisionContract);g.clock=new Date('2026-11-10T23:59:59.999Z');
+ const atBoundary=await authorizeReportRecovery({plan:g.plan,expectedMain:recoveryHead,currentRunId:recoveryId,now:g.clock,actionsToken:revisionActionsToken,...syncRevisionReaders(g)});
+ g.clock=new Date('2026-11-11T00:00:00Z');await assert.rejects(atBoundary.checkCurrent(),/RECOVERY_SCOPE/);
+});
 test('production sync-v4 has exactly six reviewed files and a distinct purpose-free release binding',async()=>{
  const expected=['scripts/fee-report-producer.mjs','scripts/fee-report-producer.test.mjs',
   'scripts/fee-source-revision-runtime.mjs','scripts/fee-source-revision-runtime.test.mjs',
@@ -1714,7 +1819,7 @@ test('production sync-v4 keeps pending, already-published and original UTC fresh
  await assert.rejects(authorizeReportRecovery({plan:f.plan,expectedMain:recoveryHead,currentRunId:recoveryId,
   now:f.clock,actionsToken:revisionActionsToken,...syncRevisionReaders(f)}),/RECOVERY_SCOPE/);
 });
-for(const contractId of [syncRevisionContract,wireRevisionContract,metadataRevisionContract]){
+for(const contractId of [syncRevisionContract,wireRevisionContract,metadataRevisionContract,publicationRevisionContract]){
 test(contractId+' sync revision binds real owner release, target, current execution and publication without inventing consumption',async()=>{
  const f=syncRevisionFixture(contractId),trace=[],admission=await syncAdmission(f,syncRevisionReaders(f,trace));
  const binding=readHistoricalRevisionAdmission(admission);assert.equal(binding.contractId,contractId);
