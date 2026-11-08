@@ -373,3 +373,147 @@ test('real IB reader: currentness change is refused and classified only where th
     assert.deepEqual(ibSourceCaptureEvidence(e),{capture:'PASSED',currentness:{PERF:['MEMBER_SET','UNKNOWN']},currentnessCoverage:'FIRST_CHANGED_RECORD'});return true;});
   assert.equal(f.reader.verifyCapturedRead(captured),false);
 });
+
+// -------------------------- v4: exact root response-metadata values only
+import {SOURCE_LEXICAL_RULE,SOURCE_EVIDENCE_METADATA_ALLOWED as META} from './fee-source-lexical.mjs';
+const metadata={id:41,timestamp:'synthetic-response-a'};
+const metadataBody={api_transaction:metadata,report:{holdings:[{id:2,quantity:1,amount:7,currency:'USD',date:D}]}};
+const metadataRecord=(body=metadataBody,path='/api/v3/portfolios/1/performance',query=perfQ(D),method='GET')=>({method,path,query,body:typeof body==='string'?body:JSON.stringify(body)});
+const metadataVariant=change=>{const body=structuredClone(metadataBody);change(body);return metadataRecord(body);};
+const metadataRewrite=(text,{path,attempt},change=null)=>path.startsWith('/api/v3/')?mutateJson(text,body=>{
+  body.api_transaction={id:100+attempt,timestamp:'synthetic-response-'+attempt};
+  if(change)change(body,path,attempt);
+}):null;
+
+test('v4 metadata value exception is opt-in and bound to exact GET v3 routes and query shapes',()=>{
+  assert.equal(SOURCE_LEXICAL_RULE,'fee-console.sharesight-lexical-json.v4');
+  for(const [path,query,route] of [
+    ['/api/v3/portfolios/1/holdings',{consolidated:'false'},'HOLD'],
+    ['/api/v3/portfolios/1/performance',perfQ(D),'PERF'],
+    ['/api/v3/portfolios/1/trades.json',{consolidated:'false',start_date:D,end_date:D},'TRADE'],
+  ]){
+    const a=metadataRecord(metadataBody,path,query),b={...a,body:a.body.replace('41','42').replace('synthetic-response-a','synthetic-response-b')};
+    assert.equal(lexicalRecordEquivalent(a,b,IBC),true,path);
+    assert.equal(lexicalRecordsSha256([a],IBC),lexicalRecordsSha256([b],IBC));
+    assert.equal(classifyRecordsDifference([a],[b],IBC),null);
+    assert.deepEqual(recordsEvidence([a],[b],IBC),{[route]:[META]});
+    assert.equal(lexicalRecordEquivalent(a,b),false,'default comparison stays strict');
+    assert.equal(lexicalRecordEquivalent(a,b,C),false,'bare v2 contract stays strict');
+    assert.equal(lexicalRecordEquivalent({...a,method:'POST'},{...b,method:'POST'},IBC),false);
+  }
+  for(const [path,query] of [
+    ['/api/v2/portfolios.json',{}],['/api/v2/portfolios/1/cash_accounts.json',{date:D}],
+    ['/api/v2/cash_accounts/3/cash_account_transactions.json',{from:D,to:D}],['/api/v2/payouts/13.json',{}],
+    ['/api/v3/portfolios/1/holdings',{consolidated:'true'}],['/api/v3/portfolios/1/holdings',{consolidated:'false',page:'2'}],
+    ['/api/v3/portfolios/1/performance',{...perfQ(D),start_date:'2026-09-01'}],
+    ['/api/v3/portfolios/1/performance',{...perfQ(D),include_sales:'true'}],
+    ['/api/v3/portfolios/1/trades.json',{consolidated:'false',end_date:D}],
+    ['/api/v3/portfolios/1/extra/holdings',{consolidated:'false'}],['/api/v3/portfolios/1/unknown',{}],
+  ]){
+    const a=metadataRecord(metadataBody,path,query),b={...a,body:a.body.replace('41','42')};
+    assert.equal(lexicalRecordEquivalent(a,b,IBC),false,path);
+    assert.equal(evidenceHasBlocking(recordsEvidence([a],[b],IBC)),true,path);
+  }
+});
+test('v4 keeps metadata presence, types, structure, other members and all business fields strict',()=>{
+  const original=metadataRecord();
+  for(const [name,change] of [
+    ['root removed',o=>delete o.api_transaction],['id removed',o=>delete o.api_transaction.id],
+    ['timestamp removed',o=>delete o.api_transaction.timestamp],['id string',o=>o.api_transaction.id='41'],
+    ['timestamp number',o=>o.api_transaction.timestamp=41],['id null',o=>o.api_transaction.id=null],
+    ['timestamp boolean',o=>o.api_transaction.timestamp=false],['id object',o=>o.api_transaction.id={id:41}],
+    ['timestamp array',o=>o.api_transaction.timestamp=['synthetic-response-a']],['metadata array',o=>o.api_transaction=[o.api_transaction]],
+    ['metadata null',o=>o.api_transaction=null],['unknown metadata member',o=>o.api_transaction.unknown=1],
+    ['unknown root member',o=>o.unknown=1],['business id',o=>o.report.holdings[0].id=3],
+    ['business quantity',o=>o.report.holdings[0].quantity=2],['business amount',o=>o.report.holdings[0].amount=8],
+    ['business currency',o=>o.report.holdings[0].currency='EUR'],['business date',o=>o.report.holdings[0].date='2026-09-03'],
+  ]){
+    const changed=metadataVariant(change);
+    assert.equal(lexicalRecordEquivalent(original,changed,IBC),false,name);
+    assert.equal(evidenceHasBlocking(recordsEvidence([original],[changed],IBC)),true,name);
+  }
+  for(const path of [['report','api_transaction'],['report','holdings',0,'api_transaction'],['api_transaction','nested']]){
+    const a=structuredClone(metadataBody);let at=a;for(const key of path.slice(0,-1))at=at[key];at[path.at(-1)]={...metadata};
+    const b=structuredClone(a);at=b;for(const key of path)at=at[key];at.id=42;at.timestamp='synthetic-response-b';
+    assert.equal(lexicalRecordEquivalent(metadataRecord(a),metadataRecord(b),IBC),false,JSON.stringify(path));
+  }
+  const a=metadataVariant(o=>o.api_transaction.other=1),b=metadataVariant(o=>o.api_transaction.other=2);
+  assert.equal(lexicalRecordEquivalent(a,b,IBC),false,'existing unknown metadata values stay strict');
+});
+test('v4 keeps key lexemes and duplicate keys strict while marking allowed value lexemes',()=>{
+  const a=metadataRecord();
+  for(const body of [a.body.replace('41','41.0'),a.body.replace('synthetic-response-a','synthetic-response-\\u0061')]){
+    const b={...a,body};assert.equal(lexicalRecordEquivalent(a,b,IBC),true);
+    assert.deepEqual(recordsEvidence([a],[b],IBC),{PERF:[META]});
+  }
+  for(const body of [a.body.replace('"id":41','"\\u0069d":41'),a.body.replace('api_transaction','api_transactio\\u006e'),
+    a.body.replace('"id":41','"id":41,"id":42'),a.body.replace('"timestamp":','"timestamp":"duplicate","timestamp":'),
+    a.body.replace('"api_transaction":','"api_transaction":{},"api_transaction":')]){
+    const b={...a,body};assert.equal(lexicalRecordEquivalent(a,b,IBC),false);
+    assert.equal(evidenceHasBlocking(recordsEvidence([a],[b],IBC)),true);
+    if(body.includes('duplicate')||body.includes('"id":41,"id"')||body.includes('"api_transaction":{}'))assert.equal(lexicalRecord(b,IBC).rawBody,body);
+  }
+  assert.equal(lexicalRecordEquivalent(a,{...a,body:a.body+'\n'},IBC),false,'outer whitespace remains strict');
+  const duplicate={...a,body:a.body.replace('"id":41','"id":41,"id":42')};
+  assert.equal(lexicalRecordEquivalent(duplicate,{...duplicate},IBC),true,'identical invalid-to-reduce evidence stays byte compared');
+});
+test('v4 allowed evidence is explicit, bounded and never hides a concurrent blocking change',()=>{
+  const a=metadataRecord(),b=metadataVariant(o=>{o.api_transaction.id=42;o.api_transaction.timestamp='synthetic-response-b';o.report.unknown=1;});
+  const evidence=recordsEvidence([a],[b],IBC);
+  assert.deepEqual(evidence,{PERF:[META,'MEMBER_SET','UNKNOWN']});
+  assert.equal(isRecordsEvidence(evidence),true);assert.equal(evidenceHasBlocking(evidence),true);
+  assert.equal(evidenceHasBlocking({PERF:[META]}),false);
+  assert.deepEqual(recordsEvidence([a],[a],IBC),{});
+  assert.doesNotMatch(JSON.stringify(evidence),/synthetic|api_transaction|timestamp|\d/);
+  const cat=metadataRecord({api_transaction:metadata,holdings:[{id:2,quantity:1,value:7}]},'/api/v3/portfolios/1/holdings',{consolidated:'false'});
+  const changed={...cat,body:cat.body.replace('41','42').replace('"value":7','"value":8')};
+  assert.deepEqual(recordsEvidence([cat],[changed],IBC),{HOLD:['ALLOWED_UNCONSUMED_CATALOG',META]});
+  assert.equal(evidenceHasBlocking(recordsEvidence([cat],[changed],IBC)),false);
+});
+test('real IB reader and captured inputs accept metadata values while preserving raw hashes and projection binding',async()=>{
+  const f=ibFixture({nativePayout:true,ownerTransfer:true,rewrite:metadataRewrite});
+  const captured=await f.reader.readStableWithEvidence(f.args),[first,second]=captured.evidence.captures;
+  assert.notEqual(first.sha256,second.sha256);assert.equal(captured.evidence.sourceSha256,first.sha256);
+  const out=projectCapturedSharesightAccount({reader:f.reader,captured,scope:f.scope});
+  assert.equal(out.captureSourceSha256,first.sha256);
+  for(const body of [out.raw.performance,out.raw.trades]){
+    const record=first.records.find(r=>r.body===body);assert.ok(record);assert.equal(sha(body),record.sha256);
+    assert.equal(JSON.parse(body).api_transaction.id,101);
+  }
+  for(const record of second.records.filter(r=>r.path.startsWith('/api/v3/')))assert.equal(JSON.parse(record.body).api_transaction.id,102);
+  const allowed={HOLD:[META],PERF:[META],TRADE:[META]};
+  assert.deepEqual(ibSourceCaptureSuccessEvidence(captured),{capture:allowed,currentness:'NOT_REACHED'});
+  assert.equal(await f.reader.checkCapturedReadCurrent(captured),true);
+  assert.deepEqual(ibSourceCaptureSuccessEvidence(captured),{capture:allowed,currentness:allowed,currentnessCoverage:'ALL_RECORDS'});
+  assert.equal(f.reader.consumeCapturedRead(captured,f.args),captured.input);
+  assert.throws(()=>projectCapturedSharesightAccount({reader:f.reader,captured:{...captured,evidence:{...captured.evidence,sourceSha256:second.sha256}},scope:f.scope}),e=>capturedInputFailureCode(e)==='FEE_SYNC_CAPTURE_ORIGIN');
+});
+for(const [name,change] of [
+  ['metadata type',(o,p)=>{o.api_transaction.id='101';}],
+  ['metadata presence',(o,p)=>{delete o.api_transaction.timestamp;}],
+  ['metadata structure',(o,p)=>{o.api_transaction=[o.api_transaction];}],
+  ['unknown metadata member',(o,p)=>{o.api_transaction.unknown=1;}],
+  ['nested same-name metadata',(o,p)=>{o.nested={api_transaction:{id:42,timestamp:'synthetic-nested'}};}],
+  ['business quantity',(o,p)=>{if(p.endsWith('/performance'))o.report.holdings[0].quantity=2;}],
+])test('real IB capture rejects metadata drift with '+name,async()=>{
+  const f=ibFixture({rewrite:(t,c)=>metadataRewrite(t,c,(o,p,a)=>{if(a===2)change(o,p);})});
+  await assert.rejects(f.reader.readStableWithEvidence(f.args),e=>{
+    assert.equal(ibSourceFailureCode(e),'IB_SOURCE_UNSTABLE');
+    const evidence=ibSourceCaptureEvidence(e);assert.ok(evidence);assert.equal(evidenceHasBlocking(evidence.capture),true);
+    assert.doesNotMatch(JSON.stringify(evidence),/synthetic|api_transaction|timestamp|\d/);return true;
+  });
+});
+test('real IB currentness revokes a capture when metadata values accompany a blocking change',async()=>{
+  const f=ibFixture({rewrite:(t,c)=>metadataRewrite(t,c,(o,p,a)=>{if(a>=3&&p.endsWith('/performance'))o.report.unknown=1;})});
+  const captured=await f.reader.readStableWithEvidence(f.args);
+  await assert.rejects(f.reader.checkCapturedReadCurrent(captured),e=>{
+    assert.equal(ibSourceCaptureRecheckDiagnostic(e),'RECORD_CHANGED');
+    assert.deepEqual(ibSourceCaptureEvidence(e),{capture:'PASSED',currentness:{PERF:[META,'MEMBER_SET','UNKNOWN']},currentnessCoverage:'FIRST_CHANGED_RECORD'});return true;
+  });
+  assert.equal(f.reader.verifyCapturedRead(captured),false);
+  assert.throws(()=>projectCapturedSharesightAccount({reader:f.reader,captured,scope:f.scope}),e=>capturedInputFailureCode(e)==='FEE_SYNC_CAPTURE_ORIGIN');
+});
+test('real fee reader still rejects root metadata value drift on its v3 responses',async()=>{
+  const f=cloudFixture({rewrite:metadataRewrite});
+  await assert.rejects(f.reader.readStableWithEvidence(D,B),e=>{assert.equal(feeCloudCaptureUnstableDiagnostic(e),'RECORDS');return true;});
+});
