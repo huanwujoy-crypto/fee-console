@@ -17,6 +17,7 @@ import {HEALTH_SCHEMA,validateHealth} from './fee-data-health.mjs';
 import {CLOUD_ONCE,cloudOnceWindow,cloudOnceRequest,admitCloudOnce,confirmCloudOnce,recordCloudOnceCandidate,cloudOnceStatus,pauseCloudOnce,cloudOnceControl,scheduledDailyContext} from './fee-report-producer.mjs';
 import {reviewedMainConfirmation,confirmReviewedMainBeforeSource,confirmReviewedRecoveryBeforeSource,isHistoricalRevisionAdmission,readHistoricalRevisionAdmission,reportHistoricalRecoveryManifest,readCurrentSyncRun} from './fee-report-producer.mjs';
 import {isHistoricalRevisionDiagnosticAdmission,readHistoricalRevisionDiagnosticAdmission,authorizeHistoricalRevisionDiagnostic} from './fee-report-producer.mjs';
+import {authorizeEnvelopeEvidence,isEnvelopeEvidenceAdmission} from './fee-report-producer.mjs';
 
 function cloudOnceFixture(){
  const main='a'.repeat(40),candidate='b'.repeat(40),runId=1001,now=new Date('2026-11-03T02:00:10Z');
@@ -1551,7 +1552,9 @@ test('both production admission checks retain their original ephemeral read toke
  assert.match(step,/FEE_REPORT_ACTIONS_TOKEN: \$\{\{ github.token \}\}/);assert.equal((produce.match(/FEE_REPORT_ACTIONS_TOKEN:/g)||[]).length,2);
  const diagnostic=wf.split('\n  ib-diagnostic:\n');assert.equal(diagnostic.length,2);
  assert.equal((diagnostic[0].match(/FEE_REPORT_ACTIONS_TOKEN:/g)||[]).length,3);
- assert.equal((diagnostic[1].match(/FEE_REPORT_ACTIONS_TOKEN:/g)||[]).length,2);
+ const envelope=diagnostic[1].split('\n  ib-envelope-evidence:\n');assert.equal(envelope.length,2);
+ assert.equal((envelope[0].match(/FEE_REPORT_ACTIONS_TOKEN:/g)||[]).length,2);
+ assert.equal((envelope[1].match(/FEE_REPORT_ACTIONS_TOKEN:/g)||[]).length,2);
  assert.doesNotMatch(produce,/contents: write|actions: write/);
  assert.deepEqual([...wf.matchAll(/cron: '([^']+)'/g)].map(m=>m[1]),['0 1 * * *','30 3 * * *','0 6 * * *']);
  assert.match(wf,/group: fee-cloud-producer\n  cancel-in-progress: false/);assert.match(wf,/github\.run_attempt == 1/);
@@ -1623,8 +1626,8 @@ test('actual period CLI and workflow summary carry the scoped token and safe fai
  assert.match(period,/permissions:\n      contents: read\n      actions: read/);assert.match(period,/FEE_REPORT_ACTIONS_TOKEN: \$\{\{ github.token \}\}/);
  const workflowJobs=[...workflow.matchAll(/^  ([a-z][a-z-]*):\n([\s\S]*?)(?=^  [a-z][a-z-]*:\n|(?![\s\S]))/gm)];
  const tokenJobs=Object.fromEntries(workflowJobs.map(([,name,body])=>[name,(body.match(/FEE_REPORT_ACTIONS_TOKEN:/g)||[]).length]).filter(([,count])=>count));
- assert.deepEqual(tokenJobs,{period:1,produce:2,'ib-diagnostic':2});
- assert.equal((workflow.match(/FEE_REPORT_ACTIONS_TOKEN:/g)||[]).length,5);
+ assert.deepEqual(tokenJobs,{period:1,produce:2,'ib-diagnostic':2,'ib-envelope-evidence':2});
+ assert.equal((workflow.match(/FEE_REPORT_ACTIONS_TOKEN:/g)||[]).length,7);
  const diagnostic=workflowJobs.find(([,name])=>name==='ib-diagnostic')[2];
  assert.match(diagnostic,/permissions:\n      contents: read\n      actions: read\n      id-token: write/);
  const tokenSteps=[...diagnostic.matchAll(/      - name: ([^\n]+)\n([\s\S]*?)(?=      - name: |(?![\s\S]))/g)].filter(([, ,body])=>body.includes('FEE_REPORT_ACTIONS_TOKEN:'));
@@ -2116,4 +2119,124 @@ test('income-boundary diagnostic rejects old release bindings and a four-file-on
  for(const contractId of [cashDiagnosticContract,economicDiagnosticContract,diagnosticRevisionContract])
   await assert.rejects(diagnosticAdmission(f,{...readers,readRecoveryRelease:async(...args)=>({...await real(...args),contractId}),
    readCurrentRun:()=>assert.fail('old contract cannot replace the new authentic release')}),/RECOVERY_SCOPE/);
+});
+
+// ---- response-envelope evidence release (read-only, its own purpose) ----
+const envelopeContract='ib-source-revision-20261106-envelope-evidence-v1',envelopeBase='08bb15e1f78ee067cfa8be96e1cfe14018410f0e';
+function envelopeFixture(){
+ const f=syncRevisionFixture(),manifest=reportHistoricalRecoveryManifest({contractId:envelopeContract});
+ f.commit.parents=[{sha:envelopeBase}];f.supportCommit.sha=envelopeBase;f.supportCommit.parents=[{sha:catalogEvidenceDiagnosticBase}];
+ f.comparison.base_commit.sha=f.comparison.merge_base_commit.sha=envelopeBase;
+ f.comparison.files=manifest.map(m=>({filename:m.path,status:m.status,sha:'b'.repeat(40)}));
+ f.tree.tree=[f.tree.tree[0],...manifest.map(m=>({path:m.path,type:'blob',mode:'100644',sha:'b'.repeat(40)}))];
+ f.reviewedCommit.parents=[{sha:envelopeBase}];f.currentRun.display_title='IB diagnostic 2026-11-06';
+ return f;
+}
+const envelopeAdmission=(f,readers=syncRevisionReaders(f))=>authorizeEnvelopeEvidence({expectedMain:recoveryHead,currentRunId:recoveryId,now:revisionRecoveryNow,
+ actionsToken:revisionActionsToken,readRecoveryRelease:readers.readRecoveryRelease,readCurrentRun:readers.readCurrentRun,clock:readers.clock});
+test('envelope evidence release is pinned to the real main 08bb15e with its own exact ten-file manifest',()=>{
+ const expected=[
+  ...['.github/workflows/fee-cloud-producer.yml','.github/workflows/scripts-check.yml','docs/fee-source-revision.md',
+   'scripts/fee-ratio-cloud-runtime.mjs','scripts/fee-report-producer.mjs','scripts/fee-report-producer.test.mjs',
+   'scripts/fee-source-revision-diagnostic.mjs','security/approval-tiers.json'].map(path=>({path,status:'modified'})),
+  ...['scripts/ib-v3-envelope-evidence.mjs','scripts/ib-v3-envelope-evidence.test.mjs'].map(path=>({path,status:'added'})),
+ ];
+ const manifest=reportHistoricalRecoveryManifest({contractId:envelopeContract});
+ assert.deepEqual(manifest,expected);assert.equal(manifest.length,10);assert(Object.isFrozen(manifest));assert(manifest.every(Object.isFrozen));
+ assert.equal(reportHistoricalRecoveryManifest({contractId:catalogEvidenceDiagnosticContract}).length,13);
+});
+test('envelope evidence admission binds release, approval and owner run, and is no other admission',async()=>{
+ const f=envelopeFixture(),trace=[],admission=await envelopeAdmission(f,syncRevisionReaders(f,trace));
+ assert.equal(isEnvelopeEvidenceAdmission(admission),true);assert.equal(isEnvelopeEvidenceAdmission({...admission}),false);
+ assert.equal(isHistoricalRevisionDiagnosticAdmission(admission),false);assert.equal(isHistoricalRevisionAdmission(admission),false);
+ assert.equal(JSON.stringify(admission),'{}');assert(Object.isFrozen(admission));
+ const binding=await admission.checkCurrent();
+ assert.deepEqual(Object.keys(binding).sort(),['approvedHead','approvedTree','contractId','currentRunId','executionSha256','mainSha','purpose','repairBaseSha','targetDate']);
+ assert.equal(binding.contractId,envelopeContract);assert.equal(binding.purpose,'read-only-envelope-evidence');assert.equal(binding.repairBaseSha,envelopeBase);
+ assert.equal(binding.targetDate,'2026-11-06');assert.equal(binding.approvedHead,revisionReviewedHead);assert.equal(binding.currentRunId,recoveryId);
+ assert.equal(trace.filter(x=>x==='actions/runs/'+recoveryId).length,2);
+ assert(!trace.some(x=>x.includes('/runs?')||x.includes('/jobs')||x.startsWith('contents/')),'no Actions history listing and no publication read');
+ admission.close();await assert.rejects(admission.checkCurrent(),/RECOVERY_CONSUMED/);
+});
+test('envelope evidence refuses a tampered release, approval or run before any credential use',async()=>{
+ for(const change of [
+  f=>f.reviewedCommit.commit.tree.sha='f'.repeat(40),f=>f.comments[0].body='/approve-xuan-ib-maintenance '+'e'.repeat(40),
+  f=>f.comments[0].user.id=1,f=>f.comparison.files.push({filename:'scripts/extra.mjs',status:'added',sha:'b'.repeat(40)}),
+  f=>f.comparison.files[0].status='added',f=>f.comparison.files.pop(),f=>f.supportCommit.parents=[{sha:'e'.repeat(40)}],
+  f=>f.commit.commit.verification.verified=false,f=>f.reviewedCommit.parents=[{sha:catalogEvidenceDiagnosticBase}],f=>f.pr.merged=false,
+  f=>f.tree.tree[0].sha='c'.repeat(40),f=>f.currentRun.run_attempt=2,f=>f.currentRun.display_title='IB diagnostic 2026-11-07',
+  f=>f.currentRun.actor.id=1,f=>f.currentRun.head_sha='e'.repeat(40),f=>f.currentRun.event='schedule',f=>f.ref.object.sha='e'.repeat(40)]){
+  const f=envelopeFixture();change(f);
+  await assert.rejects(envelopeAdmission(f),{message:/^FEE_REPORT_RECOVERY_(RELEASE|RUN|METADATA|SCOPE)$/},String(change));
+ }
+ // A later edit of the owner comment ends a live admission.
+ const f=envelopeFixture(),admission=await envelopeAdmission(f);f.comments[0].updated_at='2026-11-07T00:31:00Z';
+ await assert.rejects(admission.checkCurrent(),/RECOVERY_RELEASE/);await assert.rejects(admission.checkCurrent(),/RECOVERY_CONSUMED/);
+});
+test('envelope release and the diagnostic, recovery and budget paths refuse each other',async()=>{
+ const f=envelopeFixture(),readers=syncRevisionReaders(f);
+ await assert.rejects(diagnosticAdmission(f,readers),/RECOVERY_SCOPE/);
+ await assert.rejects(syncAdmission(f,readers),/RECOVERY_SCOPE/);
+ const release=await readers.readRecoveryRelease(recoveryHead,{targetDate:'2026-11-06',actionsToken:revisionActionsToken});
+ assert.equal(release.purpose,'read-only-envelope-evidence');assert.equal(release.contractId,envelopeContract);
+ await assert.rejects(readPeriodSourceAttempts({plan:f.plan,now:revisionRecoveryNow,currentRunId:recoveryId,recoveryMain:recoveryHead,recoveryRelease:release,actionsToken:revisionActionsToken}),/RECOVERY_SCOPE/);
+ assert.throws(()=>validateReportRecoveryEvidence({plan:f.plan,expectedMain:recoveryHead,currentRunId:recoveryId,release,budget:{attempts:0,recoveryEvidence:{entries:[],reservations:[]}}}),/RECOVERY_SCOPE/);
+ for(const contractId of [catalogEvidenceDiagnosticContract,recordOrderDiagnosticContract]){
+  const d=diagnosticRevisionFixture(contractId);await assert.rejects(envelopeAdmission(d),/RECOVERY_SCOPE/);
+ }
+ await assert.rejects(envelopeAdmission(syncRevisionFixture()),/RECOVERY_SCOPE/);
+ await assert.rejects(authorizeEnvelopeEvidence({expectedMain:recoveryHead,currentRunId:recoveryId,now:revisionRecoveryNow,actionsToken:revisionActionsToken,
+  readRecoveryRelease:async()=>({mainSha:recoveryHead,contractId:envelopeContract,purpose:'read-only-envelope-evidence',targetDate:'2026-11-06'}),
+  readCurrentRun:()=>assert.fail('a forged release must stop first')}),/RECOVERY_SCOPE/);
+});
+test('existing exhaustive dispatch checks accept the envelope fields only while off and blank',()=>{
+ const c=confirmedDailyFixture(),check=inputs=>reviewedMainConfirmation(c.args,{env:c.env,readEvent:()=>({...c.event,inputs:{...c.event.inputs,...inputs}})});
+ assert.equal(check({ib_envelope_once:'false',ib_envelope_main:''}),c.head);assert.equal(check({ib_envelope_once:false}),c.head);
+ for(const inputs of [{ib_envelope_once:'true'},{ib_envelope_once:true},{ib_envelope_main:c.head},{ib_envelope_extra:''}])assert.throws(()=>check(inputs),/CONFIRMED_MAIN_SCOPE/);
+ const a=automaticDailyFixture(),daily=inputs=>scheduledDailyContext({mode:'preflight'},{env:a.env,now:a.now,readEvent:()=>({...a.event,inputs:{...a.event.inputs,...inputs}})});
+ assert.equal(daily({ib_envelope_once:'false',ib_envelope_main:''}),true);
+ for(const inputs of [{ib_envelope_once:'true'},{ib_envelope_main:'a'.repeat(40)}])assert.throws(()=>daily(inputs),/DAILY_SCOPE/);
+});
+test('workflow: the envelope job is the only job for its fields and gets no fee key, economic source or writer',()=>{
+ const wf=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8'),head='a'.repeat(40);
+ const jobs=[...wf.matchAll(/^  ([a-z][a-z-]*):\n([\s\S]*?)(?=^  [a-z][a-z-]*:\n|(?![\s\S]))/gm)].filter(([,name])=>!['schedule','workflow_dispatch'].includes(name));
+ const condition=(body,inputs,github={})=>Boolean(vm.runInNewContext(/(?:^|\n)    if: \$\{\{ (.+) \}\}/.exec(body)[1],{inputs,needs:new Proxy({},{get:()=>({result:'success',outputs:{outcome:'produce'}})}),cancelled:()=>false,always:()=>true,
+  github:{event_name:'workflow_dispatch',actor_id:'283054367',ref:'refs/heads/main',run_attempt:1,sha:head,...github},
+  vars:{FEE_REPORT_ONCE_MAIN:'',FEE_CLOUD_MODE:'publish',FEE_REPORT_DAILY_ENABLED:'true',FEE_REPORT_PERIODS_ENABLED:'true'}}));
+ const off={ib_diagnostic_once:false,ib_diagnostic_main:'',ratio_main:'',ratio_plan:'',source_plan_check_only:false,source_acceptance_once:false,source_from:'',source_target:'',source_main:'',
+  run_reviewed_once:false,manual_sync_completed_for:'',confirmed_main:'',recovery_main:'',report_kind:'',report_target:'',report_markets:''};
+ const envelope={...off,ib_envelope_once:true,ib_envelope_main:head};
+ assert.deepEqual(jobs.filter(([,,body])=>condition(body,envelope)).map(([,name])=>name),['ib-envelope-evidence']);
+ const job=jobs.find(([,name])=>name==='ib-envelope-evidence')[2].replace(/^ *#.*\n/gm,'');
+ for(const github of [{run_attempt:2},{actor_id:'1'},{ref:'refs/heads/topic'},{event_name:'schedule'},{sha:'b'.repeat(40)}])assert.equal(condition(job,envelope,github),false);
+ for(const mixed of [{ib_diagnostic_once:true},{ib_diagnostic_main:head},{confirmed_main:head},{ratio_plan:'x'},{ratio_main:head},{recovery_main:head},{run_reviewed_once:true},
+  {source_plan_check_only:true},{source_acceptance_once:true},{report_kind:'daily'},{ib_envelope_once:false},{ib_envelope_main:''}])assert.equal(condition(job,{...envelope,...mixed}),false);
+ // Every other job is excluded whenever either envelope field is set.
+ const everything={...off,ib_diagnostic_once:true,ib_diagnostic_main:head,run_reviewed_once:true,report_kind:'daily',ratio_plan:'{}',ratio_main:head,source_plan_check_only:true,source_acceptance_once:true};
+ for(const [,name,body] of jobs)if(name!=='ib-envelope-evidence')for(const field of [{ib_envelope_once:true},{ib_envelope_main:head}])assert.equal(condition(body,{...everything,...field}),false,name);
+ assert.match(wf,/run-name: \$\{\{ \(inputs\.ib_diagnostic_once \|\| inputs\.ib_envelope_once\) && 'IB diagnostic 2026-11-06' \|\|/);
+ assert.match(job,/^    name: IB diagnostic 2026-11-06\n/m);assert.match(job,/environment: fee-cloud-producer/);
+ assert.match(job,/permissions:\n      contents: read\n      actions: read\n      id-token: write\n/);assert.doesNotMatch(job,/contents: write|actions: write|upload-artifact/);
+ assert.doesNotMatch(job,/FEE_DATA_KEY|FEE_ECON|IB_MANAGER_|FEE_RATIO|RATIO_STORAGE|secrets\.|access_token_scopes|vars\./);
+ const steps=[...job.matchAll(/      - (?:name: ([^\n]+)|uses: ([^\n]+))\n([\s\S]*?)(?=      - |(?![\s\S]))/g)];
+ const check=job.indexOf('--check-plan'),auth=job.indexOf('google-github-actions/auth@'),secret=job.indexOf('get-secretmanager-secrets@');
+ assert(check>0&&check<auth&&auth<secret,'release gate before WIF and secrets');
+ assert.equal((job.match(/sharesight-broker-sync-client-(?:id|secret)\/1/g)||[]).length,2);
+ const run=steps.find(([,name])=>name==='Compare the fixed IB v3 responses without a reader, writer or publication token')[3];
+ for(const k of ['GOOGLE_APPLICATION_CREDENTIALS','CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE','GOOGLE_GHA_CREDS_PATH'])assert.match(run,new RegExp(k+": ''"));
+ assert.match(run,/node scripts\/ib-v3-envelope-evidence\.mjs --expected-main="\$ENVELOPE_MAIN"\n/);
+ assert.doesNotMatch(steps.find(([,name])=>name?.startsWith('Verify the exact envelope'))[3],/SHARESIGHT/);
+});
+test('envelope admission runs through the entry own outer transport with its default readers',async()=>{
+ const {envelopeEvidenceTransport}=await import('./ib-v3-envelope-evidence.mjs');
+ const f=envelopeFixture(),trace=[],wire=sourceRevisionWire(f,trace);
+ const inner=async(url,init)=>{const route=url.split('/fee-console/')[1];
+  if(route==='actions/runs/'+recoveryId){trace.push(route);assert.equal(init.headers.Authorization,'Bearer '+revisionActionsToken);const r=new Response(JSON.stringify(f.currentRun));Object.defineProperty(r,'url',{value:url});return r;}
+  return wire(url,init);};
+ const transport=envelopeEvidenceTransport({fetchImpl:inner});
+ try{
+  const admission=await authorizeEnvelopeEvidence({expectedMain:recoveryHead,currentRunId:recoveryId,now:revisionRecoveryNow,actionsToken:revisionActionsToken,fetchImpl:transport.fetch,clock:()=>revisionRecoveryNow});
+  assert.equal(isEnvelopeEvidenceAdmission(admission),true);assert.equal((await admission.checkCurrent()).contractId,envelopeContract);admission.close();
+  assert(trace.length>=8);assert(!trace.some(x=>x.startsWith('contents/')||x.includes('/jobs')||x.includes('/runs?')));
+ }finally{transport.close();}
 });

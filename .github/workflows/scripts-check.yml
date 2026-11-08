@@ -88,7 +88,7 @@ jobs:
 
       - name: Test authenticated historical source revision integration
         if: ${{ github.event.pull_request.draft == false }}
-        run: node --test scripts/fee-sync-revision-artifacts.test.mjs scripts/fee-sync-revision-github.test.mjs scripts/fee-source-revision-runtime.test.mjs scripts/fee-source-revision-diagnostic.test.mjs
+        run: node --test scripts/fee-sync-revision-artifacts.test.mjs scripts/fee-sync-revision-github.test.mjs scripts/fee-source-revision-runtime.test.mjs scripts/fee-source-revision-diagnostic.test.mjs scripts/ib-v3-envelope-evidence.test.mjs
 
       - name: Test fixed-run intent and mobile holdings reliability
         if: ${{ github.event.pull_request.draft == false }}
