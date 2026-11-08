@@ -20,6 +20,19 @@ export const IB_CAPTURE_RECHECK_DIAGNOSTIC_CODES=Object.freeze([
   ...['AUTH','READ'].flatMap(stage=>captureReadCodes.map(code=>stage+'_'+code)),
 ]);
 export const ibSourceCaptureRecheckDiagnostic=error=>captureRecheckByError.get(error)||'UNKNOWN';
+// The two-attempt capture gate used to report one undivided UNSTABLE for three
+// different facts. The fixed subdivision below is a location, never a source
+// value: FINGERPRINT is the normalized business re-read, RECORDS the raw GET
+// batch and TRANSPORT the local fetch/credential object identity. Carried by
+// error identity only, so a forged, cloned or proxied error reports UNCLASSIFIED.
+export const IB_CAPTURE_UNSTABLE_DIAGNOSTIC_CODES=Object.freeze(['UNCLASSIFIED','FINGERPRINT','RECORDS','TRANSPORT']);
+const captureUnstableCodes=new Set(IB_CAPTURE_UNSTABLE_DIAGNOSTIC_CODES),captureUnstableByError=new WeakMap();
+export const ibSourceCaptureUnstableDiagnostic=error=>captureUnstableByError.get(error)||'UNCLASSIFIED';
+const failCaptureUnstable=site=>{
+  const failure=new IbManagerSourceError('UNSTABLE');
+  captureUnstableByError.set(failure,captureUnstableCodes.has(site)&&site!=='UNCLASSIFIED'?site:'UNCLASSIFIED');
+  throw failure;
+};
 function captureReadReason(error){
   if(!error||typeof error!=='object'||types.isProxy(error)||Object.getPrototypeOf(error)!==BoundedJsonError.prototype)return 'REFUSED';
   const descriptor=Object.getOwnPropertyDescriptor(error,'code');
@@ -106,6 +119,99 @@ function finishCapture(capture){
   if(!records.length)fail('INCOMPLETE');
   return {attempt:capture.attempt,records,sha256:hash(records)};
 }
+// Strict lexical equivalence of two raw JSON documents. Only object member
+// order and whitespace *between* JSON tokens are ignored. Every number keeps its
+// original lexeme (1 stays different from 1.0 and 1e0), every string keeps its
+// original escaping, array order is preserved, unknown members are preserved and
+// no member - including a generation timestamp - is dropped. Leading and
+// trailing whitespace are not between tokens, so they stay part of the form.
+// Each token is emitted with a type tag and a length prefix, so a number,
+// string, literal, member key or structural marker can never encode as another.
+const LEXICAL_WHITESPACE=new Set([' ','\t','\n','\r']);
+const LEXICAL_NUMBER=/-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/y;
+const LEXICAL_ESCAPE=/[0-9a-fA-F]{4}/y;
+const LEXICAL_MAX_NODES=400000,LEXICAL_MAX_DEPTH=64;
+const LEXICAL_REFUSED=Symbol('ib-capture-lexical-refused');
+function lexicalCanonicalJson(text){
+  if(typeof text!=='string'||text.length>CAPTURE_MAX_BYTES)return null;
+  let index=0,nodes=0;
+  const refuse=()=>{throw LEXICAL_REFUSED;};
+  const part=(tag,lexeme)=>tag+lexeme.length+':'+lexeme;
+  const space=()=>{const start=index;while(index<text.length&&LEXICAL_WHITESPACE.has(text[index]))index++;return text.slice(start,index);};
+  const string=()=>{
+    const start=index++;
+    for(;;){
+      if(index>=text.length)refuse();
+      const c=text[index];
+      if(c==='"'){index++;break;}
+      if(c==='\\'){
+        const escape=text[index+1];
+        if(escape===undefined)refuse();
+        if('"\\/bfnrt'.includes(escape))index+=2;
+        else if(escape==='u'){LEXICAL_ESCAPE.lastIndex=index+2;if(!LEXICAL_ESCAPE.exec(text))refuse();index+=6;}
+        else refuse();
+      }else if(c<' ')refuse();
+      else index++;
+    }
+    return text.slice(start,index);
+  };
+  const value=depth=>{
+    if(++nodes>LEXICAL_MAX_NODES||depth>LEXICAL_MAX_DEPTH)refuse();
+    const c=text[index];
+    if(c==='"')return part('s',string());
+    if(c==='{'){
+      index++;space();
+      if(text[index]==='}'){index++;return '{}';}
+      const members=[],keys=new Set();
+      for(;;){
+        if(text[index]!=='"')refuse();
+        const lexeme=string();
+        let key;try{key=JSON.parse(lexeme);}catch{refuse();}
+        // Duplicate members are never collapsed or reordered: a document that
+        // relies on last-wins is refused here and stays raw-byte compared.
+        if(keys.has(key))refuse();keys.add(key);
+        space();if(text[index]!==':')refuse();index++;space();
+        members.push([key,part('k',lexeme)+value(depth+1)]);space();
+        if(text[index]===','){index++;space();continue;}
+        if(text[index]==='}'){index++;break;}
+        refuse();
+      }
+      members.sort((a,b)=>a[0]<b[0]?-1:1);
+      return '{'+members.map(member=>member[1]).join('')+'}';
+    }
+    if(c==='['){
+      index++;space();
+      if(text[index]===']'){index++;return '[]';}
+      const items=[];
+      for(;;){
+        items.push(value(depth+1));space();
+        if(text[index]===','){index++;space();continue;}
+        if(text[index]===']'){index++;break;}
+        refuse();
+      }
+      return '['+items.join('')+']';
+    }
+    for(const literal of ['true','false','null'])if(text.startsWith(literal,index)){index+=literal.length;return part('l',literal);}
+    if(c==='-'||c>='0'&&c<='9'){LEXICAL_NUMBER.lastIndex=index;const m=LEXICAL_NUMBER.exec(text);if(!m||m.index!==index)refuse();index=LEXICAL_NUMBER.lastIndex;return part('n',m[0]);}
+    return refuse();
+  };
+  try{
+    const lead=space(),body=value(0),trail=space();
+    if(index!==text.length)refuse();
+    return part('w',lead)+body+part('w',trail);
+  }catch(error){if(error===LEXICAL_REFUSED)return null;throw error;}
+}
+// A record whose body cannot be reduced to a lexical form keeps its raw bytes as
+// the only accepted proof. Route and query identity are never relaxed.
+function lexicalRecord(record){
+  const lexical=lexicalCanonicalJson(record.body);
+  return {method:record.method,path:record.path,query:record.query,
+    ...(lexical===null?{rawBody:record.body}:{lexicalBody:lexical})};
+}
+const lexicalRecordsSha256=records=>hash([...records.map(lexicalRecord)]
+  .sort((a,b)=>{const x=ibCanonical(a),y=ibCanonical(b);return x<y?-1:x>y?1:0;}));
+const lexicalRecordCurrent=(current,original)=>current!==undefined&&original!==undefined
+  &&ibCanonical(lexicalRecord(current))===ibCanonical(lexicalRecord(original));
 const object=v=>v&&typeof v==='object'&&!Array.isArray(v);
 const exact=(v,keys)=>object(v)&&Object.keys(v).sort().join(',')===[...keys].sort().join(',');
 const day=d=>{if(!isCalendarDate(d))fail('DATE');return d;};
@@ -670,10 +776,16 @@ export class SharesightIbManagerReader{
         }finally{capture.active=false;}
       };
       const first=await run(1),second=await run(2);
-      if(first.fingerprint!==second.fingerprint||captures[0].sha256!==captures[1].sha256)fail('UNSTABLE');
+      // Three independent facts, three fixed diagnostics. Differing raw bytes
+      // are accepted only when the two batches are strictly lexically
+      // equivalent; the first round's original evidence and every original
+      // capture are still the delivered and recorded proof.
+      if(first.fingerprint!==second.fingerprint)failCaptureUnstable('FINGERPRINT');
+      const lexicalSha256=lexicalRecordsSha256(captures[0].records);
+      if(captures[0].sha256!==captures[1].sha256&&lexicalSha256!==lexicalRecordsSha256(captures[1].records))failCaptureUnstable('RECORDS');
       const result=freezeCapture({input:first.source,evidence:{schema:'fee-console.sharesight-capture.v1',provider:'Sharesight',targetDate,captures,sourceSha256:captures[0].sha256}});
-      if(this.#captureTransport().some((v,i)=>v!==transport[i]))fail('UNSTABLE');
-      this.#capturedReads.set(result,{parametersSha256:hash(options),transport,scope:this.#captureScope(),records:captures[0].records,sourceSha256:captures[0].sha256,consumed:false,revoked:false});return result;
+      if(this.#captureTransport().some((v,i)=>v!==transport[i]))failCaptureUnstable('TRANSPORT');
+      this.#capturedReads.set(result,{parametersSha256:hash(options),transport,scope:this.#captureScope(),records:captures[0].records,sourceSha256:captures[0].sha256,sourceLexicalSha256:lexicalSha256,consumed:false,revoked:false});return result;
     }finally{this.#captureExclusive=false;}
   }
   #captureTransport(){
@@ -709,12 +821,16 @@ export class SharesightIbManagerReader{
           const u=new URL(record.path,API);for(const[k,v]of Object.entries(record.query))u.searchParams.append(k,v);
           await this.#json(u.href,auth.access_token);
           stage='RECORD_CHANGED';
-          if(ibCanonical(capture.records.at(-1))!==ibCanonical(record))fail('UNSTABLE');
+          const current=capture.records.at(-1);
+          // Same bounded treatment as acquisition: identical bytes, or a strict
+          // lexical equivalent of the originally captured record.
+          if(ibCanonical(current)!==ibCanonical(record)&&!lexicalRecordCurrent(current,record))fail('UNSTABLE');
         }
       });
       transport();
       stage='CAPTURE_CHANGED';
-      if(finishCapture(capture).sha256!==state.sourceSha256)fail('UNSTABLE');
+      const finished=finishCapture(capture);
+      if(finished.sha256!==state.sourceSha256&&lexicalRecordsSha256(finished.records)!==state.sourceLexicalSha256)fail('UNSTABLE');
       return true;
     }catch(error){
       state.revoked=true;const failure=new IbManagerSourceError('UNSTABLE');

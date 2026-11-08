@@ -6,7 +6,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import {nyDate} from './daily-core.mjs';
-import {SharesightIbManagerReader,IbManagerSourceError,IB_CASH_RECONCILIATION_SITES,IB_CASH_DATE_ROLES,ibSourceCashSite,ibSourceCashDateRole,ibBaselineBusinessHash,ibSourceFailureCode,validateIbBootstrapCoverage,validateIbManagerReportInput,IB_CAPTURE_RECHECK_DIAGNOSTIC_CODES,ibSourceCaptureRecheckDiagnostic} from './ib-manager-source.mjs';
+import {SharesightIbManagerReader,IbManagerSourceError,IB_CASH_RECONCILIATION_SITES,IB_CASH_DATE_ROLES,ibSourceCashSite,ibSourceCashDateRole,ibBaselineBusinessHash,ibSourceFailureCode,validateIbBootstrapCoverage,validateIbManagerReportInput,IB_CAPTURE_RECHECK_DIAGNOSTIC_CODES,ibSourceCaptureRecheckDiagnostic,IB_CAPTURE_UNSTABLE_DIAGNOSTIC_CODES,ibSourceCaptureUnstableDiagnostic} from './ib-manager-source.mjs';
 import {BoundedJsonError} from './fee-http-json.mjs';
 import {buildIbManagerReportBundle,validateIbManagerReportState,buildIbOwnerBaseline,validateIbOwnerBaselineState,buildIbManagerReturnReceipt,buildIbManagerDrawdownReceipt,createIbManagerReturnConsumer,createIbManagerDrawdownConsumer} from './ib-manager-return.mjs';
 import {prepareIbManagerReport,loadIbManagerReport,sameIbManagerData,validateIbManagerCoverage,assertIbManagerConfiguration,assertIbManagerPublication,IB_PUBLICATION_DIAGNOSTIC_PREFIX,validateIbPublicationDiagnostic} from './ib-manager-report.mjs';
@@ -1466,4 +1466,155 @@ test('normalization proofs remain bound to the private source, arithmetic, nativ
   ]){const bad=structuredClone(s);mutate(bad.cashDateNormalizations[0]);rehash(bad.cashDateNormalizations[0]);assert.throws(()=>validateIbManagerReportInput(bad,f.expected),/IB_SOURCE_/);}
   for(const mutate of [x=>x.cashDateNormalizations.push(structuredClone(x.cashDateNormalizations[0])),x=>x.cashDateNormalizations=[],x=>x.closingSnapshots[0].cash[3]++,x=>x.periodReturnsInput.points.find(p=>p.d==='2026-11-01').tot++]){const bad=structuredClone(s);mutate(bad);assert.throws(()=>validateIbManagerReportInput(bad,f.expected),/IB_SOURCE_/);}
   const before=structuredClone(s);await buildIbManagerReportBundle(s,f.expected);assert.deepEqual(s,before);
+});
+
+// ---------------------------------------------------------------------------
+// SOURCE_UNSTABLE presentation layer. Every response below is generated in
+// memory by the same synthetic wire; nothing reads an account, credential or
+// network. Only the serialization of an unchanged document is varied.
+// ---------------------------------------------------------------------------
+const reorderDeep=v=>Array.isArray(v)?v.map(reorderDeep)
+  :v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().reverse().map(k=>[k,reorderDeep(v[k])])):v;
+const reserialize=text=>JSON.stringify(reorderDeep(JSON.parse(text)),null,2);
+function presentationFixture(rewrite,options={}){
+  const w=wire(options),original=w.reader.fetch;let attempt=0;
+  w.reader.fetch=async(url,init)=>{
+    const path=new URL(url).pathname;
+    if(path==='/oauth2/token')attempt++;
+    const response=await original(url,init);
+    if(path==='/oauth2/token')return response;
+    const text=await response.text(),replaced=rewrite(text,{path,attempt});
+    const output=new Response(replaced??text,{headers:{'content-type':'application/json'}});
+    Object.defineProperty(output,'url',{value:url});return output;
+  };
+  return {...w,args:{targetDate:baseline.asOf,expectedBaselineHash:lock(),baseline},attempts:()=>attempt};
+}
+const performanceOnly=change=>(text,context)=>context.path.endsWith('/performance')&&context.attempt===2?change(text):null;
+const captureUnstable=expected=>error=>{
+  assert.equal(error.message,'IB_SOURCE_UNSTABLE');assert.equal(error.code,'UNSTABLE');
+  assert.equal(ibSourceCaptureUnstableDiagnostic(error),expected);
+  assert.equal(JSON.stringify(error),'{"code":"UNSTABLE"}');assert.equal(error.cause,undefined);return true;
+};
+
+test('capture unstable diagnostics are fixed labels that no forged, cloned or proxied error can claim',()=>{
+  assert.ok(Object.isFrozen(IB_CAPTURE_UNSTABLE_DIAGNOSTIC_CODES));
+  assert.deepEqual(IB_CAPTURE_UNSTABLE_DIAGNOSTIC_CODES,['UNCLASSIFIED','FINGERPRINT','RECORDS','TRANSPORT']);
+  for(const code of IB_CAPTURE_UNSTABLE_DIAGNOSTIC_CODES)assert.match(code,/^[A-Z_]{1,32}$/);
+  let touched=0;
+  const hostile={get code(){touched++;throw Error('PRIVATE_CANARY');},get message(){touched++;throw Error('PRIVATE_CANARY');}};
+  const revoked=Proxy.revocable({},{});revoked.revoke();
+  for(const value of [null,undefined,0,'FINGERPRINT',hostile,revoked.proxy,new Proxy({},{get(){touched++;throw Error('PRIVATE_CANARY');}}),
+    new IbManagerSourceError('UNSTABLE'),Object.assign(Object.create(IbManagerSourceError.prototype),{code:'UNSTABLE'})])
+    assert.equal(ibSourceCaptureUnstableDiagnostic(value),'UNCLASSIFIED');
+  assert.equal(touched,0);
+});
+
+test('capture accepts a purely re-serialized second read, keeping both original raw rounds as the evidence',async()=>{
+  const f=presentationFixture(performanceOnly(reserialize));
+  const cap=await f.reader.readStableWithEvidence(f.args);
+  // The raw bytes genuinely differed, so this is the presentation-layer case.
+  assert.notEqual(cap.evidence.captures[0].sha256,cap.evidence.captures[1].sha256);
+  assert.deepEqual(cap.evidence.captures.map(x=>x.attempt),[1,2]);
+  assert.equal(cap.evidence.sourceSha256,cap.evidence.captures[0].sha256,'first round stays the recorded evidence');
+  assert.ok(cap.evidence.captures[1].records.some(r=>r.body.includes('\n  ')),'second round bytes are retained verbatim');
+  for(const batch of cap.evidence.captures)for(const r of batch.records)
+    assert.equal(r.sha256,crypto.createHash('sha256').update(r.body).digest('hex'),'per-record raw digest is unchanged');
+  // Business material and the ordinary normalized reader agree exactly.
+  assert.deepEqual(cap.input.periodReturnsInput,input());
+  assert.deepEqual(cap.input,await source());
+  assert.equal(f.attempts(),2,'no extra authenticated attempt');
+  assert.equal(f.reader.consumeCapturedRead(cap,f.args),cap.input);
+  assert.throws(()=>f.reader.consumeCapturedRead(cap,f.args),/IB_SOURCE_STATE/);
+});
+
+test('lexical acceptance never ignores amount precision, numeric lexeme, array order, unknown or duplicate members',async t=>{
+  // Each case leaves the parsed business document identical, so only the raw
+  // RECORDS gate can refuse it. None may be treated as a formatting change.
+  for(const [name,change] of [
+    ['trailing whitespace',text=>text+' '],
+    ['leading whitespace',text=>' '+text],
+    ['decimal point added to a money lexeme',text=>text.replace('"value":85','"value":85.0')],
+    ['exponent form of the same amount',text=>text.replace('"value":85','"value":8.5e1')],
+    ['trailing zero on a quantity lexeme',text=>text.replace('"quantity":1','"quantity":1.000')],
+    ['duplicate member relied on by last-wins',text=>text.replace('{"report":{','{"report":{"portfolio_id":1,')],
+    ['escaped key spelling',text=>text.replace('"portfolio_tz_name"','"portfolio_tz_n\\u0061me"')],
+  ])await t.test(name,async()=>{
+    const f=presentationFixture(performanceOnly(change));
+    await assert.rejects(f.reader.readStableWithEvidence(f.args),captureUnstable('RECORDS'));
+    assert.equal(f.attempts(),2,'refusal costs no extra attempt');
+  });
+  // Unknown members and array order are carried in the raw batch as well.
+  for(const [name,rewrite] of [
+    ['unknown member added later',(text,c)=>c.path.endsWith('/trades.json')&&c.attempt===2?text.replace('{','{"synthetic_note":"added",'):null],
+    ['unknown member dropped later',(text,c)=>c.path.endsWith('/trades.json')?(c.attempt===1?text.replace('{','{"synthetic_note":"kept",'):text):null],
+    ['unknown array reordered later',(text,c)=>c.path.endsWith('/trades.json')?text.replace('{','{"synthetic_order":['+(c.attempt===1?'1,2':'2,1')+'],'):null],
+  ])await t.test(name,async()=>{
+    const f=presentationFixture(rewrite);
+    await assert.rejects(f.reader.readStableWithEvidence(f.args),captureUnstable('RECORDS'));
+  });
+});
+
+test('capture still refuses a real business change with the normalized fingerprint diagnostic',async()=>{
+  const f=presentationFixture(()=>null,{mutate:(b,{capture})=>{
+    if(capture===2&&b.cash_account_transactions?.length)b.cash_account_transactions[0].description+=' changed';
+  }});
+  await assert.rejects(f.reader.readStableWithEvidence(f.args),captureUnstable('FINGERPRINT'));
+  assert.equal(f.attempts(),2);
+});
+
+test('a changed amount or source date keeps its original validator and is never a formatting difference',async t=>{
+  // These must stay refused by the amount/date/baseline checks that ran before
+  // any stability comparison. The acceptance path must not reach them at all.
+  for(const [name,rewrite] of [
+    ['amount',(text,c)=>c.path.endsWith('/performance')&&c.attempt===2?text.replace('"value":85','"value":86'):null],
+    ['cash transaction date',(text,c)=>c.path.endsWith('/cash_account_transactions.json')&&c.attempt===2
+      ?text.replaceAll('2026-09-01T12:00:00Z','2026-09-02T12:00:00Z'):null],
+    ['dated cash balance',(text,c)=>c.path.endsWith('/cash_accounts.json')&&c.attempt===2?text.replace('"balance":50','"balance":51'):null],
+  ])await t.test(name,async()=>{
+    const f=presentationFixture(rewrite);
+    await assert.rejects(f.reader.readStableWithEvidence(f.args),error=>{
+      assert.match(error.message,/^IB_SOURCE_[A-Z_]+$/);
+      assert.notEqual(ibSourceCaptureUnstableDiagnostic(error),'RECORDS');return true;
+    });
+  });
+});
+
+test('capture recheck applies the same bounded lexical treatment without new requests or a weaker revocation',async()=>{
+  const f=presentationFixture((text,{path,attempt})=>path.endsWith('/performance')&&attempt===3?reserialize(text):null);
+  const cap=await f.reader.readStableWithEvidence(f.args),frozen=JSON.stringify(cap),calls=f.calls.length;
+  assert.equal(await f.reader.checkCapturedReadCurrent(cap),true,'re-serialized current read stays current');
+  assert.equal(JSON.stringify(cap),frozen,'original evidence is never rewritten');
+  assert.equal(f.reader.verifyCapturedRead(cap),true);
+  const gets=f.calls.slice(calls).filter(x=>x.method==='GET');
+  assert.equal(gets.length,cap.evidence.captures[0].records.length,'exactly the captured GET set');
+  assert.equal(f.reader.consumeCapturedRead(cap,f.args),cap.input);
+  // A real change after acceptance still revokes, with no extra network.
+  const g=presentationFixture((text,{path,attempt})=>path.endsWith('/performance')&&attempt===3?text.replace('"value":85','"value":86'):null);
+  const live=await g.reader.readStableWithEvidence(g.args);
+  await assert.rejects(g.reader.checkCapturedReadCurrent(live),error=>{
+    assert.equal(error.code,'UNSTABLE');assert.equal(ibSourceCaptureRecheckDiagnostic(error),'RECORD_CHANGED');return true;});
+  assert.equal(g.reader.verifyCapturedRead(live),false);
+  const after=g.calls.length;
+  await assert.rejects(g.reader.checkCapturedReadCurrent(live),/IB_SOURCE_STATE/);
+  assert.equal(g.calls.length,after,'a revoked capture cannot be refreshed');
+  // Whitespace appended after the final token is not whitespace between tokens.
+  const h=presentationFixture((text,{path,attempt})=>path.endsWith('/performance')&&attempt===3?text+' ':null);
+  const spaced=await h.reader.readStableWithEvidence(h.args);
+  await assert.rejects(h.reader.checkCapturedReadCurrent(spaced),error=>{
+    assert.equal(error.code,'UNSTABLE');assert.equal(ibSourceCaptureRecheckDiagnostic(error),'RECORD_CHANGED');return true;});
+});
+
+test('a changed local transport identity is reported apart from the two source gates',async()=>{
+  const f=presentationFixture(()=>null);
+  const original=f.reader.fetch;let swapped=false;
+  f.reader.fetch=async(url,init)=>{
+    const response=await original(url,init);
+    // Replace the transport object only after the second round has completed.
+    if(!swapped&&new URL(url).pathname.endsWith('/cash_account_transactions.json')&&f.attempts()===2){
+      swapped=true;f.reader.fetch=async(...a)=>original(...a);
+    }
+    return response;
+  };
+  await assert.rejects(f.reader.readStableWithEvidence(f.args),captureUnstable('TRANSPORT'));
+  assert.equal(swapped,true);
 });
