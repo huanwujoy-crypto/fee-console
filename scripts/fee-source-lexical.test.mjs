@@ -187,3 +187,95 @@ test('captured inputs re-derive equivalence from evidence and refuse a version o
   ])assert.throws(()=>projectCapturedSharesightAccount({reader:f.reader,captured:value,scope:f.scope}),e=>capturedInputFailureCode(e)==='FEE_SYNC_CAPTURE_ORIGIN');
   assert.equal(projectCapturedSharesightAccount({reader:f.reader,captured,scope:f.scope}).captureSourceSha256,captured.evidence.captures[0].sha256);
 });
+
+// ------------------------------------------------ v2 route-bound id-set contract
+import {IB_UNORDERED_ID_ARRAYS as C,classifyRecordsDifference,SOURCE_RECORDS_SITES} from './fee-source-lexical.mjs';
+import {ibSourceCaptureRecordsSite} from './ib-manager-source.mjs';
+const perfQ=d=>({consolidated:'false',end_date:d,grouping:'investment_type',include_limited:'false',include_sales:'false',report_combined:'false',start_date:d});
+const LC=(body,path,query)=>L(body,C(path,query));
+const revKey=(text,key)=>{const v=JSON.parse(text,(k,x,c)=>typeof x==='number'?JSON.rawJSON(c.source):x);const at=key.reduce((o,k)=>o?.[k],v);if(Array.isArray(at))at.reverse();return JSON.stringify(v);};
+
+test('the id-set contract applies only to exact IB routes, exact query shapes and listed root paths',()=>{
+  assert.deepEqual(C('/api/v2/portfolios.json',{}),[['portfolios']]);
+  assert.deepEqual(C('/api/v3/portfolios/1/performance',perfQ(D)),[['report','holdings'],['report','cash_accounts']]);
+  for(const [path,query] of [['/api/v2/portfolios.json',{page:'2'}],['/api/v3/portfolios/1/holdings',{consolidated:'true'}],
+    ['/api/v3/portfolios/1/performance',{...perfQ(D),include_sales:'true'}],['/api/v3/portfolios/1/performance',{...perfQ(D),start_date:'2026-09-01'}],
+    ['/api/v3/portfolios/1/trades.json',{consolidated:'false',end_date:D}],['/api/v2/cash_accounts/3/cash_account_transactions.json',{to:D}],
+    ['/api/v2/payouts/13.json',{}],['/api/v3/portfolios/1/extra/holdings',{consolidated:'false'}],['/api/v9/unknown.json',{}]])
+    assert.deepEqual(C(path,query),[],path+' '+JSON.stringify(query));
+  // A listed path reorders; the same body on a non-contract route stays ordered.
+  const a='{"holdings":[{"id":1,"v":1},{"id":2,"v":2}]}',b='{"holdings":[{"id":2,"v":2},{"id":1,"v":1}]}';
+  assert.equal(LC(a,'/api/v3/portfolios/1/holdings',{consolidated:'false'}),LC(b,'/api/v3/portfolios/1/holdings',{consolidated:'false'}));
+  assert.notEqual(LC(a,'/api/v3/portfolios/1/holdings',{consolidated:'true'}),LC(b,'/api/v3/portfolios/1/holdings',{consolidated:'true'}));
+  assert.notEqual(L(a),L(b),'the v1 default (fee readers) stays ordered');
+});
+test('inside a contract array every row field, lexeme, count and nested order stays strict',()=>{
+  const path='/api/v2/cash_accounts/3/cash_account_transactions.json',q={from:D,to:D},k='cash_account_transactions';
+  const base={[k]:[{id:12,amount:7,date_time:D+'T00:00:00.000Z',tags:[1,2]},{id:14,amount:300,date_time:D+'T05:00:00.000Z',tags:[]}]};
+  const t=JSON.stringify(base),same=JSON.stringify({[k]:[...base[k]].reverse()});
+  assert.equal(LC(t,path,q),LC(same,path,q));
+  const variant=f=>{const v=structuredClone(base);f(v[k]);return JSON.stringify(v);};
+  for(const [name,body] of [
+    ['same id, changed amount',variant(r=>{r[1].amount=301;})],['changed date',variant(r=>{r[0].date_time=D+'T01:00:00.000Z';})],
+    ['row removed',variant(r=>{r.pop();})],['row added',variant(r=>{r.push({id:15,amount:1,date_time:D+'T06:00:00.000Z',tags:[]});})],
+    ['nested array reordered',variant(r=>{r[0].tags.reverse();})],['unknown member added',variant(r=>{r[0].note=null;})],
+    ['id changed',variant(r=>{r[0].id=13;})],
+    ['number lexeme',t.replace('"amount":7,','"amount":7.0,')],
+  ])assert.notEqual(LC(body,path,q),LC(t,path,q),name);
+  // Without a unique positive integer id per row the array is never reordered.
+  for(const rows of [[{id:1,a:1},{id:1,a:2}],[{id:1},{a:2}],[{id:'1'},{id:2}],[{id:0},{id:2}],[1,2],[{id:1},[2]]]){
+    const x=JSON.stringify({[k]:rows}),y=JSON.stringify({[k]:[...rows].reverse()});
+    assert.notEqual(LC(x,path,q),LC(y,path,q),JSON.stringify(rows));
+  }
+  // A reordered contract array never equals the same rows under an ordered encoding.
+  assert.notEqual(LC(t,path,q),L(t));
+});
+test('a batch that reads one route twice is compared only by its original bytes',()=>{
+  const r={method:'GET',path:'/api/v2/portfolios.json',query:{},body:'{"portfolios":[{"id":1},{"id":2}]}'};
+  const swap={...r,body:'{"portfolios":[{"id":2},{"id":1}]}'};
+  assert.equal(lexicalRecordsSha256([r],C),lexicalRecordsSha256([swap],C));
+  assert.notEqual(lexicalRecordsSha256([r,swap],C),lexicalRecordsSha256([swap,{...r,body:'{"portfolios":[{"id":1},{"id":3}]}'}],C));
+  assert.match(lexicalRecordsSha256([r,swap],C),/^raw:/);
+  assert.equal(classifyRecordsDifference([r,swap],[r,swap],C),'PORT_DUP');
+});
+test('the RECORDS location is a fixed route/kind literal, never a value',()=>{
+  const rec=(path,query,body)=>({method:'GET',path,query,body});
+  const h=(b)=>rec('/api/v3/portfolios/1/holdings',{consolidated:'false'},b);
+  assert.equal(classifyRecordsDifference([h('{"holdings":[]}')],[h('{"holdings":[] }')],C),null,'between-token whitespace is no difference');
+  assert.equal(classifyRecordsDifference([h('{"holdings":[]}')],[h('{"holdings":[]}\n')],C),'HOLD_LEX');
+  assert.equal(classifyRecordsDifference([h('{"holdings":[{"id":1,"q":1}]}')],[h('{"holdings":[{"id":1,"q":1.0}]}')],C),'HOLD_LEX');
+  assert.equal(classifyRecordsDifference([h('{"holdings":[{"id":1,"q":1}]}')],[h('{"holdings":[{"id":1,"q":2}]}')],C),'HOLD_VAL');
+  assert.equal(classifyRecordsDifference([h('{"holdings":[]}')],[h('{"holdings":[],"holdings":[]}')],C),'HOLD_RAW');
+  assert.equal(classifyRecordsDifference([h('{}')],[h('{}'),rec('/api/v2/payouts/13.json',{},'{}')],C),'PAYOUT_SET');
+  assert.ok(SOURCE_RECORDS_SITES.every(s=>/^[A-Z]+_[A-Z]+$/.test(s)));
+});
+
+test('real IB reader: reordered id-set rows pass capture, projection and currentness, bytes kept',async()=>{
+  const f=ibFixture({nativePayout:true,ownerTransfer:true,rewrite:(t,{attempt,path})=>attempt>=2&&path.endsWith('/cash_account_transactions.json')?revKey(t,['cash_account_transactions']):null});
+  const captured=await f.reader.readStableWithEvidence(f.args),[first,second]=captured.evidence.captures;
+  assert.notEqual(first.sha256,second.sha256,'the second round really returned another row order');
+  assert.equal(captured.evidence.sourceSha256,first.sha256);
+  const out=projectCapturedSharesightAccount({reader:f.reader,captured,scope:f.scope});
+  const original=first.records.find(r=>r.path.endsWith('/cash_account_transactions.json'));
+  assert.equal(out.raw.cashTransactions[3],original.body,'the first-round bytes are the projected input');
+  assert.deepEqual(captured.input.cashFlowByDate,{[D]:300});
+  assert.equal(await f.reader.checkCapturedReadCurrent(captured),true,'a reordered third read is current');
+});
+for(const [name,change,site] of [
+  ['a reordered nested array is content',(t,p)=>p.endsWith('/performance')?t.replace('"holdings":[','"zz":[2,1],"holdings":['):null,'PERF_VAL'],
+  ['unknown member',(t,p)=>p.endsWith('/holdings')?t.replace('{"holdings":','{"generated_at":"x","holdings":'):null,'HOLD_VAL'],
+  ['number lexeme',(t,p)=>p.endsWith('/holdings')?t.replace('"quantity":1,','"quantity":1.0,'):null,'HOLD_LEX'],
+  ['reorder plus a changed row',(t,p)=>p.endsWith('/cash_account_transactions.json')?revKey(t,['cash_account_transactions']).replace('"description":"Owner cash contribution"','"description":"Owner cash contribution."'):null,null],
+])test('real IB reader keeps refusing: '+name,async()=>{
+  const f=ibFixture({nativePayout:true,ownerTransfer:true,rewrite:(t,{attempt,path})=>attempt===2?change(t,path):null});
+  await assert.rejects(f.reader.readStableWithEvidence(f.args),e=>{
+    assert.equal(ibSourceFailureCode(e),'IB_SOURCE_UNSTABLE');
+    if(site){assert.equal(ibSourceCaptureUnstableDiagnostic(e),'RECORDS');assert.equal(ibSourceCaptureRecordsSite(e),site);}
+    else assert.equal(ibSourceCaptureUnstableDiagnostic(e),'FINGERPRINT');
+    assert.doesNotMatch(String(e.message)+JSON.stringify(e),PRIVATE);return true;
+  });
+});
+test('the two-account fee reader keeps the ordered rule: a row reorder is still RECORDS',async()=>{
+  const f=cloudFixture({rewrite:(t,{attempt,path})=>attempt===2&&path==='/api/v2/portfolios.json'?revKey(t,['portfolios']):null});
+  await assert.rejects(f.reader.readStableWithEvidence(D,B),e=>{assert.equal(feeCloudCaptureUnstableDiagnostic(e),'RECORDS');return true;});
+});

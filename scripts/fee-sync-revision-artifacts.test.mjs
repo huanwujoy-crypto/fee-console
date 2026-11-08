@@ -850,7 +850,7 @@ test('each capture gate now reports its own fixed public code instead of one und
   for(const [name,suffix,rewrite] of [
     ['business fingerprint','SOURCE_CAPTURE_FINGERPRINT',(text,{path,attempt})=>path.endsWith('/cash_account_transactions.json')&&attempt===2
       ?text.replace('Owner cash contribution','Owner capital contribution'):null],
-    ['raw records','SOURCE_CAPTURE_RECORDS',(text,{path,attempt})=>path.endsWith('/performance')&&attempt===2?text+' ':null],
+    ['raw records','SOURCE_CAPTURE_RECORDS_PERF_LEX',(text,{path,attempt})=>path.endsWith('/performance')&&attempt===2?text+' ':null],
   ])await t.test(name,async()=>{
     const f=await fixture(t),v=await f.read();sourceRounds(f,rewrite);
     const code='FEE_REPORT_SOURCE_REVISION_ARTIFACT_'+suffix;
@@ -875,7 +875,7 @@ test('the native recovery runtime carries the raw records gate to its exact safe
     sourceBytes:f.dataBytes,sourcePayload:f.currentPayload,healthBytes:f.healthBytes,githubToken:TOKEN,clientId:'synthetic-client',clientSecret:'synthetic-secret',
     keyText:f.key.toString('base64url'),baselineSha256:f.baselineSha256,legacySourcePath:null,fetchImpl,clock:f.clock});
   t.after(()=>runtime.close());
-  const expected='FEE_REPORT_SOURCE_REVISION_ARTIFACT_SOURCE_CAPTURE_RECORDS';
+  const expected='FEE_REPORT_SOURCE_REVISION_ARTIFACT_SOURCE_CAPTURE_RECORDS_PERF_LEX';
   const original=Buffer.from(f.dataBytes);
   await assert.rejects(runtime.prepare(),error=>{
     assert.equal(sourceRevisionRuntimeFailureCode(error),expected);

@@ -116,7 +116,7 @@ and `sourceFailureCode` are unchanged.
 | artifact `checkCurrent` economic recheck | `..._ARTIFACT_ECON_RECHECK_<reason>` | same set |
 | ciphertext read / version binding | `..._ARTIFACT_ECON_BYTES_<reason>`, `..._ARTIFACT_ECON_BINDING_<reason>` | same set |
 | captured Sharesight recheck in `verifyCandidate` | `..._ARTIFACT_SOURCE_RECHECK_<stage>` | `STATE`, `LOCAL_TRANSPORT`, `LOCAL_SCOPE`, `AUTH_RESPONSE`, `RECORD_CHANGED`, `CAPTURE_CHANGED`, `{AUTH,READ}_{CONFIG,HTTP,TYPE,SIZE,BODY,JSON,ABORTED,TIMEOUT,NETWORK,REFUSED}`, `UNKNOWN` |
-| two-attempt Sharesight capture in `prepareCandidate` | `..._ARTIFACT_SOURCE_CAPTURE_<site>` | `FINGERPRINT` (normalized business re-read differs), `RECORDS` (raw GET batches differ beyond the shared lexical rule), `TRANSPORT` (local fetch/credential identity changed); an unclassified reader failure keeps its original source code |
+| two-attempt Sharesight capture in `prepareCandidate` | `..._ARTIFACT_SOURCE_CAPTURE_<site>` | `FINGERPRINT` (normalized business re-read differs), `RECORDS` (raw GET batches differ beyond the shared lexical rule; when classified, `RECORDS_<route>_<kind>` with route `PORT`/`HOLD`/`PERF`/`CASH`/`TRADE`/`TXN`/`PAYOUT`/`OTHER` and kind `SET`/`DUP`/`RAW`/`LEX`/`VAL`, fixed literals only), `TRANSPORT` (local fetch/credential identity changed); an unclassified reader failure keeps its original source code |
 | original-producer log download | `..._ARTIFACT_GITHUB_<role>_LOG_<reason>` | existing bounded GitHub read reasons |
 
 Contract `ib-source-revision-20261106-diagnostic-v5` is a separate, not yet
@@ -124,6 +124,19 @@ granted read-only diagnostic for the same 2026-11-06 target. It is pinned to the
 real main `b72cd68` (parent `e30015d`, unchanged `index.html` blob) and to the
 exact file manifest of its own release; it is not the consumed v4 admission and
 does nothing until owner approval, merge and an owner-started run.
+
+Contract `ib-source-revision-20261106-diagnostic-v6` is the same kind of
+read-only diagnostic for the record-order release: same target, pinned to the
+real main `05731b0` (parent `b72cd68`, unchanged `index.html` blob) and to its
+own release file manifest. It is not the consumed v5 admission.
+
+"Once" is an execution-procedure limit, not a code guarantee. The admission
+binds the exact main, parent, file manifest, owner approval comment, owner
+actor, `workflow_dispatch` event and `run_attempt == 1` of the current run; it
+does not prove that no other run on the same main happened, and no Actions
+run-history listing, lock, store or permission is added for that. One single
+executor, a new specific approval and exactly one dispatch are required; if a
+result is unclear, read that run's own receipt instead of dispatching again.
 
 `..._ARTIFACT_` is `FEE_REPORT_SOURCE_REVISION_ARTIFACT_` after the runtime
 wrapper, and `IB_REVISION_ARTIFACT_` on the artifact capability itself. The
