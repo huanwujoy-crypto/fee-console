@@ -13,7 +13,7 @@
 // keeps its raw bytes as the only accepted proof.
 import crypto from 'node:crypto';
 
-export const SOURCE_LEXICAL_RULE='fee-console.sharesight-lexical-json.v2';
+export const SOURCE_LEXICAL_RULE='fee-console.sharesight-lexical-json.v3';
 // v2 adds one explicit, route-bound contract (opt-in per reader): the order of a
 // listed top-level array is not significant when, and only when, every element
 // is an object with a unique positive safe-integer `id`. That mirrors the IB
@@ -41,6 +41,24 @@ export const IB_UNORDERED_ID_ARRAYS=Object.freeze((path,query)=>{
     &&DAY.test(query.from)&&DAY.test(query.to)&&query.from<=query.to)return [['cash_account_transactions']];
   return [];
 });
+// v3: on the exact undated IB holdings-catalog route only, three row members
+// that no consumer of this chain reads are left out of the stability
+// comparison. Static evidence: the IB reader reads catalog rows only for id,
+// portfolio id/name, valid_position and instrument id/code/market/currency_code
+// plus the row set; no projection, readiness, acquisition, currentness consumer
+// or report reads the catalog. They are "catalog members this chain does not
+// consume", not inherently non-business data: the dated performance route,
+// which this chain does consume, keeps its quantity/value/currency strict. Every
+// other catalog member, including any unknown one, the row set and every other
+// route stay strict. The delivered first-round bytes still include them.
+export const IB_CATALOG_UNCONSUMED_MEMBERS_LIST=Object.freeze(['quantity','value','instrument_currency']);
+export const IB_CATALOG_UNCONSUMED_MEMBERS=Object.freeze((path,query)=>
+  IB_PORTFOLIO.test(path)&&path.endsWith('/holdings')&&path.split('/').length===6&&exactQuery(query,['consolidated'])&&query.consolidated==='false'
+    ?{root:['holdings'],members:IB_CATALOG_UNCONSUMED_MEMBERS_LIST}:null);
+// The whole IB comparison contract; a bare function keeps the v2 behaviour.
+export const IB_CAPTURE_CONTRACT=Object.freeze({unordered:IB_UNORDERED_ID_ARRAYS,excluded:IB_CATALOG_UNCONSUMED_MEMBERS});
+const norm=c=>typeof c==='function'?{unordered:c,excluded:null}:c&&typeof c==='object'?{unordered:c.unordered||null,excluded:c.excluded||null}:{unordered:null,excluded:null};
+const rulesFor=(c,r)=>{const n=norm(c);return {unordered:n.unordered?n.unordered(r.path,r.query):[],excluded:n.excluded?n.excluded(r.path,r.query):null};};
 // Fixed RECORDS sub-locations: which route class and which kind of difference.
 // Never a value, an id, a date, a field name or a byte offset.
 // Short literals keep every composed public code within the producer's
@@ -64,10 +82,11 @@ const REFUSED=Symbol('fee-source-lexical-refused');
 const canonical=v=>Array.isArray(v)?'['+v.map(canonical).join(',')+']':v&&typeof v==='object'?'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canonical(v[k])).join(',')+'}':JSON.stringify(v);
 const hash=v=>crypto.createHash('sha256').update(canonical(v)).digest('hex');
 
-export function lexicalCanonicalJson(text,unordered=[]){
+export function lexicalCanonicalJson(text,unordered=[],excluded=null){
   if(typeof text!=='string'||text.length>MAX_TEXT)return null;
   let index=0,nodes=0;
   const listed=new Set(unordered.map(p=>JSON.stringify(p)));
+  const excludedRoot=excluded?JSON.stringify(excluded.root):null,excludedMembers=new Set(excluded?.members||[]);
   const refuse=()=>{throw REFUSED;};
   const part=(tag,lexeme)=>tag+lexeme.length+':'+lexeme;
   const space=()=>{const start=index;while(index<text.length&&WHITESPACE.has(text[index]))index++;return text.slice(start,index);};
@@ -89,7 +108,8 @@ export function lexicalCanonicalJson(text,unordered=[]){
     return text.slice(start,index);
   };
   // path is the member-key path from the root; it is null inside any array.
-  const value=(depth,path=[])=>{
+  // omit: a member-name set to leave out of this object only (catalog rows).
+  const value=(depth,path=[],omit=null)=>{
     if(++nodes>MAX_NODES||depth>MAX_DEPTH)refuse();
     const c=text[index];
     if(c==='"')return part('s',string());
@@ -105,20 +125,22 @@ export function lexicalCanonicalJson(text,unordered=[]){
         // relies on last-wins is refused here and stays raw-byte compared.
         if(keys.has(key))refuse();keys.add(key);
         space();if(text[index]!==':')refuse();index++;space();
-        members.push([key,part('k',lexeme)+value(depth+1,path===null?null:[...path,key])]);space();
+        const form=part('k',lexeme)+value(depth+1,path===null?null:[...path,key]);
+        if(!omit||!omit.has(key))members.push([key,form]);space();
         if(text[index]===','){index++;space();continue;}
         if(text[index]==='}'){index++;break;}
         refuse();
       }
       members.sort((a,b)=>a[0]<b[0]?-1:1);
-      return '{'+members.map(member=>member[1]).join('')+'}';
+      return (omit?'x{':'{')+members.map(member=>member[1]).join('')+'}';
     }
     if(c==='['){
       index++;space();
       if(text[index]===']'){index++;return '[]';}
       const items=[],starts=[],ends=[];
+      const rowOmit=path!==null&&excludedRoot!==null&&JSON.stringify(path)===excludedRoot?excludedMembers:null;
       for(;;){
-        starts.push(index);items.push(value(depth+1,null));ends.push(index);space();
+        starts.push(index);items.push(text[index]==='{'?value(depth+1,null,rowOmit):value(depth+1,null));ends.push(index);space();
         if(text[index]===','){index++;space();continue;}
         if(text[index]===']'){index++;break;}
         refuse();
@@ -150,7 +172,8 @@ export function lexicalCanonicalJson(text,unordered=[]){
 
 // Route and query identity are never relaxed; only the body is reduced.
 export function lexicalRecord(record,contract=null){
-  const lexical=lexicalCanonicalJson(record.body,contract?contract(record.path,record.query):[]);
+  const rules=rulesFor(contract,record);
+  const lexical=lexicalCanonicalJson(record.body,rules.unordered,rules.excluded);
   return {method:record.method,path:record.path,query:record.query,
     ...(lexical===null?{rawBody:record.body}:{lexicalBody:lexical})};
 }
@@ -172,19 +195,24 @@ export const lexicalBatchesEquivalent=(a,b,contract=null)=>a.sha256===b.sha256||
 const routeClass=path=>path==='/api/v2/portfolios.json'?'PORT':/\/holdings$/.test(path)?'HOLD':/\/performance$/.test(path)?'PERF'
   :/\/cash_accounts\.json$/.test(path)?'CASH':/\/trades\.json$/.test(path)?'TRADE':/\/cash_account_transactions\.json$/.test(path)?'TXN'
   :/^\/api\/v2\/payouts\/[1-9]\d*\.json$/.test(path)?'PAYOUT':'OTHER';
-// Parsed value with the same contract arrays ordered by id: equal parsed values
-// with different lexical forms are a LEXEME difference, otherwise VALUE.
-function parsedForm(body,listed){
-  let v;try{v=JSON.parse(body);}catch{return null;}
-  const walk=(x,path)=>{
-    if(Array.isArray(x)){const out=x.map(y=>walk(y,null));
-      if(path&&listed.has(JSON.stringify(path))&&out.every(e=>e&&typeof e==='object'&&!Array.isArray(e)&&Number.isSafeInteger(e.id)&&e.id>0)&&new Set(out.map(e=>e.id)).size===out.length)
-        return {u:[...out].sort((a,b)=>a.id-b.id)};
-      return out;}
-    if(x&&typeof x==='object')return Object.fromEntries(Object.keys(x).map(k=>[k,walk(x[k],path===null?null:[...path,k])]));
+// Normalized parsed form under the same rules: contract id-arrays become id
+// maps, excluded catalog members are dropped. Equal normalized forms with
+// different lexical forms are a LEX difference, otherwise VAL.
+const idRows=x=>Array.isArray(x)&&x.every(e=>e&&typeof e==='object'&&!Array.isArray(e)&&Number.isSafeInteger(e.id)&&e.id>0)&&new Set(x.map(e=>e.id)).size===x.length;
+function normalized(body,rules){
+  let v;try{v=JSON.parse(body);}catch{return undefined;}
+  const listed=new Set(rules.unordered.map(p=>JSON.stringify(p))),ex=rules.excluded,exRoot=ex?JSON.stringify(ex.root):null,exSet=new Set(ex?.members||[]);
+  const walk=(x,path,omit)=>{
+    if(Array.isArray(x)){
+      const rowOmit=path&&exRoot===JSON.stringify(path)?exSet:null;
+      const out=x.map(y=>walk(y,null,y&&typeof y==='object'&&!Array.isArray(y)?rowOmit:null));
+      if(path&&listed.has(JSON.stringify(path))&&idRows(out))return {__idset:Object.fromEntries(out.map(e=>[e.id,e]))};
+      return out;
+    }
+    if(x&&typeof x==='object')return Object.fromEntries(Object.keys(x).filter(k=>!omit||!omit.has(k)).map(k=>[k,walk(x[k],path===null?null:[...path,k],null)]));
     return x;
   };
-  return canonical(walk(v,[]));
+  return walk(v,[],null);
 }
 // First differing route (in a stable order) and the kind of difference. Used
 // only to name a fixed location after the RECORDS gate has already failed.
@@ -196,13 +224,94 @@ export function classifyRecordsDifference(a,b,contract=null){
   for(const k of keys){const r=x.get(k)||y.get(k);if(!x.has(k)||!y.has(k))return site(r.path,'SET');}
   for(const k of keys){
     const r=x.get(k),s=y.get(k);if(lexicalRecordEquivalent(r,s,contract))continue;
-    const listed=new Set((contract?contract(r.path,r.query):[]).map(p=>JSON.stringify(p)));
-    const lr=lexicalCanonicalJson(r.body,[...listed].map(p=>JSON.parse(p))),ls=lexicalCanonicalJson(s.body,[...listed].map(p=>JSON.parse(p)));
-    if(lr===null||ls===null)return site(r.path,'RAW');
-    const pr=parsedForm(r.body,listed),ps=parsedForm(s.body,listed);
-    return site(r.path,pr!==null&&pr===ps?'LEX':'VAL');
+    const rules=rulesFor(contract,r);
+    if(lexicalCanonicalJson(r.body,rules.unordered,rules.excluded)===null||lexicalCanonicalJson(s.body,rules.unordered,rules.excluded)===null)return site(r.path,'RAW');
+    const pr=normalized(r.body,rules),ps=normalized(s.body,rules);
+    return site(r.path,pr!==undefined&&canonical(pr)===canonical(ps)?'LEX':'VAL');
   }
   return null;
+}
+
+// ---- Evidence only. Decides nothing; acceptance stays with the strict rule.
+// Every route of both acquired batches is compared; each route class gets the
+// fixed groups that differ. Only literals below ever leave this function.
+// ALLOWED_UNCONSUMED_CATALOG is the one non-blocking marker: the exact catalog
+// members this chain does not consume differed (the exception was used). Every
+// other group is a blocking difference.
+export const SOURCE_EVIDENCE_ALLOWED='ALLOWED_UNCONSUMED_CATALOG';
+export const SOURCE_EVIDENCE_GROUPS=Object.freeze(['ALLOWED_UNCONSUMED_CATALOG','ROUTE_SET','DUP_ROUTE','RAW','LEX','ROWSET','MEMBER_SET','STRUCTURE',
+  'ID','INSTRUMENT','PORTFOLIO','QUANTITY','AMOUNT','CURRENCY','DATE','STATE','TEXT','KIND','ARRAY','TYPE','UNKNOWN']);
+const GROUP_KEYS={
+  ID:['id','portfolio_id','holding_id','trade_id','payout_id','cash_account_id','instrument_id'],
+  QUANTITY:['quantity'],
+  AMOUNT:['value','amount','balance','balance_in_portfolio_currency','price','brokerage','gross_amount','resident_withholding_tax','tax_credit'],
+  CURRENCY:['currency','currency_code','portfolio_currency','instrument_currency'],
+  DATE:['date','date_time','start_date','end_date','paid_on','transaction_date'],
+  STATE:['valid_position','state','confirmed','non_taxable','include_sales','include_limited','consolidated','report_combined','grouping','portfolio_tz_name'],
+  TEXT:['name','description','foreign_identifier','comments','annotation'],
+  KIND:['description_code','cash_account_transaction_type'],
+  STRUCTURE:['report','holdings','cash_accounts','trades','cash_account_transactions','portfolios','links'],
+};
+const keyGroup=new Map(Object.entries(GROUP_KEYS).flatMap(([g,ks])=>ks.map(k=>[k,g])));
+const PARENT_GROUP={instrument:'INSTRUMENT',portfolio:'PORTFOLIO',currency:'CURRENCY',instrument_currency:'CURRENCY',cash_account_transaction_type:'KIND',links:'ID'};
+const groupOf=(key,parent)=>PARENT_GROUP[parent]||keyGroup.get(key)||'UNKNOWN';
+function diffGroups(p,q,key,parent,out){
+  const isSet=v=>v&&typeof v==='object'&&!Array.isArray(v)&&Object.keys(v).length===1&&Object.hasOwn(v,'__idset');
+  if(isSet(p)&&isSet(q)){
+    const a=p.__idset,b=q.__idset,ids=new Set([...Object.keys(a),...Object.keys(b)]);
+    for(const id of ids){if(!Object.hasOwn(a,id)||!Object.hasOwn(b,id)){out.add('ROWSET');continue;}diffGroups(a[id],b[id],key,parent,out);}
+    return;
+  }
+  if(isSet(p)!==isSet(q)){out.add('ARRAY');return;}
+  if(Array.isArray(p)&&Array.isArray(q)){if(p.length!==q.length){out.add('ARRAY');return;}p.forEach((e,i)=>diffGroups(e,q[i],key,parent,out));return;}
+  const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);
+  if(obj(p)&&obj(q)){
+    for(const k of new Set([...Object.keys(p),...Object.keys(q)])){
+      if(!Object.hasOwn(p,k)||!Object.hasOwn(q,k)){out.add('MEMBER_SET');out.add(groupOf(k,key));continue;}
+      diffGroups(p[k],q[k],k,key,out);
+    }
+    return;
+  }
+  if(Array.isArray(p)!==Array.isArray(q)||obj(p)!==obj(q)||typeof p!==typeof q||(p===null)!==(q===null)){out.add('TYPE');return;}
+  if(p!==q)out.add(groupOf(key,parent));
+}
+// Did any excluded member of a matched catalog row differ? Rows are matched by
+// id; only the listed member names are read, nothing else is derived.
+function excludedMembersDiffer(r,s,rules){
+  const ex=rules.excluded;if(!ex)return false;
+  let u,v;try{u=JSON.parse(r.body);v=JSON.parse(s.body);}catch{return false;}
+  const rowsOf=o=>ex.root.reduce((x,k)=>x&&typeof x==='object'?x[k]:undefined,o);
+  const ru=rowsOf(u),rv=rowsOf(v);if(!idRows(ru)||!idRows(rv))return false;
+  const m=new Map(rv.map(e=>[e.id,e]));
+  return ru.some(e=>m.has(e.id)&&ex.members.some(k=>canonical(e[k]===undefined?null:e[k])!==canonical(m.get(e.id)[k]===undefined?null:m.get(e.id)[k])||Object.hasOwn(e,k)!==Object.hasOwn(m.get(e.id),k)));
+}
+export function recordsEvidence(a,b,contract=null){
+  const routes={},add=(path,g)=>{const c=routeClass(path);(routes[c]||=new Set()).add(g);};
+  for(const records of [a,b]){const seen=new Set();for(const r of records){const k=routeKey(r);if(seen.has(k))add(r.path,'DUP_ROUTE');seen.add(k);}}
+  const x=new Map(a.map(r=>[routeKey(r),r])),y=new Map(b.map(r=>[routeKey(r),r]));
+  for(const k of [...new Set([...x.keys(),...y.keys()])].sort()){
+    const r=x.get(k),s=y.get(k);
+    if(!r||!s){add((r||s).path,'ROUTE_SET');continue;}
+    const rules=rulesFor(contract,r);
+    if(excludedMembersDiffer(r,s,rules))add(r.path,SOURCE_EVIDENCE_ALLOWED);
+    if(lexicalRecordEquivalent(r,s,contract))continue;
+    if(lexicalCanonicalJson(r.body,rules.unordered,rules.excluded)===null||lexicalCanonicalJson(s.body,rules.unordered,rules.excluded)===null){add(r.path,'RAW');continue;}
+    const pr=normalized(r.body,rules),ps=normalized(s.body,rules);
+    if(canonical(pr)===canonical(ps)){add(r.path,'LEX');continue;}
+    const out=new Set();diffGroups(pr,ps,null,null,out);
+    for(const g of out)add(r.path,g);
+    if(!out.size)add(r.path,'UNKNOWN');
+  }
+  const ordered={};
+  for(const c of SOURCE_RECORDS_ROUTES)if(routes[c])ordered[c]=Object.freeze(SOURCE_EVIDENCE_GROUPS.filter(g=>routes[c].has(g)));
+  return Object.freeze(ordered);
+}
+// True when the evidence holds a blocking group (anything but the allowed marker).
+export const evidenceHasBlocking=v=>Object.values(v||{}).some(g=>g.some(x=>x!==SOURCE_EVIDENCE_ALLOWED));
+// Strict shape check for anything that is about to leave as evidence.
+export function isRecordsEvidence(v){
+  if(!v||typeof v!=='object'||Array.isArray(v)||Object.getPrototypeOf(v)!==Object.prototype)return false;
+  return Object.keys(v).every(c=>SOURCE_RECORDS_ROUTES.includes(c)&&Array.isArray(v[c])&&v[c].length>0&&v[c].every(g=>SOURCE_EVIDENCE_GROUPS.includes(g)));
 }
 // A raw body string is compared in its lexical form; a non-string is compared
 // structurally. Used for a projection of raw bodies (path→body maps).

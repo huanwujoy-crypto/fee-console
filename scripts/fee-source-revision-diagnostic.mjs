@@ -11,7 +11,8 @@ import {dailyReportPlan} from './fee-report-period.mjs';
 import {authorizeHistoricalRevisionDiagnostic,readReportRecoveryRelease,readCurrentSyncRun} from './fee-report-producer.mjs';
 import {readPublicationState,decryptCandidate,safeProducerFailureSummary} from './fee-cloud-producer.mjs';
 import {fetchEconomicSnapshot,economicSourceDiagnosticCode} from './fee-economic-source.mjs';
-import {createFeeSourceRevisionRuntime,sourceRevisionRuntimeFailureCode,sourceRevisionRuntimeCashSite,sourceRevisionRuntimeCashDateRole} from './fee-source-revision-runtime.mjs';
+import {createFeeSourceRevisionRuntime,sourceRevisionRuntimeFailureCode,sourceRevisionRuntimeCashSite,sourceRevisionRuntimeCashDateRole,sourceRevisionRuntimeSourceEvidence} from './fee-source-revision-runtime.mjs';
+import {isRecordsEvidence} from './fee-source-lexical.mjs';
 import {IB_CASH_RECONCILIATION_SITES,IB_CASH_DATE_ROLES} from './ib-manager-source.mjs';
 
 const ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
@@ -112,8 +113,22 @@ function cashLocation(code,error){
   const cashSite=IB_CASH_RECONCILIATION_SITES.includes(site)?site:'UNCLASSIFIED';
   return {cashSite,cashDateRole:cashSite!=='UNCLASSIFIED'&&IB_CASH_DATE_ROLES.includes(role)?role:'NONE'};
 }
+// Only a genuine runtime capture/recheck refusal adds the reader's fixed source
+// evidence, read by error identity and re-validated literal by literal here; a
+// forged, proxied, malformed or other error adds nothing.
+function sourceEvidence(code,error){
+  if(!/^FEE_REPORT_SOURCE_REVISION_ARTIFACT_SOURCE_(?:CAPTURE|RECHECK)_[A-Z_]+$/.test(code)||sourceRevisionRuntimeFailureCode(error)!==code)return {};
+  const e=sourceRevisionRuntimeSourceEvidence(error);
+  if(!e||typeof e!=='object')return {};
+  const capture=e.capture==='PASSED'?'PASSED':isRecordsEvidence(e.capture)?e.capture:null;
+  const currentness=e.currentness==='NOT_REACHED'?'NOT_REACHED':isRecordsEvidence(e.currentness)?e.currentness:null;
+  const coverage=['FIRST_CHANGED_RECORD','ALL_RECORDS'].includes(e.currentnessCoverage)?e.currentnessCoverage:null;
+  if(!capture||!currentness||(currentness==='NOT_REACHED')!==(coverage===null))return {};
+  const copy=v=>typeof v==='string'?v:Object.fromEntries(Object.entries(v).map(([k,g])=>[k,[...g]]));
+  return {sourceEvidence:{capture:copy(capture),currentness:copy(currentness),...(coverage?{currentnessCoverage:coverage}:{})}};
+}
 const result=(status,code,error)=>Object.freeze({schema:'fee-console.source-revision-diagnostic-result.v1',status,targetDate:REVISION_DIAGNOSTIC_SCOPE.targetDate,
-  reasonCode:code,reportGenerated:false,publicationReady:false,...cashLocation(code,error)});
+  reasonCode:code,reportGenerated:false,publicationReady:false,...cashLocation(code,error),...sourceEvidence(code,error)});
 
 // Dependency injection is for synthetic tests only. The executable below pins
 // every dependency to the original readers and does not accept modules or URLs.
@@ -130,8 +145,10 @@ export async function inspectRevisionDiagnostic({checkOnly=false,authorize,check
         ||Object.keys(runtime).sort().join(',')!=='close,diagnose')fail('RESULT');
       const verified=await runtime.diagnose();assertCurrent();checkCheckout();
       if(!verified||verified.schema!=='fee-console.source-revision-diagnostic-result.v1'||verified.status!=='verified'
-        ||verified.targetDate!==REVISION_DIAGNOSTIC_SCOPE.targetDate||Object.keys(verified).sort().join(',')!=='schema,status,targetDate')fail('RESULT');
-      answer=result('verified','NONE');
+        ||verified.targetDate!==REVISION_DIAGNOSTIC_SCOPE.targetDate||!['schema,status,targetDate','schema,sourceEvidence,status,targetDate'].includes(Object.keys(verified).sort().join(',')))fail('RESULT');
+      const ev=verified.sourceEvidence;
+      if(ev!==undefined&&!(ev&&isRecordsEvidence(ev.capture)&&isRecordsEvidence(ev.currentness)&&ev.currentnessCoverage==='ALL_RECORDS'&&Object.keys(ev).sort().join(',')==='capture,currentness,currentnessCoverage'))fail('RESULT');
+      answer=Object.freeze({...result('verified','NONE'),...(ev?{sourceEvidence:{capture:Object.fromEntries(Object.entries(ev.capture).map(([k,g])=>[k,[...g]])),currentness:Object.fromEntries(Object.entries(ev.currentness).map(([k,g])=>[k,[...g]])),currentnessCoverage:'ALL_RECORDS'}}:{})});
     }
   }catch(e){error=e;}
   finally{

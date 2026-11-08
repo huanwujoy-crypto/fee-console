@@ -130,6 +130,25 @@ read-only diagnostic for the record-order release: same target, pinned to the
 real main `05731b0` (parent `b72cd68`, unchanged `index.html` blob) and to its
 own release file manifest. It is not the consumed v5 admission.
 
+Contract `ib-source-revision-20261106-diagnostic-v7` is the same kind of
+read-only diagnostic for the catalog-member/evidence release, pinned to the
+real main `4d569f5` (parent `05731b0`, unchanged `index.html` blob) and to its
+own release file manifest. It is not the consumed v6 admission.
+
+From that release the diagnostic result may carry `sourceEvidence`, re-validated
+literal by literal: `capture` (every route of both acquired rounds, or `PASSED`)
+and `currentness` (`NOT_REACHED` when the run stopped earlier; otherwise the
+groups found, with `currentnessCoverage` `FIRST_CHANGED_RECORD` or
+`ALL_RECORDS`, the coverage the original flow had). Each route class maps to
+fixed groups only: `ALLOWED_UNCONSUMED_CATALOG` (the one non-blocking marker:
+the exact catalog members this chain does not consume differed) and the
+blocking `ROUTE_SET`, `DUP_ROUTE`, `RAW`, `LEX`, `ROWSET`, `MEMBER_SET`,
+`STRUCTURE`, `ID`, `INSTRUMENT`, `PORTFOLIO`, `QUANTITY`, `AMOUNT`, `CURRENCY`,
+`DATE`, `STATE`, `TEXT`, `KIND`, `ARRAY`, `TYPE`, `UNKNOWN`. A verified run
+always carries it, so a pass still shows whether the exception was used. No
+value, id, field name, count or position is ever included. `UNKNOWN` names no
+field: it can show that an unlisted member differed, not which one or why.
+
 "Once" is an execution-procedure limit, not a code guarantee. The admission
 binds the exact main, parent, file manifest, owner approval comment, owner
 actor, `workflow_dispatch` event and `run_attempt == 1` of the current run; it

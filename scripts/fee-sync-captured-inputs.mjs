@@ -6,7 +6,7 @@ import {SharesightCloudReader,CLOUD_ACCOUNTS} from './fee-cloud-source.mjs';
 import {SharesightIbManagerReader} from './ib-manager-source.mjs';
 import {sourceContractInputHash} from './fee-source-contract.mjs';
 import {projectSharesightSyncAccount} from './fee-sync-source-projection.mjs';
-import {lexicalBatchesEquivalent,IB_UNORDERED_ID_ARRAYS} from './fee-source-lexical.mjs';
+import {lexicalBatchesEquivalent,IB_CAPTURE_CONTRACT} from './fee-source-lexical.mjs';
 
 const PREFIX='FEE_SYNC_CAPTURE_',failures=new WeakMap();
 const canonical=v=>Array.isArray(v)?'['+v.map(canonical).join(',')+']':v&&typeof v==='object'?'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canonical(v[k])).join(',')+'}':JSON.stringify(v);
@@ -96,7 +96,7 @@ export function projectCapturedSharesightAccount(request){
     // the two-account fee capture keeps the stricter ordered rule. Equivalent
     // whole batches with an identical selected route/key shape imply each
     // selected body is equivalent, since bodies are selected by exact route.
-    const contract=s.role==='ib-manager'?IB_UNORDERED_ID_ARRAYS:null;
+    const contract=s.role==='ib-manager'?IB_CAPTURE_CONTRACT:null;
     const shape=v=>canonical(JSON.parse(JSON.stringify(v,(k,x)=>typeof x==='string'?true:x)));
     if(e.sourceSha256!==e.captures[0].sha256||!lexicalBatchesEquivalent(e.captures[0],e.captures[1],contract)
       ||canonical(raw)!==canonical(other)&&shape(raw)!==shape(other))fail('BATCH');

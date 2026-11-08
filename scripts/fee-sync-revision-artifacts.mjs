@@ -9,7 +9,7 @@ import {validateHealth} from './fee-data-health.mjs';
 import {validateFeeCalculationReceiptWithEcon} from './fee-receipt-core.mjs';
 import {preserveReportMonthLocks} from './fee-report-metadata.mjs';
 import {validateIbManagerReportState,validateIbOwnerBaselineState,createIbManagerReturnConsumer,createIbManagerDrawdownConsumer} from './ib-manager-return.mjs';
-import {SharesightIbManagerReader,ibSourceCaptureRecheckDiagnostic,IB_CAPTURE_RECHECK_DIAGNOSTIC_CODES,ibSourceCaptureUnstableDiagnostic,IB_CAPTURE_UNSTABLE_DIAGNOSTIC_CODES,ibSourceCaptureRecordsSite,IB_CAPTURE_RECORDS_SITES,IB_CASH_RECONCILIATION_SITES,IB_CASH_DATE_ROLES} from './ib-manager-source.mjs';
+import {SharesightIbManagerReader,ibSourceCaptureRecheckDiagnostic,IB_CAPTURE_RECHECK_DIAGNOSTIC_CODES,ibSourceCaptureUnstableDiagnostic,IB_CAPTURE_UNSTABLE_DIAGNOSTIC_CODES,ibSourceCaptureRecordsSite,ibSourceCaptureEvidence,ibSourceCaptureSuccessEvidence,IB_CAPTURE_RECORDS_SITES,IB_CASH_RECONCILIATION_SITES,IB_CASH_DATE_ROLES} from './ib-manager-source.mjs';
 import {createIbSourceRevisionPreparer,isIbSourceRevisionCandidate,ibSourceRevisionFailureCode,ibSourceRevisionCashSite,ibSourceRevisionCashDateRole} from './ib-manager-source-revision.mjs';
 import {sourceContractInputHash as hash} from './fee-source-contract.mjs';
 import {isRevisionGithubRead,revisionGithubFailureCode,IB_REVISION_GITHUB_FAILURE_CODES} from './fee-sync-revision-github.mjs';
@@ -22,7 +22,7 @@ const OWNER='huanwujoy-crypto',REPO=OWNER+'/fee-console',parseExact=createLegacy
 const CONTRACT_MODELS=Object.freeze({'ib-source-revision-20261106-v1':'consumption-v1','ib-source-revision-20261106-sync-v2':'sync-cycle-v1',
   'ib-source-revision-20261106-sync-v3':'sync-cycle-v1','ib-source-revision-20261106-diagnostic-v1':'sync-cycle-v1',
   'ib-source-revision-20261106-diagnostic-v2':'sync-cycle-v1','ib-source-revision-20261106-diagnostic-v3':'sync-cycle-v1',
-  'ib-source-revision-20261106-diagnostic-v4':'sync-cycle-v1','ib-source-revision-20261106-diagnostic-v5':'sync-cycle-v1','ib-source-revision-20261106-diagnostic-v6':'sync-cycle-v1'});
+  'ib-source-revision-20261106-diagnostic-v4':'sync-cycle-v1','ib-source-revision-20261106-diagnostic-v5':'sync-cycle-v1','ib-source-revision-20261106-diagnostic-v6':'sync-cycle-v1','ib-source-revision-20261106-diagnostic-v7':'sync-cycle-v1'});
 const DIAGNOSTIC_ROLES=Object.freeze(['BASE','CURRENT','ANCHOR']);
 const GITHUB_STEPS=Object.freeze(['MAIN','COMMIT','TREE','HISTORY','DATA','HEALTH','RUN','JOBS','LOG']);
 const ECONOMIC_STAGES=Object.freeze(['FIRST','RECHECK','BYTES','BINDING']);
@@ -45,6 +45,13 @@ export const isIbRevisionArtifacts=value=>instances.has(value);
 function failure(code){const e=new Error('IB_REVISION_ARTIFACT_'+code);failures.set(e,code);return e;}
 function fail(code){throw Object.freeze(failure(code));}
 export const ibRevisionArtifactFailureCode=e=>'IB_REVISION_ARTIFACT_'+(failures.get(e)||'REFUSED');
+// Reader source evidence carried by error identity only (fixed literals).
+const sourceEvidenceByError=new WeakMap();
+export const ibRevisionArtifactSourceEvidence=e=>sourceEvidenceByError.get(e)||null;
+// After a verified candidate only: the reader's explicit success evidence.
+const successEvidenceByApi=new WeakMap();
+export const ibRevisionArtifactSuccessEvidence=api=>successEvidenceByApi.get(api)||null;
+const failWithEvidence=(code,evidence)=>{const e=failure(code);if(evidence)sourceEvidenceByError.set(e,evidence);throw Object.freeze(e);};
 // SOURCE_CASH_RECONCILIATION keeps the reader's fixed site/date-role beside the
 // unchanged code, by error identity only. Any other error reports the defaults.
 const cashSites=new Set(IB_CASH_RECONCILIATION_SITES),cashRoles=new Set(IB_CASH_DATE_ROLES),cashSiteByError=new WeakMap(),cashRoleByError=new WeakMap();
@@ -95,7 +102,7 @@ export function createIbRevisionArtifacts(options){
     const readAdmission=c.diagnosticOnly?producer.readHistoricalRevisionDiagnosticAdmission:producer.readHistoricalRevisionAdmission;
     active();if(!isAdmission(c.admission))fail('ADMISSION');
     const before=copy(readAdmission(c.admission));
-    if(c.diagnosticOnly?(!['ib-source-revision-20261106-diagnostic-v1','ib-source-revision-20261106-diagnostic-v2','ib-source-revision-20261106-diagnostic-v3','ib-source-revision-20261106-diagnostic-v4','ib-source-revision-20261106-diagnostic-v5','ib-source-revision-20261106-diagnostic-v6'].includes(before.contractId)||before.purpose!=='read-only-diagnostic')
+    if(c.diagnosticOnly?(!['ib-source-revision-20261106-diagnostic-v1','ib-source-revision-20261106-diagnostic-v2','ib-source-revision-20261106-diagnostic-v3','ib-source-revision-20261106-diagnostic-v4','ib-source-revision-20261106-diagnostic-v5','ib-source-revision-20261106-diagnostic-v6','ib-source-revision-20261106-diagnostic-v7'].includes(before.contractId)||before.purpose!=='read-only-diagnostic')
       :Object.hasOwn(before,'purpose'))fail('ADMISSION');
     const checked=copy(await at('ADMISSION',()=>c.admission.checkCurrent()));active();
     if(hash(before)!==hash(checked)||!Object.hasOwn(CONTRACT_MODELS,before.contractId)||before.targetDate!==IB_REVISION_ARTIFACT_SCOPE.targetDate
@@ -265,7 +272,7 @@ export function createIbRevisionArtifacts(options){
       // The source preparer sanitizes foreign callback errors as source errors.
       // Preserve only this adapter's fixed diagnostic when its own surrounding
       // checks fail; a real reader failure keeps the original source classifier.
-      let localDiagnostic=null;
+      let localDiagnostic=null,localEvidence=null;
       const localCheck=async operation=>{try{return await operation();}catch(error){
         localDiagnostic=failures.get(error)||'PHASE_'+role+'_'+phase;throw error;
       }};
@@ -281,18 +288,19 @@ export function createIbRevisionArtifacts(options){
             const site=ibSourceCaptureUnstableDiagnostic(error);
             // A classified RECORDS failure names its fixed route/kind location.
             const records=site==='RECORDS'?ibSourceCaptureRecordsSite(error):null;
-            if(site!=='UNCLASSIFIED')localDiagnostic='SOURCE_CAPTURE_'+site+(records?'_'+records:'');
+            if(site!=='UNCLASSIFIED'){localDiagnostic='SOURCE_CAPTURE_'+site+(records?'_'+records:'');localEvidence=ibSourceCaptureEvidence(error);}
             throw error;
           }
           await localCheck(check);return sourceCapture.input;}});
       let result;
       try{result=await at('SOURCE_PREPARE',()=>preparer.prepare({plan,currentPayload:record.view.currentPayload,anchorPayload:record.view.anchorPayload}));}
-      catch(error){if(localDiagnostic!==null)fail(localDiagnostic);throw error;}
+      catch(error){if(localDiagnostic!==null)failWithEvidence(localDiagnostic,localEvidence);throw error;}
       if(result.mode!=='extend-cutoff'||!isIbSourceRevisionCandidate(result))fail('CANDIDATE');candidate=result;await check();return result;
     }),
     verifyCandidate:value=>run(async()=>{
       if(!candidate||value!==candidate||!isIbSourceRevisionCandidate(value)||!sourceCapture)fail('CANDIDATE');
-      await check();try{await Reflect.apply(SharesightIbManagerReader.prototype.checkCapturedReadCurrent,sourceReader,[sourceCapture]);}catch(error){fail('SOURCE_RECHECK_'+ibSourceCaptureRecheckDiagnostic(error));}await check();return true;
+      await check();try{await Reflect.apply(SharesightIbManagerReader.prototype.checkCapturedReadCurrent,sourceReader,[sourceCapture]);}catch(error){failWithEvidence('SOURCE_RECHECK_'+ibSourceCaptureRecheckDiagnostic(error),ibSourceCaptureEvidence(error));}await check();
+      const evidence=ibSourceCaptureSuccessEvidence(sourceCapture);if(evidence)successEvidenceByApi.set(api,evidence);return true;
     }),
     close(){closed=true;record=null;candidate=null;sourceCapture=null;sourceReader=null;c.dataKey.fill(0);},
   });

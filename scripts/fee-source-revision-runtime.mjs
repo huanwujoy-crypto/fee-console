@@ -8,7 +8,7 @@ import {validateReportPlan,isReviewedDailyPlan} from './fee-report-period.mjs';
 import {verifyEconomicSnapshot} from './fee-economic-source.mjs';
 import {SharesightIbManagerReader,IB_CASH_RECONCILIATION_SITES,IB_CASH_DATE_ROLES} from './ib-manager-source.mjs';
 import {createRevisionGithubRead} from './fee-sync-revision-github.mjs';
-import {createIbRevisionArtifacts,ibRevisionArtifactFailureCode,ibRevisionArtifactCashSite,ibRevisionArtifactCashDateRole} from './fee-sync-revision-artifacts.mjs';
+import {createIbRevisionArtifacts,ibRevisionArtifactFailureCode,ibRevisionArtifactCashSite,ibRevisionArtifactCashDateRole,ibRevisionArtifactSourceEvidence,ibRevisionArtifactSuccessEvidence} from './fee-sync-revision-artifacts.mjs';
 
 const PREFIX='FEE_REPORT_SOURCE_REVISION_',errors=new WeakMap();
 const CONTRACTS=Object.freeze({
@@ -21,8 +21,9 @@ const CONTRACTS=Object.freeze({
   'ib-source-revision-20261106-diagnostic-v4':'fee-console.ib-source-revision-plan.v2',
   'ib-source-revision-20261106-diagnostic-v5':'fee-console.ib-source-revision-plan.v2',
   'ib-source-revision-20261106-diagnostic-v6':'fee-console.ib-source-revision-plan.v2',
+  'ib-source-revision-20261106-diagnostic-v7':'fee-console.ib-source-revision-plan.v2',
 }),TARGET='2026-11-06',ANCHOR='2026-11-04',PREVIOUS='2026-11-05';
-const DIAGNOSTIC_CONTRACTS=Object.freeze(['ib-source-revision-20261106-diagnostic-v1','ib-source-revision-20261106-diagnostic-v2','ib-source-revision-20261106-diagnostic-v3','ib-source-revision-20261106-diagnostic-v4','ib-source-revision-20261106-diagnostic-v5','ib-source-revision-20261106-diagnostic-v6']);
+const DIAGNOSTIC_CONTRACTS=Object.freeze(['ib-source-revision-20261106-diagnostic-v1','ib-source-revision-20261106-diagnostic-v2','ib-source-revision-20261106-diagnostic-v3','ib-source-revision-20261106-diagnostic-v4','ib-source-revision-20261106-diagnostic-v5','ib-source-revision-20261106-diagnostic-v6','ib-source-revision-20261106-diagnostic-v7']);
 const SHA=/^[a-f0-9]{64}$/,MAX_BYTES=2*1024*1024;
 const sha=bytes=>crypto.createHash('sha256').update(bytes).digest('hex');
 function failure(code){const e=new Error(PREFIX+code);errors.set(e,code);return e;}
@@ -32,10 +33,16 @@ export const sourceRevisionRuntimeFailureCode=e=>PREFIX+(errors.get(e)||'REFUSED
 // beside the unchanged code, by error identity only (defaults otherwise).
 const cashSites=new Set(IB_CASH_RECONCILIATION_SITES),cashRoles=new Set(IB_CASH_DATE_ROLES),cashSiteByError=new WeakMap(),cashRoleByError=new WeakMap();
 export const sourceRevisionRuntimeCashSite=e=>cashSiteByError.get(e)||'UNCLASSIFIED';
+const sourceEvidenceByError=new WeakMap();
+export const sourceRevisionRuntimeSourceEvidence=e=>sourceEvidenceByError.get(e)||null;
 export const sourceRevisionRuntimeCashDateRole=e=>cashRoleByError.get(e)||'NONE';
 function artifactFailure(error,fallback){
   const code=ibRevisionArtifactFailureCode(error).slice('IB_REVISION_ARTIFACT_'.length);
-  if(code!=='SOURCE_CASH_RECONCILIATION')fail(code==='REFUSED'?fallback:'ARTIFACT_'+code);
+  if(code!=='SOURCE_CASH_RECONCILIATION'){
+    const evidence=/^SOURCE_(?:CAPTURE|RECHECK)_/.test(code)?ibRevisionArtifactSourceEvidence(error):null;
+    if(evidence){const e=failure('ARTIFACT_'+code);sourceEvidenceByError.set(e,evidence);throw Object.freeze(e);}
+    fail(code==='REFUSED'?fallback:'ARTIFACT_'+code);
+  }
   const e=failure('ARTIFACT_'+code),site=ibRevisionArtifactCashSite(error),role=ibRevisionArtifactCashDateRole(error);
   cashSiteByError.set(e,cashSites.has(site)?site:'UNCLASSIFIED');
   cashRoleByError.set(e,cashSites.has(site)&&site!=='UNCLASSIFIED'&&cashRoles.has(role)?role:'NONE');
@@ -151,7 +158,10 @@ export async function createFeeSourceRevisionRuntime(options){
     // This mode has no production admission and always destroys private state.
     return Object.freeze({
       async diagnose(){try{await api.prepare();await api.checkCurrent();
-        return Object.freeze({schema:'fee-console.source-revision-diagnostic-result.v1',status:'verified',targetDate:TARGET});
+        // The reader's explicit evidence of both acquired rounds and the
+        // currentness check (fixed literals only), present on every verified run.
+        const evidence=ibRevisionArtifactSuccessEvidence(artifacts);
+        return Object.freeze({schema:'fee-console.source-revision-diagnostic-result.v1',status:'verified',targetDate:TARGET,...(evidence?{sourceEvidence:evidence}:{})});
       }finally{close();}},close,
     });
   }catch(e){close();if(errors.has(e))throw e;fail('CONFIG');}
