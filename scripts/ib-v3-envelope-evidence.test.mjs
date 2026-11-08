@@ -8,7 +8,8 @@ import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {ENVELOPE_EVIDENCE_SCOPE,ENVELOPE_ROUTES,ENVELOPE_STEPS,ENVELOPE_MAX_REQUESTS,ENVELOPE_CATEGORIES,ENVELOPE_CHANGES,ENVELOPE_TYPES,
   parseEnvelopeJson,compareEnvelopeBodies,isEnvelopeRouteEvidence,readEnvelopeEvidence,envelopeEvidenceTransport,
-  envelopeEvidenceArgs,validateEnvelopeEvidenceEvent,envelopeEvidenceFailure,inspectEnvelopeEvidence} from './ib-v3-envelope-evidence.mjs';
+  envelopeEvidenceArgs,validateEnvelopeEvidenceEvent,envelopeEvidenceFailure,inspectEnvelopeEvidence,ENVELOPE_TRANSPORT_REFUSALS} from './ib-v3-envelope-evidence.mjs';
+import {authorizeEnvelopeEvidence,RECOVERY_METADATA_STAGES,RECOVERY_METADATA_REQUESTS,RECOVERY_METADATA_CATEGORIES,reportHistoricalRecoveryManifest} from './fee-report-producer.mjs';
 import {REVISION_DIAGNOSTIC_SCOPE,validateRevisionDiagnosticEvent} from './fee-source-revision-diagnostic.mjs';
 import {IB_REVISION_ARTIFACT_SCOPE} from './fee-sync-revision-artifacts.mjs';
 import {ratioAdmission,RATIO_OWNER} from './fee-ratio-cloud-runtime.mjs';
@@ -305,4 +306,61 @@ test('the entry has no writer, no file output and is imported by no reader, writ
   const importers=fs.readdirSync(path.join(ROOT,'scripts')).filter(f=>f.endsWith('.mjs')&&!f.endsWith('.test.mjs')&&!f.startsWith('ib-v3-envelope-evidence'))
     .filter(f=>/from '\.\/ib-v3-envelope-evidence\.mjs'|import\('\.\/ib-v3-envelope-evidence\.mjs'\)/.test(fs.readFileSync(path.join(ROOT,'scripts',f),'utf8')));
   assert.deepEqual(importers,[]);
+});
+
+// ---- GitHub verification sub-location reaches the fixed entry result
+const metaKeys=r=>Object.keys(r).filter(k=>k.startsWith('metadata')||k==='transportRefusal').sort();
+const githubAuthorize=(fetchImpl,options={})=>()=>authorizeEnvelopeEvidence({expectedMain:'d'.repeat(40),currentRunId:'123456789',actionsToken:'synthetic_read_token_123456789',fetchImpl,...options});
+const quiet={checkOnly:true,checkCheckout:()=>{},read:()=>assert.fail('check-plan never reads'),cleanup:()=>{}};
+test('a GitHub verification failure reaches the entry result as fixed stage, request and category only',async()=>{
+  const canary='private-canary-'+'Q'.repeat(10);
+  const forbidden=new RegExp(canary+'|https?:|Bearer|synthetic_read_token|[a-f0-9]{40}|123456789');
+  const denied=async(url)=>{const r=new Response(JSON.stringify({message:canary,documentation_url:'https://x.invalid'}),{status:403,headers:{'content-type':'application/json'}});Object.defineProperty(r,'url',{value:url});return r;};
+  const r403=await inspectEnvelopeEvidence({...quiet,authorize:githubAuthorize(denied)});
+  assert.equal(r403.status,'incomplete');assert.equal(r403.reasonCode,'FEE_REPORT_RECOVERY_METADATA');
+  assert.equal(r403.metadataStage,'RELEASE_MAIN_COMMIT');assert(['MAIN_REF','COMMIT'].includes(r403.metadataRequest),'first settled request of the concurrent batch');
+  assert.equal(r403.metadataCategory,'HTTP_403');assert.deepEqual(metaKeys(r403),['metadataCategory','metadataRequest','metadataStage']);
+  assert.doesNotMatch(JSON.stringify(r403),forbidden);
+  const token=await inspectEnvelopeEvidence({...quiet,authorize:githubAuthorize(()=>assert.fail('no request'),{actionsToken:'t'.repeat(4097)})});
+  assert.deepEqual([token.metadataStage,token.metadataRequest,token.metadataCategory],['RELEASE_SETUP','NONE','TOKEN_FORMAT']);
+  const thrown=await inspectEnvelopeEvidence({...quiet,authorize:githubAuthorize(async()=>{throw Error(canary+' https://api.github.com/secret');})});
+  assert.equal(thrown.metadataCategory,'FETCH_REJECTED');assert.doesNotMatch(JSON.stringify(thrown),forbidden);
+  for(const r of [r403,token,thrown])for(const [k,list] of [['metadataStage',RECOVERY_METADATA_STAGES],['metadataRequest',RECOVERY_METADATA_REQUESTS],['metadataCategory',RECOVERY_METADATA_CATEGORIES]])assert(list.includes(r[k]),k);
+});
+test('the outer transport reports its own refusal as a fixed literal next to the producer category',async()=>{
+  let now=0;const t=envelopeEvidenceTransport({fetchImpl:()=>assert.fail('expired before any request'),clock:()=>now});now=ENVELOPE_EVIDENCE_SCOPE.durationMs;
+  try{
+    const r=await inspectEnvelopeEvidence({...quiet,assertCurrent:()=>{},authorize:githubAuthorize(t.fetch),transportRefusal:t.refusal});
+    assert.deepEqual([r.reasonCode,r.metadataStage,r.metadataCategory,r.transportRefusal],['FEE_REPORT_RECOVERY_METADATA','RELEASE_MAIN_COMMIT','FETCH_REJECTED','EXPIRED']);
+  }finally{t.close();}
+  const route=envelopeEvidenceTransport({fetchImpl:()=>assert.fail('refused routes never reach the network')});
+  try{
+    await assert.rejects(route.fetch('https://api.github.com/repos/huanwujoy-crypto/fee-console/contents/data.json?ref='+MAIN,{method:'GET'}),/ROUTE/);
+    assert.equal(route.refusal(),'ROUTE');assert.deepEqual(ENVELOPE_TRANSPORT_REFUSALS,['ROUTE','EXPIRED']);
+    const r=await inspectEnvelopeEvidence({...quiet,authorize:async()=>{throw new Error('FEE_REPORT_RECOVERY_RELEASE');},transportRefusal:route.refusal});
+    assert.equal(r.transportRefusal,'ROUTE');assert.equal(r.metadataStage,undefined);
+  }finally{route.close();}
+  const clean=envelopeEvidenceTransport({fetchImpl:async url=>response(url,{})});
+  try{await clean.fetch('https://api.github.com/repos/huanwujoy-crypto/fee-console/git/ref/heads/main',{method:'GET'});assert.equal(clean.refusal(),null);}finally{clean.close();}
+  const odd=await inspectEnvelopeEvidence({...quiet,authorize:async()=>{throw new Error('FEE_REPORT_RECOVERY_RELEASE');},transportRefusal:()=>'canary'});
+  assert.equal(odd.transportRefusal,undefined);
+});
+test('forged, other and unattributed failures add no metadata fields; success output is unchanged',async()=>{
+  const forged=Object.assign(new Error('FEE_REPORT_RECOVERY_METADATA'),{stage:'RELEASE_SETUP',request:'NONE',category:'TOKEN_FORMAT'});
+  assert.deepEqual(envelopeEvidenceFailure(forged),{reasonCode:'FEE_REPORT_RECOVERY_METADATA'});
+  assert.deepEqual(envelopeEvidenceFailure(new Error('FEE_REPORT_RECOVERY_RELEASE')),{reasonCode:'FEE_REPORT_RECOVERY_RELEASE'});
+  assert.deepEqual(envelopeEvidenceFailure(new Error('FEE_REPORT_RECOVERY_METADATA canary')),{reasonCode:'FEE_ENVELOPE_EVIDENCE_FAILED'});
+  const admission={async checkCurrent(){},close(){}},s=source();
+  const ok=await inspectEnvelopeEvidence({authorize:async()=>admission,checkCheckout:()=>{},cleanup:()=>{},transportRefusal:()=>'ROUTE',
+    read:hooks=>readEnvelopeEvidence({...creds,fetchImpl:s.fetchImpl,...hooks})});
+  assert.equal(ok.status,'verified');assert.deepEqual(metaKeys(ok),[]);
+  assert.deepEqual(Object.keys(ok).sort(),['contractId','publicationReady','reasonCode','reportGenerated','requestsUsed','routes','schema','stabilityDecisionChanged','status','targetDate']);
+  const plan=await inspectEnvelopeEvidence({...quiet,authorize:async()=>admission});
+  assert.deepEqual(Object.keys(plan).sort(),['contractId','publicationReady','reasonCode','reportGenerated','schema','stabilityDecisionChanged','status','targetDate']);
+});
+
+test('the entry labels results with the one contract the producer binds and accepts',()=>{
+  assert.equal(ENVELOPE_EVIDENCE_SCOPE.contractId,'ib-source-revision-20261106-envelope-evidence-v2');
+  const manifest=reportHistoricalRecoveryManifest({contractId:ENVELOPE_EVIDENCE_SCOPE.contractId});
+  assert(manifest.some(f=>f.path==='scripts/ib-v3-envelope-evidence.mjs'));assert.equal(manifest.length,5);
 });

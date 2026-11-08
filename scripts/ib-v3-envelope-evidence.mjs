@@ -10,11 +10,11 @@ import {types} from 'node:util';
 import {fileURLToPath} from 'node:url';
 import {execFileSync} from 'node:child_process';
 import {boundedJson,BoundedJsonError} from './fee-http-json.mjs';
-import {authorizeEnvelopeEvidence} from './fee-report-producer.mjs';
+import {authorizeEnvelopeEvidence,recoveryMetadataDiagnostic,RECOVERY_METADATA_STAGES,RECOVERY_METADATA_REQUESTS,RECOVERY_METADATA_CATEGORIES} from './fee-report-producer.mjs';
 
 const ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const API='https://api.sharesight.com',NAME='IB-HK',REPO='huanwujoy-crypto/fee-console',OWNER=283054367,OID=/^[a-f0-9]{40}$/;
-export const ENVELOPE_EVIDENCE_SCOPE=Object.freeze({contractId:'ib-source-revision-20261106-envelope-evidence-v1',
+export const ENVELOPE_EVIDENCE_SCOPE=Object.freeze({contractId:'ib-source-revision-20261106-envelope-evidence-v2',
   targetDate:'2026-11-06',previousDate:'2026-11-05',anchorDate:'2026-11-04',rounds:2,durationMs:8*60000});
 // Exactly the reader's own v3 requests for checkpoint 2026-11-04 -> target
 // 2026-11-06 (from = 11-05, dated performance anchor..target one day each), in
@@ -241,26 +241,29 @@ const GITHUB_READ=/^(?:git\/ref\/heads\/main|commits\/[a-f0-9]{40}(?:\?per_page=
 const SHARESIGHT_GET=new Set(ENVELOPE_ROUTES.map(r=>r.path+'?'+r.query));
 export function envelopeEvidenceTransport({fetchImpl=globalThis.fetch,clock=Date.now,durationMs=ENVELOPE_EVIDENCE_SCOPE.durationMs}={}){
   if(typeof fetchImpl!=='function'||typeof clock!=='function'||!Number.isSafeInteger(durationMs)||durationMs<1||durationMs>ENVELOPE_EVIDENCE_SCOPE.durationMs)fail('ENVIRONMENT');
-  const started=clock(),controller=new AbortController();let closed=false,last=started;
+  const started=clock(),controller=new AbortController();let closed=false,last=started,refusal=null;
   if(!Number.isSafeInteger(started)||started<0)fail('ENVIRONMENT');
   const timer=setTimeout(()=>controller.abort(),durationMs);timer.unref?.();
-  const active=()=>{const now=clock();if(closed||controller.signal.aborted||!Number.isSafeInteger(now)||now<last||now-started>=durationMs)fail('EXPIRED');last=now;};
+  // This boundary's own refusal is remembered as a fixed literal: a caller's
+  // wrapper may turn the thrown error into a generic network failure.
+  const refuse=code=>{refusal??=code;fail(code);};
+  const active=()=>{const now=clock();if(closed||controller.signal.aborted||!Number.isSafeInteger(now)||now<last||now-started>=durationMs)refuse('EXPIRED');last=now;};
   const fetch=async(url,init={})=>{
-    active();let u;try{u=new URL(url);}catch{fail('ROUTE');}
+    active();let u;try{u=new URL(url);}catch{refuse('ROUTE');}
     const method=init.method||'GET',prefix='/repos/'+REPO+'/';
     const oauth=u.href===API+'/oauth2/token';
     const github=u.origin==='https://api.github.com'&&u.pathname.startsWith(prefix)&&GITHUB_READ.test(u.pathname.slice(prefix.length)+u.search);
     const v3=/^\/api\/v3\/portfolios\/[1-9]\d{0,15}\/(holdings|performance|trades\.json)$/.exec(u.pathname);
     const sharesight=u.origin===API&&(u.pathname==='/api/v2/portfolios.json'&&u.search===''||v3&&SHARESIGHT_GET.has(v3[1]+u.search));
     if(u.protocol!=='https:'||u.username||u.password||u.port||u.hash||!(oauth||github||sharesight)
-      ||(oauth?method!=='POST':method!=='GET'||init.body!==undefined))fail('ROUTE');
+      ||(oauth?method!=='POST':method!=='GET'||init.body!==undefined))refuse('ROUTE');
     const signal=init.signal?AbortSignal.any([init.signal,controller.signal]):controller.signal;
     let listener;
-    const aborted=new Promise((_,reject)=>{listener=()=>reject(failure('EXPIRED'));if(signal.aborted)listener();else signal.addEventListener('abort',listener,{once:true});});
+    const aborted=new Promise((_,reject)=>{listener=()=>{if(controller.signal.aborted)refusal??='EXPIRED';reject(failure('EXPIRED'));};if(signal.aborted)listener();else signal.addEventListener('abort',listener,{once:true});});
     try{const result=await Promise.race([fetchImpl(url,{...init,redirect:'error',signal}),aborted]);active();return result;}
     finally{signal.removeEventListener('abort',listener);}
   };
-  return Object.freeze({fetch,assertCurrent:active,close(){closed=true;clearTimeout(timer);controller.abort();}});
+  return Object.freeze({fetch,assertCurrent:active,refusal:()=>refusal,close(){closed=true;clearTimeout(timer);controller.abort();}});
 }
 
 // ---- exact owner dispatch of this job only; every other input stays off.
@@ -299,13 +302,19 @@ export function validateEnvelopeEvidenceEvent({env,event,expectedMain,checkOnly=
   return true;
 }
 
+export const ENVELOPE_TRANSPORT_REFUSALS=Object.freeze(['ROUTE','EXPIRED']);
 const ADMISSION_CODES=['RECOVERY_SCOPE','RECOVERY_RELEASE','RECOVERY_METADATA','RECOVERY_RUN','RECOVERY_CONSUMED'].map(c=>'FEE_REPORT_'+c);
 export function envelopeEvidenceFailure(error){
   const own=ERRORS.get(error);
   if(!own){
     // Only the producer's exact fixed admission codes pass through; nothing else.
     let message;try{if(error&&typeof error==='object'&&!types.isProxy(error))message=Object.getOwnPropertyDescriptor(error,'message')?.value;}catch{}
-    return {reasonCode:ADMISSION_CODES.includes(message)?message:'FEE_ENVELOPE_EVIDENCE_FAILED'};
+    if(!ADMISSION_CODES.includes(message))return {reasonCode:'FEE_ENVELOPE_EVIDENCE_FAILED'};
+    // GitHub verification failures add the producer's fixed sub-location, read
+    // by error identity and re-checked literal by literal; nothing else.
+    const d=message==='FEE_REPORT_RECOVERY_METADATA'?recoveryMetadataDiagnostic(error):null;
+    return {reasonCode:message,...(d&&RECOVERY_METADATA_STAGES.includes(d.stage)&&RECOVERY_METADATA_REQUESTS.includes(d.request)&&RECOVERY_METADATA_CATEGORIES.includes(d.category)
+      ?{metadataStage:d.stage,metadataRequest:d.request,metadataCategory:d.category}:{})};
   }
   if(!CODES.includes(own.code))return {reasonCode:'FEE_ENVELOPE_EVIDENCE_FAILED'};
   return {reasonCode:'FEE_ENVELOPE_EVIDENCE_'+own.code,...(ENVELOPE_STEPS.includes(own.step)?{failedStep:own.step}:{}),
@@ -316,7 +325,7 @@ const result=(status,extra={})=>Object.freeze({schema:'fee-console.ib-v3-envelop
   stabilityDecisionChanged:false,reportGenerated:false,publicationReady:false,...extra});
 
 // Dependency injection is for synthetic tests only; the executable pins them.
-export async function inspectEnvelopeEvidence({checkOnly=false,authorize,checkCheckout,read,cleanup,assertCurrent=()=>{}}={}){
+export async function inspectEnvelopeEvidence({checkOnly=false,authorize,checkCheckout,read,cleanup,assertCurrent=()=>{},transportRefusal=()=>null}={}){
   let admission,answer,error,cleanupFailed=false;
   try{
     assertCurrent();checkCheckout();admission=await authorize();assertCurrent();
@@ -337,7 +346,9 @@ export async function inspectEnvelopeEvidence({checkOnly=false,authorize,checkCh
     admission=null;
   }
   if(cleanupFailed)return result('incomplete',{reasonCode:'FEE_ENVELOPE_EVIDENCE_CLEANUP'});
-  return error?result('incomplete',envelopeEvidenceFailure(error)):answer;
+  if(!error)return answer;
+  let refusal=null;try{refusal=transportRefusal();}catch{}
+  return result('incomplete',{...envelopeEvidenceFailure(error),...(ENVELOPE_TRANSPORT_REFUSALS.includes(refusal)?{transportRefusal:refusal}:{})});
 }
 
 function readRegular(filename,max){
@@ -358,7 +369,7 @@ async function main(){
   validateEnvelopeEvidenceEvent({env:{...env},event,...options,execArgv:process.execArgv});
   const transport=envelopeEvidenceTransport();
   try{
-    const answer=await inspectEnvelopeEvidence({checkOnly:options.checkOnly,assertCurrent:transport.assertCurrent,
+    const answer=await inspectEnvelopeEvidence({checkOnly:options.checkOnly,assertCurrent:transport.assertCurrent,transportRefusal:transport.refusal,
       checkCheckout:()=>checkout(options.expectedMain),
       authorize:()=>authorizeEnvelopeEvidence({expectedMain:options.expectedMain,now:new Date(),currentRunId:env.GITHUB_RUN_ID,actionsToken:env.FEE_REPORT_ACTIONS_TOKEN,fetchImpl:transport.fetch}),
       read:hooks=>readEnvelopeEvidence({clientId:env.FEE_CLOUD_SHARESIGHT_CLIENT_ID,clientSecret:env.FEE_CLOUD_SHARESIGHT_CLIENT_SECRET,fetchImpl:transport.fetch,...hooks}),

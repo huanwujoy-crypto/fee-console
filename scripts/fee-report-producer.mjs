@@ -387,7 +387,15 @@ const CATALOG_EVIDENCE_DIAGNOSTIC_CONTRACT='ib-source-revision-20261106-diagnost
 // pinned to the real main 08bb15e. It reads only the IB v3 envelope, decides no
 // stability and has no writer; no diagnostic or recovery path accepts it and
 // its admission accepts none of theirs. Once is procedural only.
-const ENVELOPE_EVIDENCE_CONTRACT='ib-source-revision-20261106-envelope-evidence-v1';
+const ENVELOPE_EVIDENCE_V1_CONTRACT='ib-source-revision-20261106-envelope-evidence-v1';
+// The sub-located release: same purpose, window and 14-request limit, pinned to
+// the real main c64b41a (parent 08bb15e) and its own exact five-file manifest.
+// It is the only envelope release the admission accepts; the v1 binding stays
+// for history and is refused. It grants nothing until the owner's exact-head
+// approval, required checks, protected merge and a separately approved run.
+const ENVELOPE_EVIDENCE_CONTRACT='ib-source-revision-20261106-envelope-evidence-v2';
+const ENVELOPE_EVIDENCE_V2_FILES=Object.freeze(['docs/fee-source-revision.md','scripts/fee-report-producer.mjs','scripts/fee-report-producer.test.mjs',
+  'scripts/ib-v3-envelope-evidence.mjs','scripts/ib-v3-envelope-evidence.test.mjs'].map(path=>Object.freeze({path,status:'modified'})));
 const ENVELOPE_EVIDENCE_PURPOSE='read-only-envelope-evidence';
 const ENVELOPE_EVIDENCE_FILES=Object.freeze([
   ...['.github/workflows/fee-cloud-producer.yml','.github/workflows/scripts-check.yml','docs/fee-source-revision.md',
@@ -488,6 +496,10 @@ const SOURCE_STABILITY_DIAGNOSTIC_FILES=Object.freeze([
 // ordinary attempts nor grants a future target/version a retry.
 const RECOVERY_SCOPES=Object.freeze([
  Object.freeze({contractId:ENVELOPE_EVIDENCE_CONTRACT,purpose:ENVELOPE_EVIDENCE_PURPOSE,admissionModel:'envelope-evidence-v1',target:'2026-11-06',
+  baseSha:'c64b41a16ede36e1fadc2a57e231118a5921899a',repairBase:'c64b41a16ede36e1fadc2a57e231118a5921899a',
+  baseParents:Object.freeze(['08bb15e1f78ee067cfa8be96e1cfe14018410f0e']),fileManifest:ENVELOPE_EVIDENCE_V2_FILES,
+  uiBlob:'2bb9f66ac890ba87cec504ef72a5083c07670689'}),
+ Object.freeze({contractId:ENVELOPE_EVIDENCE_V1_CONTRACT,purpose:ENVELOPE_EVIDENCE_PURPOSE,admissionModel:'envelope-evidence-v1',target:'2026-11-06',
   baseSha:'08bb15e1f78ee067cfa8be96e1cfe14018410f0e',repairBase:'08bb15e1f78ee067cfa8be96e1cfe14018410f0e',
   baseParents:Object.freeze(['4d569f5c4aacbe4b75a760805de3ca1b5b3d5f6d']),fileManifest:ENVELOPE_EVIDENCE_FILES,
   uiBlob:'2bb9f66ac890ba87cec504ef72a5083c07670689'}),
@@ -672,10 +684,10 @@ async function reviewedRevisionHead(get,{expectedMain,commit,scope,signed}){
   // signed squash tree to the actual merged PR and its owner's precise comment.
   // Completeness is conservative: a full page is unknown, not permission.
   let associated;
-  try{associated=await get('commits/'+expectedMain+'/pulls?per_page=100');}catch{fail('RECOVERY_METADATA');}
+  try{associated=await get('commits/'+expectedMain+'/pulls?per_page=100');}catch(error){metadataFrom('RELEASE_PR_ASSOCIATION',error);}
   if(!Array.isArray(associated)||associated.length!==1||!Number.isSafeInteger(associated[0]?.number)||associated[0].number<=0)fail('RECOVERY_RELEASE');
   const number=associated[0].number;let pr,comments;
-  try{[pr,comments]=await Promise.all([get('pulls/'+number),get('issues/'+number+'/comments?per_page=100')]);}catch{fail('RECOVERY_METADATA');}
+  try{[pr,comments]=await Promise.all([get('pulls/'+number),get('issues/'+number+'/comments?per_page=100')]);}catch(error){metadataFrom('RELEASE_PR_COMMENTS',error);}
   const repo='huanwujoy-crypto/fee-console',head=pr.head?.sha,merged=Date.parse(pr.merged_at);
   if(pr.number!==number||pr.state!=='closed'||pr.merged!==true||pr.draft!==false||pr.merge_commit_sha!==expectedMain
       ||pr.user?.id!==RECOVERY_OWNER||pr.user?.login!=='huanwujoy-crypto'||pr.base?.ref!=='main'||pr.base?.repo?.full_name!==repo
@@ -687,15 +699,56 @@ async function reviewedRevisionHead(get,{expectedMain,commit,scope,signed}){
     &&Number.isFinite(Date.parse(c.created_at))&&Number.isFinite(Date.parse(c.updated_at))
     &&Date.parse(c.created_at)<=Date.parse(c.updated_at)&&Date.parse(c.updated_at)<=merged);
   if(!approvals.length)fail('RECOVERY_RELEASE');
-  let reviewed;try{reviewed=await get('commits/'+head+'?per_page=1');}catch{fail('RECOVERY_METADATA');}
+  let reviewed;try{reviewed=await get('commits/'+head+'?per_page=1');}catch(error){metadataFrom('RELEASE_REVIEWED_HEAD',error);}
   if(reviewed.sha!==head||reviewed.parents?.length!==1||reviewed.parents[0].sha!==scope.repairBase
       ||!signed(reviewed)||reviewed.commit?.tree?.sha!==commit.commit.tree.sha)fail('RECOVERY_RELEASE');
   const chosen=[...approvals].sort((a,b)=>a.id-b.id)[0];
   return {approvedHead:head,approvedTree:commit.commit.tree.sha,approvedPullRequest:number,ownerApprovalCommentId:chosen.id,
     ownerApprovalCommentSha256:hash({id:chosen.id,user:chosen.user,body:chosen.body,created_at:chosen.created_at,updated_at:chosen.updated_at,issue_url:chosen.issue_url})};
 }
+// Fixed GitHub-verification sub-location for RECOVERY_METADATA, carried by
+// error identity only: the message and every existing code stay unchanged. A
+// stage names one call site. For a concurrent batch it names the request whose
+// rejection settled first, not the only request sent: siblings may have been
+// sent, succeeded or failed later. HTTP statuses map to fixed classes; nothing
+// from a URL, query, header, token, body, stack or exception text is retained.
+export const RECOVERY_METADATA_STAGES=Object.freeze(['RELEASE_SETUP','RELEASE_MAIN_COMMIT','RELEASE_TOKEN','RELEASE_BASE_COMPARE_TREE',
+  'RELEASE_PR_ASSOCIATION','RELEASE_PR_COMMENTS','RELEASE_REVIEWED_HEAD','RELEASE_MAIN_RECHECK','REFRESH_RECORD','REFRESH_MAIN_COMMENT',
+  'CURRENT_RUN','ADMISSION_RECHECK','UNKNOWN']);
+export const RECOVERY_METADATA_REQUESTS=Object.freeze(['NONE','MAIN_REF','COMMIT','COMPARE','TREE','PR_ASSOCIATION','PR','PR_COMMENTS','COMMENT','RUN','OTHER']);
+export const RECOVERY_METADATA_CATEGORIES=Object.freeze(['TOKEN_FORMAT','TOKEN_MISSING','ANONYMOUS_LIMIT','RECORD','FETCH_REJECTED','STREAM_FAILED',
+  'TIMEOUT','ABORTED','RESPONSE_URL','HTTP_3XX','HTTP_401','HTTP_403','HTTP_404','HTTP_429','HTTP_4XX','HTTP_5XX','HTTP_OTHER',
+  'SIZE','BODY','TYPE','JSON','CONFIG','UNKNOWN']);
+const metadataRequestDiagnostics=new WeakMap(),metadataDiagnostics=new WeakMap();
+export const recoveryMetadataDiagnostic=error=>error&&typeof error==='object'?metadataDiagnostics.get(error)||null:null;
+const failMetadata=(stage,request='NONE',category='UNKNOWN')=>{
+  const error=Error('FEE_REPORT_RECOVERY_METADATA');
+  metadataDiagnostics.set(error,Object.freeze({stage,request,category}));throw error;
+};
+// The caught GET failure keeps its fixed request class and category; the call
+// site supplies the stage. Anything unattributed is UNKNOWN, never a guess.
+const metadataFrom=(stage,error)=>{
+  const own=recoveryMetadataDiagnostic(error),request=error&&typeof error==='object'?metadataRequestDiagnostics.get(error):undefined;
+  failMetadata(stage,own?.request||request?.request||'NONE',own?.category||request?.category||'UNKNOWN');
+};
+const metadataRequestClass=p=>p==='git/ref/heads/main'?'MAIN_REF':/^commits\/[a-f0-9]{40}\/pulls\?/.test(p)?'PR_ASSOCIATION'
+  :/^commits\/[a-f0-9]{40}\?/.test(p)?'COMMIT':p.startsWith('compare/')?'COMPARE':p.startsWith('git/trees/')?'TREE'
+  :/^pulls\/\d+$/.test(p)?'PR':/^issues\/\d+\/comments\?/.test(p)?'PR_COMMENTS':/^issues\/comments\/\d+$/.test(p)?'COMMENT'
+  :/^actions\/runs\/\d+$/.test(p)?'RUN':'OTHER';
+function metadataCategory(error,status,rejected){
+  let code;try{if(error instanceof BoundedJsonError)code=Object.getOwnPropertyDescriptor(error,'code')?.value;}catch{}
+  if(code==='HTTP'){
+    if(!Number.isInteger(status))return 'HTTP_OTHER';
+    if(status===200)return 'RESPONSE_URL';
+    if(status>=300&&status<400)return 'HTTP_3XX';
+    if([401,403,404,429].includes(status))return 'HTTP_'+status;
+    return status>=400&&status<500?'HTTP_4XX':status>=500&&status<600?'HTTP_5XX':'HTTP_OTHER';
+  }
+  if(code==='NETWORK')return rejected?'FETCH_REJECTED':'STREAM_FAILED';
+  return ['TIMEOUT','ABORTED','SIZE','BODY','TYPE','JSON','CONFIG'].includes(code)?code:'UNKNOWN';
+}
 function recoveryMetadataGet(fetchImpl,actionsToken){
-  if(actionsToken!==undefined&&(typeof actionsToken!=='string'||actionsToken.length<20||actionsToken.length>4096||/\s/.test(actionsToken)))fail('RECOVERY_METADATA');
+  if(actionsToken!==undefined&&(typeof actionsToken!=='string'||actionsToken.length<20||actionsToken.length>4096||/\s/.test(actionsToken)))failMetadata('RELEASE_SETUP','NONE','TOKEN_FORMAT');
   const root='https://api.github.com/repos/huanwujoy-crypto/fee-console/';
   const counts={authenticated:0,anonymous:0};
   // Existing Actions permissions cover commits/trees/main/actions. Public PR
@@ -704,9 +757,20 @@ function recoveryMetadataGet(fetchImpl,actionsToken){
   const get=p=>{
     const publicReview=/^(?:commits\/[a-f0-9]{40}\/pulls\?per_page=100|pulls\/[1-9]\d*|issues\/(?:[1-9]\d*\/comments\?per_page=100|comments\/[1-9]\d*))$/.test(p);
     const authenticated=!publicReview&&actionsToken!==undefined;
-    if(authenticated)counts.authenticated++;else{if(counts.anonymous>=32)fail('RECOVERY_METADATA');counts.anonymous++;}
+    const request=metadataRequestClass(p);
+    if(authenticated)counts.authenticated++;else{if(counts.anonymous>=32)failMetadata('UNKNOWN',request,'ANONYMOUS_LIMIT');counts.anonymous++;}
     const headers={Accept:'application/vnd.github+json',...(authenticated?{Authorization:'Bearer '+actionsToken}:{})};
-    return boundedJson(fetchImpl,root+p,{method:'GET',headers},{timeoutMs:5000,maxBytes:512*1024});
+    // Observe only the numeric status and whether the transport rejected; the
+    // response itself and every request option pass through unchanged.
+    let status,rejected=false;
+    const observed=async(target,init)=>{
+      try{const response=await fetchImpl(target,init);status=typeof response?.status==='number'?response.status:undefined;return response;}
+      catch(error){rejected=true;throw error;}
+    };
+    return boundedJson(observed,root+p,{method:'GET',headers},{timeoutMs:5000,maxBytes:512*1024}).catch(error=>{
+      if(error&&typeof error==='object'&&!recoveryMetadataDiagnostic(error))metadataRequestDiagnostics.set(error,Object.freeze({request,category:metadataCategory(error,status,rejected)}));
+      throw error;
+    });
   };
   return {get,counts};
 }
@@ -714,17 +778,17 @@ export async function readReportRecoveryRelease(expectedMain,{fetchImpl=globalTh
   if(!/^[a-f0-9]{40}$/.test(expectedMain||''))fail('RECOVERY_RELEASE');
   if(targetDate!==null&&!recoveryTargetKnown(targetDate))fail('RECOVERY_RELEASE');
   const transport=recoveryMetadataGet(fetchImpl,actionsToken),get=transport.get;
-  let ref,commit;try{[ref,commit]=await Promise.all([get('git/ref/heads/main'),get('commits/'+expectedMain+'?per_page=1')]);}catch{fail('RECOVERY_METADATA');}
+  let ref,commit;try{[ref,commit]=await Promise.all([get('git/ref/heads/main'),get('commits/'+expectedMain+'?per_page=1')]);}catch(error){metadataFrom('RELEASE_MAIN_COMMIT',error);}
   const signed=c=>c.author?.id===RECOVERY_OWNER&&c.author?.login==='huanwujoy-crypto'
     &&['huanwujoy-crypto','web-flow'].includes(c.committer?.login)
     &&c.commit?.verification?.verified===true&&c.commit.verification.reason==='valid';
   const scope=uniqueRecoveryScope(RECOVERY_SCOPES.filter(s=>s.repairBase===commit.parents?.[0]?.sha&&(targetDate===null||s.target===targetDate)));
   if(ref.object?.sha!==expectedMain||commit.sha!==expectedMain||commit.parents?.length!==1
       ||!scope||!signed(commit)||!/^[a-f0-9]{40}$/.test(commit.commit?.tree?.sha||''))fail('RECOVERY_RELEASE');
-  if(scope.contractId&&actionsToken===undefined)fail('RECOVERY_METADATA');
+  if(scope.contractId&&actionsToken===undefined)failMetadata('RELEASE_TOKEN','NONE','TOKEN_MISSING');
   const manifest=recoveryFileManifest(scope);
   let base,comparison,tree;
-  try{[base,comparison,tree]=await Promise.all([get('commits/'+scope.repairBase+'?per_page=1'),get('compare/'+scope.repairBase+'...'+expectedMain+'?per_page=100'),get('git/trees/'+commit.commit.tree.sha+(scope.contractId?'?recursive=1':''))]);}catch{fail('RECOVERY_METADATA');}
+  try{[base,comparison,tree]=await Promise.all([get('commits/'+scope.repairBase+'?per_page=1'),get('compare/'+scope.repairBase+'...'+expectedMain+'?per_page=100'),get('git/trees/'+commit.commit.tree.sha+(scope.contractId?'?recursive=1':''))]);}catch(error){metadataFrom('RELEASE_BASE_COMPARE_TREE',error);}
   // No new UI version: the already deployed reviewed blob must remain exact.
   // Only this contract's reviewed files may differ from its pinned main.
   const files=comparison.files,indices=Array.isArray(tree.tree)?tree.tree.filter(f=>f.path==='index.html'):[];
@@ -741,7 +805,7 @@ export async function readReportRecoveryRelease(expectedMain,{fetchImpl=globalTh
     reviewed=await reviewedRevisionHead(get,{expectedMain,commit,scope,signed});
     // Re-read main after PR/approval IO. Approval or tree hashes are bindings,
     // never a substitute for the caller's separate permission to execute.
-    let current;try{current=await get('git/ref/heads/main');}catch{fail('RECOVERY_METADATA');}
+    let current;try{current=await get('git/ref/heads/main');}catch(error){metadataFrom('RELEASE_MAIN_RECHECK',error);}
     if(current.object?.sha!==expectedMain)fail('RECOVERY_RELEASE');
   }
   const result=Object.freeze({mainSha:expectedMain,parent:scope.repairBase,baseSha:scope.baseSha,repairBaseSha:scope.repairBase,uiBlob:scope.uiBlob,signatureVerified:true,
@@ -750,9 +814,9 @@ export async function readReportRecoveryRelease(expectedMain,{fetchImpl=globalTh
 }
 async function refreshHistoricalRelease(release){
   const record=recoveryReleaseRecords.get(release);
-  if(!record?.scope.contractId||typeof record.get!=='function'||record.snapshot!==hash(release))fail('RECOVERY_METADATA');
+  if(!record?.scope.contractId||typeof record.get!=='function'||record.snapshot!==hash(release))failMetadata('REFRESH_RECORD','NONE','RECORD');
   let main,comment;
-  try{[main,comment]=await Promise.all([record.get('git/ref/heads/main'),record.get('issues/comments/'+release.ownerApprovalCommentId)]);}catch{fail('RECOVERY_METADATA');}
+  try{[main,comment]=await Promise.all([record.get('git/ref/heads/main'),record.get('issues/comments/'+release.ownerApprovalCommentId)]);}catch(error){metadataFrom('REFRESH_MAIN_COMMENT',error);}
   if(main.object?.sha!==release.mainSha)fail('RECOVERY_RELEASE');
   // Git commit/tree identities and the merged squash relation are immutable.
   // The mutable owner comment is still re-read on every current-context check;
@@ -792,7 +856,7 @@ export function validateReportRecoveryEvidence({plan,expectedMain,currentRunId,b
 export async function readCurrentSyncRun({currentRunId,actionsToken=process.env.FEE_REPORT_ACTIONS_TOKEN,fetchImpl=globalThis.fetch}={}){
   if(!Number.isSafeInteger(Number(currentRunId))||Number(currentRunId)<=0||!/^\d+$/.test(String(currentRunId))||!actionsToken)fail('RECOVERY_RUN');
   try{return await recoveryMetadataGet(fetchImpl,actionsToken).get('actions/runs/'+currentRunId);}
-  catch{fail('RECOVERY_METADATA');}
+  catch(error){metadataFrom('CURRENT_RUN',error);}
 }
 function currentSyncRunBinding(run,{currentRunId,expectedMain,now,diagnostic=false}){
   if(!Number.isFinite(now?.getTime())||!Number.isSafeInteger(Number(currentRunId))||Number(currentRunId)<=0
@@ -885,7 +949,11 @@ export async function authorizeEnvelopeEvidence({expectedMain,now=new Date(),cur
     try{if(await load(clock())!==executionSha256)fail('RECOVERY_CONSUMED');return bindings;}
     catch(error){close();const codes=['RECOVERY_SCOPE','RECOVERY_RELEASE','RECOVERY_METADATA','RECOVERY_RUN','RECOVERY_CONSUMED'];
       let message;try{message=Object.getOwnPropertyDescriptor(error,'message')?.value;}catch{}
-      fail(codes.find(c=>message==='FEE_REPORT_'+c)||'RECOVERY_METADATA');
+      const code=codes.find(c=>message==='FEE_REPORT_'+c)||'RECOVERY_METADATA';
+      // The fixed sub-location travels with the code; an unattributed failure
+      // of this recheck is labelled as such, never given a guessed request.
+      if(code==='RECOVERY_METADATA'){const own=recoveryMetadataDiagnostic(error);failMetadata(own?.stage||'ADMISSION_RECHECK',own?.request||'NONE',own?.category||'UNKNOWN');}
+      fail(code);
     }finally{checking=false;}
   },close});
   envelopeAdmissions.set(admission,record);return admission;
