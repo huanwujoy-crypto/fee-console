@@ -1648,10 +1648,11 @@ test('actual period CLI and workflow summary carry the scoped token and safe fai
 
 const syncRevisionContract='ib-source-revision-20261106-sync-v2',syncRevisionBase='50392c2fb5ec3b1b26e5515cdb0feebb48823d2d';
 const wireRevisionContract='ib-source-revision-20261106-sync-v3',wireRevisionBase='b218f264c53e914d6469ec9f43824f48ccb7af18';
+const metadataRevisionContract='ib-source-revision-20261106-sync-v4',metadataRevisionBase='ea6ce4dcc6784979a4e5bd526d2a13ac0282ae2e';
 function syncRevisionFixture(contractId=syncRevisionContract){
- const wire=contractId===wireRevisionContract,base=wire?wireRevisionBase:syncRevisionBase;
+ const metadata=contractId===metadataRevisionContract,wire=contractId===wireRevisionContract,base=metadata?metadataRevisionBase:wire?wireRevisionBase:syncRevisionBase;
  const f=sourceRevisionRecoveryFixture(),manifest=reportHistoricalRecoveryManifest({contractId});
- f.commit.parents=[{sha:base}];f.supportCommit.sha=base;f.supportCommit.parents=[{sha:wire?'4f98318c73d1727d323febdcc72b7d5fbfb77f01':revisionRecoveryBase}];
+ f.commit.parents=[{sha:base}];f.supportCommit.sha=base;f.supportCommit.parents=[{sha:metadata?'860387709b954fdfc97f040031791258b9fa5b15':wire?'4f98318c73d1727d323febdcc72b7d5fbfb77f01':revisionRecoveryBase}];
  f.comparison.base_commit.sha=f.comparison.merge_base_commit.sha=base;
  f.comparison.files=manifest.map(m=>({filename:m.path,status:m.status,sha:'b'.repeat(40)}));
  f.tree.tree=[f.tree.tree[0],...manifest.map(m=>({path:m.path,type:'blob',mode:'100644',sha:'b'.repeat(40)}))];
@@ -1676,7 +1677,44 @@ function syncRevisionReaders(f,trace=[]){
   readSourceAttempts:()=>assert.fail('sync admission may not count source attempts')};
 }
 const syncAdmission=(f,readers=syncRevisionReaders(f))=>authorizeReportRecovery({plan:f.plan,expectedMain:recoveryHead,currentRunId:recoveryId,now:revisionRecoveryNow,actionsToken:revisionActionsToken,...readers});
-for(const contractId of [syncRevisionContract,wireRevisionContract]){
+test('production sync-v4 has exactly six reviewed files and a distinct purpose-free release binding',async()=>{
+ const expected=['scripts/fee-report-producer.mjs','scripts/fee-report-producer.test.mjs',
+  'scripts/fee-source-revision-runtime.mjs','scripts/fee-source-revision-runtime.test.mjs',
+  'scripts/fee-sync-revision-artifacts.mjs','scripts/fee-sync-revision-artifacts.test.mjs'];
+ assert.deepEqual(reportHistoricalRecoveryManifest({contractId:metadataRevisionContract}),expected.map(path=>({path,status:'modified'})));
+ const f=syncRevisionFixture(metadataRevisionContract),admission=await syncAdmission(f),binding=readHistoricalRevisionAdmission(admission);
+ assert.equal(binding.repairBaseSha,metadataRevisionBase);assert.equal(Object.hasOwn(binding,'purpose'),false);
+ assert.equal(isHistoricalRevisionDiagnosticAdmission(admission),false);assert.equal(isEnvelopeEvidenceAdmission(admission),false);
+ assert.equal(reportHistoricalRecoveryManifest({contractId:wireRevisionContract}).length,10);
+ assert.equal(reportHistoricalRecoveryManifest({contractId:rootMetadataDiagnosticContract}).length,6);
+ admission.close();
+});
+test('production sync-v4 rejects wrong base, owner, head, UI and duplicate or changed manifest evidence',async()=>{
+ for(const change of [
+  f=>f.commit.parents[0].sha='f'.repeat(40),f=>f.commit.author.id=1,f=>f.supportCommit.commit.verification.verified=false,
+  f=>f.reviewedCommit.parents[0].sha='860387709b954fdfc97f040031791258b9fa5b15',f=>f.pr.head.sha='f'.repeat(40),
+  f=>f.tree.tree[0].sha='f'.repeat(40),f=>f.tree.tree.push({...f.tree.tree[0]}),f=>f.tree.truncated=true,
+  f=>f.comparison.files[1]={...f.comparison.files[0]},f=>f.comparison.files[0].sha='f'.repeat(40),
+  f=>f.comments[0].body='/approve-xuan-ib-maintenance '+'f'.repeat(40),f=>f.comments[0].body='prefix\n'+f.comments[0].body,
+  f=>f.ref.object.sha=metadataRevisionBase,
+ ]){
+  const f=syncRevisionFixture(metadataRevisionContract);change(f);
+  await assert.rejects(syncAdmission(f,{...syncRevisionReaders(f),readCurrentRun:()=>assert.fail('invalid release must stop before run reads')}),/RECOVERY_/);
+ }
+});
+test('production sync-v4 keeps pending, already-published and original UTC freshness boundaries',async()=>{
+ for(const change of [f=>f.publication.pending=true,f=>f.publication.health.targetDate='2026-11-06',f=>f.publication.data=Buffer.from('changed')]){
+  const f=syncRevisionFixture(metadataRevisionContract);change(f);await assert.rejects(syncAdmission(f),/RECOVERY_SCOPE/);
+ }
+ const f=syncRevisionFixture(metadataRevisionContract);f.clock=new Date('2026-11-10T23:59:59.999Z');
+ const admission=await authorizeReportRecovery({plan:f.plan,expectedMain:recoveryHead,currentRunId:recoveryId,
+  now:f.clock,actionsToken:revisionActionsToken,...syncRevisionReaders(f)});
+ f.clock=new Date('2026-11-11T00:00:00.000Z');await assert.rejects(admission.checkCurrent(),/RECOVERY_SCOPE/);
+ assert.equal(isHistoricalRevisionAdmission(admission),false);
+ await assert.rejects(authorizeReportRecovery({plan:f.plan,expectedMain:recoveryHead,currentRunId:recoveryId,
+  now:f.clock,actionsToken:revisionActionsToken,...syncRevisionReaders(f)}),/RECOVERY_SCOPE/);
+});
+for(const contractId of [syncRevisionContract,wireRevisionContract,metadataRevisionContract]){
 test(contractId+' sync revision binds real owner release, target, current execution and publication without inventing consumption',async()=>{
  const f=syncRevisionFixture(contractId),trace=[],admission=await syncAdmission(f,syncRevisionReaders(f,trace));
  const binding=readHistoricalRevisionAdmission(admission);assert.equal(binding.contractId,contractId);
@@ -2043,7 +2081,7 @@ test(contractId+' production entry refuses diagnostic capability before files, e
 });
 
 test(contractId+' diagnostic admission rejects old production releases, copied releases and changed exact manifests before run reads',async()=>{
- for(const fixture of [syncRevisionFixture,()=>syncRevisionFixture(wireRevisionContract),sourceRevisionRecoveryFixture]){
+ for(const fixture of [syncRevisionFixture,()=>syncRevisionFixture(wireRevisionContract),()=>syncRevisionFixture(metadataRevisionContract),sourceRevisionRecoveryFixture]){
   const f=fixture();await assert.rejects(diagnosticAdmission(f,{...syncRevisionReaders(f),readCurrentRun:()=>assert.fail('wrong release must stop first')}),/RECOVERY_SCOPE/);
  }
  const f=diagnosticRevisionFixture(contractId),readers=syncRevisionReaders(f),real=readers.readRecoveryRelease;
@@ -2226,6 +2264,7 @@ test('envelope release and the diagnostic, recovery and budget paths refuse each
   const d=diagnosticRevisionFixture(contractId);await assert.rejects(envelopeAdmission(d),/RECOVERY_SCOPE/);
  }
  await assert.rejects(envelopeAdmission(syncRevisionFixture()),/RECOVERY_SCOPE/);
+ await assert.rejects(envelopeAdmission(syncRevisionFixture(metadataRevisionContract)),/RECOVERY_SCOPE/);
  await assert.rejects(authorizeEnvelopeEvidence({expectedMain:recoveryHead,currentRunId:recoveryId,now:revisionRecoveryNow,actionsToken:revisionActionsToken,
   readRecoveryRelease:async()=>({mainSha:recoveryHead,contractId:envelopeContract,purpose:'read-only-envelope-evidence',targetDate:'2026-11-06'}),
   readCurrentRun:()=>assert.fail('a forged release must stop first')}),/RECOVERY_SCOPE/);
