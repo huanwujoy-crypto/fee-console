@@ -366,7 +366,17 @@ const WIRE_REVISION_FILES=Object.freeze([
   'scripts/fee-sync-capture.test.mjs','scripts/fee-sync-revision-artifacts.mjs','scripts/fee-sync-revision-artifacts.test.mjs',
   'scripts/ib-manager-source.mjs','scripts/ib-manager-source.test.mjs',
 ].map(path=>Object.freeze({path,status:'modified'})));
-const isProductionSyncRevision=contractId=>contractId===SYNC_REVISION_CONTRACT||contractId===WIRE_REVISION_CONTRACT;
+// Production binding after the lexical v4 repair and diagnostic v8 release.
+// Same target, historical artifacts and execution-bound sync model. This is
+// neither diagnostic nor envelope admission and resets no prior consumption.
+// Exact-head approval, protected merge and separate execution approval remain.
+const METADATA_REVISION_CONTRACT='ib-source-revision-20261106-sync-v4';
+const METADATA_REVISION_FILES=Object.freeze([
+  'scripts/fee-report-producer.mjs','scripts/fee-report-producer.test.mjs',
+  'scripts/fee-source-revision-runtime.mjs','scripts/fee-source-revision-runtime.test.mjs',
+  'scripts/fee-sync-revision-artifacts.mjs','scripts/fee-sync-revision-artifacts.test.mjs',
+].map(path=>Object.freeze({path,status:'modified'})));
+const isProductionSyncRevision=contractId=>contractId===SYNC_REVISION_CONTRACT||contractId===WIRE_REVISION_CONTRACT||contractId===METADATA_REVISION_CONTRACT;
 const DIAGNOSTIC_REVISION_CONTRACT='ib-source-revision-20261106-diagnostic-v1';
 const ECONOMIC_DIAGNOSTIC_CONTRACT='ib-source-revision-20261106-diagnostic-v2';
 const CASH_DIAGNOSTIC_CONTRACT='ib-source-revision-20261106-diagnostic-v3';
@@ -505,6 +515,10 @@ const SOURCE_STABILITY_DIAGNOSTIC_FILES=Object.freeze([
 // admission belongs only to its signed immediate successor; it neither resets
 // ordinary attempts nor grants a future target/version a retry.
 const RECOVERY_SCOPES=Object.freeze([
+ Object.freeze({contractId:METADATA_REVISION_CONTRACT,admissionModel:'sync-cycle-v1',target:'2026-11-06',
+  baseSha:'ea6ce4dcc6784979a4e5bd526d2a13ac0282ae2e',repairBase:'ea6ce4dcc6784979a4e5bd526d2a13ac0282ae2e',
+  baseParents:Object.freeze(['860387709b954fdfc97f040031791258b9fa5b15']),fileManifest:METADATA_REVISION_FILES,
+  uiBlob:'2bb9f66ac890ba87cec504ef72a5083c07670689'}),
  Object.freeze({contractId:ROOT_METADATA_DIAGNOSTIC_CONTRACT,purpose:DIAGNOSTIC_REVISION_PURPOSE,admissionModel:'sync-cycle-v1',target:'2026-11-06',
   baseSha:'860387709b954fdfc97f040031791258b9fa5b15',repairBase:'860387709b954fdfc97f040031791258b9fa5b15',
   baseParents:Object.freeze(['97101f6f75f7e5295acd232f7d69c32594ec4044']),fileManifest:ROOT_METADATA_DIAGNOSTIC_FILES,
