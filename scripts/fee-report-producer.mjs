@@ -41,12 +41,12 @@ function reviewedCloudOnceManual(env,readEvent){
       ||env.GITHUB_RUN_ATTEMPT!=='1'||env.GITHUB_SHA!==env.FEE_REPORT_ONCE_MAIN)return false;
     const event=readEvent?readEvent():(()=>{const p=env.GITHUB_EVENT_PATH;if(!p||fs.statSync(p).size>256*1024)throw Error();return JSON.parse(fs.readFileSync(p,'utf8'));})();
     const i=event?.inputs,off=v=>v===undefined||v===false||v==='false',blank=v=>v===undefined||v==='';
-    const keys=['ib_diagnostic_once','ib_diagnostic_main','run_reviewed_once','report_kind','report_target','report_markets','manual_sync_completed_for','confirmed_main','recovery_main','ratio_main','ratio_plan','source_plan_check_only','source_acceptance_once','source_from','source_target','source_main'];
+    const keys=['ib_envelope_once','ib_envelope_main','ib_diagnostic_once','ib_diagnostic_main','run_reviewed_once','report_kind','report_target','report_markets','manual_sync_completed_for','confirmed_main','recovery_main','ratio_main','ratio_plan','source_plan_check_only','source_acceptance_once','source_from','source_target','source_main'];
     return event.sender?.id===RECOVERY_OWNER&&event.repository?.full_name===ONCE_REPO&&i&&!Array.isArray(i)
       &&Object.keys(i).every(k=>keys.includes(k))&&[true,'true'].includes(i.run_reviewed_once)
       &&i.report_kind==='daily'&&i.report_target===CLOUD_ONCE.target&&i.report_markets==='NASDAQ,NYSE'
       &&['manual_sync_completed_for','confirmed_main','recovery_main','ratio_main','ratio_plan','source_from','source_target','source_main'].every(k=>blank(i[k]))
-      &&off(i.source_plan_check_only)&&off(i.source_acceptance_once)&&off(i.ib_diagnostic_once)&&blank(i.ib_diagnostic_main);
+      &&off(i.source_plan_check_only)&&off(i.source_acceptance_once)&&off(i.ib_diagnostic_once)&&blank(i.ib_diagnostic_main)&&off(i.ib_envelope_once)&&blank(i.ib_envelope_main);
   }catch{return false;}
 }
 export function cloudOnceWindow({main,head,event,attempt,reviewedManual=false,now=new Date()}={}){
@@ -383,6 +383,18 @@ const RECORD_ORDER_DIAGNOSTIC_CONTRACT='ib-source-revision-20261106-diagnostic-v
 // pinned to the real main 4d569f5. Not the consumed v6 admission; grants nothing
 // until owner approval, merge and an owner-started run. Once is procedural only.
 const CATALOG_EVIDENCE_DIAGNOSTIC_CONTRACT='ib-source-revision-20261106-diagnostic-v7';
+// Response-envelope evidence release: same 2026-11-06 window, its own purpose,
+// pinned to the real main 08bb15e. It reads only the IB v3 envelope, decides no
+// stability and has no writer; no diagnostic or recovery path accepts it and
+// its admission accepts none of theirs. Once is procedural only.
+const ENVELOPE_EVIDENCE_CONTRACT='ib-source-revision-20261106-envelope-evidence-v1';
+const ENVELOPE_EVIDENCE_PURPOSE='read-only-envelope-evidence';
+const ENVELOPE_EVIDENCE_FILES=Object.freeze([
+  ...['.github/workflows/fee-cloud-producer.yml','.github/workflows/scripts-check.yml','docs/fee-source-revision.md',
+    'scripts/fee-ratio-cloud-runtime.mjs','scripts/fee-report-producer.mjs','scripts/fee-report-producer.test.mjs',
+    'scripts/fee-source-revision-diagnostic.mjs','security/approval-tiers.json'].map(path=>Object.freeze({path,status:'modified'})),
+  ...['scripts/ib-v3-envelope-evidence.mjs','scripts/ib-v3-envelope-evidence.test.mjs'].map(path=>Object.freeze({path,status:'added'})),
+]);
 const isDiagnosticRevision=contractId=>contractId===DIAGNOSTIC_REVISION_CONTRACT||contractId===ECONOMIC_DIAGNOSTIC_CONTRACT||contractId===CASH_DIAGNOSTIC_CONTRACT||contractId===INCOME_BOUNDARY_DIAGNOSTIC_CONTRACT||contractId===SOURCE_STABILITY_DIAGNOSTIC_CONTRACT||contractId===RECORD_ORDER_DIAGNOSTIC_CONTRACT||contractId===CATALOG_EVIDENCE_DIAGNOSTIC_CONTRACT;
 const DIAGNOSTIC_REVISION_PURPOSE='read-only-diagnostic';
 const DIAGNOSTIC_REVISION_FILES=Object.freeze([
@@ -475,6 +487,10 @@ const SOURCE_STABILITY_DIAGNOSTIC_FILES=Object.freeze([
 // admission belongs only to its signed immediate successor; it neither resets
 // ordinary attempts nor grants a future target/version a retry.
 const RECOVERY_SCOPES=Object.freeze([
+ Object.freeze({contractId:ENVELOPE_EVIDENCE_CONTRACT,purpose:ENVELOPE_EVIDENCE_PURPOSE,admissionModel:'envelope-evidence-v1',target:'2026-11-06',
+  baseSha:'08bb15e1f78ee067cfa8be96e1cfe14018410f0e',repairBase:'08bb15e1f78ee067cfa8be96e1cfe14018410f0e',
+  baseParents:Object.freeze(['4d569f5c4aacbe4b75a760805de3ca1b5b3d5f6d']),fileManifest:ENVELOPE_EVIDENCE_FILES,
+  uiBlob:'2bb9f66ac890ba87cec504ef72a5083c07670689'}),
  Object.freeze({contractId:CATALOG_EVIDENCE_DIAGNOSTIC_CONTRACT,purpose:DIAGNOSTIC_REVISION_PURPOSE,admissionModel:'sync-cycle-v1',target:'2026-11-06',
   baseSha:'4d569f5c4aacbe4b75a760805de3ca1b5b3d5f6d',repairBase:'4d569f5c4aacbe4b75a760805de3ca1b5b3d5f6d',
   baseParents:Object.freeze(['05731b04e8a0728a38ae773ea46194879c20fcc4']),fileManifest:CATALOG_EVIDENCE_DIAGNOSTIC_FILES,
@@ -579,7 +595,7 @@ export async function readPeriodSourceAttempts({plan,now,currentRunId=null,recov
   if(assertAdmissionActive!==null&&typeof assertAdmissionActive!=='function')fail('RECOVERY_METADATA');
   if(recoveryMain!==null&&!/^[a-f0-9]{40}$/.test(recoveryMain))fail('RECOVERY_METADATA');
   const scope=recoveryScope(plan.accountingThrough,recoveryRelease);
-  if(scope?.admissionModel==='sync-cycle-v1')fail('RECOVERY_SCOPE');
+  if(scope?.admissionModel==='sync-cycle-v1'||scope?.purpose!==undefined)fail('RECOVERY_SCOPE');
   if(recoveryRelease!==null&&(recoveryMain===null||recoveryRelease.mainSha!==recoveryMain||!scope))fail('RECOVERY_METADATA');
   const root='https://api.github.com/repos/huanwujoy-crypto/fee-console/actions',from=new Date(sourceAttemptWindowStart(plan)).toISOString();
   const query=new URLSearchParams({branch:'main',created:from+'..'+now.toISOString(),per_page:'100'});
@@ -751,7 +767,7 @@ async function refreshHistoricalRelease(release){
 }
 export function validateReportRecoveryEvidence({plan,expectedMain,currentRunId,budget,release}={}){
   const e=budget?.recoveryEvidence,c=e?.currentRun,scope=recoveryScope(plan?.accountingThrough,release);
-  if(scope?.admissionModel==='sync-cycle-v1')fail('RECOVERY_SCOPE');
+  if(scope?.admissionModel==='sync-cycle-v1'||scope?.purpose!==undefined)fail('RECOVERY_SCOPE');
   if(!validateReportPlan(plan)||!isReviewedDailyPlan(plan)||!scope||plan.kind!=='daily'||plan.markets.join(',')!=='NASDAQ,NYSE'
       ||!/^[a-f0-9]{40}$/.test(expectedMain||'')||expectedMain===scope.baseSha||release?.mainSha!==expectedMain||release.baseSha!==scope.baseSha
       ||release.repairBaseSha!==scope.repairBase||release.parent!==scope.repairBase||expectedMain===scope.repairBase||release.uiBlob!==scope.uiBlob||release.signatureVerified!==true)fail('RECOVERY_SCOPE');
@@ -840,10 +856,44 @@ export async function authorizeHistoricalRevisionDiagnostic({plan,expectedMain,n
   if(!isDiagnosticRevision(release?.contractId)||release.purpose!==DIAGNOSTIC_REVISION_PURPOSE)fail('RECOVERY_SCOPE');
   return authorizeSyncRevision({release,plan,expectedMain,now,currentRunId,actionsToken,readCurrentRun,readState,clock,diagnostic:true});
 }
+// Separate read-only capability for the envelope evidence entry only. It binds
+// the exact signed release, the owner's exact-head approval comment and the
+// current owner run; it is never a diagnostic, recovery or production admission.
+const envelopeAdmissions=new WeakMap();
+export const isEnvelopeEvidenceAdmission=value=>envelopeAdmissions.get(value)?.active===true;
+export async function authorizeEnvelopeEvidence({expectedMain,now=new Date(),currentRunId=process.env.GITHUB_RUN_ID,actionsToken=process.env.FEE_REPORT_ACTIONS_TOKEN,fetchImpl=globalThis.fetch,
+  readRecoveryRelease=(sha,args)=>readReportRecoveryRelease(sha,{...args,fetchImpl}),readCurrentRun=args=>readCurrentSyncRun({...args,fetchImpl}),clock=()=>new Date()}={}){
+  const release=await readRecoveryRelease(expectedMain,{targetDate:'2026-11-06',actionsToken}),rr=recoveryReleaseRecords.get(release);
+  if(!rr||rr.snapshot!==hash(release)||rr.scope.contractId!==ENVELOPE_EVIDENCE_CONTRACT||rr.scope.purpose!==ENVELOPE_EVIDENCE_PURPOSE
+      ||release.contractId!==ENVELOPE_EVIDENCE_CONTRACT||release.purpose!==ENVELOPE_EVIDENCE_PURPOSE||release.mainSha!==expectedMain
+      ||release.targetDate!=='2026-11-06'||release.repairBaseSha!==rr.scope.repairBase)fail('RECOVERY_SCOPE');
+  let active=true,checking=false,token=actionsToken;
+  const load=async at=>{
+    if(!active||typeof rr.get!=='function')fail('RECOVERY_CONSUMED');
+    await refreshHistoricalRelease(release);
+    const run=currentSyncRunBinding(await readCurrentRun({currentRunId,actionsToken:token}),{currentRunId,expectedMain,now:at,diagnostic:true});
+    if(!active)fail('RECOVERY_CONSUMED');
+    return hash({schema:'fee-console.ib-envelope-evidence-execution.v1',release,run});
+  };
+  const executionSha256=await load(now),bindings=Object.freeze({contractId:release.contractId,purpose:ENVELOPE_EVIDENCE_PURPOSE,
+    targetDate:release.targetDate,mainSha:expectedMain,repairBaseSha:release.repairBaseSha,approvedHead:release.approvedHead,
+    approvedTree:release.approvedTree,currentRunId:Number(currentRunId),executionSha256});
+  const record={bindings,active:true};
+  const close=()=>{active=false;record.active=false;token=null;rr.get=null;};
+  const admission=Object.freeze({async checkCurrent(){
+    if(!active||checking)fail('RECOVERY_CONSUMED');checking=true;
+    try{if(await load(clock())!==executionSha256)fail('RECOVERY_CONSUMED');return bindings;}
+    catch(error){close();const codes=['RECOVERY_SCOPE','RECOVERY_RELEASE','RECOVERY_METADATA','RECOVERY_RUN','RECOVERY_CONSUMED'];
+      let message;try{message=Object.getOwnPropertyDescriptor(error,'message')?.value;}catch{}
+      fail(codes.find(c=>message==='FEE_REPORT_'+c)||'RECOVERY_METADATA');
+    }finally{checking=false;}
+  },close});
+  envelopeAdmissions.set(admission,record);return admission;
+}
 export async function authorizeReportRecovery({plan,expectedMain,now=new Date(),currentRunId=process.env.GITHUB_RUN_ID,readSourceAttempts=readPeriodSourceAttempts,readRecoveryRelease=readReportRecoveryRelease,actionsToken=process.env.FEE_REPORT_ACTIONS_TOKEN,readCurrentRun=readCurrentSyncRun,readState,clock=()=>new Date()}={}){
   let cachedRelease=null,token=actionsToken;
   const initialRelease=await readRecoveryRelease(expectedMain,{targetDate:plan?.accountingThrough,actionsToken:token});
-  if(isDiagnosticRevision(initialRelease?.contractId)||initialRelease?.purpose===DIAGNOSTIC_REVISION_PURPOSE)fail('RECOVERY_SCOPE');
+  if(isDiagnosticRevision(initialRelease?.contractId)||initialRelease?.purpose!==undefined)fail('RECOVERY_SCOPE');
   if(isProductionSyncRevision(initialRelease.contractId))return authorizeSyncRevision({release:initialRelease,plan,expectedMain,now,currentRunId,actionsToken:token,readCurrentRun,readState,clock});
   let initialPending=true;
   const load=async(at,reuseImmutable=false,assertAdmissionActive=null)=>{
@@ -1000,8 +1050,8 @@ export function scheduledDailyContext(args,{env=process.env,now=new Date(),readE
       if(env.GITHUB_EVENT_NAME!=='workflow_dispatch'||env.GITHUB_ACTOR_ID!==String(RECOVERY_OWNER)||env.FEE_REPORT_ONCE_MAIN)throw Error();
       const event=readEvent?readEvent():(()=>{const p=env.GITHUB_EVENT_PATH;if(!p||fs.statSync(p).size>256*1024)throw Error();return JSON.parse(fs.readFileSync(p,'utf8'));})();
       const i=event?.inputs,off=v=>v===undefined||v===false||v==='false',blank=v=>v===undefined||v==='';
-      const bools=['ib_diagnostic_once','run_reviewed_once','source_plan_check_only','source_acceptance_once'];
-      const strings=['ib_diagnostic_main','report_target','report_markets','manual_sync_completed_for','confirmed_main','recovery_main','ratio_main','ratio_plan','source_from','source_target','source_main'];
+      const bools=['ib_envelope_once','ib_diagnostic_once','run_reviewed_once','source_plan_check_only','source_acceptance_once'];
+      const strings=['ib_envelope_main','ib_diagnostic_main','report_target','report_markets','manual_sync_completed_for','confirmed_main','recovery_main','ratio_main','ratio_plan','source_from','source_target','source_main'];
       if(event.sender?.id!==RECOVERY_OWNER||event.repository?.full_name!==ONCE_REPO||!i||Array.isArray(i)
           ||i.report_kind!=='automatic-daily'||Object.keys(i).some(k=>!['report_kind',...bools,...strings].includes(k))
           ||!bools.every(k=>off(i[k]))||!strings.every(k=>blank(i[k])))throw Error();
@@ -1194,8 +1244,8 @@ export function reviewedMainConfirmation(args,{env=process.env,readEvent}={}){
     const event=readEvent?readEvent():(()=>{const p=env.GITHUB_EVENT_PATH;if(!p||fs.statSync(p).size>256*1024)throw Error();return JSON.parse(fs.readFileSync(p,'utf8'));})();
     const i=event?.inputs,off=v=>v===undefined||v===false||v==='false',blank=v=>v===undefined||v==='';
     if(value===undefined&&blank(i?.confirmed_main))return null;
-    const bools=['ib_diagnostic_once','source_plan_check_only','source_acceptance_once'];
-    const strings=['ib_diagnostic_main','report_markets','recovery_main','ratio_main','ratio_plan','source_from','source_target','source_main'];
+    const bools=['ib_envelope_once','ib_diagnostic_once','source_plan_check_only','source_acceptance_once'];
+    const strings=['ib_envelope_main','ib_diagnostic_main','report_markets','recovery_main','ratio_main','ratio_plan','source_from','source_target','source_main'];
     if(typeof value!=='string'||!ONCE_SHA.test(value)||env.GITHUB_SHA!==value
         ||env.GITHUB_ACTIONS!=='true'||env.GITHUB_EVENT_NAME!=='workflow_dispatch'||env.GITHUB_REF!=='refs/heads/main'
         ||env.GITHUB_REPOSITORY!==ONCE_REPO||env.GITHUB_ACTOR_ID!==String(RECOVERY_OWNER)||env.GITHUB_RUN_ATTEMPT!=='1'

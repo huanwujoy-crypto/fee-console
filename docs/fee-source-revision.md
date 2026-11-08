@@ -172,6 +172,62 @@ storage, and a transport reason the credential or GitHub status, each outside
 the diagnostic. Reproducing the historical failure needs a run under the same
 conditions, which this candidate does not perform.
 
+## IB v3 response-envelope evidence (`envelope-evidence-v1`)
+
+Contract `ib-source-revision-20261106-envelope-evidence-v1` is a separate
+read-only evidence entry, not a diagnostic, recovery or production admission
+and not a repair. It is pinned to the real main `08bb15e` (parent `4d569f5`,
+unchanged `index.html` blob) and to its own exact ten-file manifest: the
+modified `.github/workflows/fee-cloud-producer.yml`,
+`.github/workflows/scripts-check.yml`, `docs/fee-source-revision.md`,
+`scripts/fee-ratio-cloud-runtime.mjs`, `scripts/fee-report-producer.mjs`,
+`scripts/fee-report-producer.test.mjs`,
+`scripts/fee-source-revision-diagnostic.mjs` and `security/approval-tiers.json`,
+and the added `scripts/ib-v3-envelope-evidence.mjs` and its test. Its purpose is
+`read-only-envelope-evidence`: the diagnostic, recovery and period-budget paths
+refuse it, and its admission is never one of theirs.
+
+The dispatch fields `ib_envelope_once` and `ib_envelope_main` select only the
+`ib-envelope-evidence` job, under the reserved read-only title
+`IB diagnostic 2026-11-06`, so the period budget and the supervisor keep
+treating it as no production. Every other job excludes those fields, and every
+existing exhaustive dispatch-input check accepts them only while off and blank.
+`--check-plan` verifies the signed release, exact manifest and tree, the owner's
+exact-head approval comment and the current owner run before WIF. The run step
+receives only the existing Sharesight OAuth pair and `FEE_REPORT_ACTIONS_TOKEN`;
+`FEE_DATA_KEY`, the economic locator, publication or storage tokens are never
+given, and the WIF credential-file paths are blanked for that step. That does
+not narrow the existing `fee-cloud-producer` service account: its IAM scope is
+unchanged and is not claimed to be smaller.
+
+Two sequential rounds, each exactly: OAuth token; `GET /api/v2/portfolios.json`
+(only to resolve the single USD `IB-HK` id; never classified or emitted);
+the undated holdings catalog `?consolidated=false`; dated performance for
+2026-11-04, 2026-11-05 and 2026-11-06, one day each, with the reader's own
+query; trades `start_date=2026-11-05&end_date=2026-11-06`. That is the reader's
+own v3 order and query for checkpoint 2026-11-04 to target 2026-11-06; 14
+requests at most, no retry, redirect, pagination or route expansion, one
+deadline. The two rounds' bodies stay in memory only. The identity must be the
+same in both rounds. Any refusal stops the run with a fixed code and step.
+
+Each route is compared between its two rounds in a strict JSON tree that keeps
+member order, duplicates and number spelling. Output is fixed literals only:
+per route `bytes`, `structure`, `arrayKeying` (`ID`/`POSITION`) and preset
+categories (`ROOT`, `ROOT_API_TRANSACTION`, `..._ID`, `..._TIMESTAMP`,
+`..._OTHER`, `ROOT_LINKS`, `ROOT_LINKS_SELF`, `ROOT_LINKS_OTHER`, `ROOT_PAGING`,
+`ROOT_OTHER`, `BODY`, `BODY_ROWSET`, `BODY_API_TRANSACTION`, `BODY_LINKS`,
+`BODY_CATALOG_UNCONSUMED` and the `BODY_*` field groups ending in `BODY_OTHER`),
+each with JSON types and changes (`VALUE`, `TYPE`, `ADDED`, `REMOVED`, `ORDER`,
+`MEMBER_ORDER`, `DUPLICATE_MEMBER`). No value, id, key name, count, position,
+URL, hash or exception text is emitted. A `*_OTHER` category says that an
+unlisted member changed, not which one; that boundary is deliberate. The entry
+changes no stability rule and authorizes no exception: any later allowance is a
+separately reviewed change for explicit key paths only.
+
+"Once" is procedural here as well. The admission binds the exact main, approval
+comment, owner actor, event and `run_attempt == 1`; it cannot see another
+dispatch on the same main, and no run-history query, lock or store is added.
+
 ## One complete recovery batch
 
 The integration is limited to extending the current published source through
