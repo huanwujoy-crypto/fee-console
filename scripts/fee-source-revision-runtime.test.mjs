@@ -46,7 +46,7 @@ test('a serialized sync-cycle execution binding cannot replace the producer Weak
 });
 test('all read-only diagnostic contracts require genuine separate admissions and cannot authorize production by serialized flags',async t=>{
  const f=await fixture(t);let called=0;
- for(const contractId of ['ib-source-revision-20261106-diagnostic-v1','ib-source-revision-20261106-diagnostic-v2','ib-source-revision-20261106-diagnostic-v3','ib-source-revision-20261106-diagnostic-v4','ib-source-revision-20261106-diagnostic-v5','ib-source-revision-20261106-diagnostic-v6']){
+ for(const contractId of ['ib-source-revision-20261106-diagnostic-v1','ib-source-revision-20261106-diagnostic-v2','ib-source-revision-20261106-diagnostic-v3','ib-source-revision-20261106-diagnostic-v4','ib-source-revision-20261106-diagnostic-v5','ib-source-revision-20261106-diagnostic-v6','ib-source-revision-20261106-diagnostic-v7']){
   const binding={contractId,purpose:'read-only-diagnostic',targetDate:DATE,mainSha:'a'.repeat(40),repairBaseSha:'b'.repeat(40),
    approvedHead:'c'.repeat(40),approvedTree:'d'.repeat(40),currentRunId:90000000001,admissionModel:'sync-cycle-v1',executionSha256:'e'.repeat(64)};
   for(const admission of [binding,{...binding,checkCurrent(){called++;return binding;},close(){called++;}},new Proxy(binding,{get(){called++;throw Error('PRIVATE_CANARY');}})]){

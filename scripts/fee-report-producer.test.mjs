@@ -1785,10 +1785,12 @@ const sourceStabilityDiagnosticContract='ib-source-revision-20261106-diagnostic-
 const sourceStabilityDiagnosticBase='b72cd6895c5990e4bb644b26f181d9f78313ca72';
 const recordOrderDiagnosticContract='ib-source-revision-20261106-diagnostic-v6';
 const recordOrderDiagnosticBase='05731b04e8a0728a38ae773ea46194879c20fcc4';
+const catalogEvidenceDiagnosticContract='ib-source-revision-20261106-diagnostic-v7';
+const catalogEvidenceDiagnosticBase='4d569f5c4aacbe4b75a760805de3ca1b5b3d5f6d';
 function diagnosticRevisionFixture(contractId=diagnosticRevisionContract){
- const order=contractId===recordOrderDiagnosticContract,stability=contractId===sourceStabilityDiagnosticContract,boundary=contractId===incomeBoundaryDiagnosticContract,cash=contractId===cashDiagnosticContract,economic=contractId===economicDiagnosticContract,base=order?recordOrderDiagnosticBase:stability?sourceStabilityDiagnosticBase:boundary?incomeBoundaryDiagnosticBase:cash?cashDiagnosticBase:economic?economicDiagnosticBase:diagnosticRevisionBase;
+ const catalog=contractId===catalogEvidenceDiagnosticContract,order=contractId===recordOrderDiagnosticContract,stability=contractId===sourceStabilityDiagnosticContract,boundary=contractId===incomeBoundaryDiagnosticContract,cash=contractId===cashDiagnosticContract,economic=contractId===economicDiagnosticContract,base=catalog?catalogEvidenceDiagnosticBase:order?recordOrderDiagnosticBase:stability?sourceStabilityDiagnosticBase:boundary?incomeBoundaryDiagnosticBase:cash?cashDiagnosticBase:economic?economicDiagnosticBase:diagnosticRevisionBase;
  const f=syncRevisionFixture(),manifest=reportHistoricalRecoveryManifest({contractId});
- f.commit.parents=[{sha:base}];f.supportCommit.sha=base;f.supportCommit.parents=[{sha:order?sourceStabilityDiagnosticBase:stability?incomeBoundaryDiagnosticBase:boundary?cashDiagnosticBase:cash?economicDiagnosticBase:economic?wireRevisionBase:syncRevisionBase}];
+ f.commit.parents=[{sha:base}];f.supportCommit.sha=base;f.supportCommit.parents=[{sha:catalog?recordOrderDiagnosticBase:order?sourceStabilityDiagnosticBase:stability?incomeBoundaryDiagnosticBase:boundary?cashDiagnosticBase:cash?economicDiagnosticBase:economic?wireRevisionBase:syncRevisionBase}];
  f.comparison.base_commit.sha=f.comparison.merge_base_commit.sha=base;
  f.comparison.files=manifest.map(m=>({filename:m.path,status:m.status,sha:'b'.repeat(40)}));
  f.tree.tree=[f.tree.tree[0],...manifest.map(m=>({path:m.path,type:'blob',mode:'100644',sha:'b'.repeat(40)}))];
@@ -1882,6 +1884,28 @@ test('cash diagnostic cannot relabel old bases, manifests or capabilities as the
   readRecoveryRelease:async(...args)=>({...await real(...args),contractId}),readCurrentRun:()=>assert.fail('copied release cannot acquire admission')}),/RECOVERY_SCOPE/);
 });
 
+test('catalog-evidence diagnostic v7 is pinned to the real main 4d569f5 and its exact own file manifest',()=>{
+ const expected=[
+  ['docs/fee-source-revision.md','modified'],
+  ['docs/fee-unified-source-readiness.md','modified'],
+  ['scripts/fee-report-producer.mjs','modified'],
+  ['scripts/fee-report-producer.test.mjs','modified'],
+  ['scripts/fee-source-lexical.mjs','modified'],
+  ['scripts/fee-source-lexical.test.mjs','modified'],
+  ['scripts/fee-source-revision-diagnostic.mjs','modified'],
+  ['scripts/fee-source-revision-runtime.mjs','modified'],
+  ['scripts/fee-source-revision-runtime.test.mjs','modified'],
+  ['scripts/fee-sync-captured-inputs.mjs','modified'],
+  ['scripts/fee-sync-revision-artifacts.mjs','modified'],
+  ['scripts/fee-sync-revision-artifacts.test.mjs','modified'],
+  ['scripts/ib-manager-source.mjs','modified'],
+ ];
+ const manifest=reportHistoricalRecoveryManifest({contractId:catalogEvidenceDiagnosticContract});
+ assert.deepEqual(manifest,expected.map(([path,status])=>({path,status})));
+ assert(Object.isFrozen(manifest));assert(manifest.every(Object.isFrozen));
+ // The consumed v6 admission keeps its own unchanged 12-file manifest and base.
+ assert.equal(reportHistoricalRecoveryManifest({contractId:recordOrderDiagnosticContract}).length,12);
+});
 test('record-order diagnostic v6 is pinned to the real main 05731b0 and its exact own file manifest',()=>{
  const expected=[
   ['docs/fee-source-revision.md','modified'],
@@ -1932,7 +1956,7 @@ test('source-stability diagnostic v5 is pinned to the real released main and its
  // The consumed v4 admission keeps its own unchanged manifest and base.
  assert.equal(reportHistoricalRecoveryManifest({contractId:incomeBoundaryDiagnosticContract}).length,10);
 });
-for(const contractId of [diagnosticRevisionContract,economicDiagnosticContract,cashDiagnosticContract,incomeBoundaryDiagnosticContract,sourceStabilityDiagnosticContract,recordOrderDiagnosticContract]){
+for(const contractId of [diagnosticRevisionContract,economicDiagnosticContract,cashDiagnosticContract,incomeBoundaryDiagnosticContract,sourceStabilityDiagnosticContract,recordOrderDiagnosticContract,catalogEvidenceDiagnosticContract]){
 test(contractId+' diagnostic admission is authentic, read-only, execution-bound and never a production admission',async()=>{
  const f=diagnosticRevisionFixture(contractId),before=JSON.stringify(f),trace=[],readers=syncRevisionReaders(f,trace),admission=await diagnosticAdmission(f,readers);
  assert.equal(isHistoricalRevisionDiagnosticAdmission(admission),true);assert.equal(isHistoricalRevisionAdmission(admission),false);
@@ -1940,7 +1964,7 @@ test(contractId+' diagnostic admission is authentic, read-only, execution-bound 
  assert.throws(()=>readHistoricalRevisionAdmission(admission),/RECOVERY_SCOPE/);
  const binding=readHistoricalRevisionDiagnosticAdmission(admission);assert.equal(binding.contractId,contractId);
  assert.equal(binding.purpose,'read-only-diagnostic');assert.equal(binding.admissionModel,'sync-cycle-v1');assert.equal(binding.mainSha,recoveryHead);
- assert.equal(binding.repairBaseSha,contractId===recordOrderDiagnosticContract?recordOrderDiagnosticBase:contractId===sourceStabilityDiagnosticContract?sourceStabilityDiagnosticBase:contractId===incomeBoundaryDiagnosticContract?incomeBoundaryDiagnosticBase:contractId===cashDiagnosticContract?cashDiagnosticBase:contractId===economicDiagnosticContract?economicDiagnosticBase:diagnosticRevisionBase);assert.equal(binding.targetDate,'2026-11-06');assert.equal(binding.currentRunId,recoveryId);
+ assert.equal(binding.repairBaseSha,contractId===catalogEvidenceDiagnosticContract?catalogEvidenceDiagnosticBase:contractId===recordOrderDiagnosticContract?recordOrderDiagnosticBase:contractId===sourceStabilityDiagnosticContract?sourceStabilityDiagnosticBase:contractId===incomeBoundaryDiagnosticContract?incomeBoundaryDiagnosticBase:contractId===cashDiagnosticContract?cashDiagnosticBase:contractId===economicDiagnosticContract?economicDiagnosticBase:diagnosticRevisionBase);assert.equal(binding.targetDate,'2026-11-06');assert.equal(binding.currentRunId,recoveryId);
  assert.equal(binding.approvedHead,revisionReviewedHead);assert.match(binding.executionSha256,/^[a-f0-9]{64}$/);assert.equal(Object.hasOwn(binding,'consumptionSha256'),false);
  assert(Object.isFrozen(binding));assert.deepEqual(await admission.checkCurrent(),binding);assert.equal(JSON.stringify(f),before);
  assert.equal(trace.filter(x=>x==='actions/runs/'+recoveryId).length,2);

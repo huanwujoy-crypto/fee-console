@@ -379,7 +379,11 @@ const SOURCE_STABILITY_DIAGNOSTIC_CONTRACT='ib-source-revision-20261106-diagnost
 // the real main 05731b0 it would be released on. Not the consumed v5 admission;
 // grants nothing until owner approval, merge and an owner-started run.
 const RECORD_ORDER_DIAGNOSTIC_CONTRACT='ib-source-revision-20261106-diagnostic-v6';
-const isDiagnosticRevision=contractId=>contractId===DIAGNOSTIC_REVISION_CONTRACT||contractId===ECONOMIC_DIAGNOSTIC_CONTRACT||contractId===CASH_DIAGNOSTIC_CONTRACT||contractId===INCOME_BOUNDARY_DIAGNOSTIC_CONTRACT||contractId===SOURCE_STABILITY_DIAGNOSTIC_CONTRACT||contractId===RECORD_ORDER_DIAGNOSTIC_CONTRACT;
+// Catalog-member/evidence release: same 2026-11-06 target and read-only purpose,
+// pinned to the real main 4d569f5. Not the consumed v6 admission; grants nothing
+// until owner approval, merge and an owner-started run. Once is procedural only.
+const CATALOG_EVIDENCE_DIAGNOSTIC_CONTRACT='ib-source-revision-20261106-diagnostic-v7';
+const isDiagnosticRevision=contractId=>contractId===DIAGNOSTIC_REVISION_CONTRACT||contractId===ECONOMIC_DIAGNOSTIC_CONTRACT||contractId===CASH_DIAGNOSTIC_CONTRACT||contractId===INCOME_BOUNDARY_DIAGNOSTIC_CONTRACT||contractId===SOURCE_STABILITY_DIAGNOSTIC_CONTRACT||contractId===RECORD_ORDER_DIAGNOSTIC_CONTRACT||contractId===CATALOG_EVIDENCE_DIAGNOSTIC_CONTRACT;
 const DIAGNOSTIC_REVISION_PURPOSE='read-only-diagnostic';
 const DIAGNOSTIC_REVISION_FILES=Object.freeze([
   ...['.github/workflows/fee-cloud-producer.yml','.github/workflows/scripts-check.yml','security/approval-tiers.json',
@@ -410,6 +414,23 @@ const INCOME_BOUNDARY_DIAGNOSTIC_FILES=Object.freeze([
   'scripts/ib-manager-source.mjs','scripts/ib-manager-source.test.mjs',
   'scripts/ib-manager-source-revision.mjs','scripts/ib-manager-source-revision.test.mjs',
 ].map(path=>Object.freeze({path,status:'modified'})));
+// BEGIN CATALOG_EVIDENCE_DIAGNOSTIC_FILES
+const CATALOG_EVIDENCE_DIAGNOSTIC_FILES=Object.freeze([
+  Object.freeze({path:'docs/fee-source-revision.md',status:'modified'}),
+  Object.freeze({path:'docs/fee-unified-source-readiness.md',status:'modified'}),
+  Object.freeze({path:'scripts/fee-report-producer.mjs',status:'modified'}),
+  Object.freeze({path:'scripts/fee-report-producer.test.mjs',status:'modified'}),
+  Object.freeze({path:'scripts/fee-source-lexical.mjs',status:'modified'}),
+  Object.freeze({path:'scripts/fee-source-lexical.test.mjs',status:'modified'}),
+  Object.freeze({path:'scripts/fee-source-revision-diagnostic.mjs',status:'modified'}),
+  Object.freeze({path:'scripts/fee-source-revision-runtime.mjs',status:'modified'}),
+  Object.freeze({path:'scripts/fee-source-revision-runtime.test.mjs',status:'modified'}),
+  Object.freeze({path:'scripts/fee-sync-captured-inputs.mjs',status:'modified'}),
+  Object.freeze({path:'scripts/fee-sync-revision-artifacts.mjs',status:'modified'}),
+  Object.freeze({path:'scripts/fee-sync-revision-artifacts.test.mjs',status:'modified'}),
+  Object.freeze({path:'scripts/ib-manager-source.mjs',status:'modified'}),
+]);
+// END CATALOG_EVIDENCE_DIAGNOSTIC_FILES
 // BEGIN RECORD_ORDER_DIAGNOSTIC_FILES
 const RECORD_ORDER_DIAGNOSTIC_FILES=Object.freeze([
   Object.freeze({path:'docs/fee-source-revision.md',status:'modified'}),
@@ -454,6 +475,10 @@ const SOURCE_STABILITY_DIAGNOSTIC_FILES=Object.freeze([
 // admission belongs only to its signed immediate successor; it neither resets
 // ordinary attempts nor grants a future target/version a retry.
 const RECOVERY_SCOPES=Object.freeze([
+ Object.freeze({contractId:CATALOG_EVIDENCE_DIAGNOSTIC_CONTRACT,purpose:DIAGNOSTIC_REVISION_PURPOSE,admissionModel:'sync-cycle-v1',target:'2026-11-06',
+  baseSha:'4d569f5c4aacbe4b75a760805de3ca1b5b3d5f6d',repairBase:'4d569f5c4aacbe4b75a760805de3ca1b5b3d5f6d',
+  baseParents:Object.freeze(['05731b04e8a0728a38ae773ea46194879c20fcc4']),fileManifest:CATALOG_EVIDENCE_DIAGNOSTIC_FILES,
+  uiBlob:'2bb9f66ac890ba87cec504ef72a5083c07670689'}),
  Object.freeze({contractId:RECORD_ORDER_DIAGNOSTIC_CONTRACT,purpose:DIAGNOSTIC_REVISION_PURPOSE,admissionModel:'sync-cycle-v1',target:'2026-11-06',
   baseSha:'05731b04e8a0728a38ae773ea46194879c20fcc4',repairBase:'05731b04e8a0728a38ae773ea46194879c20fcc4',
   baseParents:Object.freeze(['b72cd6895c5990e4bb644b26f181d9f78313ca72']),fileManifest:RECORD_ORDER_DIAGNOSTIC_FILES,

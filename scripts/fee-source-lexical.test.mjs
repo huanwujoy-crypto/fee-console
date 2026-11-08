@@ -118,7 +118,7 @@ for(const [name,change,code] of [
 for(const [name,change,site] of [
   ['consistent transfer description',(t,p)=>p.endsWith('/cash_account_transactions.json')?t.replace('Owner cash contribution','Owner capital contribution'):t,'FINGERPRINT'],
   ['unknown member',(t,p)=>p.endsWith('/holdings')?t.replace('{"holdings":','{"extra":null,"holdings":'):t,'RECORDS'],
-  ['number lexeme',(t,p)=>p.endsWith('/holdings')?t.replace('"quantity":1,','"quantity":1.0,'):t,'RECORDS'],
+  ['number lexeme on a consumed route',(t,p)=>p.endsWith('/payouts/13.json')?t.replace('"amount":7,','"amount":7.0,'):t,'RECORDS'],
   ['duplicate member, same value',(t,p)=>p.endsWith('/holdings')?t.replace('{"holdings":','{"x":1,"x":1,"holdings":'):t,'RECORDS'],
   ['trailing newline',(t,p)=>p.endsWith('/holdings')?t+'\n':t,'RECORDS'],
 ])test('IB real second-round change is refused at its own fixed site: '+name,async()=>{
@@ -264,7 +264,7 @@ test('real IB reader: reordered id-set rows pass capture, projection and current
 for(const [name,change,site] of [
   ['a reordered nested array is content',(t,p)=>p.endsWith('/performance')?t.replace('"holdings":[','"zz":[2,1],"holdings":['):null,'PERF_VAL'],
   ['unknown member',(t,p)=>p.endsWith('/holdings')?t.replace('{"holdings":','{"generated_at":"x","holdings":'):null,'HOLD_VAL'],
-  ['number lexeme',(t,p)=>p.endsWith('/holdings')?t.replace('"quantity":1,','"quantity":1.0,'):null,'HOLD_LEX'],
+  ['number lexeme on a consumed route',(t,p)=>p.endsWith('/payouts/13.json')?t.replace('"amount":7,','"amount":7.0,'):null,'PAYOUT_LEX'],
   ['reorder plus a changed row',(t,p)=>p.endsWith('/cash_account_transactions.json')?revKey(t,['cash_account_transactions']).replace('"description":"Owner cash contribution"','"description":"Owner cash contribution."'):null,null],
 ])test('real IB reader keeps refusing: '+name,async()=>{
   const f=ibFixture({nativePayout:true,ownerTransfer:true,rewrite:(t,{attempt,path})=>attempt===2?change(t,path):null});
@@ -278,4 +278,98 @@ for(const [name,change,site] of [
 test('the two-account fee reader keeps the ordered rule: a row reorder is still RECORDS',async()=>{
   const f=cloudFixture({rewrite:(t,{attempt,path})=>attempt===2&&path==='/api/v2/portfolios.json'?revKey(t,['portfolios']):null});
   await assert.rejects(f.reader.readStableWithEvidence(D,B),e=>{assert.equal(feeCloudCaptureUnstableDiagnostic(e),'RECORDS');return true;});
+});
+
+// -------------------------- v3: exact catalog members this chain does not consume
+import {IB_CAPTURE_CONTRACT as IBC,IB_CATALOG_UNCONSUMED_MEMBERS,recordsEvidence,isRecordsEvidence,evidenceHasBlocking,SOURCE_EVIDENCE_GROUPS} from './fee-source-lexical.mjs';
+import {ibSourceCaptureEvidence,ibSourceCaptureSuccessEvidence} from './ib-manager-source.mjs';
+const mutateJson=(t,f)=>{const o=JSON.parse(t);f(o);return JSON.stringify(o);};
+const catRow=f=>(t,p)=>p.endsWith('/holdings')?mutateJson(t,o=>f(o.holdings[0],o)):null;
+const perfTarget=f=>(t,p)=>p.endsWith('/performance')&&t.includes('"end_date":"'+D+'"')?mutateJson(t,o=>f(o.report)):null;
+const txnRow=f=>(t,p)=>p.endsWith('/cash_account_transactions.json')?mutateJson(t,o=>f(o.cash_account_transactions)):null;
+const both=(...fs)=>(t,p)=>fs.reduce((x,g)=>g(x??t,p)??x,null);
+const PRIV=/synthetic-secret|synthetic-client|synthetic-capture-token|Owner|IB-HK|SYNTH|NYSE|\d{3}\.|2026-0/;
+
+test('the exclusion is bound to the exact catalog route, query and row members only',()=>{
+  assert.deepEqual(IB_CATALOG_UNCONSUMED_MEMBERS('/api/v3/portfolios/1/holdings',{consolidated:'false'}),{root:['holdings'],members:['quantity','value','instrument_currency']});
+  for(const [p,q] of [['/api/v3/portfolios/1/holdings',{consolidated:'true'}],['/api/v3/portfolios/1/holdings',{}],['/api/v3/portfolios/1/performance',perfQ(D)],['/api/v2/portfolios.json',{}],['/api/v3/portfolios/1/x/holdings',{consolidated:'false'}]])
+    assert.equal(IB_CATALOG_UNCONSUMED_MEMBERS(p,q),null,p);
+  const rec=(path,query,o)=>({method:'GET',path,query,body:JSON.stringify(o)});
+  const row={id:2,portfolio:{id:1,name:'P'},valid_position:true,instrument:{id:8,code:'S',market_code:'M',currency_code:'USD'},instrument_currency:{code:'USD'},quantity:1,value:100};
+  const cat=o=>rec('/api/v3/portfolios/1/holdings',{consolidated:'false'},{holdings:[{...row,...o}]});
+  const perf=o=>rec('/api/v3/portfolios/1/performance',perfQ(D),{report:{holdings:[{...row,...o}]}});
+  for(const o of [{quantity:2},{value:101},{instrument_currency:{code:'EUR'}},{value:100.0}])assert.equal(lexicalRecordEquivalent(cat({}),cat(o),IBC),true,JSON.stringify(o));
+  for(const o of [{id:3},{portfolio:{id:1,name:'Q'}},{valid_position:false},{instrument:{...row.instrument,code:'T'}},{instrument:{...row.instrument,id:9}},{instrument:{...row.instrument,currency_code:'EUR'}},{zz_updated_at:'t'}])
+    assert.equal(lexicalRecordEquivalent(cat({}),cat(o),IBC),false,JSON.stringify(o));
+  // The same member names on the dated performance route stay strict.
+  for(const o of [{quantity:2},{value:101},{instrument_currency:{code:'EUR'}}])assert.equal(lexicalRecordEquivalent(perf({}),perf(o),IBC),false,JSON.stringify(o));
+  // Nested members of the same name, and the root object, are not excluded.
+  const nested=o=>rec('/api/v3/portfolios/1/holdings',{consolidated:'false'},{holdings:[{...row,instrument:{...row.instrument,...o}}]});
+  assert.equal(lexicalRecordEquivalent(nested({value:1}),nested({value:2}),IBC),false);
+  assert.equal(lexicalRecordEquivalent(rec('/api/v3/portfolios/1/holdings',{consolidated:'false'},{holdings:[row],value:1}),rec('/api/v3/portfolios/1/holdings',{consolidated:'false'},{holdings:[row],value:2}),IBC),false);
+  // A row added or removed is never hidden by the exclusion.
+  assert.equal(lexicalRecordEquivalent(cat({}),rec('/api/v3/portfolios/1/holdings',{consolidated:'false'},{holdings:[row,{...row,id:3}]}),IBC),false);
+});
+test('evidence: fixed groups only; the allowed catalog exception is marked, never silent',()=>{
+  const rec=(path,query,o)=>({method:'GET',path,query,body:JSON.stringify(o)});
+  const row={id:2,instrument:{id:8,code:'S'},quantity:1,value:100};
+  const cat=o=>rec('/api/v3/portfolios/1/holdings',{consolidated:'false'},{holdings:[{...row,...o}]});
+  assert.deepEqual(recordsEvidence([cat({})],[cat({})],IBC),{});
+  assert.deepEqual(recordsEvidence([cat({})],[cat({value:1})],IBC),{HOLD:['ALLOWED_UNCONSUMED_CATALOG']});
+  const e=recordsEvidence([cat({})],[cat({value:1,zz:1})],IBC);
+  assert.deepEqual(e,{HOLD:['ALLOWED_UNCONSUMED_CATALOG','MEMBER_SET','UNKNOWN']});assert.equal(evidenceHasBlocking(e),true);
+  assert.equal(evidenceHasBlocking({HOLD:['ALLOWED_UNCONSUMED_CATALOG']}),false);
+  assert.ok(isRecordsEvidence(e));assert.equal(isRecordsEvidence({HOLD:['zz']}),false);assert.equal(isRecordsEvidence({hold:['ID']}),false);
+  assert.doesNotMatch(JSON.stringify(e),/zz|\d/);
+  assert.ok(SOURCE_EVIDENCE_GROUPS.every(g=>/^[A-Z_]+$/.test(g)));
+});
+
+test('real IB reader: only unconsumed catalog members changed -> pass, marked, first-round bytes kept',async()=>{
+  const plain=ibFixture({nativePayout:true,ownerTransfer:true}),pc=await plain.reader.readStableWithEvidence(plain.args);
+  const plainOut=projectCapturedSharesightAccount({reader:plain.reader,captured:pc,scope:plain.scope});
+  const f=ibFixture({nativePayout:true,ownerTransfer:true,rewrite:(t,{attempt,path})=>attempt>=2?catRow(h=>{h.value=h.value+attempt;h.quantity=attempt;h.instrument_currency={code:'EUR'};})(t,path):null});
+  const captured=await f.reader.readStableWithEvidence(f.args),[first,second]=captured.evidence.captures;
+  assert.notEqual(first.sha256,second.sha256,'the two original batches keep their own different hashes');
+  assert.equal(captured.evidence.sourceSha256,first.sha256);
+  assert.match(first.records.find(r=>r.path.endsWith('/holdings')).body,/"value":100[,}]/,'first-round bytes are kept as delivered');
+  assert.deepEqual(ibSourceCaptureSuccessEvidence(captured),{capture:{HOLD:['ALLOWED_UNCONSUMED_CATALOG']},currentness:'NOT_REACHED'});
+  const out=projectCapturedSharesightAccount({reader:f.reader,captured,scope:f.scope});
+  assert.equal(out.projection.sourceSha256,plainOut.projection.sourceSha256,'no consumer sees a difference');
+  assert.equal(out.raw.holdings,undefined,'the catalog is not part of the projected inputs');
+  assert.deepEqual(captured.input.cashFlowByDate,{[D]:300});
+  assert.equal(await f.reader.checkCapturedReadCurrent(captured),true,'currentness with the same allowed change passes');
+  assert.deepEqual(ibSourceCaptureSuccessEvidence(captured),{capture:{HOLD:['ALLOWED_UNCONSUMED_CATALOG']},currentness:{HOLD:['ALLOWED_UNCONSUMED_CATALOG']},currentnessCoverage:'ALL_RECORDS'});
+});
+for(const [name,change,code,routes] of [
+  ['catalog holding id',catRow(h=>{h.id=3;}),'RECORDS',{HOLD:['ROWSET']}],
+  ['catalog instrument code',catRow(h=>{h.instrument.code='OTHER';}),'RECORDS',{HOLD:['INSTRUMENT']}],
+  ['catalog instrument id',catRow(h=>{h.instrument.id=9;}),'RECORDS',{HOLD:['INSTRUMENT']}],
+  ['catalog unknown member',catRow(h=>{h.zz_updated_at='x';}),'RECORDS',{HOLD:['MEMBER_SET','UNKNOWN']}],
+  ['catalog unknown member beside an allowed one',catRow(h=>{h.value=1;h.zz='x';}),'RECORDS',{HOLD:['ALLOWED_UNCONSUMED_CATALOG','MEMBER_SET','UNKNOWN']}],
+  ['catalog row added',(t,p)=>p.endsWith('/holdings')?mutateJson(t,o=>o.holdings.push({...o.holdings[0],id:7})):null,'RECORDS',{HOLD:['ROWSET']}],
+  ['target performance holding quantity',perfTarget(r=>{r.holdings[0].quantity=2;}),'FINGERPRINT',{PERF:['QUANTITY']}],
+  ['target performance unknown member',perfTarget(r=>{r.zz_generated_at='x';}),'RECORDS',{PERF:['MEMBER_SET','UNKNOWN']}],
+  ['several routes at once',both(catRow(h=>{h.zz='x';}),perfTarget(r=>{r.zz='x';}),txnRow(rows=>{rows[0].zz='x';})),'RECORDS',{HOLD:['MEMBER_SET','UNKNOWN'],PERF:['MEMBER_SET','UNKNOWN'],TXN:['MEMBER_SET','UNKNOWN']}],
+])test('real IB reader: blocking change keeps refusing with complete evidence: '+name,async()=>{
+  const f=ibFixture({nativePayout:true,ownerTransfer:true,rewrite:(t,{attempt,path})=>attempt===2?change(t,path):null});
+  await assert.rejects(f.reader.readStableWithEvidence(f.args),e=>{
+    assert.equal(ibSourceFailureCode(e),'IB_SOURCE_UNSTABLE');assert.equal(ibSourceCaptureUnstableDiagnostic(e),code);
+    assert.deepEqual(ibSourceCaptureEvidence(e),{capture:routes,currentness:'NOT_REACHED'});
+    assert.doesNotMatch(JSON.stringify(ibSourceCaptureEvidence(e)),PRIV);return true;
+  });
+});
+test('real IB reader: a dated-performance amount change is still refused by its own validator',async()=>{
+  const f=ibFixture({nativePayout:true,ownerTransfer:true,rewrite:(t,{attempt,path})=>attempt===2?perfTarget(r=>{r.holdings[0].value=101;})(t,path):null});
+  await assert.rejects(f.reader.readStableWithEvidence(f.args),e=>{assert.equal(ibSourceFailureCode(e),'IB_SOURCE_AMOUNT');assert.equal(ibSourceCaptureEvidence(e),null,'no evidence when round 2 was never completed');return true;});
+});
+test('real IB reader: currentness change is refused and classified only where the recheck stopped',async()=>{
+  let mode=null;
+  const f=ibFixture({nativePayout:true,ownerTransfer:true,rewrite:(t,{attempt,path})=>attempt>=3&&mode==='perf'?perfTarget(r=>{r.zz='x';})(t,path):attempt>=3&&mode==='cat'?catRow(h=>{h.value=1;})(t,path):null});
+  const captured=await f.reader.readStableWithEvidence(f.args);
+  mode='cat';assert.equal(await f.reader.checkCapturedReadCurrent(captured),true);
+  mode='perf';
+  await assert.rejects(f.reader.checkCapturedReadCurrent(captured),e=>{
+    assert.equal(ibSourceCaptureRecheckDiagnostic(e),'RECORD_CHANGED');
+    assert.deepEqual(ibSourceCaptureEvidence(e),{capture:'PASSED',currentness:{PERF:['MEMBER_SET','UNKNOWN']},currentnessCoverage:'FIRST_CHANGED_RECORD'});return true;});
+  assert.equal(f.reader.verifyCapturedRead(captured),false);
 });

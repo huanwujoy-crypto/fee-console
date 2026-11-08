@@ -5,7 +5,7 @@ import {types} from 'node:util';
 import {boundedJson,BoundedJsonError} from './fee-http-json.mjs';
 import {isCalendarDate,inclusiveDays} from './fee-engine.mjs';
 import {parseSourceJson,cashCents,exactNumberText} from './fee-cloud-source.mjs';
-import {SOURCE_CAPTURE_UNSTABLE_CODES,SOURCE_RECORDS_SITES,IB_UNORDERED_ID_ARRAYS,classifyRecordsDifference,lexicalRecordsSha256 as sharedLexicalRecordsSha256,lexicalRecordEquivalent} from './fee-source-lexical.mjs';
+import {SOURCE_CAPTURE_UNSTABLE_CODES,SOURCE_RECORDS_SITES,IB_CAPTURE_CONTRACT,classifyRecordsDifference,recordsEvidence,lexicalRecordsSha256 as sharedLexicalRecordsSha256,lexicalRecordEquivalent} from './fee-source-lexical.mjs';
 import {ibNoncashMark,buildIbNativeNoncashProof,validateIbNativeNoncashProof,validateIbAuditEvent,validateIbAuditQuote} from './ib-manager-noncash.mjs';
 
 export const IB_BASELINE_WINDOW=Object.freeze({from:'2026-08-01',asOf:'2026-10-23'});
@@ -33,8 +33,9 @@ export const ibSourceCaptureUnstableDiagnostic=error=>captureUnstableByError.get
 export const IB_CAPTURE_RECORDS_SITES=SOURCE_RECORDS_SITES;
 const recordsSites=new Set(SOURCE_RECORDS_SITES),recordsSiteByError=new WeakMap();
 export const ibSourceCaptureRecordsSite=error=>recordsSiteByError.get(error)||null;
-const failCaptureUnstable=(site,recordsSite=null)=>{
+const failCaptureUnstable=(site,recordsSite=null,evidence=null)=>{
   const failure=new IbManagerSourceError('UNSTABLE');
+  if(evidence)withEvidence(failure,evidence);
   captureUnstableByError.set(failure,captureUnstableCodes.has(site)&&site!=='UNCLASSIFIED'?site:'UNCLASSIFIED');
   if(site==='RECORDS'&&recordsSites.has(recordsSite))recordsSiteByError.set(failure,recordsSite);
   throw failure;
@@ -129,8 +130,20 @@ function finishCapture(capture){
 // so every capture layer accepts exactly the same, and only the same, change.
 // The IB reader opts in to the route-bound unordered-id contract: it already
 // refuses duplicate ids in these arrays and keys their rows by id.
-const lexicalRecordsSha256=records=>sharedLexicalRecordsSha256(records,IB_UNORDERED_ID_ARRAYS);
-const lexicalRecordCurrent=(current,original)=>lexicalRecordEquivalent(current,original,IB_UNORDERED_ID_ARRAYS);
+// v3 adds the exact catalog-only unconsumed members to that same contract.
+const lexicalRecordsSha256=records=>sharedLexicalRecordsSha256(records,IB_CAPTURE_CONTRACT);
+const lexicalRecordCurrent=(current,original)=>lexicalRecordEquivalent(current,original,IB_CAPTURE_CONTRACT);
+// Evidence attached by error identity only: fixed route classes and field
+// groups, never a value, id, field name or count. capture covers every route
+// of both acquired rounds; currentness is present only when the recheck was
+// actually reached, with the coverage the original flow had at that point.
+const sourceEvidenceByError=new WeakMap();
+export const ibSourceCaptureEvidence=error=>sourceEvidenceByError.get(error)||null;
+const withEvidence=(failure,evidence)=>{sourceEvidenceByError.set(failure,Object.freeze(evidence));return failure;};
+// Success evidence keyed by the original capture result: explicit even when
+// empty, so a passing run still shows whether the catalog exception was used.
+const successEvidenceByResult=new WeakMap();
+export const ibSourceCaptureSuccessEvidence=result=>successEvidenceByResult.get(result)||null;
 const object=v=>v&&typeof v==='object'&&!Array.isArray(v);
 const exact=(v,keys)=>object(v)&&Object.keys(v).sort().join(',')===[...keys].sort().join(',');
 const day=d=>{if(!isCalendarDate(d))fail('DATE');return d;};
@@ -699,12 +712,14 @@ export class SharesightIbManagerReader{
       // are accepted only when the two batches are strictly lexically
       // equivalent; the first round's original evidence and every original
       // capture are still the delivered and recorded proof.
-      if(first.fingerprint!==second.fingerprint)failCaptureUnstable('FINGERPRINT');
+      const captureEvidence=()=>({capture:recordsEvidence(captures[0].records,captures[1].records,IB_CAPTURE_CONTRACT),currentness:'NOT_REACHED'});
+      if(first.fingerprint!==second.fingerprint)failCaptureUnstable('FINGERPRINT',null,captureEvidence());
       const lexicalSha256=lexicalRecordsSha256(captures[0].records);
       if(captures[0].sha256!==captures[1].sha256&&lexicalSha256!==lexicalRecordsSha256(captures[1].records))
-        failCaptureUnstable('RECORDS',classifyRecordsDifference(captures[0].records,captures[1].records,IB_UNORDERED_ID_ARRAYS));
+        failCaptureUnstable('RECORDS',classifyRecordsDifference(captures[0].records,captures[1].records,IB_CAPTURE_CONTRACT),captureEvidence());
       const result=freezeCapture({input:first.source,evidence:{schema:'fee-console.sharesight-capture.v1',provider:'Sharesight',targetDate,captures,sourceSha256:captures[0].sha256}});
-      if(this.#captureTransport().some((v,i)=>v!==transport[i]))failCaptureUnstable('TRANSPORT');
+      if(this.#captureTransport().some((v,i)=>v!==transport[i]))failCaptureUnstable('TRANSPORT',null,captureEvidence());
+      successEvidenceByResult.set(result,Object.freeze({capture:recordsEvidence(captures[0].records,captures[1].records,IB_CAPTURE_CONTRACT),currentness:'NOT_REACHED'}));
       this.#capturedReads.set(result,{parametersSha256:hash(options),transport,scope:this.#captureScope(),records:captures[0].records,sourceSha256:captures[0].sha256,sourceLexicalSha256:lexicalSha256,consumed:false,revoked:false});return result;
     }finally{this.#captureExclusive=false;}
   }
@@ -723,7 +738,7 @@ export class SharesightIbManagerReader{
     }
     this.#captureExclusive=true;
     const capture={attempt:0,records:[],bytes:0,active:true,currentCheck:true,secrets:[state.transport[2],state.transport[3]]};
-    let stage='LOCAL_TRANSPORT';
+    let stage='LOCAL_TRANSPORT',recheckEvidence=null;
     try{
       const transport=()=>{
         stage='LOCAL_TRANSPORT';if(this.#captureTransport().some((v,i)=>v!==state.transport[i]))fail('STATE');
@@ -744,17 +759,28 @@ export class SharesightIbManagerReader{
           const current=capture.records.at(-1);
           // Same bounded treatment as acquisition: identical bytes, or a strict
           // lexical equivalent of the originally captured record.
-          if(ibCanonical(current)!==ibCanonical(record)&&!lexicalRecordCurrent(current,record))fail('UNSTABLE');
+          if(ibCanonical(current)!==ibCanonical(record)&&!lexicalRecordCurrent(current,record)){
+            // The original flow stops at the first changed record: that is the
+            // whole currentness coverage available, and it is labelled so.
+            recheckEvidence={capture:'PASSED',currentness:recordsEvidence(current?[record]:[],current?[current]:[],IB_CAPTURE_CONTRACT),currentnessCoverage:'FIRST_CHANGED_RECORD'};
+            fail('UNSTABLE');
+          }
         }
       });
       transport();
       stage='CAPTURE_CHANGED';
       const finished=finishCapture(capture);
-      if(finished.sha256!==state.sourceSha256&&lexicalRecordsSha256(finished.records)!==state.sourceLexicalSha256)fail('UNSTABLE');
+      if(finished.sha256!==state.sourceSha256&&lexicalRecordsSha256(finished.records)!==state.sourceLexicalSha256){
+        recheckEvidence={capture:'PASSED',currentness:recordsEvidence(state.records,finished.records,IB_CAPTURE_CONTRACT),currentnessCoverage:'ALL_RECORDS'};
+        fail('UNSTABLE');
+      }
+      const prior=successEvidenceByResult.get(result);
+      if(prior)successEvidenceByResult.set(result,Object.freeze({capture:prior.capture,currentness:recordsEvidence(state.records,finished.records,IB_CAPTURE_CONTRACT),currentnessCoverage:'ALL_RECORDS'}));
       return true;
     }catch(error){
       state.revoked=true;const failure=new IbManagerSourceError('UNSTABLE');
       captureRecheckByError.set(failure,['AUTH','READ'].includes(stage)?stage+'_'+(captureReadByError.get(error)||'REFUSED'):stage);
+      if(recheckEvidence&&['RECORD_CHANGED','CAPTURE_CHANGED'].includes(stage))withEvidence(failure,recheckEvidence);
       throw failure;
     }
     finally{capture.active=false;capture.secrets.length=0;this.#captureExclusive=false;}

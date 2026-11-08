@@ -657,7 +657,7 @@ test('diagnostic runtime has no writer handoff, closes its separate admission an
   const runtime=await createFeeSourceRevisionRuntime(diagnosticRuntimeOptions(f));
   assert.deepEqual(Object.keys(runtime).sort(),['close','diagnose']);
   const result=await runtime.diagnose();
-  assert.deepEqual(result,{schema:'fee-console.source-revision-diagnostic-result.v1',status:'verified',targetDate:T});
+  assert.deepEqual(result,{schema:'fee-console.source-revision-diagnostic-result.v1',status:'verified',targetDate:T,sourceEvidence:{capture:{},currentness:{},currentnessCoverage:'ALL_RECORDS'}},'explicit evidence: no exception used');
   assert.equal(Object.isFrozen(result),true);assert.equal(isHistoricalRevisionDiagnosticAdmission(f.admission),false);
   assert.deepEqual(f.dataBytes,before.data);assert.deepEqual(f.healthBytes,before.health);assert.deepEqual(fs.readFileSync(f.config.economicSnapshot.sourcePath),before.econ);
   assert.deepEqual(fs.readdirSync(f.dir).sort(),before.files);
@@ -755,7 +755,7 @@ test('new exact diagnostic release walks the complete Jenny preparation and rech
   const f=await fixture(t,{[contract]:true,bankWire:true,lockedMonth:true});
   const before={data:Buffer.from(f.dataBytes),health:Buffer.from(f.healthBytes),econ:fs.readFileSync(f.config.economicSnapshot.sourcePath),files:fs.readdirSync(f.dir).sort()};
   const runtime=await createFeeSourceRevisionRuntime(diagnosticRuntimeOptions(f));
-  assert.deepEqual(await runtime.diagnose(),{schema:'fee-console.source-revision-diagnostic-result.v1',status:'verified',targetDate:T});
+  assert.deepEqual(await runtime.diagnose(),{schema:'fee-console.source-revision-diagnostic-result.v1',status:'verified',targetDate:T,sourceEvidence:{capture:{},currentness:{},currentnessCoverage:'ALL_RECORDS'}});
   assert.equal(isHistoricalRevisionAdmission(f.admission),false);assert.equal(isHistoricalRevisionDiagnosticAdmission(f.admission),false);
   assert.equal(isIbRevisionArtifacts(f.cap),false);
   assert.deepEqual(f.dataBytes,before.data);assert.deepEqual(f.healthBytes,before.health);
@@ -884,4 +884,55 @@ test('the native recovery runtime carries the raw records gate to its exact safe
   });
   assert.deepEqual(f.dataBytes,original,'a refused capture never writes');
   await assert.rejects(runtime.prepare(),/REUSE|CLOSED/);
+});
+
+// ---------------------------------------------------------------------------
+// v3 catalog exception and source evidence through the real artifacts, runtime
+// and diagnostic result. Synthetic responses only; nothing is read or written.
+import {sourceRevisionRuntimeSourceEvidence} from './fee-source-revision-runtime.mjs';
+function catalogRounds(f,change){
+  let attempt=0;
+  return async(url,init)=>{
+    if(!url.startsWith('https://api.sharesight.com/'))return f.fetchImpl(url,init);
+    const u=new URL(url);if(u.pathname==='/oauth2/token'){attempt++;return f.fetchImpl(url,init);}
+    const original=await f.fetchImpl(url,init),text=await original.text();
+    const next=u.pathname.endsWith('/holdings')&&attempt>=2?change(JSON.parse(text),attempt):null;
+    const out=new Response(next?JSON.stringify(next):text,{headers:{'content-type':'application/json'}});
+    Object.defineProperty(out,'url',{value:url});return out;
+  };
+}
+const quietDiagnostic=error=>inspectRevisionDiagnostic({authorize:async()=>({checkCurrent:async()=>{},close(){}}),checkCheckout(){},
+  readPrivate:async()=>({}),createRuntime:async()=>({diagnose:async()=>{throw error;},close(){}}),cleanup:async()=>{}});
+
+test('historical revision: only unconsumed catalog members changed -> verified with the exception explicitly marked',async t=>{
+  const f=await fixture(t,{diagnosticV4:true,bankWire:true,lockedMonth:true});
+  const before={data:Buffer.from(f.dataBytes),health:Buffer.from(f.healthBytes)};
+  const runtime=await createFeeSourceRevisionRuntime({...diagnosticRuntimeOptions(f),fetchImpl:catalogRounds(f,(o,n)=>{o.holdings[0].value=n;o.holdings[0].quantity=n;return o;})});
+  assert.deepEqual(await runtime.diagnose(),{schema:'fee-console.source-revision-diagnostic-result.v1',status:'verified',targetDate:T,
+    sourceEvidence:{capture:{HOLD:['ALLOWED_UNCONSUMED_CATALOG']},currentness:{HOLD:['ALLOWED_UNCONSUMED_CATALOG']},currentnessCoverage:'ALL_RECORDS'}});
+  assert.deepEqual(f.dataBytes,before.data);assert.deepEqual(f.healthBytes,before.health);
+});
+test('historical revision: a blocking catalog change is refused; the diagnostic result carries complete fixed evidence',async t=>{
+  const f=await fixture(t,{diagnosticV4:true,bankWire:true,lockedMonth:true});
+  const runtime=await createFeeSourceRevisionRuntime({...diagnosticRuntimeOptions(f),fetchImpl:catalogRounds(f,(o,n)=>{o.holdings[0].value=n;o.holdings[0].note='round '+n;return o;})});
+  let genuine;
+  await assert.rejects(runtime.diagnose(),e=>{genuine=e;
+    assert.equal(sourceRevisionRuntimeFailureCode(e),'FEE_REPORT_SOURCE_REVISION_ARTIFACT_SOURCE_CAPTURE_RECORDS_HOLD_VAL');
+    assert.deepEqual(sourceRevisionRuntimeSourceEvidence(e),{capture:{HOLD:['ALLOWED_UNCONSUMED_CATALOG','UNKNOWN']},currentness:'NOT_REACHED'});return true;});
+  const r=await quietDiagnostic(genuine);
+  assert.deepEqual(r,{schema:'fee-console.source-revision-diagnostic-result.v1',status:'incomplete',targetDate:T,
+    reasonCode:'FEE_REPORT_SOURCE_REVISION_ARTIFACT_SOURCE_CAPTURE_RECORDS_HOLD_VAL',reportGenerated:false,publicationReady:false,
+    sourceEvidence:{capture:{HOLD:['ALLOWED_UNCONSUMED_CATALOG','UNKNOWN']},currentness:'NOT_REACHED'}});
+  assert.doesNotMatch(JSON.stringify(r.sourceEvidence),/round|note|IB-HK|\d/,"evidence holds only fixed literals");
+  // A forged or copied error never gains evidence.
+  for(const forged of [Error(genuine.message),Object.assign(Error(genuine.message),{sourceEvidence:{capture:{HOLD:['ID']}}}),new Proxy(genuine,{})]){
+    const x=await quietDiagnostic(forged);assert.equal(Object.hasOwn(x,'sourceEvidence'),false);
+  }
+});
+test('historical revision: a catalog change after capture is refused at the recheck with currentness evidence',async t=>{
+  const f=await fixture(t,{diagnosticV4:true,bankWire:true,lockedMonth:true});
+  const runtime=await createFeeSourceRevisionRuntime({...diagnosticRuntimeOptions(f),fetchImpl:catalogRounds(f,(o,n)=>{if(n>=3)o.holdings[0].note='later';return o;})});
+  await assert.rejects(runtime.diagnose(),e=>{
+    assert.equal(sourceRevisionRuntimeFailureCode(e),'FEE_REPORT_SOURCE_REVISION_ARTIFACT_SOURCE_RECHECK_RECORD_CHANGED');
+    assert.deepEqual(sourceRevisionRuntimeSourceEvidence(e),{capture:'PASSED',currentness:{HOLD:['UNKNOWN']},currentnessCoverage:'FIRST_CHANGED_RECORD'});return true;});
 });

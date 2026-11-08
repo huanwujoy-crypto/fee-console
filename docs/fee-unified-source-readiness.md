@@ -61,6 +61,17 @@ other arrays and other routes stay ordered and strict; a batch reading a route
 twice compares by bytes only. The two-account fee capture keeps the ordered rule.
 Row order is not claimed to be guaranteed or random by Sharesight; this only
 stops treating an order the reader ignores as a source change.
+Rule v3 adds one more IB-only, route-bound contract: on the exact undated
+holdings catalog (`/api/v3/portfolios/{id}/holdings?consolidated=false`) the
+row members `quantity`, `value` and `instrument_currency` are left out of the
+stability comparison. They are catalog members this chain does not consume,
+not inherently non-business data: the IB reader reads catalog rows only for
+id, portfolio id/name, valid_position and instrument id/code/market/currency
+code plus the row set, and no projection, readiness, acquisition or report
+reads the catalog. The dated performance route keeps quantity, value and
+currency strict, as do every other catalog member (unknown ones included), the
+row set and every other route. The first round's original bytes and both byte
+hashes are kept unchanged; the evidence marks every use of this exception.
 Future China sync-date accounting (`scripts/fee-sync-date-policy.mjs`) is
 OFF unless a gate with an explicit `effectiveFromChinaDate` is passed as
 `syncDatePolicy`; no production caller passes one. On or after that cutover the
