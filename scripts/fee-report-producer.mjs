@@ -376,7 +376,8 @@ const METADATA_REVISION_FILES=Object.freeze([
   'scripts/fee-source-revision-runtime.mjs','scripts/fee-source-revision-runtime.test.mjs',
   'scripts/fee-sync-revision-artifacts.mjs','scripts/fee-sync-revision-artifacts.test.mjs',
 ].map(path=>Object.freeze({path,status:'modified'})));
-const isProductionSyncRevision=contractId=>contractId===SYNC_REVISION_CONTRACT||contractId===WIRE_REVISION_CONTRACT||contractId===METADATA_REVISION_CONTRACT;
+const PUBLICATION_REVISION_CONTRACT='ib-source-revision-20261106-sync-v5';
+const isProductionSyncRevision=contractId=>contractId===SYNC_REVISION_CONTRACT||contractId===WIRE_REVISION_CONTRACT||contractId===METADATA_REVISION_CONTRACT||contractId===PUBLICATION_REVISION_CONTRACT;
 const DIAGNOSTIC_REVISION_CONTRACT='ib-source-revision-20261106-diagnostic-v1';
 const ECONOMIC_DIAGNOSTIC_CONTRACT='ib-source-revision-20261106-diagnostic-v2';
 const CASH_DIAGNOSTIC_CONTRACT='ib-source-revision-20261106-diagnostic-v3';
@@ -515,6 +516,10 @@ const SOURCE_STABILITY_DIAGNOSTIC_FILES=Object.freeze([
 // admission belongs only to its signed immediate successor; it neither resets
 // ordinary attempts nor grants a future target/version a retry.
 const RECOVERY_SCOPES=Object.freeze([
+ Object.freeze({contractId:PUBLICATION_REVISION_CONTRACT,admissionModel:'sync-cycle-v1',target:'2026-11-06',
+  baseSha:'2e890aea0ddc14d99b38dd6d525279dfc966624e',repairBase:'2e890aea0ddc14d99b38dd6d525279dfc966624e',
+  baseParents:Object.freeze(['ea6ce4dcc6784979a4e5bd526d2a13ac0282ae2e']),fileManifest:METADATA_REVISION_FILES,
+  uiBlob:'2bb9f66ac890ba87cec504ef72a5083c07670689'}),
  Object.freeze({contractId:METADATA_REVISION_CONTRACT,admissionModel:'sync-cycle-v1',target:'2026-11-06',
   baseSha:'ea6ce4dcc6784979a4e5bd526d2a13ac0282ae2e',repairBase:'ea6ce4dcc6784979a4e5bd526d2a13ac0282ae2e',
   baseParents:Object.freeze(['860387709b954fdfc97f040031791258b9fa5b15']),fileManifest:METADATA_REVISION_FILES,
@@ -914,9 +919,26 @@ async function authorizeSyncRevision({release,plan,expectedMain,now,currentRunId
       ||(diagnostic?scope.purpose!==DIAGNOSTIC_REVISION_PURPOSE||release.purpose!==DIAGNOSTIC_REVISION_PURPOSE:scope.purpose!==undefined||release.purpose!==undefined)
       ||release.mainSha!==expectedMain||release.targetDate!==plan?.accountingThrough
       ||plan?.kind!=='daily'||plan.markets.join(',')!=='NASDAQ,NYSE')fail('RECOVERY_SCOPE');
-  readState||=((target,start)=>readPublicationState(target,start,undefined,{requireIb:true,strictCandidates:true}));
   const planHash=hash(plan);let active=true,checking=false,token=actionsToken;
   const assertActive=()=>{if(!active||typeof rr.get!=='function')fail('RECOVERY_CONSUMED');};
+  if(!readState){
+    if(typeof token!=='string'||token.length<20||token.length>4096||/\s/.test(token))fail('RECOVERY_METADATA');
+    // Reuse this admission's Actions read token, never ambient credentials or
+    // anonymous fallback. Only the original strict publication GETs are allowed.
+    const fetchImpl=globalThis.fetch,root='https://api.github.com/repos/'+ONCE_REPO+'/',
+      refs='git/matching-refs/heads/codex/fee-daily-'+plan.accountingThrough.replaceAll('-','')+'-',
+      comparison=new RegExp('^compare/[a-f0-9]{40}\\.\\.\\.'+expectedMain+'\\?per_page=1$');
+    const request=async route=>{
+      assertActive();
+      if(route!=='git/ref/heads/main'&&route!=='contents/data.json?ref='+expectedMain
+          &&route!=='contents/fee-data-health.json?ref='+expectedMain&&route!==refs&&!comparison.test(route))fail('RECOVERY_METADATA');
+      let value;try{value=await boundedJson(fetchImpl,root+route,{method:'GET',headers:{Accept:'application/vnd.github+json',
+        'X-GitHub-Api-Version':'2022-11-28',Authorization:'Bearer '+token}},{timeoutMs:15000,maxBytes:8*1024*1024});}
+      catch{throw Error('FEE_CLOUD_PUBLICATION_READ');}
+      assertActive();return value;
+    };
+    readState=(target,start)=>readPublicationState(target,start,request,{requireIb:true,strictCandidates:true});
+  }
   const load=async at=>{
     assertActive();
     await refreshHistoricalRelease(release);assertActive();

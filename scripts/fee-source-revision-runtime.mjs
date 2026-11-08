@@ -16,6 +16,7 @@ const CONTRACTS=Object.freeze({
   'ib-source-revision-20261106-sync-v2':'fee-console.ib-source-revision-plan.v2',
   'ib-source-revision-20261106-sync-v3':'fee-console.ib-source-revision-plan.v2',
   'ib-source-revision-20261106-sync-v4':'fee-console.ib-source-revision-plan.v2',
+  'ib-source-revision-20261106-sync-v5':'fee-console.ib-source-revision-plan.v2',
   'ib-source-revision-20261106-diagnostic-v1':'fee-console.ib-source-revision-plan.v2',
   'ib-source-revision-20261106-diagnostic-v2':'fee-console.ib-source-revision-plan.v2',
   'ib-source-revision-20261106-diagnostic-v3':'fee-console.ib-source-revision-plan.v2',

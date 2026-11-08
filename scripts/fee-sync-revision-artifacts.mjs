@@ -21,6 +21,7 @@ const instances=new WeakSet(),failures=new WeakMap(),OID=/^[a-f0-9]{40}$/,SHA=/^
 const OWNER='huanwujoy-crypto',REPO=OWNER+'/fee-console',parseExact=createLegacyPolicy().parseExactJson;
 const CONTRACT_MODELS=Object.freeze({'ib-source-revision-20261106-v1':'consumption-v1','ib-source-revision-20261106-sync-v2':'sync-cycle-v1',
   'ib-source-revision-20261106-sync-v4':'sync-cycle-v1',
+  'ib-source-revision-20261106-sync-v5':'sync-cycle-v1',
   'ib-source-revision-20261106-sync-v3':'sync-cycle-v1','ib-source-revision-20261106-diagnostic-v1':'sync-cycle-v1',
   'ib-source-revision-20261106-diagnostic-v2':'sync-cycle-v1','ib-source-revision-20261106-diagnostic-v3':'sync-cycle-v1',
   'ib-source-revision-20261106-diagnostic-v4':'sync-cycle-v1','ib-source-revision-20261106-diagnostic-v5':'sync-cycle-v1','ib-source-revision-20261106-diagnostic-v6':'sync-cycle-v1','ib-source-revision-20261106-diagnostic-v7':'sync-cycle-v1','ib-source-revision-20261106-diagnostic-v8':'sync-cycle-v1'});
