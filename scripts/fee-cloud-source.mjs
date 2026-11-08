@@ -11,6 +11,7 @@ import {managedTransferCandidates,buildManagedTransferProof,consumeManagedTransf
 import {validateManagementRegistry} from './fee-management-exemption.mjs';
 import {SHARESIGHT_REFERENCE_SCHEMA,normalizeSharesightReference,classifyFlow} from './daily-core.mjs';
 
+import {SOURCE_CAPTURE_UNSTABLE_CODES,lexicalRecordsSha256,lexicalRecordEquivalent} from './fee-source-lexical.mjs';
 import {isSharesightDeclaredTradeCash,resolveFundRecordsTradeCashEvidence} from './fee-trade-cash-evidence.mjs';
 export {isControlledWebullNetProceeds} from './fee-trade-cash-evidence.mjs';
 
@@ -30,6 +31,17 @@ export const CLOUD_ACCOUNTS = Object.freeze({
 });
 
 const fail = code => { throw new Error(`FEE_CLOUD_${code}`); };
+// The ordinary FEE_CLOUD_SOURCE_UNSTABLE message and every allowlist stay
+// unchanged. The shared fixed capture location is carried by error identity
+// only, so a forged, cloned or proxied error reports UNCLASSIFIED.
+export const FEE_CLOUD_CAPTURE_UNSTABLE_CODES=SOURCE_CAPTURE_UNSTABLE_CODES;
+const captureUnstableByError=new WeakMap();
+export const feeCloudCaptureUnstableDiagnostic=error=>captureUnstableByError.get(error)||'UNCLASSIFIED';
+const failCaptureUnstable=site=>{
+  const failure=new Error('FEE_CLOUD_SOURCE_UNSTABLE');
+  captureUnstableByError.set(failure,SOURCE_CAPTURE_UNSTABLE_CODES.includes(site)?site:'UNCLASSIFIED');
+  throw failure;
+};
 const object = value => value !== null && typeof value === "object" && !Array.isArray(value);
 const finite = value => typeof value === "number" && Number.isFinite(value);
 const round2 = value => Math.round((value + Number.EPSILON) * 100) / 100;
@@ -953,11 +965,13 @@ export class SharesightCloudReader {
           transport();
           const u=new URL(record.path,API);for(const [k,v]of Object.entries(record.query))u.searchParams.append(k,v);
           await FIXED_HTTP_JSON.call(this.#ownedHttp,u.href,{method:'GET',headers:{Accept:'application/json',Authorization:'Bearer '+token,'User-Agent':'fee-console-cloud-reader/1.0'}});
-          if(stable(context.records.at(-1))!==stable(record))fail('SOURCE_UNSTABLE');
+          // Identical bytes, or a strict lexical equivalent of the original record.
+          const current=context.records.at(-1);
+          if(stable(current)!==stable(record)&&!lexicalRecordEquivalent(current,record))fail('SOURCE_UNSTABLE');
         }
       });
       transport();
-      if(context.records.length!==state.records.length||sha256(context.records)!==state.sourceSha256)fail('SOURCE_UNSTABLE');
+      if(context.records.length!==state.records.length||sha256(context.records)!==state.sourceSha256&&lexicalRecordsSha256(context.records)!==state.sourceLexicalSha256)fail('SOURCE_UNSTABLE');
       return true;
     }catch{state.revoked=true;fail('SOURCE_UNSTABLE');}
     finally{secrets.length=0;this.#capturing=false;}
@@ -1092,11 +1106,16 @@ export class SharesightCloudReader {
         const records=context.records.sort((a,b)=>order(a)<order(b)?-1:order(a)>order(b)?1:0),digest=sha256(records);
         captures.push({attempt,records,sha256:digest});inputs.push(input);
       }
-      if(stable(inputs[0])!==stable(inputs[1])||captures[0].sha256!==captures[1].sha256)fail('SOURCE_UNSTABLE');
-      if(argumentsHash!==sha256(this.#captureArguments(targetDate,benchmark)))fail('SOURCE_UNSTABLE');
+      // Same shared rule as the IB capture: the normalized business re-read must
+      // match exactly; differing raw bytes are accepted only when the batches are
+      // strictly lexically equivalent. The first round's records stay the proof.
+      if(stable(inputs[0])!==stable(inputs[1]))failCaptureUnstable('FINGERPRINT');
+      const lexicalSha256=lexicalRecordsSha256(captures[0].records);
+      if(captures[0].sha256!==captures[1].sha256&&lexicalSha256!==lexicalRecordsSha256(captures[1].records))failCaptureUnstable('RECORDS');
+      if(argumentsHash!==sha256(this.#captureArguments(targetDate,benchmark)))failCaptureUnstable('UNCLASSIFIED');
       const result=freezeCapture({input:inputs[0],evidence:{schema:'fee-console.sharesight-capture.v1',provider:'Sharesight',targetDate,captures,sourceSha256:captures[0].sha256}});
-      if(this.#captureTransport().some((v,i)=>v!==transport[i]))fail('SOURCE_UNSTABLE');
-      this.#capturedReads.set(result,{argumentsHash,arguments:freezeCapture(argumentsCopy),transport,peerPortfolioId:this.#capturePeer(),records:captures[0].records,sourceSha256:captures[0].sha256,consumed:false,revoked:false});return result;
+      if(this.#captureTransport().some((v,i)=>v!==transport[i]))failCaptureUnstable('TRANSPORT');
+      this.#capturedReads.set(result,{argumentsHash,arguments:freezeCapture(argumentsCopy),transport,peerPortfolioId:this.#capturePeer(),records:captures[0].records,sourceSha256:captures[0].sha256,sourceLexicalSha256:lexicalSha256,consumed:false,revoked:false});return result;
     }finally{secrets.length=0;this.#capturing=false;}
   }
   // Field acceptance only, not an IB TWR receipt or a baseline/coverage grant.

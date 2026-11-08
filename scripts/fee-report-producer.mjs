@@ -371,7 +371,11 @@ const DIAGNOSTIC_REVISION_CONTRACT='ib-source-revision-20261106-diagnostic-v1';
 const ECONOMIC_DIAGNOSTIC_CONTRACT='ib-source-revision-20261106-diagnostic-v2';
 const CASH_DIAGNOSTIC_CONTRACT='ib-source-revision-20261106-diagnostic-v3';
 const INCOME_BOUNDARY_DIAGNOSTIC_CONTRACT='ib-source-revision-20261106-diagnostic-v4';
-const isDiagnosticRevision=contractId=>contractId===DIAGNOSTIC_REVISION_CONTRACT||contractId===ECONOMIC_DIAGNOSTIC_CONTRACT||contractId===CASH_DIAGNOSTIC_CONTRACT||contractId===INCOME_BOUNDARY_DIAGNOSTIC_CONTRACT;
+// Source-stability release: the same 2026-11-06 target and read-only purpose,
+// pinned to the real main it would be released on. It is not the consumed v4
+// admission and grants nothing until owner approval, merge and an owner run.
+const SOURCE_STABILITY_DIAGNOSTIC_CONTRACT='ib-source-revision-20261106-diagnostic-v5';
+const isDiagnosticRevision=contractId=>contractId===DIAGNOSTIC_REVISION_CONTRACT||contractId===ECONOMIC_DIAGNOSTIC_CONTRACT||contractId===CASH_DIAGNOSTIC_CONTRACT||contractId===INCOME_BOUNDARY_DIAGNOSTIC_CONTRACT||contractId===SOURCE_STABILITY_DIAGNOSTIC_CONTRACT;
 const DIAGNOSTIC_REVISION_PURPOSE='read-only-diagnostic';
 const DIAGNOSTIC_REVISION_FILES=Object.freeze([
   ...['.github/workflows/fee-cloud-producer.yml','.github/workflows/scripts-check.yml','security/approval-tiers.json',
@@ -402,10 +406,38 @@ const INCOME_BOUNDARY_DIAGNOSTIC_FILES=Object.freeze([
   'scripts/ib-manager-source.mjs','scripts/ib-manager-source.test.mjs',
   'scripts/ib-manager-source-revision.mjs','scripts/ib-manager-source-revision.test.mjs',
 ].map(path=>Object.freeze({path,status:'modified'})));
+// BEGIN SOURCE_STABILITY_DIAGNOSTIC_FILES
+const SOURCE_STABILITY_DIAGNOSTIC_FILES=Object.freeze([
+  Object.freeze({path:'.github/workflows/scripts-check.yml',status:'modified'}),
+  Object.freeze({path:'docs/fee-source-revision.md',status:'modified'}),
+  Object.freeze({path:'docs/fee-unified-source-readiness.md',status:'modified'}),
+  Object.freeze({path:'scripts/fee-cloud-source.mjs',status:'modified'}),
+  Object.freeze({path:'scripts/fee-report-producer.mjs',status:'modified'}),
+  Object.freeze({path:'scripts/fee-report-producer.test.mjs',status:'modified'}),
+  Object.freeze({path:'scripts/fee-source-lexical.mjs',status:'added'}),
+  Object.freeze({path:'scripts/fee-source-lexical.test.mjs',status:'added'}),
+  Object.freeze({path:'scripts/fee-source-revision-runtime.mjs',status:'modified'}),
+  Object.freeze({path:'scripts/fee-source-revision-runtime.test.mjs',status:'modified'}),
+  Object.freeze({path:'scripts/fee-sync-captured-inputs.mjs',status:'modified'}),
+  Object.freeze({path:'scripts/fee-sync-date-policy.mjs',status:'added'}),
+  Object.freeze({path:'scripts/fee-sync-date-policy.test.mjs',status:'added'}),
+  Object.freeze({path:'scripts/fee-sync-readiness.mjs',status:'modified'}),
+  Object.freeze({path:'scripts/fee-sync-revision-artifacts.mjs',status:'modified'}),
+  Object.freeze({path:'scripts/fee-sync-revision-artifacts.test.mjs',status:'modified'}),
+  Object.freeze({path:'scripts/fee-sync-test-fixtures.mjs',status:'modified'}),
+  Object.freeze({path:'scripts/ib-manager-source.mjs',status:'modified'}),
+  Object.freeze({path:'scripts/ib-manager-source.test.mjs',status:'modified'}),
+  Object.freeze({path:'security/approval-tiers.json',status:'modified'}),
+]);
+// END SOURCE_STABILITY_DIAGNOSTIC_FILES
 // Preserve each consumed contract and its evidence. Each independently reviewed
 // admission belongs only to its signed immediate successor; it neither resets
 // ordinary attempts nor grants a future target/version a retry.
 const RECOVERY_SCOPES=Object.freeze([
+ Object.freeze({contractId:SOURCE_STABILITY_DIAGNOSTIC_CONTRACT,purpose:DIAGNOSTIC_REVISION_PURPOSE,admissionModel:'sync-cycle-v1',target:'2026-11-06',
+  baseSha:'b72cd6895c5990e4bb644b26f181d9f78313ca72',repairBase:'b72cd6895c5990e4bb644b26f181d9f78313ca72',
+  baseParents:Object.freeze(['e30015d7260e43622f8ad63a119b0efbef35acb4']),fileManifest:SOURCE_STABILITY_DIAGNOSTIC_FILES,
+  uiBlob:'2bb9f66ac890ba87cec504ef72a5083c07670689'}),
  Object.freeze({contractId:INCOME_BOUNDARY_DIAGNOSTIC_CONTRACT,purpose:DIAGNOSTIC_REVISION_PURPOSE,admissionModel:'sync-cycle-v1',target:'2026-11-06',
   baseSha:'e30015d7260e43622f8ad63a119b0efbef35acb4',repairBase:'e30015d7260e43622f8ad63a119b0efbef35acb4',
   baseParents:Object.freeze(['f1d4454d25849e1908ba508f8c7f140389e425bb']),fileManifest:INCOME_BOUNDARY_DIAGNOSTIC_FILES,
