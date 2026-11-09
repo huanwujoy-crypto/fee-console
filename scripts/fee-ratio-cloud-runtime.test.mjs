@@ -8,13 +8,18 @@ import {spawnSync} from 'node:child_process';
 import {authenticated} from './fee-ratio-official-source.test.mjs';
 import {createRatioCloudPublisher} from './fee-ratio-cloud-publish.mjs';
 import {ratioAdmission,createRatioTransport,executeRatioCloud,saveRatioReceipt,safeRatioReceipt,RATIO_BUCKET,RATIO_OWNER} from './fee-ratio-cloud-runtime.mjs';
-const gid='0'.repeat(32),managerToken='synthetic-manager-token-not-real-123',accessToken='synthetic-google-token-not-real-123',head='a'.repeat(40),canary='CANARY_PRIVATE_TOKEN_NEVER_LOG';
+const gid='0'.repeat(32),managerToken='synthetic-manager-token-not-real-123',accessToken='synthetic-google-token-not-real-123',repositoryToken='synthetic-repository-token-not-real-123',head='a'.repeat(40),canary='CANARY_PRIVATE_TOKEN_NEVER_LOG';
+const mainUrl='https://api.github.com/repos/huanwujoy-crypto/fee-console/git/ref/heads/main';
 const hash=b=>crypto.createHash('sha256').update(b).digest('hex');
 const response=(url,value,status=200)=>{const r=new Response(status===204||status===412?null:typeof value==='string'?value:JSON.stringify(value),{status});Object.defineProperty(r,'url',{value:url});return r;};
 const plan=()=>({mode:'verify-current',previousBodySha256:'b'.repeat(64),bundleId:null,original:null,input:null,library:null});
 function admission(p=plan()){
  const event={sender:{id:RATIO_OWNER},repository:{full_name:'huanwujoy-crypto/fee-console'},inputs:{ratio_main:head,ratio_plan:JSON.stringify(p)}};
- const env={GITHUB_ACTIONS:'true',GITHUB_EVENT_NAME:'workflow_dispatch',GITHUB_RUN_ATTEMPT:'1',GITHUB_REF:'refs/heads/main',GITHUB_REPOSITORY:'huanwujoy-crypto/fee-console',GITHUB_ACTOR_ID:String(RATIO_OWNER),GITHUB_SHA:head,RATIO_PLAN:event.inputs.ratio_plan,FEE_ECON_GIST_ID:gid,FEE_DATA_KEY:Buffer.alloc(32,7).toString('base64url'),FEE_RATIO_MANAGER_TOKEN:managerToken};return {event,env};
+ const env={GITHUB_ACTIONS:'true',GITHUB_EVENT_NAME:'workflow_dispatch',GITHUB_RUN_ATTEMPT:'1',GITHUB_REF:'refs/heads/main',GITHUB_REPOSITORY:'huanwujoy-crypto/fee-console',GITHUB_ACTOR_ID:String(RATIO_OWNER),GITHUB_SHA:head,GITHUB_TOKEN:repositoryToken,RATIO_PLAN:event.inputs.ratio_plan,FEE_ECON_GIST_ID:gid,FEE_DATA_KEY:Buffer.alloc(32,7).toString('base64url'),FEE_RATIO_MANAGER_TOKEN:managerToken};return {event,env};
+}
+function forbidFinancialAccess(env){
+ let reads=0;for(const key of ['FEE_ECON_GIST_ID','FEE_DATA_KEY','FEE_RATIO_MANAGER_TOKEN','RATIO_STORAGE_ACCESS_TOKEN'])Object.defineProperty(env,key,{get(){reads++;throw Error(canary);}});
+ return ()=>reads;
 }
 const safe=()=>({schema:'fee-console.ratio-cloud-safe-result.v1',status:'REFUSED',stage:'ADMISSION',claim:'NOT_ATTEMPTED',patchAttempts:0,bodySha256:null,contentSha256:null,cleanup:'NO_INPUTS_READ'});
 test('exact manual owner/main/attempt and closed plan; fee inputs cannot be mixed',()=>{
@@ -26,12 +31,48 @@ test('exact manual owner/main/attempt and closed plan; fee inputs cannot be mixe
 test('full read-only entry authenticates exact packet; no storage, claims, PATCH or financial API',async t=>{
  const f=await authenticated(t),p=plan();p.previousBodySha256=await f.ratio.digest(f.signed.body);const a=admission(p),calls=[],saved=[],files={};
  for(const [name,value]of [['fee-console-ratio-recipient.json',f.manager.recipient],['fee-console-ratio-snapshot.json',f.signed]]){const content=JSON.stringify(value);files[name]={filename:name,size:Buffer.byteLength(content),content,truncated:false};}
- const fetchImpl=async(url,o)=>{calls.push({url,method:o.method||'GET'});assert.equal(o.redirect,'error');if(url.endsWith('/git/ref/heads/main'))return response(url,{object:{sha:head}});assert.equal(o.headers.Authorization,'Bearer '+managerToken);if(url.endsWith('/user'))return response(url,{id:RATIO_OWNER,login:'synthetic-owner'});assert.equal(url,'https://api.github.com/gists/'+gid);return response(url,{id:gid,public:false,owner:{id:RATIO_OWNER,login:'synthetic-owner'},history:[{version:'d'.repeat(40)}],files});};
+ const fetchImpl=async(url,o)=>{calls.push({url,method:o.method||'GET'});assert.equal(o.redirect,'error');if(url===mainUrl){assert.equal(o.headers.Authorization,'Bearer '+repositoryToken);return response(url,{object:{sha:head}});}assert.equal(o.headers.Authorization,'Bearer '+managerToken);if(url.endsWith('/user'))return response(url,{id:RATIO_OWNER,login:'synthetic-owner'});assert.equal(url,'https://api.github.com/gists/'+gid);return response(url,{id:gid,public:false,owner:{id:RATIO_OWNER,login:'synthetic-owner'},history:[{version:'d'.repeat(40)}],files});};
  const r=await executeRatioCloud({...a,fetchImpl,publisher:createRatioCloudPublisher({exposureCore:f.exposure}),clock:()=>f.now,saveReceipt:async v=>saved.push(structuredClone(v))});assert.equal(r.status,'VERIFIED_CURRENT_NO_WRITE');assert.equal(r.patchAttempts,0);assert.deepEqual(saved.at(-1),r);assert.equal(calls.length,3);assert.ok(calls.every(c=>c.method==='GET'&&!c.url.includes('storage')));
 });
 test('public preflight main mismatch and unknown inputs fail before credentials, preserving fixed receipt',async()=>{
- for(const change of [false,true]){const a=admission(),calls=[],saved=[];const r=await executeRatioCloud({...a,env:{...a.env,FEE_RATIO_MANAGER_TOKEN:undefined},preflight:true,fetchImpl:async url=>{calls.push(url);return response(url,{object:{sha:change?'b'.repeat(40):head}});},saveReceipt:async v=>saved.push(v)});assert.equal(calls.length,1);assert.equal(change?r.stage:r.preflight,change?'MAIN':true);if(change)assert.equal(saved.length,1);}
+ for(const change of [false,true]){const a=admission(),calls=[],saved=[];const r=await executeRatioCloud({...a,env:{...a.env,FEE_RATIO_MANAGER_TOKEN:undefined},preflight:true,fetchImpl:async url=>{calls.push(url);return response(url,{object:{sha:change?'b'.repeat(40):head}});},saveReceipt:async v=>saved.push(v)});assert.equal(calls.length,1);assert.equal(change?r.stage:r.preflight,change?'MAIN_HEAD':true);if(change)assert.equal(saved.length,1);}
  const a=admission();a.event.inputs.bad=canary;const saved=[];const r=await executeRatioCloud({...a,fetchImpl:()=>{throw Error('NO_CALL')},saveReceipt:async v=>saved.push(v)});assert.equal(r.stage,'ADMISSION');assert.ok(!JSON.stringify(saved).includes(canary));
+});
+test('authenticated main preflight avoids synthetic anonymous rate limiting without financial access',async()=>{
+ const a=admission(),reads=forbidFinancialAccess(a.env),calls=[];
+ const fetchImpl=async(url,o)=>{calls.push({url,authorization:o.headers.Authorization});assert.equal(url,mainUrl);return o.headers.Authorization==='Bearer '+repositoryToken?response(url,{object:{sha:head}}):response(url,{message:canary},403);};
+ assert.equal((await fetchImpl(mainUrl,{headers:{}})).status,403);calls.length=0;
+ const r=await executeRatioCloud({...a,preflight:true,fetchImpl,saveReceipt:async()=>assert.fail('successful preflight has no failure receipt')});
+ assert.deepEqual(r,{preflight:true,mode:'verify-current'});assert.deepEqual(calls,[{url:mainUrl,authorization:'Bearer '+repositoryToken}]);assert.equal(reads(),0);
+});
+test('missing or malformed repository token refuses before fetch, publisher or financial-secret access',async()=>{
+ for(const preflight of [true,false])for(const value of [undefined,null,false,42,'','short','a'.repeat(8193),' '+repositoryToken,repositoryToken+'\n',repositoryToken+'\0',repositoryToken+'\x7f',repositoryToken+'é']){
+  const a=admission(),reads=forbidFinancialAccess(a.env),saved=[];a.env.GITHUB_TOKEN=value;let calls=0,publishes=0;
+  const r=await executeRatioCloud({...a,preflight,fetchImpl:async()=>{calls++;throw Error(canary);},publisher:{async run(){publishes++;throw Error(canary);}},saveReceipt:async v=>saved.push(v)});
+  assert.deepEqual(r,{...safe(),stage:'MAIN_TOKEN'});assert.deepEqual(saved,[r]);assert.equal(calls,0);assert.equal(publishes,0);assert.equal(reads(),0);assert.ok(!JSON.stringify(saved).includes(canary));
+ }
+});
+test('main failures retain bounded fixed diagnostics, stop before private reads, and never retry',async t=>{
+ const cases=[
+  ['network','MAIN_FETCH',()=>{throw Error(canary);}],
+  ['HTTP 403','MAIN_HTTP',()=>response(mainUrl,{message:canary},403)],
+  ['HTTP 429','MAIN_HTTP',()=>response(mainUrl,{message:canary},429)],
+  ['redirect','MAIN_RESPONSE',()=>{const r=response(mainUrl,{});Object.defineProperty(r,'redirected',{value:true});return r;}],
+  ['wrong URL','MAIN_RESPONSE',()=>response('https://example.invalid/'+canary,{object:{sha:head}})],
+  ['body failure','MAIN_RESPONSE',()=>({status:200,redirected:false,url:mainUrl,text:async()=>{throw Error(canary);}})],
+  ['oversized body','MAIN_RESPONSE',()=>response(mainUrl,canary+'x'.repeat(65537))],
+  ['invalid JSON','MAIN_RESPONSE',()=>response(mainUrl,canary)],
+  ['changed main','MAIN_HEAD',()=>response(mainUrl,{object:{sha:'b'.repeat(40)}})],
+  ['missing main','MAIN_HEAD',()=>response(mainUrl,{message:canary})]
+ ];
+ for(const [name,stage,makeResponse]of cases)await t.test(name,async()=>{
+  for(const preflight of [true,false]){
+   const a=admission(),reads=forbidFinancialAccess(a.env),saved=[];let calls=0,publishes=0;
+   const r=await executeRatioCloud({...a,preflight,fetchImpl:async(url,o)=>{calls++;assert.equal(url,mainUrl);assert.equal(o.headers.Authorization,'Bearer '+repositoryToken);assert.equal(o.redirect,'error');assert.equal(o.credentials,'omit');return makeResponse();},publisher:{async run(){publishes++;throw Error(canary);}},saveReceipt:async v=>saved.push(v)});
+   assert.deepEqual(r,{...safe(),stage});assert.deepEqual(saved,[r]);assert.equal(calls,1);assert.equal(publishes,0);assert.equal(reads(),0);
+   for(const secret of [canary,repositoryToken,managerToken,accessToken])assert.ok(!JSON.stringify(saved).includes(secret));
+  }
+ });
 });
 function transportFixture({truncated=false,mutate=()=>{},extra}={}){
  const body=Buffer.from('{"synthetic":"snapshot"}'),raw='https://gist.githubusercontent.com/synthetic-owner/'+gid+'/raw/'+'c'.repeat(40)+'/fee-console-ratio-snapshot.json';
@@ -70,6 +111,10 @@ test('outer error cannot erase a possibly issued PATCH outcome',async()=>{
 test('safe receipt atomic save refuses extra fields and cannot overwrite pending evidence',t=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ratio-safe-test-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));const file=path.join(dir,'result.json');saveRatioReceipt(file,safe());assert.equal(fs.statSync(file).mode&0o777,0o600);assert.deepEqual(JSON.parse(fs.readFileSync(file)),safe());assert.throws(()=>safeRatioReceipt({...safe(),secret:canary}),/REFUSED/);fs.writeFileSync(file+'.pending','pending');assert.throws(()=>saveRatioReceipt(file,safe()));assert.deepEqual(JSON.parse(fs.readFileSync(file)),safe());
 });
+test('main diagnostic stages remain a closed enum and legacy MAIN receipts remain readable',()=>{
+ for(const stage of ['MAIN','MAIN_TOKEN','MAIN_FETCH','MAIN_HTTP','MAIN_RESPONSE','MAIN_HEAD'])assert.deepEqual(safeRatioReceipt({...safe(),stage}),{...safe(),stage});
+ assert.throws(()=>safeRatioReceipt({...safe(),stage:'MAIN_'+canary}),/REFUSED/);assert.throws(()=>safeRatioReceipt({...safe(),stage:'MAIN_HTTP',response:canary}),/REFUSED/);
+});
 test('actual final command fails admission without networking and saves before displaying',t=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ratio-entry-test-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));fs.writeFileSync(path.join(dir,'event.json'),JSON.stringify({bad:canary}));
  const r=spawnSync(process.execPath,['scripts/fee-ratio-cloud-runtime.mjs','--preflight'],{cwd:new URL('..',import.meta.url),env:{...process.env,GITHUB_EVENT_PATH:path.join(dir,'event.json'),RUNNER_TEMP:dir,GITHUB_ACTIONS:'false'},encoding:'utf8'});assert.equal(r.status,1);assert.ok(!r.stdout.includes(canary));assert.ok(!r.stderr.includes(canary));assert.equal(JSON.parse(fs.readFileSync(path.join(dir,'fee-ratio-result.safe.json'))).stage,'ADMISSION');
@@ -78,6 +123,8 @@ test('workflow isolates all fee jobs, preserves schedule/concurrency and never e
  const wf=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8');for(const job of ['period','once-admit','produce','once-finish','source-plan-check','source-acceptance']){const body=wf.split('\n  '+job+':\n')[1].split(/\n  [a-z-]+:\n/)[0];assert.match(body,/    if: \$\{\{ !inputs\.ib_diagnostic_once && !inputs\.ib_diagnostic_main && !inputs\.ratio_plan && !inputs\.ratio_main && /,job);}
  assert.match(wf,/group: fee-cloud-producer\n  cancel-in-progress: false/);assert.match(wf,/cron: '0 1 \* \* \*'/);assert.deepEqual([...wf.matchAll(/- cron: '([^']+)'/g)].map(m=>m[1]),['0 1 * * *','30 3 * * *','0 6 * * *']);
  const ratio=wf.split('\n  ratio:\n')[1].split(/\n  [a-z-]+:\n/)[0];assert.ok(!ratio.includes('SHARESIGHT'));assert.ok(!ratio.includes('fee-report-producer.mjs'));assert.match(ratio,/create_credentials_file: false/);assert.match(ratio,/access_token_scopes: https:\/\/www.googleapis.com\/auth\/devstorage.read_write/);assert.match(ratio,/fromJSON\(inputs.ratio_plan\).mode == 'publish'/);assert.equal((wf.match(/secrets.FEE_RATIO_MANAGER_TOKEN/g)||[]).length,1);assert.match(ratio,/path: \$\{\{ runner.temp \}\}\/fee-ratio-result.safe.json/);
+ for(const job of ['ratio-preflight','ratio']){const body=wf.split('\n  '+job+':\n')[1].split(/\n  [a-z-]+:\n/)[0];assert.equal((body.match(/GITHUB_TOKEN: \$\{\{ github.token \}\}/g)||[]).length,1);assert.match(body,/GITHUB_TOKEN: \$\{\{ github.token \}\}\n          RATIO_PLAN: \$\{\{ inputs.ratio_plan \}\}/);assert.match(body,/permissions:\n      contents: read\n/);assert.ok(!body.includes('contents: write'));}
+ const preflight=wf.split('\n  ratio-preflight:\n')[1].split(/\n  [a-z-]+:\n/)[0];assert.ok(!preflight.includes('secrets.'));assert.ok(!preflight.includes('id-token: write'));
 });
 
 test('complete publish entry: pinned storage, real crypto, durable intent, one PATCH, exact readback and cleanup',async t=>{
@@ -88,7 +135,7 @@ test('complete publish entry: pinned storage, real crypto, durable intent, one P
  let current=JSON.stringify(f.signed),revision='d'.repeat(40),patches=0,claims=0;const events=[],saved=[],objects=new Map([[p.original.name,{spec:p.original,bytes:original}],[p.input.name,{spec:p.input,bytes:input}]]);
  const fetchImpl=async(url,o)=>{
   const u=new URL(url);events.push(o.method||'GET');
-  if(url.endsWith('/git/ref/heads/main'))return response(url,{object:{sha:head}});
+  if(url===mainUrl){assert.equal(o.headers.Authorization,'Bearer '+repositoryToken);return response(url,{object:{sha:head}});}
   if(u.host==='api.github.com'){
    assert.equal(o.headers.Authorization,'Bearer '+managerToken);
    if(url.endsWith('/user'))return response(url,{id:RATIO_OWNER,login:'synthetic-owner'});

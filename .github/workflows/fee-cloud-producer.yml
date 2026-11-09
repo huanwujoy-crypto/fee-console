@@ -550,6 +550,7 @@ jobs:
           persist-credentials: false
       - name: Validate manual ratio admission without financial credentials
         env:
+          GITHUB_TOKEN: ${{ github.token }}
           RATIO_PLAN: ${{ inputs.ratio_plan }}
         run: node scripts/fee-ratio-cloud-runtime.mjs --preflight
 
@@ -582,6 +583,7 @@ jobs:
           export_environment_variables: false
       - name: Execute only the reviewed ratio operation
         env:
+          GITHUB_TOKEN: ${{ github.token }}
           RATIO_PLAN: ${{ inputs.ratio_plan }}
           RATIO_STORAGE_ACCESS_TOKEN: ${{ steps.ratio-auth.outputs.access_token }}
           FEE_RATIO_MANAGER_TOKEN: ${{ secrets.FEE_RATIO_MANAGER_TOKEN }}

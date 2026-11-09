@@ -96,7 +96,7 @@ export function createRatioTransport({fetchImpl=fetch,gistId,managerToken,access
 }
 
 const statuses=['REFUSED','VERIFIED_CURRENT_NO_WRITE','UNCHANGED_SOURCE_NO_WRITE','PUBLISHED_CONFIRMED','WRITE_UNCONFIRMED'];
-const stages=['ADMISSION','MAIN','CREDENTIALS','PLAN','CURRENT','INPUT','SOURCE','CLAIM','PREWRITE','WRITE_INTENT','READBACK','COMPLETE'];
+const stages=['ADMISSION','MAIN','MAIN_TOKEN','MAIN_FETCH','MAIN_HTTP','MAIN_RESPONSE','MAIN_HEAD','CREDENTIALS','PLAN','CURRENT','INPUT','SOURCE','CLAIM','PREWRITE','WRITE_INTENT','READBACK','COMPLETE'];
 export function safeRatioReceipt(v){
   const keys=['schema','status','stage','claim','patchAttempts','bodySha256','contentSha256','cleanup'];
   if(!v||Object.keys(v).sort().join(',')!==keys.sort().join(',')||v.schema!=='fee-console.ratio-cloud-safe-result.v1'||!statuses.includes(v.status)||!stages.includes(v.stage)||!['NOT_ATTEMPTED','UNKNOWN','EXISTS','OWNED'].includes(v.claim)||![0,1].includes(v.patchAttempts)||![v.bodySha256,v.contentSha256].every(x=>x===null||hex(x))||!['NOT_RUN','LOCAL_AND_PINNED_INPUTS','LOCAL_ONLY','NO_INPUTS_READ','INCOMPLETE'].includes(v.cleanup))fail();
@@ -109,9 +109,24 @@ export function saveRatioReceipt(file,value){
 export async function executeRatioCloud({env,event,fetchImpl=fetch,saveReceipt,publisher=createRatioCloudPublisher(),preflight=false,clock}){
   let result={schema:'fee-console.ratio-cloud-safe-result.v1',status:'REFUSED',stage:'ADMISSION',claim:'NOT_ATTEMPTED',patchAttempts:0,bodySha256:null,contentSha256:null,cleanup:'NO_INPUTS_READ'},io;
   try{
-    const plan=ratioAdmission(env,event);result.stage='MAIN';
-    const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),20000);let r;
-    try{r=await fetchImpl('https://api.github.com/repos/'+REPO+'/git/ref/heads/main',{signal:controller.signal,redirect:'error',headers:{Accept:'application/vnd.github+json'},credentials:'omit'});if(r.status!==200||r.redirected||r.url!=='https://api.github.com/repos/'+REPO+'/git/ref/heads/main')fail();const text=await r.text();if(text.length>65536||JSON.parse(text)?.object?.sha!==env.GITHUB_SHA)fail();}finally{clearTimeout(timer);}
+    const plan=ratioAdmission(env,event);result.stage='MAIN_TOKEN';
+    // Only the existing ephemeral contents:read token may authenticate this
+    // fixed repository request. Financial credentials remain untouched here.
+    const repositoryToken=env.GITHUB_TOKEN;
+    if(!token(repositoryToken)||/[^\x21-\x7e]/.test(repositoryToken))fail();
+    const url='https://api.github.com/repos/'+REPO+'/git/ref/heads/main';
+    const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),20000);
+    try{
+      // Literal stages are the complete diagnostic: never log remote bodies,
+      // headers, tokens or exception text. Retain MAIN for earlier receipts.
+      result.stage='MAIN_FETCH';
+      const r=await fetchImpl(url,{signal:controller.signal,redirect:'error',headers:{Accept:'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28',Authorization:'Bearer '+repositoryToken},credentials:'omit'});
+      result.stage='MAIN_HTTP';if(r.status!==200)fail();
+      result.stage='MAIN_RESPONSE';if(r.redirected||r.url!==url)fail();
+      const text=await r.text();if(text.length>65536)fail();
+      const liveMain=JSON.parse(text)?.object?.sha;
+      result.stage='MAIN_HEAD';if(liveMain!==env.GITHUB_SHA)fail();
+    }finally{clearTimeout(timer);}
     if(preflight)return {preflight:true,mode:plan.mode};
     result.stage='CREDENTIALS';
     const ratio=createFeeRatioCore(createRankedExposureCore(),crypto.webcrypto),manager=await ratio.deriveSnapshotManager(env.FEE_ECON_GIST_ID,env.FEE_DATA_KEY,env.FEE_RATIO_MANAGER_TOKEN);
