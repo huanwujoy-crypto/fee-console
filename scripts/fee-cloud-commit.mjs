@@ -9,6 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { boundedJson, BoundedJsonError } from './fee-http-json.mjs';
+import { publishedEnvelopeErrors } from './fee-data-health.mjs';
 
 const OWNER = "huanwujoy-crypto";
 const REPO = `${OWNER}/fee-console`;
@@ -43,10 +44,14 @@ export async function commitPrepared({ dataFile, healthFile, baseSha, token = pr
   if (typeof token !== "string" || token.length < 20 || /[\r\n\0]/.test(token)) fail("TOKEN");
   if (!SHA_RE.test(baseSha || "")) fail("BASE");
   const data = fs.readFileSync(dataFile), health = fs.readFileSync(healthFile);
-  let receipt, envelope;
-  try { receipt = JSON.parse(health); envelope = JSON.parse(data); } catch { fail("FILES"); }
+  let receipt;
+  try { receipt = JSON.parse(health); } catch { fail("FILES"); }
+  // Exact outer {data, enc, v} (plain object, enc true, v 3, canonical base64)
+  // before any network call; a correct hash over an envelope that carries
+  // extra plaintext members is still refused.
+  if (receipt === null || typeof receipt !== "object" || publishedEnvelopeErrors(data).length) fail("FILES");
   if (!DATE_RE.test(receipt.targetDate || "") || !["updated", "no-op"].includes(receipt.outcome)
-      || receipt.dataSha256 !== sha256(data) || envelope.enc !== true || envelope.v !== 3) fail("FILES");
+      || receipt.dataSha256 !== sha256(data)) fail("FILES");
   const graph = "https://api.github.com/graphql";
   const repository = await fetchImpl(graph, token, { method: "POST", body: JSON.stringify({
     query: "query { viewer { login } repository(owner: \"huanwujoy-crypto\", name: \"fee-console\") { id ref(qualifiedName: \"refs/heads/main\") { target { oid } } } }",

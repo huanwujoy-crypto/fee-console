@@ -985,3 +985,132 @@ test("private validation rebuilds source binding rather than trusting a re-signe
   const { legacyV3Copy, ...native } = input.economicInput;
   assert.equal(validateFeeCalculationReceiptWithEcon(receipt, input.data, native).ok, false);
 });
+
+/* ---------- One management-fee rule shared by the engine and the receipt ---------- */
+
+const F1_PINNED_RECEIPT_ID = "b6ab35ef0355bc83065209f296d3d0ce138bff5bae00571a7cf53b2b6ae5462e";
+const F1_PINNED_RECEIPT_SHA256 = "fd0e0a96688e8631063772db88bef36deaf42eacede2a915768dc2f9b6d1e453";
+
+const mgmtFixture = ({ totals, start, mgmt = 1, carry = 20, opening: open, flowsAuto = [], months = [] }) => {
+  const days = dates(start, new Date(Date.parse(start + "T00:00:00Z") + (totals.length - 1) * 86400000).toISOString().slice(0, 10));
+  const daily = days.map((d, i) => {
+    const schwab = Math.round(totals[i] * 50) / 100;
+    return { d, schwab, webull: Math.round((totals[i] - schwab) * 100) / 100 };
+  });
+  const first = open ?? totals[0];
+  const schwabOpen = Math.round(first * 50) / 100;
+  return {
+    data: {
+      daily,
+      flowsAuto,
+      flowsUnresolved: [],
+      status: { asOf: days.at(-1), provisional: false, calibrated: true, unresolvedCount: 0 }
+    },
+    economicInput: {
+      v: 4,
+      settings: { start, mgmt, carry, fx: { USD: 1 } },
+      accounts: [{ id: "schwab", opening: schwabOpen }, { id: "webull", opening: Math.round((first - schwabOpen) * 100) / 100 }],
+      months,
+      fees: []
+    }
+  };
+};
+
+test("two synthetic days of 3,558.75 at 1% accrue 20 cents in the engine and the receipt", async () => {
+  const { computeFeeStatement, managementFeeCentsFromBaseCents } = await import("./fee-engine.mjs");
+  const f = mgmtFixture({ totals: [3558.75, 3558.75], start: "2026-03-01", carry: 0 });
+  // 711,750 cents × 10,000 ppm ÷ 365 = 19.5 cents exactly; the old float path gave 19.4999… → 19.
+  assert.equal(managementFeeCentsFromBaseCents(711750, 10000), 20);
+  const statement = computeFeeStatement({ ...f.data, econ: normalizeEconomicInputs(f.economicInput), asOf: "2026-03-02" });
+  assert.equal(statement.rows[0].managementFee, 0.2);
+  const receipt = buildFeeCalculationReceipt(f);
+  assert.equal(receipt.periods[0].feeBaseSumCents, 711750);
+  assert.equal(receipt.periods[0].managementFeeCents, 20);
+  assert.equal(receipt.totals.managementFeeCents, 20);
+  assert.equal(receipt.totals.netPnlCents, receipt.totals.grossPnlCents - receipt.totals.totalFeeCents);
+  assert.deepEqual(validateFeeCalculationReceiptWithEcon(receipt, f.data, f.economicInput), { ok: true, errors: [] });
+});
+
+test("management fee rounds once on either side of a half cent", async () => {
+  const { managementFeeCentsFromBaseCents, periodReturns: pr } = await import("./fee-engine.mjs");
+  for (const [baseCents, expected] of [[711749, 19], [711750, 20], [711751, 20], [693499, 19], [675250, 19], [675249, 18]]) {
+    assert.equal(managementFeeCentsFromBaseCents(baseCents, 10000), expected, String(baseCents));
+    const r = pr({ points: [{ d: "2026-03-01", tot: baseCents / 100 }], openT: baseCents / 100, from: "2026-03-01", to: "2026-03-01",
+      days: 1, flowByDate: {}, managementRatePpm: 10000, cr: 0, cumBefore: 0, hwmBefore: 0 });
+    assert.equal(r.mgmt, expected / 100, String(baseCents));
+  }
+});
+
+test("the monthly basis is summed before rounding, and each month is recomputed after a month boundary", async () => {
+  const { managementFeeCentsFromBaseCents } = await import("./fee-engine.mjs");
+  // 3,540.00 per day: one day is 9.698 cents (10 if rounded daily), two days 19.397 → 19.
+  const f = mgmtFixture({ totals: [3540, 3540, 3540, 3540, 3540], start: "2026-01-30", carry: 0 });
+  const receipt = buildFeeCalculationReceipt(f);
+  assert.deepEqual(receipt.periods.map(p => [p.ym, p.calendarDayCount, p.feeBaseSumCents, p.managementFeeCents]), [
+    ["2026-01", 2, 708000, 19],
+    ["2026-02", 3, 1062000, 29]
+  ]);
+  for (const period of receipt.periods) {
+    assert.equal(period.managementFeeCents, managementFeeCentsFromBaseCents(period.feeBaseSumCents, receipt.managementRatePpm));
+  }
+  assert.equal(receipt.totals.managementFeeCents, 48);
+  assert.notEqual(receipt.totals.managementFeeCents, 5 * 10, "daily-rounded sum is not the rule");
+  assert.deepEqual(validateFeeCalculationReceiptWithEcon(receipt, f.data, f.economicInput), { ok: true, errors: [] });
+});
+
+test("zero, four-decimal and invalid management rates follow the receipt rate rule", async () => {
+  const { computeFeeStatement, feeRatePpm } = await import("./fee-engine.mjs");
+  const zero = buildFeeCalculationReceipt(mgmtFixture({ totals: [3558.75, 3558.75], start: "2026-03-01", mgmt: 0 }));
+  assert.equal(zero.managementRatePpm, 0);
+  assert.equal(zero.totals.managementFeeCents, 0);
+  const precise = mgmtFixture({ totals: [3558.75, 3558.75], start: "2026-03-01", mgmt: 1.2345, carry: 0 });
+  const preciseReceipt = buildFeeCalculationReceipt(precise);
+  assert.equal(preciseReceipt.managementRatePpm, 12345);
+  assert.equal(preciseReceipt.totals.managementFeeCents, Math.round((711750 / 365) * (12345 / 1_000_000)));
+  assert.equal(feeRatePpm("1.2345", "rate"), 12345);
+  for (const [mgmt, pattern] of [[1.23456, /more than four decimal places/], [-1, /invalid fee rate|cannot be negative/],
+    [100.0001, /cannot exceed 100%/], ["abc", /invalid fee rate|finite number/], [Infinity, /invalid fee rate|finite number/]]) {
+    const f = mgmtFixture({ totals: [3558.75, 3558.75], start: "2026-03-01", mgmt });
+    assert.throws(() => buildFeeCalculationReceipt(f), pattern, String(mgmt));
+    assert.throws(() => computeFeeStatement({ ...f.data, econ: { ...f.economicInput }, asOf: "2026-03-02" }), pattern, String(mgmt));
+  }
+});
+
+test("periodReturns validates its management rate and refuses an unsafe cent basis", async () => {
+  const { periodReturns: pr } = await import("./fee-engine.mjs");
+  const base = { points: [{ d: "2026-03-01", tot: 100 }], openT: 100, from: "2026-03-01", to: "2026-03-01", days: 1, flowByDate: {}, cr: 0, cumBefore: 0, hwmBefore: 0 };
+  assert.equal(pr({ ...base, rate: 0.01, managementRatePpm: 10000 }).mgmt, 0);
+  assert.throws(() => pr({ ...base, rate: 0.02, managementRatePpm: 10000 }), /disagree/);
+  for (const ppm of [-1, 1.5, 1_000_001, Number.NaN]) assert.throws(() => pr({ ...base, managementRatePpm: ppm }), /ppm is invalid/);
+  for (const rate of [undefined, Number.NaN, "x", -0.01, 0.0000001]) assert.throws(() => pr({ ...base, rate }), /management rate/);
+  const huge = 1e14; // 1e16 cents exceeds Number.MAX_SAFE_INTEGER
+  assert.throws(() => pr({ ...base, points: [{ d: "2026-03-01", tot: huge }], openT: huge, rate: 0.01 }), /safe integer range/);
+});
+
+test("exempt gift value, same-day flows and IB zero management fee keep their basis under the shared rule", async () => {
+  const { periodReturns: pr, managementFeeCentsFromBaseCents } = await import("./fee-engine.mjs");
+  const r = pr({
+    points: [{ d: "2026-03-01", tot: 4000 }, { d: "2026-03-02", tot: 5000, managementExemptUsd: 441.25 }],
+    openT: 4000, from: "2026-03-01", to: "2026-03-02", days: 2, flowByDate: { "2026-03-02": 1000 },
+    rate: 0.01, cr: 0, cumBefore: 0, hwmBefore: 0
+  });
+  // 4,000.00 + (5,000.00 − 1,000.00 − 441.25) = 7,558.75 → 755,875 cents → 20.71 → 21 cents.
+  assert.equal(r.feeBaseSum, 7558.75);
+  assert.equal(r.mgmt, managementFeeCentsFromBaseCents(755875, 10000) / 100);
+  assert.equal(r.mgmt, 0.21);
+  assert.equal(r.fees, 0.21);
+  const ib = pr({ points: [{ d: "2026-03-01", tot: 3558.75 }, { d: "2026-03-02", tot: 3558.75 }], openT: 3558.75,
+    from: "2026-03-01", to: "2026-03-02", days: 2, flowByDate: {}, rate: 0, cr: 0, cumBefore: 0, hwmBefore: 0 });
+  assert.equal(ib.mgmt, 0);
+  assert.equal(ib.fees, 0);
+});
+
+test("an existing valid synthetic receipt keeps its exact bytes and schema", () => {
+  const f = mgmtFixture({ totals: [100000, 100250.5, 100510.25, 101000], start: "2026-08-29", mgmt: 2, carry: 20, opening: 99900 });
+  const receipt = buildFeeCalculationReceipt(f);
+  assert.equal(receipt.schema, FEE_RECEIPT_SCHEMA);
+  assert.equal(receipt.engineVersion, "fee-v4.6.1");
+  // Pinned from the unchanged main before the shared rule; any byte drift changes this commitment.
+  assert.equal(receipt.receiptId, F1_PINNED_RECEIPT_ID);
+  assert.equal(crypto.createHash("sha256").update(canonicalJson(receipt)).digest("hex"), F1_PINNED_RECEIPT_SHA256);
+});

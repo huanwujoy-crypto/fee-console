@@ -127,6 +127,9 @@ jobs:
           if (!outer || typeof outer !== 'object' || Array.isArray(outer)) {
             throw new Error('data.json must be a JSON object');
           }
+          if (Object.getPrototypeOf(outer) !== Object.prototype || Object.keys(outer).sort().join(',') !== 'data,enc,v') {
+            throw new Error('data.json outer envelope must contain exactly data, enc and v');
+          }
           if (outer.enc !== true || outer.v !== 3) {
             throw new Error('data.json must use the encrypted v3 envelope');
           }
@@ -139,7 +142,16 @@ jobs:
           if (Buffer.from(outer.data, 'base64').toString('base64') !== outer.data) {
             throw new Error('data.json ciphertext is not canonical base64');
           }
-          console.log('envelope ok');
+          // JSON.parse keeps only the last duplicate member; re-read the raw
+          // bytes with the repository's exact parser, which refuses duplicate
+          // decoded keys (escaped spellings included) without echoing values.
+          (async () => {
+            const { pathToFileURL } = require('url');
+            const { createLegacyPolicy } = await import(pathToFileURL(require('path').resolve('scripts/fee-legacy-policy.mjs')).href);
+            try { createLegacyPolicy().parseExactJson(fs.readFileSync('data.json')); }
+            catch { throw new Error('data.json must not contain duplicate or invalid JSON members'); }
+            console.log('envelope ok');
+          })().catch(error => { console.error(error.message); process.exit(1); });
           NODE
 
       - name: Verify amount-free run receipt and outcome

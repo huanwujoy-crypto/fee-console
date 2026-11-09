@@ -6,7 +6,14 @@ import {
   computeFeeStatement,
   endOfMonth,
   inclusiveDays,
-  isCalendarDate
+  isCalendarDate,
+  FEE_RATE_MAX_PPM as RATE_MAX_PPM,
+  feeFinite as finite,
+  feeSafeInteger as safeInteger,
+  feeCents as cents,
+  feeRatePpm as ratePpm,
+  applyPpm,
+  managementFeeCentsFromBaseCents
 } from "./fee-engine.mjs";
 
 export const FEE_RECEIPT_SCHEMA = "fee-console.calculation-receipt.v1";
@@ -20,41 +27,9 @@ const BASE64_RE = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=
 
 const HASH_RE = /^[a-f0-9]{64}$/;
 const YM_RE = /^\d{4}-(?:0[1-9]|1[0-2])$/;
-const NUMBER_RE = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
-const RATE_MAX_PPM = 1_000_000;
 const ACCOUNT_IDS = ["schwab", "webull"];
 const ALLOWED_PROVISIONAL_CODES = new Set(["daily-provisional", "status-provisional", "owner-estimated-cash-date", "owner-notification-cash-date"]);
 const codeUnitCompare = (left, right) => left < right ? -1 : left > right ? 1 : 0;
-
-const finite = (value, label) => {
-  let parsed;
-  if (typeof value === "number") parsed = value;
-  else if (typeof value === "string" && value.trim() !== "" && NUMBER_RE.test(value.trim())) parsed = Number(value);
-  else throw new Error(`${label} must be a finite number`);
-  if (!Number.isFinite(parsed)) throw new Error(`${label} must be a finite number`);
-  return parsed;
-};
-
-const safeInteger = (value, label) => {
-  if (!Number.isSafeInteger(value)) throw new Error(`${label} is outside the safe integer range`);
-  return value;
-};
-
-const cents = (value, label = "amount") => safeInteger(Math.round(finite(value, label) * 100), `${label} cents`);
-
-const ratePpm = (percent, label) => {
-  const value = finite(percent, label);
-  if (value < 0) throw new Error(`${label} cannot be negative`);
-  const ppm = Math.round(value * 10_000);
-  if (Math.abs(value * 10_000 - ppm) > 1e-8) throw new Error(`${label} has more than four decimal places`);
-  if (ppm > RATE_MAX_PPM) throw new Error(`${label} cannot exceed 100%`);
-  return ppm;
-};
-
-const applyPpm = (amountCents, ppm, divisor = 1) => safeInteger(
-  Math.round((amountCents / divisor) * (ppm / 1_000_000)),
-  "rate result"
-);
 
 const addDay = value => new Date(Date.parse(`${value}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
 
@@ -470,7 +445,7 @@ const receiptPeriod = (row, finalAsOf, managementRatePpm, carryRatePpm, chain) =
   }
   const feeBaseSumCents = cents(row.feeBaseSum, `${row.ym}.feeBaseSum`);
   const averageFeeBaseCents = safeInteger(Math.round(feeBaseSumCents / row.calendarDayCount), `${row.ym}.averageFeeBase`);
-  const managementFeeCents = applyPpm(feeBaseSumCents, managementRatePpm, 365);
+  const managementFeeCents = managementFeeCentsFromBaseCents(feeBaseSumCents, managementRatePpm);
   if (managementFeeCents !== cents(row.managementFee, `${row.ym}.managementFee`)) {
     throw new Error(`${row.ym} management-fee rounding is inconsistent`);
   }
@@ -742,7 +717,7 @@ function validateFeeCalculationReceiptUnsafe(receipt, data) {
       if (period.averageFeeBaseCents !== Math.round(period.feeBaseSumCents / period.calendarDayCount)) {
         errors.push(`${label} average fee base does not balance`);
       }
-      if (period.managementFeeCents !== applyPpm(period.feeBaseSumCents, receipt.managementRatePpm, 365)) {
+      if (period.managementFeeCents !== managementFeeCentsFromBaseCents(period.feeBaseSumCents, receipt.managementRatePpm)) {
         errors.push(`${label} management fee does not match its basis`);
       }
       if (period.cumulativePnlBeforeCents !== cumulative || period.highWaterBeforeCents !== highWater) {

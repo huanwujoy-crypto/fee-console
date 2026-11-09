@@ -65,3 +65,73 @@ test("wrong GitHub owner and mismatched health hash fail closed", async t => {
   await assert.rejects(commitPrepared({ ...input, baseSha: BASE, token: "t".repeat(30),
     fetchImpl: async () => ({ login: "huanwujoy-crypto" }) }), /COMMIT_FILES/);
 });
+
+test("the outer envelope must be exactly {data, enc, v} before any network call", async t => {
+  const good = { enc: true, v: 3, data: "A".repeat(44) };
+  const cases = [
+    { ...good, label: "plaintext" },
+    { enc: true, v: 3 },
+    { enc: true, data: good.data },
+    { ...good, enc: "true" },
+    { ...good, v: "3" },
+    { ...good, data: 42 },
+    { ...good, data: "not base64!".padEnd(44, "x") },
+    { ...good, data: "A".repeat(43) },
+    [good],
+    null,
+    "envelope"
+  ];
+  for (const envelope of cases) {
+    const input = files(t);
+    const bytes = Buffer.from(`${JSON.stringify(envelope)}\n`);
+    fs.writeFileSync(input.dataFile, bytes);
+    // A correct health hash over the rejected bytes is still refused.
+    fs.writeFileSync(input.healthFile, `${JSON.stringify({ targetDate: "2026-09-23", outcome: "updated",
+      dataSha256: crypto.createHash("sha256").update(bytes).digest("hex") })}\n`);
+    let calls = 0;
+    await assert.rejects(commitPrepared({ ...input, baseSha: BASE, token: "t".repeat(30),
+      fetchImpl: async () => { calls++; return {}; } }), /FEE_CLOUD_COMMIT_FILES/, JSON.stringify(envelope));
+    assert.equal(calls, 0, JSON.stringify(envelope));
+  }
+  const proto = files(t);
+  const protoBytes = Buffer.from(`{"enc":true,"v":3,"data":"${good.data}","__proto__":{}}\n`);
+  fs.writeFileSync(proto.dataFile, protoBytes);
+  fs.writeFileSync(proto.healthFile, JSON.stringify({ targetDate: "2026-09-23", outcome: "no-op",
+    dataSha256: crypto.createHash("sha256").update(protoBytes).digest("hex") }));
+  let calls = 0;
+  await assert.rejects(commitPrepared({ ...proto, baseSha: BASE, token: "t".repeat(30),
+    fetchImpl: async () => { calls++; return {}; } }), /FEE_CLOUD_COMMIT_FILES/);
+  assert.equal(calls, 0);
+});
+
+const RAW_DUPLICATE_ENVELOPES = ["{\"data\":\"SYNTHETIC_PLAINTEXT\",\"enc\":true,\"v\":3,\"data\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"}", "{\"data\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"enc\":true,\"v\":3,\"data\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"}", "{\"enc\":true,\"v\":3,\"d\\u0061ta\":\"SYNTHETIC_PLAINTEXT\",\"data\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"}", "{\"\\u0064\\u0061\\u0074\\u0061\":\"SYNTHETIC_PLAINTEXT\",\"enc\":true,\"v\":3,\"data\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"}", "{\"enc\":false,\"enc\":true,\"v\":3,\"data\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"}", "{\"enc\":true,\"v\":4,\"v\":3,\"data\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"}", "{\"enc\":true,\"v\":3,\"data\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\", \"data\" : \"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"}"];
+const RAW_VALID_ENVELOPES = ["{\"enc\":true,\"v\":3,\"data\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"}", "{\"data\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"v\":3,\"enc\":true}", "{\n  \"v\" : 3 ,\n\t\"enc\": true,\r\n \"data\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"\n}\n", "{\"\\u0065nc\":true,\"v\":3,\"data\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"}"];
+
+test("duplicate root members, including escaped equivalent keys, are refused before any network call", async t => {
+  for (const raw of RAW_DUPLICATE_ENVELOPES) {
+    const input = files(t);
+    const bytes = Buffer.from(raw);
+    fs.writeFileSync(input.dataFile, bytes);
+    fs.writeFileSync(input.healthFile, JSON.stringify({ targetDate: "2026-09-23", outcome: "updated",
+      dataSha256: crypto.createHash("sha256").update(bytes).digest("hex") }));
+    let calls = 0;
+    const error = await commitPrepared({ ...input, baseSha: BASE, token: "t".repeat(30),
+      fetchImpl: async () => { calls++; return {}; } }).then(() => null, e => e);
+    assert.match(String(error?.message), /^FEE_CLOUD_COMMIT_FILES$/, raw);
+    assert.equal(calls, 0, raw);
+  }
+});
+
+test("valid envelopes with any key order, spacing or escaped key spelling still reach the publication path", async t => {
+  for (const raw of RAW_VALID_ENVELOPES) {
+    const input = files(t);
+    const bytes = Buffer.from(raw);
+    fs.writeFileSync(input.dataFile, bytes);
+    fs.writeFileSync(input.healthFile, JSON.stringify({ targetDate: "2026-09-23", outcome: "updated",
+      dataSha256: crypto.createHash("sha256").update(bytes).digest("hex") }));
+    let calls = 0;
+    await assert.rejects(commitPrepared({ ...input, baseSha: BASE, token: "t".repeat(30),
+      fetchImpl: async () => { calls++; return { data: { viewer: { login: "someone-else" } } }; } }), /COMMIT_OWNER/, raw);
+    assert.equal(calls, 1, raw);
+  }
+});

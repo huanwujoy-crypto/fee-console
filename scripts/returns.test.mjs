@@ -116,8 +116,9 @@ test("an EOD contribution starts accruing management fees on the following day",
     flowByDate: { "2026-09-02": 50 }, rate: 0.0365, cr: 0,
     cumBefore: 0, hwmBefore: 0,
   });
-  // 基数 100 + (150−50) + 150；日费率 0.0365/365 = 0.0001。
-  near(r.mgmt, usesDailyEodFee ? 0.035 : 0.0375, 1e-12, "EOD 入金版本门槛");
+  // 基数 100 + (150−50) + 150 = 350.00；350.00 × 0.0365 / 365 = 3.5 分，
+  // 按回执唯一规则（月度基数合计转分 → ppm → ÷365 → 一次舍入）得 4 分。
+  near(r.mgmt, usesDailyEodFee ? 0.04 : 0.0375, 1e-12, "EOD 入金版本门槛");
 });
 
 test("an EOD withdrawal still accrues on the pre-withdrawal NAV that day", () => {
@@ -131,8 +132,8 @@ test("an EOD withdrawal still accrues on the pre-withdrawal NAV that day", () =>
     flowByDate: { "2026-09-02": -40 }, rate: 0.0365, cr: 0,
     cumBefore: 0, hwmBefore: 0,
   });
-  // 基数 100 + (60−(−40)) + 60。
-  near(r.mgmt, usesDailyEodFee ? 0.026 : 0.024, 1e-12, "EOD 出金版本门槛");
+  // 基数 100 + (60−(−40)) + 60 = 260.00 → 2.6 分，一次舍入得 3 分。
+  near(r.mgmt, usesDailyEodFee ? 0.03 : 0.024, 1e-12, "EOD 出金版本门槛");
 });
 
 test("v4.6.1 and later expose only decision-useful TWR metrics", () => {
@@ -167,7 +168,8 @@ test("a flow booked at its own close is out of the market that day", () => {
 
 test("the LP rate is Modified Dietz and converges on the true IRR", () => {
   const r = august();
-  near(r.rD, usesDailyEodFee ? 0.035209826132771335 : 0.035092202318229716,
+  // 管理费按分舍入后为 138.18（未舍入 138.178…），净收益率随之精确到该分值。
+  near(r.rD, usesDailyEodFee ? (4750 - (138.18 + 950)) / (OPEN + TRANSFER * 4 / 24) : 0.035092202318229716,
     1e-12, "出资方净收益率");
   // 同一合成现金流序列的数值求解 IRR 为 3.5112%，两种 money-weighted
   // 方法必须收敛。
