@@ -627,6 +627,8 @@
     "scripts/fee-ratio-cloud-publish.test.mjs",
     "scripts/fee-ratio-cloud-runtime.mjs",
     "scripts/fee-ratio-cloud-runtime.test.mjs",
+    "scripts/fee-ratio-fee-publication.mjs",
+    "scripts/fee-ratio-fee-publication.test.mjs",
     "docs/fee-ratio-cloud-local-candidate.md",
     "scripts/fee-ratio-aggregate-returns.mjs",
     "scripts/fee-ratio-aggregate-returns.test.mjs",

@@ -34,6 +34,14 @@ jobs:
           (github.event_name != 'workflow_run' ||
           (github.event.workflow_run.conclusion == 'success' &&
            github.event.workflow_run.event == 'push')) }}
+    # Fee-first critical section, shared only with the protected promote job.
+    # Job-level and FIFO-queued (never replaced, never cancelled for a newer
+    # run while queue room remains). A holder never waits on another workflow,
+    # so no cycle with the outer fee-cloud-producer / promote-fee-data groups.
+    concurrency:
+      group: fee-publication-critical
+      cancel-in-progress: false
+      queue: max
     runs-on: ubuntu-latest
     environment: trusted-promotion
     permissions:

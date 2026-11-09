@@ -556,6 +556,14 @@ jobs:
 
   ratio:
     needs: ratio-preflight
+    # Fee-first critical section, shared only with the protected promote job.
+    # Job-level and FIFO-queued (never replaced, never cancelled for a newer
+    # run while queue room remains). A holder never waits on another workflow,
+    # so no cycle with the outer fee-cloud-producer / promote-fee-data groups.
+    concurrency:
+      group: fee-publication-critical
+      cancel-in-progress: false
+      queue: max
     if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && !inputs.confirmed_main && !inputs.ib_envelope_once && !inputs.ib_envelope_main && needs.ratio-preflight.result == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && inputs.ratio_main == github.sha }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -589,6 +597,7 @@ jobs:
           FEE_RATIO_MANAGER_TOKEN: ${{ secrets.FEE_RATIO_MANAGER_TOKEN }}
           FEE_DATA_KEY: ${{ secrets.FEE_DATA_KEY }}
           FEE_ECON_GIST_ID: ${{ secrets.FEE_ECON_GIST_ID }}
+          IB_MANAGER_BASELINE_SHA256: ${{ vars.IB_MANAGER_BASELINE_SHA256 }}
         run: node scripts/fee-ratio-cloud-runtime.mjs --run
       - name: Retain only the closed safe ratio result
         if: ${{ always() }}

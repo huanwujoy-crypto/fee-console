@@ -8,6 +8,7 @@ import {createRatioCloudPublisher,RATIO_CLOUD_FILE,validateRatioCloudPlan} from 
 import {createFeeRatioCore} from './fee-ratio-management.mjs';
 import {createRankedExposureCore} from './xuan-ib-sharesight-exposure.mjs';
 import {createLegacyPolicy} from './fee-legacy-policy.mjs';
+import {verifyFeeFinalPublication,isFeeFinalPublicationProof,FEE_PUBLICATION_CODES} from './fee-ratio-fee-publication.mjs';
 
 export const RATIO_BUCKET='family-portfolio-gateway-fee-ratio-private';
 export const RATIO_OWNER=283054367;
@@ -95,8 +96,9 @@ export function createRatioTransport({fetchImpl=fetch,gistId,managerToken,access
   };
 }
 
-const statuses=['REFUSED','VERIFIED_CURRENT_NO_WRITE','UNCHANGED_SOURCE_NO_WRITE','PUBLISHED_CONFIRMED','WRITE_UNCONFIRMED'];
-const stages=['ADMISSION','MAIN','MAIN_TOKEN','MAIN_FETCH','MAIN_HTTP','MAIN_RESPONSE','MAIN_HEAD','CREDENTIALS','PLAN','CURRENT','INPUT','SOURCE','CLAIM','PREWRITE','WRITE_INTENT','READBACK','COMPLETE'];
+const statuses=['REFUSED','VERIFIED_CURRENT_NO_WRITE','UNCHANGED_SOURCE_NO_WRITE','WAITING_FEE_READBACK_NO_WRITE','PUBLISHED_CONFIRMED','WRITE_UNCONFIRMED'];
+const stages=['ADMISSION','MAIN','MAIN_TOKEN','MAIN_FETCH','MAIN_HTTP','MAIN_RESPONSE','MAIN_HEAD','CREDENTIALS','PLAN','CURRENT','INPUT','SOURCE','FEE_READBACK','CLAIM','PREWRITE','FEE_RECHECK','WRITE_INTENT','READBACK','COMPLETE',
+  ...['FEE_READBACK','FEE_RECHECK'].flatMap(stage=>FEE_PUBLICATION_CODES.map(code=>stage+':'+code))];
 export function safeRatioReceipt(v){
   const keys=['schema','status','stage','claim','patchAttempts','bodySha256','contentSha256','cleanup'];
   if(!v||Object.keys(v).sort().join(',')!==keys.sort().join(',')||v.schema!=='fee-console.ratio-cloud-safe-result.v1'||!statuses.includes(v.status)||!stages.includes(v.stage)||!['NOT_ATTEMPTED','UNKNOWN','EXISTS','OWNED'].includes(v.claim)||![0,1].includes(v.patchAttempts)||![v.bodySha256,v.contentSha256].every(x=>x===null||hex(x))||!['NOT_RUN','LOCAL_AND_PINNED_INPUTS','LOCAL_ONLY','NO_INPUTS_READ','INCOMPLETE'].includes(v.cleanup))fail();
@@ -132,6 +134,15 @@ export async function executeRatioCloud({env,event,fetchImpl=fetch,saveReceipt,p
     const ratio=createFeeRatioCore(createRankedExposureCore(),crypto.webcrypto),manager=await ratio.deriveSnapshotManager(env.FEE_ECON_GIST_ID,env.FEE_DATA_KEY,env.FEE_RATIO_MANAGER_TOKEN);
     if(plan.mode==='publish'&&!token(env.RATIO_STORAGE_ACCESS_TOKEN))fail();
     io=createRatioTransport({fetchImpl,gistId:env.FEE_ECON_GIST_ID,managerToken:env.FEE_RATIO_MANAGER_TOKEN,accessToken:env.RATIO_STORAGE_ACCESS_TOKEN,saveReceipt:async v=>{result=safeRatioReceipt(v);await saveReceipt(result);}});
+    // Fee-first gate: the same existing read-only repository token as the main
+    // check, sent only to fixed repository API URLs; Pages reads are anonymous.
+    io.verifyFeePublication=async({handoff,previousProof})=>{
+      if(previousProof!==undefined&&!isFeeFinalPublicationProof(previousProof))fail();
+      const proof=await verifyFeeFinalPublication({handoff,runMain:env.GITHUB_SHA,repositoryToken,
+        feeDataKey:env.FEE_DATA_KEY,ibBaselineSha256:env.IB_MANAGER_BASELINE_SHA256,
+        fetchImpl,...(clock?{clock}:{}),...(previousProof!==undefined?{previousProof}:{})});
+      if(!isFeeFinalPublicationProof(proof))fail();return proof;
+    };
     result=await publisher.run({plan,identity:{gistId:env.FEE_ECON_GIST_ID,ownerId:RATIO_OWNER},manager,io,...(clock?{clock}:{})});
   }catch{if(io)try{await io.cleanupLocal();}catch{}/* No exception text can reach logs. */}
   // Save before the caller prints anything. Saving failure is not a publication retry.

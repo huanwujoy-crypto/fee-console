@@ -50,10 +50,77 @@ are used. Plans/hashes constrain execution but do not provide user consent.
 Do not dispatch a manual ratio operation during the original Nov3 fee window.
 
 A verify plan contains `mode: "verify-current"`, `previousBodySha256`, and
-`bundleId`, `original`, `input`, `library` all null. A later separately approved
+`bundleId`, `original`, `input`, `library`, `fee` all null. A later separately approved
 publish plan uses `mode: "publish"` and two `{name,generation,sha256}` references:
 `inputs/<64-hex-bundle>/original.json` and `input.json`. `library` is the approved
 private source `{fileId,version}`. No arbitrary URL, destination or secret is input.
+
+### Fee-first gate
+
+A publish plan also carries `fee`: the coordinator's handoff of the fee report
+that is already formally published, `{mainSha, accountingThrough, dataSha256,
+healthSha256}`. A producer job or a candidate branch is not a publication. Before
+the claim (`FEE_READBACK`) and again before the durable write intent
+(`FEE_RECHECK`, bound to the first proof), `scripts/fee-ratio-fee-publication.mjs`
+requires all of the following:
+- `data.json` and `fee-data-health.json` at `fee.mainSha` hash exactly to the
+  handoff;
+- the live main is still this run's `ratio_main`, and its root carries the same
+  two blobs, so a newer promotion supersedes the handoff;
+- Pages serves the same bytes;
+- the health receipt is a verified `updated`/`no-op` bound to the data, for
+  `fee.accountingThrough`;
+- the decrypted fee receipt, period metadata, Jenny return and drawdown verify
+  for that cutoff.
+
+Repository reads use only the existing read-only `GITHUB_TOKEN` and only fixed
+`api.github.com/repos/huanwujoy-crypto/fee-console/` URLs; Pages reads carry no
+credential and no redirect is followed. The only added input is the existing
+non-secret `vars.IB_MANAGER_BASELINE_SHA256`.
+
+The fee and ratio reports keep their own real source dates and may differ; the
+fee cutoff comes only from the handoff, never from the ratio source. There is no
+36-hour age gate: identity decides. An older fee report is accepted only when it
+is explicitly handed over and still live, and a superseded one is refused. A
+refusal before the claim reports `WAITING_FEE_READBACK_NO_WRITE` and consumes
+nothing. A refusal after the claim stops before PATCH and keeps the claim
+consumed, as with `PREWRITE`. A benchmark-pending fee publication and one
+without a verified Jenny section are refused until those cases are reviewed.
+
+Serialization. The protected `ratio` job and the `promote` job, the only
+Actions jobs that write the ratio snapshot or the fee pair on main, share one
+job-level group:
+- `fee-publication-critical`, `cancel-in-progress: false`, `queue: max`;
+- a FIFO queue of up to 100 by wait start, never a replaced pending job.
+
+A promotion therefore cannot land between `FEE_RECHECK` and the PATCH, and a
+ratio cannot run while a promotion job is selecting or fast-forwarding.
+
+Neither job waits on anything while holding the group: there are no polling
+loops and no waits on another workflow. The outer `fee-cloud-producer` and
+`promote-fee-data` groups are acquired before the job starts, so there is no
+lock cycle.
+
+The outer groups are left unchanged on purpose. The period gate refuses any run
+in its window that lists no jobs (`fee-report-producer.mjs`
+`readPeriodSourceAttempts`), and a queued outer run may list none. So a ratio
+dispatch pending behind a producer run can still be replaced, visibly as
+cancelled, by a newer producer run.
+
+Not covered by this group:
+- Pages deployment after the push: the `PAGES_*` checks refuse until it serves
+  the bytes.
+- Any browser or manual Gist write (fund, ledger, recipient, snapshot) and any
+  manual push to main.
+- The order in which queued jobs were dispatched: FIFO is by wait start, and a
+  full queue still cancels.
+
+Coordination therefore remains required:
+1. Dispatch the ratio only after promotion and the fee Pages readback.
+2. Use the current main as `ratio_main` and the exact fee handoff.
+3. Confirm the ratio run actually started; a queued promotion may also move
+   main first, which the `MAIN_HEAD` check then refuses before credentials.
+4. Make no browser Gist writes during the window.
 
 The consuming executor materializes only the approved private Library inputs
 through Library's supported flow, then uploads the exact two projections using

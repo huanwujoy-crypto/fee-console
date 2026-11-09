@@ -223,15 +223,17 @@ test('prior performance date cannot disappear through a later signed legacy snap
  const current=await f.snapshot.verify(f.performanceSigned,f.manager,{now:f.now});await assert.rejects(f.snapshot.verify(legacy,f.manager,{now:f.now,watermark:current.watermark}));
 });
 test('aggregate-only cloud path keeps one fixed-file write, readback and pinned cleanup',async t=>{
- const f=await fixture(t,raw=>{addInceptionEvidence(raw);for(const [i,r]of raw.performance.reports.entries()){const id=String(i+6);r.additionalSources=[{libraryFileId:'libfile_'+id.repeat(32),version:0,sha256:id.repeat(64),locator:'Synthetic auxiliary original'}];r.rows[0].sourceFileId=r.additionalSources[0].libraryFileId;}}),bundleId=hash(Buffer.concat([f.original,f.inputBytes])),prefix='inputs/'+bundleId+'/',plan={mode:'publish',previousBodySha256:await f.ratio.digest(f.signed.body),bundleId,original:{name:prefix+'original.json',generation:'1',sha256:hash(f.original)},input:{name:prefix+'input.json',generation:'2',sha256:hash(f.inputBytes)},library:{fileId:'libfile_'+'9'.repeat(32),version:0}},identity={gistId:'0'.repeat(32),ownerId:42};
- let current=bytes(f.signed),patches=0,claimed=0,deleted=0;const io={
+ const f=await fixture(t,raw=>{addInceptionEvidence(raw);for(const [i,r]of raw.performance.reports.entries()){const id=String(i+6);r.additionalSources=[{libraryFileId:'libfile_'+id.repeat(32),version:0,sha256:id.repeat(64),locator:'Synthetic auxiliary original'}];r.rows[0].sourceFileId=r.additionalSources[0].libraryFileId;}}),bundleId=hash(Buffer.concat([f.original,f.inputBytes])),prefix='inputs/'+bundleId+'/',plan={mode:'publish',previousBodySha256:await f.ratio.digest(f.signed.body),bundleId,original:{name:prefix+'original.json',generation:'1',sha256:hash(f.original)},input:{name:prefix+'input.json',generation:'2',sha256:hash(f.inputBytes)},library:{fileId:'libfile_'+'9'.repeat(32),version:0},fee:{mainSha:'e'.repeat(40),accountingThrough:'2026-11-05',dataSha256:'1'.repeat(64),healthSha256:'2'.repeat(64)}},identity={gistId:'0'.repeat(32),ownerId:42};
+ let current=bytes(f.signed),patches=0,claimed=0,deleted=0,feeChecks=0;const io={
  async readDestination(name){assert.equal(name,RATIO_CLOUD_FILE);return {id:identity.gistId,ownerId:42,authenticatedUserId:42,public:false,revision:(patches?'b':'a').repeat(40),recipientBytes:bytes(f.manager.recipient),snapshotBytes:Buffer.from(current)};},
  async readInput(s){return {generation:s.generation,bytes:Buffer.from(s.name.endsWith('original.json')?f.original:f.inputBytes)};},
  async claimOnce(k,b,options){assert.deepEqual(options,{ifGenerationMatch:0});return ++claimed===1?'CREATED':'EXISTS';},
  async patchSnapshot(body){assert.deepEqual(Object.keys(body.files),[RATIO_CLOUD_FILE]);patches++;current=Buffer.from(body.files[RATIO_CLOUD_FILE].content);},
- async saveReceipt(){},async cleanupLocal(){},async deleteInputs(specs){assert.deepEqual(specs,[plan.original,plan.input]);deleted++;}};
+ async saveReceipt(){},async cleanupLocal(){},async deleteInputs(specs){assert.deepEqual(specs,[plan.original,plan.input]);deleted++;},
+ // Synthetic stand-in for the verified fee-first handoff; the gate itself is tested separately.
+ async verifyFeePublication({handoff}){feeChecks++;return Object.freeze({accountingThrough:handoff.accountingThrough,feeMainSha:handoff.mainSha,dataSha256:handoff.dataSha256,healthSha256:handoff.healthSha256,verifiedAt:f.now.toISOString()});}};
  const result=await createRatioCloudPublisher({exposureCore:f.exposure}).run({plan,identity,manager:f.manager,io,clock:()=>f.now});
- assert.equal(result.status,'PUBLISHED_CONFIRMED');assert.equal(patches,1);assert.equal(claimed,1);assert.equal(deleted,1);
+ assert.equal(result.status,'PUBLISHED_CONFIRMED');assert.equal(patches,1);assert.equal(claimed,1);assert.equal(deleted,1);assert.equal(feeChecks,2);
  const accepted=await f.snapshot.verify(JSON.parse(current),f.manager,{now:f.now});assert.deepEqual(accepted.model.performance,f.raw.performance);
  const tampered=structuredClone(f.model);tampered.performance.reports[0].additionalSources[0].sha256='e'.repeat(64);await assert.rejects(f.snapshot.verifyOriginal({...f.args,model:tampered}));
 });
