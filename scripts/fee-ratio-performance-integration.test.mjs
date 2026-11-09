@@ -190,7 +190,7 @@ test('fund and top-five periods share two flexible columns without changing over
  assert.match(page,/\.ratio-fund-distribution \.ratio-return-compact-line,\.ratio-holding-row \.ratio-return-compact-line\{min-width:0;overflow-wrap:anywhere\}/);
  const values=lastRule('.ratio-distribution-values');assert.match(values,/display:grid/);assert.match(values,/grid-template-columns:minmax\(0,1fr\) auto/);assert.match(values,/width:100%/);
  const labeled=lastRule('.ratio-fund-distribution .ratio-returns-inline,.ratio-holding-row .ratio-returns-inline');assert.match(labeled,/display:grid/);assert.match(labeled,/grid-template-columns:auto minmax\(0,1fr\)/);
- const facts=lastRule('.ratio-fund-distribution .ratio-returns-inline>.ratio-return-facts,.ratio-holding-row .ratio-returns-inline>.ratio-return-facts');assert.match(facts,/grid-column:1\/-1/);assert.match(facts,/width:100%/);
+ const facts=lastRule('#p-ratio .ratio-fund-distribution .ratio-returns-inline>.ratio-return-facts,#p-ratio .ratio-holding-row .ratio-returns-inline>.ratio-return-facts');assert.match(facts,/grid-column:1\/-1/);assert.match(facts,/width:100%/);
  assert.match(page,/\.ratio-return-amount\{display:block;[^}]*overflow-wrap:anywhere/);
  assert.doesNotMatch(page,/\.ratio-return-amount\{[^}]*(?:text-overflow:ellipsis|overflow:hidden)/);
  // At a 390px viewport, both periods share the content width; long Chinese
@@ -228,7 +228,7 @@ test('browser uses exact tested factories and preserves existing note/session co
  const css=page.split('<style>')[1].split('</style>')[0];
  assert.doesNotMatch(css,/\\n/,'stylesheet must contain actual newlines, not escaped selector prefixes');
  assert.match(css,/(?:^|\n)\.ratio-overview-table\{width:100%;table-layout:fixed\}/);
- assert.match(css,/\.ratio-overview-table th:first-child\{width:24%\}/);assert.match(css,/\.ratio-overview-table th:nth-child\(2\)\{width:39%\}/);assert.match(css,/\.ratio-overview-table th:nth-child\(3\)\{width:37%\}/);
+ assert.match(css,/#p-ratio \.ratio-overview-table th:first-child,#p-ratio \.ratio-overview-table td:first-child\{width:24%\}/);assert.match(css,/#p-ratio \.ratio-overview-table th:nth-child\(2\),#p-ratio \.ratio-overview-table td:nth-child\(2\)\{width:39%\}/);assert.match(css,/#p-ratio \.ratio-overview-table th:nth-child\(3\),#p-ratio \.ratio-overview-table td:nth-child\(3\)\{width:37%\}/);
  assert.match(css,/\.ratio-money-precise\{[^}]*font-variant-numeric:tabular-nums;overflow-wrap:anywhere\}/);assert.doesNotMatch(css,/\.ratio-money-precise\{[^}]*(?:text-overflow:ellipsis|overflow:hidden)/);
  for(const file of ['fee-ratio-aggregate-returns','fee-ratio-management','fee-ratio-source-core','fee-ratio-snapshot']){const code=fs.readFileSync(new URL('./'+file+'.mjs',import.meta.url),'utf8'),factory=code.slice(code.indexOf('export function ')).replace('export function ','function ').trim();assert.ok(page.includes(factory),file);}
  assert.match(page,/summary\?\.textContent==='分类、账户与参考目标'/);assert.match(page,/summary\.textContent='明细'/);assert.match(page,/createAggregateReturnsCore\.toString\(\)/);
