@@ -10,6 +10,7 @@ import {createFeeRatioCore} from './fee-ratio-management.mjs';
 import {createRatioSourceCore} from './fee-ratio-source-core.mjs';
 import {createRatioSnapshotCore} from './fee-ratio-snapshot.mjs';
 import {buildRatioModel} from './fee-ratio-packet.mjs';
+import {feePublicationFailureCode,validateFeeHandoff} from './fee-ratio-fee-publication.mjs';
 
 export const RATIO_CLOUD_FILE='fee-console-ratio-snapshot.json';
 const MAX=5*1024*1024;
@@ -25,12 +26,16 @@ function bytes(value){
 function pinnedObject(spec,prefix,file){
   if(!exact(spec,['name','generation','sha256'])||spec.name!==prefix+file||typeof spec.generation!=='string'||!/^\d{1,30}$/.test(spec.generation)||/^0+$/.test(spec.generation)||!hex(spec.sha256))refuse();
 }
+// `fee` is the coordinator's handoff of the already published fee report this
+// ratio follows (fee main, accounting cutoff, data/health byte hashes). It is
+// an identity to verify, never a date the ratio source must match.
 export function validateRatioCloudPlan(plan){
-  if(!exact(plan,['mode','previousBodySha256','bundleId','original','input','library'])||!['verify-current','publish'].includes(plan.mode)||!hex(plan.previousBodySha256))refuse();
+  if(!exact(plan,['mode','previousBodySha256','bundleId','original','input','library','fee'])||!['verify-current','publish'].includes(plan.mode)||!hex(plan.previousBodySha256))refuse();
   if(plan.mode==='verify-current'){
-    if([plan.bundleId,plan.original,plan.input,plan.library].some(v=>v!==null))refuse();
+    if([plan.bundleId,plan.original,plan.input,plan.library,plan.fee].some(v=>v!==null))refuse();
     return;
   }
+  if(!validateFeeHandoff(plan.fee))refuse();
   if(!hex(plan.bundleId)||!exact(plan.library,['fileId','version'])||!/^libfile_[a-f0-9]{32}$/.test(plan.library.fileId)||!Number.isSafeInteger(plan.library.version)||plan.library.version<0)refuse();
   const prefix='inputs/'+plan.bundleId+'/';
   pinnedObject(plan.original,prefix,'original.json');pinnedObject(plan.input,prefix,'input.json');
@@ -78,7 +83,18 @@ export function createRatioCloudPublisher({exposureCore=createRankedExposureCore
     let claimed=false,sourceRead=false,originalBytes=null,inputBytes=null;
     let selectedPlan;
     const time=()=>{const at=clock();if(!(at instanceof Date)||!Number.isFinite(at.getTime()))refuse();return at;};
+    // A proof must be the one just returned: same handoff, not from the future.
+    const feeProof=proof=>{
+      const verified=Date.parse(proof?.verifiedAt);
+      if(!proof||typeof proof!=='object'||proof.feeMainSha!==plan.fee.mainSha||proof.accountingThrough!==plan.fee.accountingThrough
+        ||proof.dataSha256!==plan.fee.dataSha256||proof.healthSha256!==plan.fee.healthSha256
+        ||!Number.isFinite(verified)||verified>time().getTime()+300000)refuse();
+      return proof;
+    };
     const read=async()=>destination(await io.readDestination(RATIO_CLOUD_FILE),identity);
+    const readFee=async input=>{try{return await io.verifyFeePublication(input);}catch(error){
+      receipt.stage+=':'+feePublicationFailureCode(error);refuse();
+    }};
     try{await (async()=>{
       validateRatioCloudPlan(plan);plan=structuredClone(plan);selectedPlan=plan;identity=structuredClone(identity);
       if(!exact(identity,['gistId','ownerId'])||typeof identity.gistId!=='string'||!/^(?:[a-f0-9]{20}|[a-f0-9]{32})$/.test(identity.gistId)||!Number.isSafeInteger(identity.ownerId)||identity.ownerId<=0)refuse();
@@ -96,6 +112,14 @@ export function createRatioCloudPublisher({exposureCore=createRankedExposureCore
       receipt.stage='SOURCE';
       const prepared=await prepare({plan,originalBytes,inputBytes,manager,previous:prior.packet,now:time()});
       if(prepared.sameSource){receipt.status='UNCHANGED_SOURCE_NO_WRITE';return;}
+      // A successful producer job or candidate is not a published fee report.
+      // The fixed runtime verifies the handed-over fee publication on the
+      // pinned and live main and on Pages, validates the real fee/Jenny
+      // receipts in memory, and returns a process-local proof. The ratio keeps
+      // its own source dates; the fee cutoff comes only from the handoff.
+      receipt.stage='FEE_READBACK';
+      if(typeof io.verifyFeePublication!=='function')refuse();
+      const firstFee=feeProof(await readFee({handoff:structuredClone(plan.fee)}));
       const raw=Buffer.from(JSON.stringify(prepared.signed));
       receipt.bodySha256=await ratio.digest(prepared.signed.body);receipt.contentSha256=sha(raw);
       // The claim key binds the input pair and previous accepted body, not a
@@ -110,9 +134,17 @@ export function createRatioCloudPublisher({exposureCore=createRankedExposureCore
       if(check.revision!==before.revision||!check.snapshotBytes.equals(before.snapshotBytes)||!check.recipientBytes.equals(before.recipientBytes))refuse();
       await current(check,manager,plan.previousBodySha256,time());
       if(time().getTime()>Date.parse(prepared.signed.body.source.expiresAt))refuse();
+      receipt.stage='FEE_RECHECK';
+      // Re-read the same final publication; a changed main/report, a stale
+      // receipt, or an unavailable Pages readback cannot release this claim.
+      // Never wait here for another producer job while holding its concurrency
+      // group, and never generate a fee report to satisfy this prerequisite.
+      feeProof(await readFee({handoff:structuredClone(plan.fee),previousProof:firstFee}));
+      if(time().getTime()>Date.parse(prepared.signed.body.source.expiresAt))refuse();
       receipt.stage='WRITE_INTENT';
       // An atomic durable safe receipt must exist before the only PATCH.
       await io.saveReceipt(structuredClone(receipt));
+      if(time().getTime()>Date.parse(prepared.signed.body.source.expiresAt))refuse();
       receipt.stage='READBACK';receipt.patchAttempts=1;
       try{await io.patchSnapshot({files:{[RATIO_CLOUD_FILE]:{content:raw.toString('utf8')}}});}catch{/* Request outcome may be unknown. Never resend. */}
       try{
@@ -124,6 +156,7 @@ export function createRatioCloudPublisher({exposureCore=createRankedExposureCore
       raw.fill(0);
     })();}catch{
       if(receipt.patchAttempts)receipt.status='WRITE_UNCONFIRMED';
+      else if(receipt.stage==='FEE_READBACK'||receipt.stage.startsWith('FEE_READBACK:'))receipt.status='WAITING_FEE_READBACK_NO_WRITE';
       // No exception message, stack, URL, token, body or account reaches output.
     }
     return finish();

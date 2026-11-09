@@ -7,12 +7,13 @@ import crypto from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import {authenticated} from './fee-ratio-official-source.test.mjs';
 import {createRatioCloudPublisher} from './fee-ratio-cloud-publish.mjs';
+import {syntheticFeePublicationFixture} from './fee-ratio-fee-publication.test.mjs';
 import {ratioAdmission,createRatioTransport,executeRatioCloud,saveRatioReceipt,safeRatioReceipt,RATIO_BUCKET,RATIO_OWNER} from './fee-ratio-cloud-runtime.mjs';
 const gid='0'.repeat(32),managerToken='synthetic-manager-token-not-real-123',accessToken='synthetic-google-token-not-real-123',repositoryToken='synthetic-repository-token-not-real-123',head='a'.repeat(40),canary='CANARY_PRIVATE_TOKEN_NEVER_LOG';
 const mainUrl='https://api.github.com/repos/huanwujoy-crypto/fee-console/git/ref/heads/main';
 const hash=b=>crypto.createHash('sha256').update(b).digest('hex');
 const response=(url,value,status=200)=>{const r=new Response(status===204||status===412?null:typeof value==='string'?value:JSON.stringify(value),{status});Object.defineProperty(r,'url',{value:url});return r;};
-const plan=()=>({mode:'verify-current',previousBodySha256:'b'.repeat(64),bundleId:null,original:null,input:null,library:null});
+const plan=()=>({mode:'verify-current',previousBodySha256:'b'.repeat(64),bundleId:null,original:null,input:null,library:null,fee:null});
 function admission(p=plan()){
  const event={sender:{id:RATIO_OWNER},repository:{full_name:'huanwujoy-crypto/fee-console'},inputs:{ratio_main:head,ratio_plan:JSON.stringify(p)}};
  const env={GITHUB_ACTIONS:'true',GITHUB_EVENT_NAME:'workflow_dispatch',GITHUB_RUN_ATTEMPT:'1',GITHUB_REF:'refs/heads/main',GITHUB_REPOSITORY:'huanwujoy-crypto/fee-console',GITHUB_ACTOR_ID:String(RATIO_OWNER),GITHUB_SHA:head,GITHUB_TOKEN:repositoryToken,RATIO_PLAN:event.inputs.ratio_plan,FEE_ECON_GIST_ID:gid,FEE_DATA_KEY:Buffer.alloc(32,7).toString('base64url'),FEE_RATIO_MANAGER_TOKEN:managerToken};return {event,env};
@@ -111,6 +112,11 @@ test('outer error cannot erase a possibly issued PATCH outcome',async()=>{
 test('safe receipt atomic save refuses extra fields and cannot overwrite pending evidence',t=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ratio-safe-test-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));const file=path.join(dir,'result.json');saveRatioReceipt(file,safe());assert.equal(fs.statSync(file).mode&0o777,0o600);assert.deepEqual(JSON.parse(fs.readFileSync(file)),safe());assert.throws(()=>safeRatioReceipt({...safe(),secret:canary}),/REFUSED/);fs.writeFileSync(file+'.pending','pending');assert.throws(()=>saveRatioReceipt(file,safe()));assert.deepEqual(JSON.parse(fs.readFileSync(file)),safe());
 });
+test('fee gate statuses and fixed stage:code pairs are closed; free text is refused',()=>{
+ assert.deepEqual(safeRatioReceipt({...safe(),status:'WAITING_FEE_READBACK_NO_WRITE',stage:'FEE_READBACK:FEE_PUBLICATION_LIVE'}).stage,'FEE_READBACK:FEE_PUBLICATION_LIVE');
+ for(const stage of ['FEE_READBACK','FEE_RECHECK','FEE_RECHECK:FEE_PUBLICATION_CHANGED'])assert.equal(safeRatioReceipt({...safe(),stage}).stage,stage);
+ for(const stage of ['FEE_READBACK:'+canary,'FEE_RECHECK:FEE_PUBLICATION_EXPIRED','FEE_PUBLICATION_LIVE'])assert.throws(()=>safeRatioReceipt({...safe(),stage}),/REFUSED/);
+});
 test('main diagnostic stages remain a closed enum and legacy MAIN receipts remain readable',()=>{
  for(const stage of ['MAIN','MAIN_TOKEN','MAIN_FETCH','MAIN_HTTP','MAIN_RESPONSE','MAIN_HEAD'])assert.deepEqual(safeRatioReceipt({...safe(),stage}),{...safe(),stage});
  assert.throws(()=>safeRatioReceipt({...safe(),stage:'MAIN_'+canary}),/REFUSED/);assert.throws(()=>safeRatioReceipt({...safe(),stage:'MAIN_HTTP',response:canary}),/REFUSED/);
@@ -125,17 +131,27 @@ test('workflow isolates all fee jobs, preserves schedule/concurrency and never e
  const ratio=wf.split('\n  ratio:\n')[1].split(/\n  [a-z-]+:\n/)[0];assert.ok(!ratio.includes('SHARESIGHT'));assert.ok(!ratio.includes('fee-report-producer.mjs'));assert.match(ratio,/create_credentials_file: false/);assert.match(ratio,/access_token_scopes: https:\/\/www.googleapis.com\/auth\/devstorage.read_write/);assert.match(ratio,/fromJSON\(inputs.ratio_plan\).mode == 'publish'/);assert.equal((wf.match(/secrets.FEE_RATIO_MANAGER_TOKEN/g)||[]).length,1);assert.match(ratio,/path: \$\{\{ runner.temp \}\}\/fee-ratio-result.safe.json/);
  for(const job of ['ratio-preflight','ratio']){const body=wf.split('\n  '+job+':\n')[1].split(/\n  [a-z-]+:\n/)[0];assert.equal((body.match(/GITHUB_TOKEN: \$\{\{ github.token \}\}/g)||[]).length,1);assert.match(body,/GITHUB_TOKEN: \$\{\{ github.token \}\}\n          RATIO_PLAN: \$\{\{ inputs.ratio_plan \}\}/);assert.match(body,/permissions:\n      contents: read\n/);assert.ok(!body.includes('contents: write'));}
  const preflight=wf.split('\n  ratio-preflight:\n')[1].split(/\n  [a-z-]+:\n/)[0];assert.ok(!preflight.includes('secrets.'));assert.ok(!preflight.includes('id-token: write'));
+ // The fee readback needs only the existing non-secret baseline variable; no new secret or scope.
+ assert.equal((ratio.match(/IB_MANAGER_BASELINE_SHA256: \$\{\{ vars.IB_MANAGER_BASELINE_SHA256 \}\}/g)||[]).length,1);assert.ok(!preflight.includes('IB_MANAGER_BASELINE_SHA256'));
+ assert.equal((ratio.match(/secrets\./g)||[]).length,3);assert.match(ratio,/permissions:\n      contents: read\n      id-token: write\n/);
 });
 
 test('complete publish entry: pinned storage, real crypto, durable intent, one PATCH, exact readback and cleanup',async t=>{
  const {createOfficialRatioSourceCore}=await import('./fee-ratio-official-source.mjs');const f=await authenticated(t),raw=structuredClone(f.raw);raw.classification.capturedAt='2026-10-30T05:45:00.000Z';raw.exposure.capturedAt='2026-10-30T05:44:00.000Z';
  const original=Buffer.from(JSON.stringify(raw)),input=Buffer.from(JSON.stringify(createOfficialRatioSourceCore().build(raw,{sourceSha256:hash(original),sourceBytes:original.length}).input));
  const bundleId=hash(Buffer.concat([original,input])),spec=(file,b,generation)=>({name:'inputs/'+bundleId+'/'+file+'.json',generation,sha256:hash(b)});
- const p={mode:'publish',previousBodySha256:await f.ratio.digest(f.signed.body),bundleId,original:spec('original',original,'101'),input:spec('input',input,'102'),library:{fileId:'libfile_'+'9'.repeat(32),version:0}},a=admission(p);a.env.RATIO_STORAGE_ACCESS_TOKEN=accessToken;
+ const p={mode:'publish',previousBodySha256:await f.ratio.digest(f.signed.body),bundleId,original:spec('original',original,'101'),input:spec('input',input,'102'),library:{fileId:'libfile_'+'9'.repeat(32),version:0},fee:null};
+ // The fee report was promoted at another main; its cutoff is not the ratio date.
+ const fee=await syntheticFeePublicationFixture({targetDate:'2026-10-27',reviewedMain:head,feeMain:'c'.repeat(40),repoToken:repositoryToken,clock:()=>f.now});
+ p.fee=fee.handoff;assert.notEqual(p.fee.accountingThrough,JSON.parse(input).classification.asOf);
+ const a=admission(p);a.env.RATIO_STORAGE_ACCESS_TOKEN=accessToken;a.env.IB_MANAGER_BASELINE_SHA256=fee.ibBaselineSha256;assert.equal(a.env.FEE_DATA_KEY,fee.feeDataKey);
  let current=JSON.stringify(f.signed),revision='d'.repeat(40),patches=0,claims=0;const events=[],saved=[],objects=new Map([[p.original.name,{spec:p.original,bytes:original}],[p.input.name,{spec:p.input,bytes:input}]]);
  const fetchImpl=async(url,o)=>{
   const u=new URL(url);events.push(o.method||'GET');
-  if(url===mainUrl){assert.equal(o.headers.Authorization,'Bearer '+repositoryToken);return response(url,{object:{sha:head}});}
+  // Repository API reads (main check and fee readback) carry only the existing
+  // read-only token; Pages reads carry none. Both are checked by the fixture.
+  if(url.startsWith('https://api.github.com/repos/huanwujoy-crypto/fee-console/')||url.startsWith('https://huanwujoy-crypto.github.io/fee-console/'))
+   return fee.args.fetchImpl(url,{...o,method:o.method||'GET',cache:'no-store'});
   if(u.host==='api.github.com'){
    assert.equal(o.headers.Authorization,'Bearer '+managerToken);
    if(url.endsWith('/user'))return response(url,{id:RATIO_OWNER,login:'synthetic-owner'});
@@ -152,6 +168,44 @@ test('complete publish entry: pinned storage, real crypto, durable intent, one P
  };
  const r=await executeRatioCloud({...a,fetchImpl,publisher:createRatioCloudPublisher({exposureCore:f.exposure}),clock:()=>f.now,saveReceipt:async v=>{saved.push(structuredClone(v));events.push('saved');}});
  assert.equal(r.status,'PUBLISHED_CONFIRMED');assert.equal(patches,1);assert.equal(claims,1);assert.equal(objects.size,0);assert.equal(r.cleanup,'LOCAL_AND_PINNED_INPUTS');assert.equal(events.at(-1),'saved');assert.equal(JSON.parse(current).body.version,2);assert.ok(!JSON.stringify(saved).includes(managerToken));
+ // Two complete fee readbacks: before the claim and again before durable intent.
+ assert.equal(fee.calls.filter(c=>c.url.endsWith('/contents/data.json?ref='+'c'.repeat(40))).length,2);
+ assert.equal(fee.calls.filter(c=>c.url.startsWith('https://huanwujoy-crypto.github.io/')).length,4);
+ assert.ok(!JSON.stringify(saved).includes(repositoryToken));
+});
+test('unpublished or superseded fee stops before the claim; a change after the claim stops before PATCH',async t=>{
+ const {createOfficialRatioSourceCore}=await import('./fee-ratio-official-source.mjs');
+ for(const kind of ['pages','live','recheck']){
+  const f=await authenticated(t),raw=structuredClone(f.raw);raw.classification.capturedAt='2026-10-30T05:45:00.000Z';raw.exposure.capturedAt='2026-10-30T05:44:00.000Z';
+  const original=Buffer.from(JSON.stringify(raw)),input=Buffer.from(JSON.stringify(createOfficialRatioSourceCore().build(raw,{sourceSha256:hash(original),sourceBytes:original.length}).input));
+  const bundleId=hash(Buffer.concat([original,input])),spec=(file,b,generation)=>({name:'inputs/'+bundleId+'/'+file+'.json',generation,sha256:hash(b)});
+  let pageReads=0;
+  const fee=await syntheticFeePublicationFixture({targetDate:'2026-10-27',reviewedMain:head,repoToken:repositoryToken,clock:()=>f.now,
+   editPageData:b=>(++pageReads,kind==='pages'||kind==='recheck'&&pageReads===2)?Buffer.concat([b,Buffer.from('\n')]):b,
+   editRoot:r=>kind==='live'?r.map(x=>x.name==='data.json'?{...x,sha:'9'.repeat(40)}:x):r});
+  const p={mode:'publish',previousBodySha256:await f.ratio.digest(f.signed.body),bundleId,original:spec('original',original,'101'),input:spec('input',input,'102'),library:{fileId:'libfile_'+'9'.repeat(32),version:0},fee:fee.handoff};
+  const a=admission(p);a.env.RATIO_STORAGE_ACCESS_TOKEN=accessToken;a.env.IB_MANAGER_BASELINE_SHA256=fee.ibBaselineSha256;
+  let claims=0,patches=0;const saved=[],objects=new Map([[p.original.name,{spec:p.original,bytes:original}],[p.input.name,{spec:p.input,bytes:input}]]);
+  const fetchImpl=async(url,o)=>{
+   if(url.startsWith('https://api.github.com/repos/huanwujoy-crypto/fee-console/')||url.startsWith('https://huanwujoy-crypto.github.io/fee-console/'))return fee.args.fetchImpl(url,{...o,method:o.method||'GET',cache:'no-store'});
+   const u=new URL(url);
+   if(u.host==='api.github.com'){
+    if(url.endsWith('/user'))return response(url,{id:RATIO_OWNER,login:'synthetic-owner'});
+    if(o.method==='PATCH')patches++;
+    const files={};for(const [name,content]of [['fee-console-ratio-recipient.json',JSON.stringify(f.manager.recipient)],['fee-console-ratio-snapshot.json',JSON.stringify(f.signed)]])files[name]={filename:name,content,size:Buffer.byteLength(content),truncated:false};
+    return response(url,{id:gid,public:false,owner:{id:RATIO_OWNER,login:'synthetic-owner'},history:[{version:'d'.repeat(40)}],files});
+   }
+   if(o.method==='POST'){claims++;return response(url,{bucket:RATIO_BUCKET,name:u.searchParams.get('name'),generation:'301'});}
+   const name=decodeURIComponent(u.pathname.split('/o/')[1]),obj=objects.get(name);
+   if(o.method==='DELETE'){objects.delete(name);return response(url,null,204);}
+   return response(url,u.searchParams.get('alt')==='media'?obj.bytes.toString():{bucket:RATIO_BUCKET,name,generation:obj.spec.generation,size:String(obj.bytes.length)});
+  };
+  const r=await executeRatioCloud({...a,fetchImpl,publisher:createRatioCloudPublisher({exposureCore:f.exposure}),clock:()=>f.now,saveReceipt:async v=>saved.push(structuredClone(v))});
+  assert.equal(patches,0,kind);
+  if(kind==='recheck'){assert.equal(r.status,'REFUSED');assert.equal(r.stage,'FEE_RECHECK:FEE_PUBLICATION_PAGES_DATA');assert.equal(claims,1);assert.equal(r.claim,'OWNED');}
+  else{assert.equal(r.status,'WAITING_FEE_READBACK_NO_WRITE');assert.equal(r.stage,'FEE_READBACK:FEE_PUBLICATION_'+(kind==='pages'?'PAGES_DATA':'LIVE'));assert.equal(claims,0);assert.equal(r.claim,'NOT_ATTEMPTED');}
+  assert.deepEqual(safeRatioReceipt(r),r);assert.ok(!JSON.stringify(saved).includes(repositoryToken)&&!JSON.stringify(saved).includes(canary));
+ }
 });
 
 
@@ -162,4 +216,24 @@ test('ratio-only runs do not wake fee failure diagnosis or candidate promotion',
  assert.equal(eligible({event:{workflow_run:{display_title:'Manual ratio snapshot'}}}),false);
  assert.equal(eligible({event:{workflow_run:{display_title:'Fee cloud producer'}}}),true);
  assert.ok(!promotion.includes('- Fee console cloud producer'));
+});
+
+test('fee-first critical section: only the two publishing jobs share one queued job-level group, outer groups unchanged',()=>{
+ const root=new URL('../.github/workflows/',import.meta.url),read=n=>fs.readFileSync(new URL(n,root),'utf8');
+ const producer=read('fee-cloud-producer.yml'),promotion=read('promote-fee-data.yml');
+ const block='    concurrency:\n      group: fee-publication-critical\n      cancel-in-progress: false\n      queue: max\n';
+ const job=(wf,name)=>wf.split('\n  '+name+':\n')[1].split(/\n  [a-z-]+:\n/)[0];
+ assert.ok(job(producer,'ratio').includes(block));assert.ok(job(promotion,'promote').includes(block));
+ // Exactly these two jobs, across every workflow, and never at workflow level.
+ const all=fs.readdirSync(root).filter(n=>n.endsWith('.yml')).map(n=>[n,read(n)]);
+ assert.deepEqual(all.flatMap(([n,t])=>Array(t.split('fee-publication-critical').length-1).fill(n)).sort(),['fee-cloud-producer.yml','promote-fee-data.yml']);
+ for(const name of ['period','produce','ratio-preflight','once-admit','once-finish','ib-diagnostic','ib-envelope-evidence'])assert.ok(!job(producer,name).includes('fee-publication-critical'),name);
+ assert.match(producer,/\nconcurrency:\n  group: fee-cloud-producer\n  cancel-in-progress: false\n\n/);
+ assert.match(promotion,/\nconcurrency:\n  group: promote-fee-data\n  cancel-in-progress: false\n\n/);
+ // A holder never waits: no sleeps, polls or run watches inside either critical job.
+ for(const body of [job(producer,'ratio'),job(promotion,'promote')])assert.doesNotMatch(body.replace(/^ *#.*$/gm,''),/\bsleep\b|gh run watch|until\s|timeout-minutes: (?:[2-9]\d|\d{3,})/);
+ // The cron schedules and the ratio job's own permissions stay as reviewed.
+ assert.deepEqual([...producer.matchAll(/- cron: '([^']+)'/g)].map(m=>m[1]),['0 1 * * *','30 3 * * *','0 6 * * *']);
+ assert.deepEqual([...promotion.matchAll(/- cron: '([^']+)'/g)].map(m=>m[1]),['45 2 * * *','15 5,6 * * *']);
+ assert.match(job(producer,'ratio'),/permissions:\n      contents: read\n      id-token: write\n/);
 });
