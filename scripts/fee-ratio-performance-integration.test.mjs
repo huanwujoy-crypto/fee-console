@@ -21,6 +21,10 @@ function performance(base){
  const core=createAggregateReturnsCore(),member={account:'Synthetic 2',market:'PRIVATE',securityCode:'SYNTHETIC-CLOSED'};
  return {schema:core.SCHEMA,provider:'Sharesight',currency:'USD',asOf:'2026-10-30',accounts:base.accounts,reports:['all','oneYear'].map((period,i)=>({period,startDate:i?'2025-10-30':'2020-01-02',endDate:'2026-10-30',includeClosed:true,calculationMethod:'sharesight-native',currency:'USD',cashPerformance:'excluded',source:{libraryFileId:'libfile_'+String(i+4).repeat(32),version:0,sha256:String(i+4).repeat(64),locator:'Native Total cells'},rows:[{scope:scope('常青基金'),members:[member],sourceSheet:'Synthetic group',sourceRow:9,returnPct:i?-2.1:8.25,unit:i?'period':'p.a.',termEvidence:{type:'unknown'}}],unavailable:[{scope:scope('All Together'),reason:'benchmark-members-included'},{scope:scope('未分类','常青基金'),reason:'native-aggregate-not-provided'}]}))};
 }
+function addInceptionEvidence(raw){
+ const source={libraryFileId:'libfile_'+'8'.repeat(32),version:0,sha256:'8'.repeat(64),locator:'Synthetic private inception directory'};
+ raw.performance.inceptionEvidence={schema:'fee-console.ratio-inception-source.v1',capturedAt:'2026-10-29T05:00:00.000Z',includeClosed:true,sources:[source],members:[{...raw.performance.reports[0].rows[0].members[0],startDate:'2022-03-04',dateKind:'holding-inception',sourceFileId:source.libraryFileId,sourceLocator:'Synthetic historical member inception_date'}]};
+}
 async function fixture(t,edit=x=>x,allocation=syntheticOfficialSource()){
  const f=await authenticated(t,allocation),raw={schemaVersion:'sharesight-private-performance-v1',accounts:[...f.raw.accounts],allocation:structuredClone(f.raw),performance:performance(f.raw),performanceCapturedAt:'2026-10-30T05:50:00.000Z'};
  edit(raw,f);const original=bytes(raw),base=createOfficialRatioSourceCore().build(raw.allocation,{sourceSha256:hash(original),sourceBytes:original.length}).input,input={...base,schema:'fee-console.ratio-sources.v3',performance:structuredClone(raw.performance)},inputBytes=bytes(input);
@@ -42,6 +46,18 @@ test('tampered return, missing return source, fabricated proof and account misma
  for(const change of [m=>m.performance.reports[0].rows[0].returnPct++,m=>delete m.performance,m=>m.performance.accounts.pop(),m=>m.sourceDates.performance='2026-10-29']){const model=structuredClone(f.model);change(model);await assert.rejects(f.snapshot.verifyOriginal({...f.args,model}));}
  const input=structuredClone(f.input);input.performance.reports[0].rows[0].returnPct++;const changed=bytes(input);await assert.rejects(f.snapshot.verifyOriginal({...f.args,inputBytes:new Uint8Array(changed),inputSha256:hash(changed)}));
  await assert.rejects(f.snapshot.candidate({model:f.model,recipient:f.manager.recipient,proof:structuredClone(f.proof),now:f.now}));
+});
+test('inception metadata follows original association, encryption and readback without changing financial dates',async t=>{
+ const f=await fixture(t,addInceptionEvidence),r=await f.snapshot.verify(f.performanceSigned,f.manager,{now:f.now});
+ assert.deepEqual(r.model.performance.inceptionEvidence,f.raw.performance.inceptionEvidence);assert.deepEqual(r.model.sourceDates,f.model.sourceDates);assert.equal(r.source.capturedAt,f.signed.body.source.capturedAt);
+ assert.equal(r.model.performance.reports[0].startDate,'2020-01-02');const core=createAggregateReturnsCore(),view=core.build(r.model.performance,{expectedAccounts:r.model.performance.accounts,expectedAsOf:'2026-10-30'}),html=core.renderInline(core.select(view,scope('常青基金')));assert.match(html,/全部：<\/strong>2022-03-04 至 2026-10-30/);assert.match(html,/近一年：<\/strong>2025-10-30 至 2026-10-30/);assert.match(f.ratio.render(r.model),/8.25%/);
+ assert.doesNotMatch(html,/Synthetic historical member inception_date|libfile_8888/);
+ for(const change of [e=>e.members[0].startDate='2023-01-02',e=>e.members[0].account='Synthetic 3',e=>e.sources[0].sha256='f'.repeat(64),e=>e.members.pop()]){
+  const model=structuredClone(f.model);change(model.performance.inceptionEvidence);await assert.rejects(f.snapshot.verifyOriginal({...f.args,model}));
+  const input=structuredClone(f.input);change(input.performance.inceptionEvidence);const inputBytes=bytes(input);await assert.rejects(f.snapshot.verifyOriginal({...f.args,inputBytes:new Uint8Array(inputBytes),inputSha256:hash(inputBytes)}));
+ }
+ const raw=structuredClone(f.raw);raw.performance.inceptionEvidence.members[0].startDate='2023-01-02';await assert.rejects(f.snapshot.verifyOriginal({...f.args,originalBytes:new Uint8Array(bytes(raw))}));
+ const model=structuredClone(f.model);delete model.performance.inceptionEvidence;await assert.rejects(f.snapshot.verifyOriginal({...f.args,model}));
 });
 test('performance evidence cannot refresh old allocation capture or use future/old returns',async t=>{
  for(const edit of [r=>r.performanceCapturedAt='2026-11-01T00:00:00.000Z',r=>r.performanceCapturedAt='2026-10-27T00:00:00.000Z',r=>r.performance.asOf='2026-10-31',r=>r.accounts.reverse()])await assert.rejects(fixture(t,edit));
@@ -207,7 +223,7 @@ test('prior performance date cannot disappear through a later signed legacy snap
  const current=await f.snapshot.verify(f.performanceSigned,f.manager,{now:f.now});await assert.rejects(f.snapshot.verify(legacy,f.manager,{now:f.now,watermark:current.watermark}));
 });
 test('aggregate-only cloud path keeps one fixed-file write, readback and pinned cleanup',async t=>{
- const f=await fixture(t,raw=>{for(const [i,r]of raw.performance.reports.entries()){const id=String(i+6);r.additionalSources=[{libraryFileId:'libfile_'+id.repeat(32),version:0,sha256:id.repeat(64),locator:'Synthetic auxiliary original'}];r.rows[0].sourceFileId=r.additionalSources[0].libraryFileId;}}),bundleId=hash(Buffer.concat([f.original,f.inputBytes])),prefix='inputs/'+bundleId+'/',plan={mode:'publish',previousBodySha256:await f.ratio.digest(f.signed.body),bundleId,original:{name:prefix+'original.json',generation:'1',sha256:hash(f.original)},input:{name:prefix+'input.json',generation:'2',sha256:hash(f.inputBytes)},library:{fileId:'libfile_'+'9'.repeat(32),version:0}},identity={gistId:'0'.repeat(32),ownerId:42};
+ const f=await fixture(t,raw=>{addInceptionEvidence(raw);for(const [i,r]of raw.performance.reports.entries()){const id=String(i+6);r.additionalSources=[{libraryFileId:'libfile_'+id.repeat(32),version:0,sha256:id.repeat(64),locator:'Synthetic auxiliary original'}];r.rows[0].sourceFileId=r.additionalSources[0].libraryFileId;}}),bundleId=hash(Buffer.concat([f.original,f.inputBytes])),prefix='inputs/'+bundleId+'/',plan={mode:'publish',previousBodySha256:await f.ratio.digest(f.signed.body),bundleId,original:{name:prefix+'original.json',generation:'1',sha256:hash(f.original)},input:{name:prefix+'input.json',generation:'2',sha256:hash(f.inputBytes)},library:{fileId:'libfile_'+'9'.repeat(32),version:0}},identity={gistId:'0'.repeat(32),ownerId:42};
  let current=bytes(f.signed),patches=0,claimed=0,deleted=0;const io={
  async readDestination(name){assert.equal(name,RATIO_CLOUD_FILE);return {id:identity.gistId,ownerId:42,authenticatedUserId:42,public:false,revision:(patches?'b':'a').repeat(40),recipientBytes:bytes(f.manager.recipient),snapshotBytes:Buffer.from(current)};},
  async readInput(s){return {generation:s.generation,bytes:Buffer.from(s.name.endsWith('original.json')?f.original:f.inputBytes)};},
@@ -230,6 +246,8 @@ test('browser uses exact tested factories and preserves existing note/session co
  assert.match(css,/(?:^|\n)\.ratio-overview-table\{width:100%;table-layout:fixed\}/);
  assert.match(css,/#p-ratio \.ratio-overview-table th:first-child,#p-ratio \.ratio-overview-table td:first-child\{width:24%\}/);assert.match(css,/#p-ratio \.ratio-overview-table th:nth-child\(2\),#p-ratio \.ratio-overview-table td:nth-child\(2\)\{width:39%\}/);assert.match(css,/#p-ratio \.ratio-overview-table th:nth-child\(3\),#p-ratio \.ratio-overview-table td:nth-child\(3\)\{width:37%\}/);
  assert.match(css,/\.ratio-money-precise\{[^}]*font-variant-numeric:tabular-nums;overflow-wrap:anywhere\}/);assert.doesNotMatch(css,/\.ratio-money-precise\{[^}]*(?:text-overflow:ellipsis|overflow:hidden)/);
+ assert.match(css,/#fundInvestorBox \.kpi:not\(\.wide\) \.val\{white-space:nowrap;font-size:clamp\(16px,4.5vw,22px\)\}/);
+ assert.match(css,/@media\(max-width:360px\)\{#fundInvestorBox \.kpis\{grid-template-columns:1fr\}/);
  for(const file of ['fee-ratio-aggregate-returns','fee-ratio-management','fee-ratio-source-core','fee-ratio-snapshot']){const code=fs.readFileSync(new URL('./'+file+'.mjs',import.meta.url),'utf8'),factory=code.slice(code.indexOf('export function ')).replace('export function ','function ').trim();assert.ok(page.includes(factory),file);}
  assert.match(page,/summary\?\.textContent==='分类、账户与参考目标'/);assert.match(page,/summary\.textContent='明细'/);assert.match(page,/createAggregateReturnsCore\.toString\(\)/);
 });
