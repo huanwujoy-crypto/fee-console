@@ -15,7 +15,7 @@ import { guardLegacySourceFile } from "./fee-legacy-source-file.mjs";
 import { buildFeeCalculationReceipt, validateFeeCalculationReceipt } from './fee-receipt-core.mjs';
 
 import {
-  validateInputs, checkCashLedger, checkMove, classifyFlow, reconcileFlows,
+  validateInputs, checkCashLedger, checkMove, classifyFlow, reconcileFlows, FLOW_ID_ECONOMIC_CONFLICT,
   flowId, inKindBusinessKey, buildPoint, validateBenchmarkTimeline, buildStatus, nyDate, dayDiff,
   SPLIT_PROVISIONAL, STYLE_SPLIT_EPS, MAX_LOOKBACK_DAYS, BENCH_MAX_SOURCE_LAG_DAYS
 } from "./daily-core.mjs";
@@ -2370,4 +2370,122 @@ test('asset type: legacy source bytes, fees and provenance survive source-type r
   assert.equal(again.status, 0, again.stderr);
   assert.match(again.stdout, /no-op/);
   assert.deepEqual(fs.readFileSync(path.join(dir, 'data.json')), encrypted);
+});
+
+test("a half-cent management fee no longer stalls the writer, and the receipt uses the shared cent rule", () => {
+  const dir = tmp();
+  const halfCent = { schwab: "3558.75", webull: "3558.75", cash: "0", stock: "7117.50" };
+  const econFile = writeEconEnvelope(dir, econForToday({
+    settings: { mgmt: 1, carry: 0 },
+    accounts: [{ id: "schwab", name: "PRIVATE SCHWAB", opening: 3558.75 }, { id: "webull", name: "PRIVATE WEBULL", opening: 3558.75 }],
+    fees: []
+  }));
+  const result = run(dir, halfCent, [], { FEE_ECON_FILE: econFile });
+  assert.equal(result.status, 0, result.stderr);
+  const receipt = readPayload(dir).feeCalculationReceipt;
+  // 711,750 cents × 1% ÷ 365 = 19.5 cents → 20 under the single receipt rule.
+  assert.equal(receipt.periods[0].feeBaseSumCents, 711750);
+  assert.equal(receipt.periods[0].managementFeeCents, 20);
+});
+
+test("a management rate the receipt cannot represent still writes nothing", () => {
+  const dir = tmp();
+  const econFile = writeEconEnvelope(dir, econForToday());
+  assert.equal(run(dir, {}, [], { FEE_ECON_FILE: econFile }).status, 0);
+  const before = fs.readFileSync(path.join(dir, "data.json"));
+  writeEconEnvelope(dir, econForToday({ settings: { mgmt: 1.23456 } }));
+  const r = run(dir, {}, [], { FEE_ECON_FILE: econFile });
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /settings\.mgmt has more than four decimal places/);
+  assert.match(r.stderr, /nothing written/);
+  assert.ok(before.equals(fs.readFileSync(path.join(dir, "data.json"))));
+});
+
+/* ---------- A caller id names one economic event (date, account, amount) ---------- */
+
+const callerWire = (over = {}) => ({ id: "synthetic-caller-1", date: "2026-03-02", acct: "schwab", amount: 1000, desc: "WIRE IN", ...over });
+const callerDeposit = (over = {}) => ({ id: "synthetic-caller-2", date: "2026-03-02", acct: "webull", amount: 300, type: "DEPOSIT", desc: "", ...over });
+
+test("same caller id with identical economics replays idempotently, even with a revised description", () => {
+  const seed = reconcileFlows([], [], [callerWire()]);
+  assert.deepEqual(seed.errors, []);
+  const replay = reconcileFlows(seed.auto, seed.unresolved, [callerWire(), callerWire({ desc: "WIRE IN revised wording" })]);
+  assert.deepEqual(replay.errors, []);
+  assert.deepEqual(replay.auto, seed.auto);
+  assert.equal(replay.added, 0);
+  const pending = reconcileFlows([], [], [callerDeposit()]);
+  assert.deepEqual(reconcileFlows(pending.auto, pending.unresolved, [callerDeposit()]).errors, []);
+});
+
+test("same caller id with a different date, account or amount fails closed with a value-free code", () => {
+  const seed = reconcileFlows([], [], [callerWire()]);
+  for (const change of [{ date: "2026-03-03" }, { acct: "webull" }, { amount: 1000.01 }, { amount: -1000 }, { amount: "not a number" }]) {
+    const r = reconcileFlows(seed.auto, seed.unresolved, [callerWire(change)]);
+    assert.deepEqual(r.errors, [FLOW_ID_ECONOMIC_CONFLICT], JSON.stringify(change));
+    assert.deepEqual(r.auto, seed.auto);
+    assert.deepEqual(r.unresolved, []);
+    for (const value of ["synthetic-caller-1", "2026-03", "schwab", "webull", "1000"]) {
+      assert.equal(r.errors.join(" ").includes(value), false, value);
+    }
+  }
+});
+
+test("a same-batch duplicate caller id with different economics is refused", () => {
+  const r = reconcileFlows([], [], [callerWire(), callerWire({ amount: 2000 })]);
+  assert.deepEqual(r.errors, [FLOW_ID_ECONOMIC_CONFLICT]);
+  const sameBatchPending = reconcileFlows([], [], [callerDeposit(), callerDeposit({ date: "2026-03-03" })]);
+  assert.deepEqual(sameBatchPending.errors, [FLOW_ID_ECONOMIC_CONFLICT]);
+});
+
+test("a caller id cannot move between auto and unresolved with different economics", () => {
+  const pending = reconcileFlows([], [], [callerDeposit()]);
+  const upgradedWrong = reconcileFlows(pending.auto, pending.unresolved, [callerDeposit({ amount: 999, type: "", desc: "WIRE IN" })]);
+  assert.deepEqual(upgradedWrong.errors, [FLOW_ID_ECONOMIC_CONFLICT]);
+  assert.deepEqual(upgradedWrong.auto, []);
+  assert.deepEqual(upgradedWrong.unresolved, pending.unresolved);
+  const seed = reconcileFlows([], [], [callerWire()]);
+  const downgradedWrong = reconcileFlows(seed.auto, seed.unresolved, [callerWire({ amount: 5, type: "DEPOSIT", desc: "" })]);
+  assert.deepEqual(downgradedWrong.errors, [FLOW_ID_ECONOMIC_CONFLICT]);
+  assert.deepEqual(downgradedWrong.unresolved, []);
+});
+
+test("legitimate unresolved-to-external and ineffective-to-effective upgrades keep working", () => {
+  const pending = reconcileFlows([], [], [callerDeposit()]);
+  const upgraded = reconcileFlows(pending.auto, pending.unresolved, [callerDeposit({ type: "", desc: "WIRE IN" })]);
+  assert.deepEqual(upgraded.errors, []);
+  assert.deepEqual(upgraded.unresolved, []);
+  assert.equal(upgraded.auto.length, 1);
+  assert.equal(upgraded.promoted, 1);
+  const inKind = {
+    date: "2026-08-20", acct: "webull", amount: 1234.5, desc: "synthetic FOP",
+    sourceTradeId: 9001, tradeId: 9002, holdingId: 9003, holdingDelta: 10,
+    sourceDate: "2026-08-20", destinationDate: "2026-08-20",
+    sourceInstrument: "SYN.A", destinationInstrument: "SYN/A",
+    sourceQuantity: 10, destinationQuantity: 10, evidence: "external_asset_transfer"
+  };
+  const incomplete = reconcileFlows([], [], [{ ...inKind, destinationQuantity: 9 }]);
+  assert.equal(incomplete.unresolved.length, 1);
+  assert.equal(incomplete.unresolved[0].effective, false);
+  const effective = reconcileFlows(incomplete.auto, incomplete.unresolved, [inKind]);
+  assert.deepEqual(effective.errors, []);
+  assert.deepEqual(effective.unresolved, []);
+  assert.equal(effective.auto.length, 1);
+  assert.equal(effective.auto[0].effective, true);
+  const changedInKind = reconcileFlows(effective.auto, [], [{ ...inKind, amount: 1300 }]);
+  assert.match(changedInKind.errors.join(" "), /immutable in-kind event conflicts/);
+});
+
+test("the writer refuses a reused caller id with changed economics and keeps the encrypted bytes", () => {
+  const dir = tmp();
+  const t = today();
+  const flow = amount => JSON.stringify([{ id: "synthetic-caller-cli", date: t, acct: "schwab", amount, desc: "WIRE IN" }]);
+  const first = run(dir, { schwab: "598617.36", cash: "263797.83", "acct-cash-schwab": "200", "prev-acct-cash-schwab": "100" }, [`--flows=${flow(100)}`]);
+  assert.equal(first.status, 0, first.stderr);
+  const before = fs.readFileSync(path.join(dir, "data.json"));
+  const r = run(dir, { schwab: "598617.36", cash: "263797.83", "acct-cash-schwab": "250", "prev-acct-cash-schwab": "100" }, [`--flows=${flow(150)}`]);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /FLOW_ID_ECONOMIC_CONFLICT/);
+  assert.match(r.stderr, /nothing written/);
+  assert.equal(r.stderr.includes("synthetic-caller-cli"), false);
+  assert.ok(before.equals(fs.readFileSync(path.join(dir, "data.json"))));
 });

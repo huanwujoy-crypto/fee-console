@@ -11,6 +11,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { validateFeeCalculationReceiptWithEcon } from "./fee-receipt-core.mjs";
+import { createLegacyPolicy } from "./fee-legacy-policy.mjs";
 
 export const HEALTH_SCHEMA = "fee-console.daily-health.v1";
 export const SUCCESS_OUTCOMES = Object.freeze(["updated", "no-op"]);
@@ -47,6 +48,31 @@ const NY_CLOCK = new Intl.DateTimeFormat("en-US", {
 });
 const nyParts = instant => Object.fromEntries(NY_CLOCK.formatToParts(instant)
   .filter(part => part.type !== "literal").map(part => [part.type, part.value]));
+
+// The published data.json outer layer is exactly {data, enc, v}: a plain
+// object, enc true, v 3, and canonical standard base64 ciphertext.  Any other
+// member (even a well-meant label) would be plaintext next to the ciphertext,
+// so it is refused before upload, in health validation and in both workflows.
+// JSON.parse keeps only the last of duplicate members, so the raw bytes are
+// first read with the repository's existing exact parser, which refuses any
+// duplicate decoded key (escaped spellings included) before shape checks.
+export const PUBLISHED_ENVELOPE_KEYS = Object.freeze(["data", "enc", "v"]);
+export function publishedEnvelopeErrors(bytes) {
+  let outer;
+  try {
+    outer = createLegacyPolicy().parseExactJson(Buffer.isBuffer(bytes) ? bytes : Buffer.from(String(bytes), "utf8"));
+  } catch (error) {
+    return [error?.code === "INPUT_DUPLICATE_JSON_KEY" ? "data envelope duplicate member" : "data envelope invalid"];
+  }
+  if (!object(outer) || Object.getPrototypeOf(outer) !== Object.prototype
+      || !exactKeys(outer, PUBLISHED_ENVELOPE_KEYS)) return ["data envelope shape"];
+  const errors = [];
+  if (outer.enc !== true || outer.v !== 3) errors.push("data envelope version");
+  if (typeof outer.data !== "string" || outer.data.length < 40 || outer.data.length % 4 !== 0
+      || !/^[A-Za-z0-9+/]+={0,2}$/.test(outer.data)
+      || Buffer.from(outer.data, "base64").toString("base64") !== outer.data) errors.push("data envelope ciphertext");
+  return errors;
+}
 
 export function validateHealth(value, { now = new Date(), maxAgeHours = 36 } = {}) {
   const errors = [];
@@ -170,6 +196,7 @@ async function main() {
     const errors = validateHealth(health, { maxAgeHours });
     const bytes = fs.readFileSync(args.data || "data.json");
     if (health.dataSha256 !== sha256(bytes)) errors.push("health data hash mismatch");
+    errors.push(...publishedEnvelopeErrors(bytes));
     if (errors.length) throw new Error(errors.join("; "));
     console.log(`health ok ${health.targetDate} ${health.outcome}`);
     return;

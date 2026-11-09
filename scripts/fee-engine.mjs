@@ -17,6 +17,59 @@ export const isCalendarDate = value => {
     && date.getUTCDate() === day;
 };
 
+// Integer fee arithmetic shared with the calculation receipt.  The management
+// fee has exactly one rule: the period's summed daily basis is rounded to
+// cents, multiplied by the integer ppm rate, divided by 365 and rounded once.
+// The receipt imports these same helpers and still asserts that the engine row
+// and its own recomputation agree exactly, so the two cannot drift apart.
+const FEE_NUMBER_RE = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
+export const FEE_RATE_MAX_PPM = 1_000_000;
+
+export const feeFinite = (value, label) => {
+  let parsed;
+  if (typeof value === "number") parsed = value;
+  else if (typeof value === "string" && value.trim() !== "" && FEE_NUMBER_RE.test(value.trim())) parsed = Number(value);
+  else throw new Error(`${label} must be a finite number`);
+  if (!Number.isFinite(parsed)) throw new Error(`${label} must be a finite number`);
+  return parsed;
+};
+
+export const feeSafeInteger = (value, label) => {
+  if (!Number.isSafeInteger(value)) throw new Error(`${label} is outside the safe integer range`);
+  return value;
+};
+
+export const feeCents = (value, label = "amount") => feeSafeInteger(Math.round(feeFinite(value, label) * 100), `${label} cents`);
+
+export const feeRatePpm = (percent, label) => {
+  const value = feeFinite(percent, label);
+  if (value < 0) throw new Error(`${label} cannot be negative`);
+  const ppm = Math.round(value * 10_000);
+  if (Math.abs(value * 10_000 - ppm) > 1e-8) throw new Error(`${label} has more than four decimal places`);
+  if (ppm > FEE_RATE_MAX_PPM) throw new Error(`${label} cannot exceed 100%`);
+  return ppm;
+};
+
+export const applyPpm = (amountCents, ppm, divisor = 1) => feeSafeInteger(
+  Math.round((amountCents / divisor) * (ppm / 1_000_000)),
+  "rate result"
+);
+
+export const managementFeeCentsFromBaseCents = (feeBaseSumCents, managementRatePpm) =>
+  applyPpm(feeBaseSumCents, managementRatePpm, 365);
+
+const periodManagementRatePpm = input => {
+  if (input.managementRatePpm !== undefined) {
+    const ppm = input.managementRatePpm;
+    if (!Number.isSafeInteger(ppm) || ppm < 0 || ppm > FEE_RATE_MAX_PPM) throw new Error("management rate ppm is invalid");
+    if (input.rate !== undefined && feeRatePpm(feeFinite(input.rate, "management rate") * 100, "management rate") !== ppm) {
+      throw new Error("management rate and management rate ppm disagree");
+    }
+    return ppm;
+  }
+  return feeRatePpm(feeFinite(input.rate, "management rate") * 100, "management rate");
+};
+
 const number = value => {
   const parsed = Number.parseFloat(value);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -161,7 +214,7 @@ export function periodReturns(input) {
   const to = input.to;
   const opening = input.openT;
   const days = Math.max(1, input.days);
-  const rate = input.rate;
+  const managementRatePpm = periodManagementRatePpm(input);
   const carryRate = input.cr;
   const cumulativeBefore = input.cumBefore;
   const highWaterBefore = input.hwmBefore;
@@ -211,7 +264,9 @@ export function periodReturns(input) {
   if (feeBases.length !== days) issues.push(`管理费计费点数 ${feeBases.length} 与日历天数 ${days} 不一致`);
   const feeBaseSum = mgmtValid ? feeBases.reduce((sum, value) => sum + value.basis, 0) : null;
   const averageFeeBase = mgmtValid ? feeBaseSum / feeBases.length : null;
-  const managementFee = mgmtValid ? feeBaseSum * rate / 365 : null;
+  const managementFee = mgmtValid
+    ? managementFeeCentsFromBaseCents(feeCents(feeBaseSum, "management-fee basis"), managementRatePpm) / 100
+    : null;
   const carry = Math.max(0, cumulativeBefore + grossPnl - highWaterBefore) * carryRate;
   const fees = managementFee == null ? null : managementFee + carry;
   const portfolioReady = issues.length === 0;
@@ -257,6 +312,7 @@ export function computeFeeStatement({ daily = [], flowsAuto = [], econ, asOf }) 
   if (!Number.isFinite(rate) || rate < 0 || !Number.isFinite(carryRate) || carryRate < 0) {
     throw new Error("economic input has an invalid fee rate");
   }
+  const managementRatePpm = feeRatePpm(econ.settings.mgmt, "settings.mgmt");
   const accounts = Array.isArray(econ.accounts) ? econ.accounts : [];
   if (!accounts.length || accounts.some(account => !account?.id || !Number.isFinite(Number(account.opening)))) {
     throw new Error("economic input has invalid accounts");
@@ -295,7 +351,7 @@ export function computeFeeStatement({ daily = [], flowsAuto = [], econ, asOf }) 
       to,
       days: inclusiveDays(from, to),
       flowByDate,
-      rate,
+      managementRatePpm,
       cr: carryRate,
       cumBefore: cumulative,
       hwmBefore: highWater

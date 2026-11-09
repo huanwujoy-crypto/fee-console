@@ -485,6 +485,29 @@ export function flowId(raw) {
   return crypto.createHash("sha256").update(canon).digest("hex").slice(0, 16);
 }
 
+/** Fixed, value-free error for a caller id reused with different economics. */
+export const FLOW_ID_ECONOMIC_CONFLICT = "FLOW_ID_ECONOMIC_CONFLICT";
+
+const flowAmountCents = value => {
+  const parsed = typeof value === "number" ? value : typeof value === "string" && value.trim() !== "" ? Number(value) : NaN;
+  return Number.isFinite(parsed) ? Math.round(parsed * 100) : null;
+};
+
+/**
+ * Within the persisted flowsAuto / flowsUnresolved rows (and rows this batch
+ * has already added to them), a flow id names one economic event: date,
+ * account and amount in cents.  A replay with the same economics is
+ * idempotent, and the description, reason or effective state may legitimately
+ * be revised, but such an id must never stand for a different date, account or
+ * amount.  Checked before any auto/unresolved mutation.  Records classified
+ * internal are not stored, so this does not make ids unique across them.
+ */
+const sameIdEconomicConflict = (rows, id, raw) => {
+  const cents = flowAmountCents(raw.amount);
+  return rows.some(row => row && row.id === id && (row.date !== raw.date || row.acct !== raw.acct
+    || cents === null || flowAmountCents(row.amount) !== cents));
+};
+
 /**
  * Sort incoming records. A `misfiled` record — an internal trade dressed up as
  * an external transfer — is an obvious error and aborts the write.
@@ -505,6 +528,10 @@ export function reconcileFlows(existingAuto, existingUnresolved, incoming,{refer
     const id = (businessKey || notificationIncomeFlowAudit(raw)) ? flowId(raw)
       : (raw.id != null && raw.id !== "" ? String(raw.id) : flowId(raw));
     if (kind === "misfiled") { errors.push(`flow ${raw.date} ${raw.acct}: ${reason}`); continue; }
+    // A verified in-kind key keeps its own stricter immutable-event check below.
+    if (!businessKey && (autoIds.has(id) || unresolvedIds.has(id)) && sameIdEconomicConflict([...auto, ...unresolved], id, raw)) {
+      errors.push(FLOW_ID_ECONOMIC_CONFLICT); continue;
+    }
     if (kind === "internal") {
       if(raw.evidence==='internal_income_owner_notification'&&autoIds.has(id)) {
         errors.push('notification income conflicts with an existing external flow');continue;

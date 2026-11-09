@@ -15,7 +15,7 @@ test('independent Astra EOD scenario: symmetric noncash flow, unchanged cost and
  assert.ok(Math.abs(grossTwrDailyFactor(2322,0,2300)-1-22/2300)<1e-12);
  assert.ok(Math.abs(grossTwrDailyFactor(2100,800,1000)-1-.3)<1e-12);
  const r=periodReturns({points:[{d:'2026-10-27',tot:2100},{d:'2026-10-28',tot:2122}],openT:1000,from:'2026-10-27',to:'2026-10-28',days:2,flowByDate:{'2026-10-27':1100},rate:.01,cr:.2,cumBefore:0,hwmBefore:0});
- assert.equal(r.pnl,22);assert.equal(r.feeBaseSum,3122);assert.ok(Math.abs(r.mgmt-3122*.01/365)<1e-12);assert.ok(Math.abs(r.carry-4.4)<1e-12);
+ assert.equal(r.pnl,22);assert.equal(r.feeBaseSum,3122);assert.equal(r.mgmt,Math.round(312200/365*.01)/100,'monthly basis in cents x ppm / 365, rounded once');assert.equal(r.mgmt,0.09);assert.ok(Math.abs(r.carry-4.4)<1e-12);
  assert.equal(-1100+1100,0,'AllTogether transfer is internal, no second family subscription');
 });
 test("reviewed next fund factory exactly matches source; the frozen prior factory remains a separate contract", () => {
