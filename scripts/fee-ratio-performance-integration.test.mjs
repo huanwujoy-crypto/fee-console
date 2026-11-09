@@ -296,7 +296,7 @@ function presentationFixture({returns=true,reverse=false,extra=false,inline=true
 function actualPresentation(f){
  const actual=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8'),page=hash(actual)===aggregateUiFixture.nextSha256?actual:aggregateUiStage(actual);
  const start=page.indexOf('function styleRatioReport('),end=page.indexOf('\n/* ratio-presentation:v1:end */',start);assert.ok(start>=0&&end>start);
- return new Function('document','ratioHoldingDisplayName','foldRatioFundNotes',page.slice(start,end)+'\nreturn styleRatioReport;')(f.document,s=>s,()=>{});
+ return new Function('document','ratioHoldingDisplayName','foldRatioFundNotes',page.slice(page.indexOf('function arrangeRatioRowDetails('),page.indexOf('function foldRatioFundNotes('))+page.slice(start,end)+'\nreturn styleRatioReport;')(f.document,s=>s,()=>{});
 }
 for(const mode of [{returns:true,inline:true},{returns:true,inline:true,reverse:true,extra:true},{returns:true,inline:false},{returns:false}])test('card styling preserves direct returns, disclosures and native values '+JSON.stringify(mode),()=>{
  const f=presentationFixture(mode),style=actualPresentation(f);style(f.root);
@@ -309,9 +309,15 @@ for(const mode of [{returns:true,inline:true},{returns:true,inline:true,reverse:
  for(const [i,card]of cards.entries()){
   const o=f.originals[i];assert.equal(card.querySelector('.ratio-holding-amount').textContent,o.amount);assert.equal(card.querySelector('.ratio-holding-accounts'),o.account);
   assert.deepEqual(card.querySelectorAll('dd').map(n=>n.textContent),o.weights.split('／'));
-  assert.deepEqual(card.children.filter(n=>n.tagName==='DETAILS'||n.classList.contains('ratio-returns-inline')),o.disclosures,'preserve source order and node identity');
-  if(o.rate){assert.equal(o.rate.textContent,o.rateText);assert.equal(o.rate.classList.contains('ratio-composition'),false);assert.equal(o.rate.querySelector('summary').textContent,mode.inline?'详情':o.category===3?'直接持仓收益率':'收益率');if(mode.inline){assert.equal(o.rate.querySelector('.ratio-return-compact').parentNode,o.rate,'values stay outside the closed evidence panel');assert.equal(o.rate.querySelector('.ratio-return-inline-label').textContent,o.category===3?'直接持仓收益率':'收益率');}}
-  if(o.composition){assert.equal(o.composition.classList.contains('ratio-composition'),true);assert.match(o.composition.querySelector('summary').textContent,/^明细 [1-5] · /);assert.equal(o.composition.querySelectorAll('li').length,2);}
+  for(const disclosure of o.disclosures)assert.ok(disclosure.closest('.ratio-holding-row')===card,'same nodes remain under the matching holding');
+  if(o.rate){assert.equal(o.rate.classList.contains('ratio-composition'),false);if(mode.inline){
+   assert.equal(o.rate.querySelector('.ratio-return-compact').parentNode,o.rate,'values stay outside the closed evidence panel');
+   assert.equal(o.rate.querySelector('.ratio-return-inline-label').textContent,o.category===3?'直接持仓收益率':'收益率');
+   const facts=card.querySelector('.ratio-return-facts');assert.equal(facts.querySelector('summary').textContent,'收益率说明');
+   assert.equal(facts.parentNode.className,'ratio-row-disclosures');assert.equal(facts.querySelectorAll('p').length,3);
+  }else assert.equal(o.rate.textContent,o.rateText);}
+  if(o.composition){assert.equal(o.composition.classList.contains('ratio-composition'),true);assert.equal(o.composition.querySelector('summary').textContent,'持仓明细');assert.equal(o.composition.querySelectorAll('li').length,2);}
+
  }
  const before=f.root.textContent;style(f.root);assert.equal(f.root.textContent,before);assert.equal(f.exposure.querySelectorAll('.ratio-holding-row').length,20,'second styling is inert');
 });
@@ -398,3 +404,24 @@ test('one common disclosure retains scope and unit semantics without being a tra
  assert.match(html,/不含 ETF 穿透敞口，也不乘杠杆倍数/);assert.match(html,/未计预算、资本承诺或交易限制/);assert.match(html,/PE\/VC目标0%不代表卖出指令/);
 });
 }
+
+test('category disclosures move only exact matching existing holdings, keeping ambiguous history in place',()=>{
+ const f=presentationFixture(),el=(tag,cls='',text='')=>{const n=new PresentationNode(tag);n.className=cls;n.textContent=text;return n;};
+ const section=el('section','ratio-fund-distribution'),archive=el('details','ratio-distribution-details');archive.append(el('summary','','分类、账户与参考目标'));
+ const rows=[],categories=[];
+ for(const name of ['SYNTH A','SYNTH B','SYNTH B']){
+  const row=el('div','ratio-distribution-row'),weight=el('span','ratio-distribution-weight');weight.append(el('strong','','25.00%'));row.append(el('span','ratio-distribution-name',name),weight);
+  const compact=el('div','ratio-return-compact'),line=el('span','ratio-return-compact-line');line.append(el('span','','近一年：'),el('strong','','-12.34%'));compact.append(line);
+  const facts=el('details','ratio-return-facts');facts.append(el('summary','','详情'),el('p','','2025-01-01 至 2026-01-01'));
+  row.append(compact,facts);section.append(row);rows.push(row);
+  const category=el('section','ratio-distribution-category');category.append(el('h3','',name+' · 25.00%'),el('li','',name+' holding'));archive.append(category);categories.push(category);
+ }
+ archive.append(el('p','','此历史快照未包含账户及持仓明细，更新快照后可查看。'));section.append(archive);f.report.append(section);
+ actualPresentation(f)(f.root);
+ assert.equal(categories[0].closest('.ratio-distribution-row'),rows[0]);
+ for(const category of categories.slice(1))assert.equal(category.parentNode,archive);
+ assert.equal(rows[0].querySelectorAll('summary').map(n=>n.textContent).join('|'),'收益率说明|持仓明细');
+ assert.equal(rows[0].querySelector('.ratio-return-value').textContent,'近一年：-12.34%');
+ assert.equal(categories[0].querySelector('li').textContent,'SYNTH A holding');
+ assert.match(archive.textContent,/历史快照未包含/);assert.equal(f.report.querySelectorAll('.ratio-distribution-category').length,3);
+});
