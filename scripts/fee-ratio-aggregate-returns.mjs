@@ -5,6 +5,7 @@ export function createAggregateReturnsCore(){
  const exact=(v,ks)=>v&&Object.getPrototypeOf(v)===Object.prototype&&Object.keys(v).sort().join('|')===[...ks].sort().join('|');
  const text=v=>typeof v==='string'&&v.length>0&&v.length<=500&&!/[\u0000-\u001f\u007f]/.test(v);
  const date=v=>typeof v==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(v)&&Number.isFinite(Date.parse(v))&&new Date(v).toISOString().slice(0,10)===v;
+ const instant=v=>typeof v==='string'&&/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(v)&&Number.isFinite(Date.parse(v))&&new Date(v).toISOString()===v;
  const canon=v=>Array.isArray(v)?'['+v.map(canon).join(',')+']':v&&typeof v==='object'?'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canon(v[k])).join(',')+'}':JSON.stringify(v);
  const same=(a,b)=>canon(a)===canon(b),memberKey=m=>canon([m.account,m.market,m.securityCode]);
  function scopeKey(s){
@@ -16,10 +17,43 @@ export function createAggregateReturnsCore(){
  function oneYearBefore(end){if(!date(end))fail();const y=Number(end.slice(0,4))-1,m=Number(end.slice(5,7)),d=Number(end.slice(8,10));return String(y).padStart(4,'0')+'-'+String(m).padStart(2,'0')+'-'+String(Math.min(d,new Date(Date.UTC(y,m,0)).getUTCDate())).padStart(2,'0');}
  const stockScope=s=>s?.type==='classification'&&s.name==='股票市场'&&s.parent===null;
  const stockSourceIds=s=>new Set(s.reports.filter(r=>Array.isArray(r?.additionalSources)&&r.additionalSources.length===2).map(r=>r.additionalSources[1]?.libraryFileId));
+ function inceptionDirectory(e,accounts,asOf){
+  const out=new Map();
+  if(!exact(e,['schema','capturedAt','includeClosed','sources','members'])||e.schema!=='fee-console.ratio-inception-source.v1'||!instant(e.capturedAt)||e.includeClosed!==true||!Array.isArray(e.sources)||!e.sources.length||!Array.isArray(e.members)||!e.members.length)fail();
+  const sources=new Set();for(const source of e.sources){ref(source);if(sources.has(source.libraryFileId))fail();sources.add(source.libraryFileId);}
+  for(const m of e.members){
+   if(!exact(m,['account','market','securityCode','startDate','dateKind','sourceFileId','sourceLocator'])||![m.account,m.market,m.securityCode,m.sourceLocator].every(text)||!accounts.includes(m.account)||!sources.has(m.sourceFileId)||out.has(memberKey(m)))fail();
+   const cash=m.market.trim().toUpperCase()==='CASH';
+   if(m.dateKind==='unknown'){if(m.startDate!==null)fail();}
+   else if(!date(m.startDate)||m.startDate>asOf||!(cash?['cash-opening-balance','cash-first-transaction']:['holding-inception']).includes(m.dateKind))fail();
+   out.set(memberKey(m),m.startDate);
+  }return out;
+ }
+ function investmentStart(members,directory,report){
+  if(report.period!=='all')return {};
+  // A missing historical member, including cash, makes the scope incomplete.
+  // Never substitute the query window or the minimum of a partial subset.
+  const dates=members.map(m=>directory.get(memberKey(m)));
+  if(dates.some(d=>date(d)&&d<report.startDate))fail();
+  const start=dates.every(date)?[...dates].sort()[0]:null;
+  return {investmentStartDate:start};
+ }
+ function unavailableStart(scope,report,directory){
+  if(report.period!=='all')return {};
+  if(scope.type!=='classification'||scope.name!=='现金类'||scope.parent!==null)return {investmentStartDate:null};
+  // The existing allocation contract defines cash as these two official
+  // scopes. Derive only its date; absence of a native union return stays null.
+  const parts=['Cash Accounts','防御资产'].map(name=>report.rows.filter(r=>r.scope.type==='classification'&&r.scope.name===name&&r.scope.parent===null));
+  if(parts.some(rows=>rows.length!==1))return {investmentStartDate:null};
+  const members=parts.flatMap(rows=>rows[0].members);
+  if(new Set(members.map(memberKey)).size!==members.length)fail();
+  return investmentStart(members,directory,report);
+ }
  function build(s,{expectedAccounts,expectedAsOf,topTargets:expectedTopTargets=null,excludedMembers=[],benchmarkMembers=[{account:'Citi-HK & 地产四期',market:'NASDAQ',securityCode:'QQQ'},{account:'Citi-HK & 地产四期',market:'NYSE',securityCode:'SPY'}]}={}){
-  if(!exact(s,['schema','provider','currency','asOf','accounts','reports',...(Object.hasOwn(s||{},'topHoldings')?['topHoldings']:[])])||s.schema!==SCHEMA||s.provider!=='Sharesight'||s.currency!=='USD'||!date(s.asOf)||s.asOf!==expectedAsOf)fail();
+  if(!exact(s,['schema','provider','currency','asOf','accounts','reports',...['topHoldings','inceptionEvidence'].filter(k=>Object.hasOwn(s||{},k))])||s.schema!==SCHEMA||s.provider!=='Sharesight'||s.currency!=='USD'||!date(s.asOf)||s.asOf!==expectedAsOf)fail();
   const accounts=s.accounts;
   if(!Array.isArray(accounts)||!accounts.length||!accounts.every(text)||new Set(accounts).size!==accounts.length||!Array.isArray(expectedAccounts)||!same([...accounts].sort(),[...expectedAccounts].sort())||!Array.isArray(s.reports)||s.reports.length!==2||!Array.isArray(excludedMembers))fail();
+  const inceptions=Object.hasOwn(s,'inceptionEvidence')?inceptionDirectory(s.inceptionEvidence,accounts,s.asOf):new Map();
   const member=m=>{if(!exact(m,['account','market','securityCode'])||![m.account,m.market,m.securityCode].every(text))fail();return memberKey(m);};
   if(!Array.isArray(benchmarkMembers))fail();
   const excluded=new Set(excludedMembers.map(member)),benchmarks=new Set(benchmarkMembers.map(member)),periods=new Set(),files=new Set(),items=new Map(),stockFiles=stockSourceIds(s);
@@ -60,7 +94,7 @@ export function createAggregateReturnsCore(){
     const status=row.unit==='unavailable'?'source-unavailable':short?'under-one-year':row.unit==='p.a.'?'annualised':row.unit==='period'?'period-return':'source-unit-unspecified';
     // Closed holdings can differ between windows. Stable category scope does
     // not require dropping holdings sold before the trailing-year start.
-    put(row.scope,{status,nativePct:row.returnPct,...(hasAmount?{nativeAmountUSD:amount,amountSource:{...structuredClone(rowSource),locator:row.sourceSheet+'!N'+row.sourceRow}}:{}),startDate:r.startDate,endDate:r.endDate,includeClosed:true,cashPerformance:stockSource&&rowSource.libraryFileId===stockSource.libraryFileId?'unknown':r.cashPerformance,accounts:[...new Set(members.map(m=>m.account))].sort(),memberCount:members.length,benchmarkMemberCount:members.filter(m=>benchmarks.has(memberKey(m))).length,source:{...structuredClone(rowSource),locator:row.sourceSheet+'!O'+row.sourceRow},termEvidence:structuredClone(e)});
+    put(row.scope,{status,nativePct:row.returnPct,...(hasAmount?{nativeAmountUSD:amount,amountSource:{...structuredClone(rowSource),locator:row.sourceSheet+'!N'+row.sourceRow}}:{}),startDate:r.startDate,endDate:r.endDate,...investmentStart(members,inceptions,r),includeClosed:true,cashPerformance:stockSource&&rowSource.libraryFileId===stockSource.libraryFileId?'unknown':r.cashPerformance,accounts:[...new Set(members.map(m=>m.account))].sort(),memberCount:members.length,benchmarkMemberCount:members.filter(m=>benchmarks.has(memberKey(m))).length,source:{...structuredClone(rowSource),locator:row.sourceSheet+'!O'+row.sourceRow},termEvidence:structuredClone(e)});
    }
    if(stockSource){
     if(!stockRow)fail();
@@ -79,7 +113,7 @@ export function createAggregateReturnsCore(){
      if(row.members.some(m=>instruments.has(canon([m.market,m.securityCode]))))fail();
     }
    }
-   for(const row of r.unavailable){if(!exact(row,['scope','reason'])||!['benchmark-members-included','native-aggregate-not-provided','cash-scope-unverified'].includes(row.reason))fail();put(row.scope,{status:row.reason,nativePct:null,startDate:r.startDate,endDate:r.endDate,includeClosed:true});}
+   for(const row of r.unavailable){if(!exact(row,['scope','reason'])||!['benchmark-members-included','native-aggregate-not-provided','cash-scope-unverified'].includes(row.reason))fail();scopeKey(row.scope);put(row.scope,{status:row.reason,nativePct:null,startDate:r.startDate,endDate:r.endDate,...unavailableStart(row.scope,r,inceptions),includeClosed:true});}
   }
   return {schema:'fee-console.ratio-performance-view.v2',provider:'Sharesight',asOf:s.asOf,currency:'USD',accounts:[...accounts],items:[...items.values()],...(Object.hasOwn(s,'topHoldings')?{topHoldings:buildTop(s.topHoldings,s,expectedTopTargets)}:{})};
  }
@@ -180,6 +214,7 @@ export function createAggregateReturnsCore(){
 
  function select(v,s){const k=scopeKey(s);return v.items.find(x=>scopeKey(x.scope)===k)||{scope:structuredClone(s),periods:{}};}
  const esc=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+ const periodDates=(p,key)=>!p?.endDate?'来源日期未提供':key==='all'?(p.investmentStartDate?p.investmentStartDate+' 至 '+p.endDate:'首投日期未提供；截至 '+p.endDate):p.startDate?p.startDate+' 至 '+p.endDate:'来源日期未提供';
  function renderInline(item,label='收益率'){
   // Show each native value once. Shared calculation rules belong to the
   // page's common disclosure; this folded panel retains only scope facts.
@@ -199,7 +234,7 @@ export function createAggregateReturnsCore(){
    if(p?.accounts?.length)add(label,'账户：'+p.accounts.join(' · ')+'。');
    if(!stockScope(item.scope))add(label,{included:'现金收益沿用原报表启用设置；不表示每个现金账户均有收益值。',excluded:'原报表未含现金账户收益。',mixed:'现金收益覆盖沿用本期原报表的混合设置。',unknown:'现金账户收益覆盖未获来源确认。'}[p?.cashPerformance]);
    if(p?.benchmarkMemberCount>0)add(label,'含 '+p.benchmarkMemberCount+' 项模拟基准，收益未剔除其影响；配置比例仍排除。');
-   return '<p class="ratio-return-date-fact"><strong>'+label+'：</strong>'+esc(p?.startDate&&p?.endDate?p.startDate+' 至 '+p.endDate:'来源日期未提供')+'</p>';
+   return '<p class="ratio-return-date-fact"><strong>'+label+'：</strong>'+esc(periodDates(p,key))+'</p>';
   }).join('');
   const notes=[...facts].map(([value,labels])=>'<p class="ratio-return-scope-fact">'+(labels.length===2?'':esc(labels.join('／'))+'：')+esc(value)+'</p>').join('');
   const scopeNote=item.target?.category==='二级市场'?'仅对应直接持有的实际产品；不包括 ETF 穿透公司敞口，杠杆产品收益不乘敞口倍数。':stockScope(item.scope)?'仅四个股票分类的历史成员，不含现金账户、防御资产或主题投资。':'';
@@ -213,7 +248,7 @@ export function createAggregateReturnsCore(){
    const value=has?p.nativePct.toFixed(2)+'%'+(p.status==='annualised'?' p.a.':''):'暂未提供';
    const reason=!p?'尚无这个分类范围的 Sharesight 官方合并收益率。':reasons[p.status]||(p.status==='source-unit-unspecified'?'原报表未注明此数值是否年化；按原值显示，不推算投资期限。':p.status==='under-one-year'?'Sharesight 资金加权平均投资时间未满一年，显示实际收益率，未换算成年化。':p.status==='period-return'?'显示 Sharesight 原生期间收益率，未换算成年化。':'');
    const benchmarkNote=p?.benchmarkMemberCount>0?'含 '+p.benchmarkMemberCount+' 项用于程序取值的模拟基准，收益率沿用官方合计，未剔除其影响；资产配置仍按原规则排除。':'';
-   return '<div class="ratio-return-period"><strong>'+label+'</strong><span>'+esc(value)+(badge?' <small class="ratio-return-badge">'+badge+'</small>':'')+'</span>'+(p?'<small>'+esc(p.startDate)+' 至 '+esc(p.endDate)+' · 含已平仓</small>':'')+(reason?'<small>'+reason+'</small>':'')+(benchmarkNote?'<small class="ratio-return-benchmark-note">'+benchmarkNote+'</small>':'')+'</div>';
+   return '<div class="ratio-return-period"><strong>'+label+'</strong><span>'+esc(value)+(badge?' <small class="ratio-return-badge">'+badge+'</small>':'')+'</span>'+(p?'<small>'+esc(periodDates(p,key))+' · 含已平仓</small>':'')+(reason?'<small>'+reason+'</small>':'')+(benchmarkNote?'<small class="ratio-return-benchmark-note">'+benchmarkNote+'</small>':'')+'</div>';
   }).join('');
   const accounts=[...new Set(Object.values(item.periods).flatMap(p=>p.accounts||[]))].sort(),cash=[...new Set(Object.values(item.periods).map(p=>p.cashPerformance).filter(Boolean))];
   const note=stockScope(item.scope)?'股票市场小计只包含四个股票分类的历史成员，不含现金账户、防御资产或主题投资。':cash.includes('unknown')?'现金账户收益覆盖未获来源确认。':cash.includes('mixed')||cash.length>1?'现金收益覆盖分别保留各期原报表设置。':cash[0]==='included'?'含现金账户收益。':cash[0]==='excluded'?'未含现金账户收益。':'';

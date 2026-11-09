@@ -9,6 +9,9 @@ function fixture(){return {schema:c.SCHEMA,provider:'Sharesight',currency:'USD',
 const opts={expectedAccounts:accounts,expectedAsOf:end};
 const build=s=>c.build(s,opts),html=s=>c.render(c.select(build(s),scope()));
 function term(r,years){return {type:'sharesight-average-years-invested',years,scope:structuredClone(r.rows[0].scope),period:r.period,endDate:end,source:ref(3)};}
+function withInceptions(s,entries=s.reports[0].rows.flatMap(r=>r.members).map(m=>({...m,startDate:'2021-03-04'}))){
+ const source=ref(8);s.inceptionEvidence={schema:'fee-console.ratio-inception-source.v1',capturedAt:'2026-11-04T06:00:00.000Z',includeClosed:true,sources:[source],members:entries.map((m,i)=>({...m,dateKind:m.dateKind||(m.startDate===null?'unknown':m.market==='CASH'?'cash-opening-balance':'holding-inception'),sourceFileId:source.libraryFileId,sourceLocator:'Synthetic member '+i}))};return s;
+}
 test('only native aggregate values; unknown unit is transparent, not hidden or falsely short',()=>{
  const s=fixture(),before=structuredClone(s),h=html(s);assert.deepEqual(s,before);assert.match(h,/12.50%/);assert.match(h,/-1.25%/);assert.match(h,/原报表口径/);assert.match(h,/未注明此数值是否年化/);assert.doesNotMatch(h,/p.a.|未满一年|未确认|SYNTHETIC-A/);
 });
@@ -62,7 +65,7 @@ test('inline native returns are readable before the closed evidence panel withou
  assert.doesNotMatch(visible,/未满一年|p\.a\.|<small>原报表口径/);assert.match(visible,/原报表未注明是否年化/);
  assert.match(visible,/<p class="ratio-return-inline-label">收益率<\/p>/);
  assert.match(h,/<details class="ratio-returns ratio-return-facts"><summary>详情<\/summary>/);assert.doesNotMatch(h,/<details[^>]*open/);
- assert.match(h,/2020-01-02 至 2026-11-04/);assert.match(h,/Account A/);
+ assert.match(h,/首投日期未提供；截至 2026-11-04/);assert.match(h,/Account A/);
  assert.doesNotMatch(h.slice(h.indexOf('<details')),/12.50%|-1.25%|只显示组合或分类原生收益|原报表口径/);
 });
 test('inline zero, missing and evidenced short or annualised returns retain distinct meanings',()=>{
@@ -75,9 +78,9 @@ test('inline absent scope never inherits another classification value and escape
  assert.equal((visible.match(/<strong[^>]*>—<\/strong>/g)||[]).length,2);assert.doesNotMatch(visible,/12.50%|<img/);assert.match(h,/&lt;img src=x&gt;/);
 });
 test('compact facts deduplicate equal account and cash scope while retaining each actual date',()=>{
- const item=c.select(build(fixture()),scope()),before=structuredClone(item),h=c.renderInline(item),facts=h.slice(h.indexOf('<details'));
+ const item=c.select(build(withInceptions(fixture())),scope()),before=structuredClone(item),h=c.renderInline(item),facts=h.slice(h.indexOf('<details'));
  assert.equal((facts.match(/Account A/g)||[]).length,1);assert.equal((facts.match(/原报表未含现金账户收益/g)||[]).length,1);
- assert.match(facts,/全部：<\/strong>2020-01-02 至 2026-11-04/);assert.match(facts,/近一年：<\/strong>2025-11-04 至 2026-11-04/);
+ assert.match(facts,/全部：<\/strong>2021-03-04 至 2026-11-04/);assert.match(facts,/近一年：<\/strong>2025-11-04 至 2026-11-04/);
  assert.deepEqual(item,before);assert.doesNotMatch(facts,/%|只显示组合或分类原生收益|不按当前市值/);
 });
 test('compact facts preserve differing historical accounts, cash coverage and benchmark counts by period',()=>{
@@ -95,7 +98,7 @@ test('compact facts retain short-investment evidence and missing reasons without
  assert.match(facts,/近一年：Sharesight 暂未提供此范围的收益率/);assert.doesNotMatch(facts,/%/);
  for(const reason of ['benchmark-members-included','native-aggregate-not-provided','cash-scope-unverified']){
   const unavailable=fixture();unavailable.reports[0].rows=[];unavailable.reports[0].unavailable=[{scope:scope(),reason}];
-  const rendered=c.renderInline(c.select(build(unavailable),scope()));assert.match(rendered,/全部：<\/strong>2020-01-02 至 2026-11-04/);assert.match(rendered,/全部：[含暂现]/);
+  const rendered=c.renderInline(c.select(build(unavailable),scope()));assert.match(rendered,/全部：<\/strong>首投日期未提供；截至 2026-11-04/);assert.match(rendered,/全部：[含暂现]/);
  }
 });
 test('compact facts escape account and injected display text without exposing source identifiers',()=>{
@@ -105,6 +108,55 @@ test('compact facts escape account and injected display text without exposing so
  assert.doesNotMatch(h,/<img|<svg|libfile_|SYNTHETIC-A|Synthetic grouping/);
 });
 test('calendar-year boundary handles leap dates',()=>{assert.equal(c.oneYearBefore('2024-02-29'),'2023-02-28');assert.equal(c.oneYearBefore('2025-02-28'),'2024-02-28');});
+test('all scope inception includes closed members and retains the exact report window and rates',()=>{
+ const s=fixture(),sold=member('Account B','SOLD-B');s.reports[0].rows[0].members.push(sold);
+ s.reports[0].rows.push({...structuredClone(s.reports[0].rows[0]),scope:scope('Other'),members:[member()],sourceRow:10});
+ withInceptions(s,[{...member(),startDate:'2024-01-03'},{...sold,startDate:'2021-03-04'}]);const before=structuredClone(s),v=build(s),p=v.items[0].periods;
+ assert.equal(p.all.investmentStartDate,'2021-03-04');assert.equal(v.items[1].periods.all.investmentStartDate,'2024-01-03');assert.equal(p.all.startDate,'2020-01-02');
+ assert.deepEqual(p.oneYear,build(fixture()).items[0].periods.oneYear);assert.equal(p.all.nativePct,12.5);assert.equal(p.all.status,'source-unit-unspecified');assert.deepEqual(s,before);
+ for(const render of [c.render,c.renderInline]){const h=render(v.items[0]);assert.match(h,/2021-03-04 至 2026-11-04/);assert.doesNotMatch(h,/2020-01-02|SOLD-B|libfile_|Synthetic member/);}
+});
+test('missing, explicitly unknown and legacy inception never substitute a partial minimum or query date',()=>{
+ const s=fixture(),sold=member('Account B','SOLD-B');s.reports[0].rows[0].members.push(sold);withInceptions(s);
+ for(const edit of [x=>delete x.inceptionEvidence,x=>x.inceptionEvidence.members.pop(),x=>{const m=x.inceptionEvidence.members[1];m.startDate=null;m.dateKind='unknown';}]){
+  const x=structuredClone(s);edit(x);const item=build(x).items[0];assert.equal(item.periods.all.investmentStartDate,null);const h=c.renderInline(item);assert.match(h,/全部：<\/strong>首投日期未提供；截至 2026-11-04/);assert.doesNotMatch(h,/2020-01-02|2021-03-04 至/);assert.equal(item.periods.all.nativePct,12.5);
+ }
+});
+test('cash-inclusive scopes need the cash origin and preserve explicit unknown cash evidence',()=>{
+ const s=fixture(),cash={account:'Account A',market:'CASH',securityCode:'USD'};s.reports[0].rows[0].members.push(cash);
+ withInceptions(s,[{...member(),startDate:'2024-01-03'},{...cash,startDate:'2022-02-02',dateKind:'cash-first-transaction'}]);
+ assert.equal(build(s).items[0].periods.all.investmentStartDate,'2022-02-02');
+ s.inceptionEvidence.members[1].dateKind='cash-opening-balance';assert.equal(build(s).items[0].periods.all.investmentStartDate,'2022-02-02');
+ s.inceptionEvidence.members[1].dateKind='unknown';s.inceptionEvidence.members[1].startDate=null;assert.equal(build(s).items[0].periods.all.investmentStartDate,null);
+});
+test('missing cash-union return can show the proven start of its exact Cash Accounts and defensive union',()=>{
+ const s=fixture(),cash={account:'Account A',market:'CASH',securityCode:'USD'},bond=member('Account B','SYNTHETIC-DEFENSIVE');
+ for(const r of s.reports){r.rows=[{...r.rows[0],scope:scope('Cash Accounts'),members:[cash]},{...structuredClone(r.rows[0]),scope:scope('防御资产'),members:[bond],sourceRow:10}];r.unavailable=[{scope:scope('现金类'),reason:'native-aggregate-not-provided'}];}
+ withInceptions(s,[{...cash,startDate:'2022-02-02',dateKind:'cash-first-transaction'},{...bond,startDate:'2021-03-04'}]);
+ const item=c.select(build(s),scope('现金类'));assert.equal(item.periods.all.investmentStartDate,'2021-03-04');assert.equal(item.periods.all.nativePct,null);assert.equal(item.periods.all.status,'native-aggregate-not-provided');
+ const h=c.renderInline(item);assert.match(h,/全部：<\/strong>2021-03-04 至 2026-11-04/);assert.match(h,/近一年：<\/strong>2025-11-04 至 2026-11-04/);assert.equal((h.match(/<strong[^>]*>—<\/strong>/g)||[]).length,2);assert.doesNotMatch(h,/12.50%/);
+ for(const edit of [x=>x.reports[0].rows.pop(),x=>x.reports[0].rows.shift(),x=>x.inceptionEvidence.members.pop(),x=>{x.inceptionEvidence.members[0].startDate=null;x.inceptionEvidence.members[0].dateKind='unknown';}]){const x=structuredClone(s);edit(x);assert.equal(c.select(build(x),scope('现金类')).periods.all.investmentStartDate,null);}
+ const duplicate=structuredClone(s);duplicate.reports[0].rows[1].members.push(cash);assert.throws(()=>build(duplicate),/REFUSED/);
+ const unrelated=structuredClone(s);unrelated.reports[0].unavailable[0].scope=scope('Other');assert.equal(c.select(build(unrelated),scope('Other')).periods.all.investmentStartDate,null);
+});
+test('inception matching binds account, market and code; similar names and outside members cannot substitute',()=>{
+ const s=fixture();withInceptions(s,[{...member('Account B'),startDate:'2021-03-04'},{...member(),market:'OTHER',startDate:'2021-03-04'}]);assert.equal(build(s).items[0].periods.all.investmentStartDate,null);
+ s.inceptionEvidence.members.push({...s.inceptionEvidence.members[0],...member(),startDate:'2023-05-06'});assert.equal(build(s).items[0].periods.all.investmentStartDate,'2023-05-06');
+});
+test('inception cannot claim full history before the official report window, even with another missing member',()=>{
+ for(const partial of [false,true]){const s=withInceptions(fixture());s.inceptionEvidence.members[0].startDate='2019-01-01';if(partial)s.reports[0].rows[0].members.push(member('Account B','MISSING'));assert.throws(()=>build(s),/REFUSED/);}
+ const s=withInceptions(fixture());s.inceptionEvidence.members[0].startDate=s.reports[0].startDate;assert.equal(build(s).items[0].periods.all.investmentStartDate,s.reports[0].startDate);
+});
+test('strict inception directory rejects malformed, duplicate, unbound and mismatched date evidence',()=>{
+ const mutations=[e=>e.schema='other',e=>e.capturedAt='2026-11-04',e=>e.capturedAt='2026-02-30T00:00:00.000Z',e=>e.includeClosed=false,e=>e.extra=true,e=>e.sources=[],e=>e.members=[],e=>e.sources.push(structuredClone(e.sources[0])),e=>e.sources[0].sha256='bad',e=>e.members.push(structuredClone(e.members[0])),e=>e.members[0].account='Outside',e=>e.members[0].sourceFileId=ref(7).libraryFileId,e=>e.members[0].sourceLocator='',e=>e.members[0].startDate='2026-11-05',e=>e.members[0].startDate='2024-02-30',e=>e.members[0].dateKind='cash-opening-balance',e=>e.members[0].dateKind='unknown',e=>e.members[0].startDate=null,e=>e.members[0].market='CASH',e=>e.members[0].extra=true];
+ for(const edit of mutations){const s=withInceptions(fixture());edit(s.inceptionEvidence);assert.throws(()=>build(s),/REFUSED/);}
+ for(const value of [null,undefined,{}]){const s=fixture();s.inceptionEvidence=value;assert.throws(()=>build(s),/REFUSED/);}
+});
+test('inception does not infer annualisation or replace its independent official evidence',()=>{
+ const s=withInceptions(fixture());s.inceptionEvidence.members[0].startDate='2026-10-03';assert.equal(build(s).items[0].periods.all.status,'source-unit-unspecified');assert.doesNotMatch(html(s),/未满一年/);
+ s.reports[0].rows[0].unit='p.a.';s.reports[0].rows[0].termEvidence=term(s.reports[0],2);assert.equal(build(s).items[0].periods.all.status,'annualised');
+ s.reports[0].rows[0].unit='period';s.reports[0].rows[0].termEvidence=term(s.reports[0],0.5);assert.equal(build(s).items[0].periods.all.status,'under-one-year');
+});
 test('supplemental native rows retain the correct workbook identity and hash',()=>{
  const s=fixture();s.reports[0].additionalSources=[ref(4)];s.reports[0].rows[0].sourceFileId=ref(4).libraryFileId;
  const p=build(s).items[0].periods.all;assert.equal(p.nativePct,12.5);assert.equal(p.source.libraryFileId,ref(4).libraryFileId);assert.equal(p.source.sha256,ref(4).sha256);assert.equal(p.source.locator,'Synthetic grouping!O9');
@@ -162,6 +214,12 @@ function topFixture(){
  s.topHoldings={schema:'fee-console.ratio-top5-source.v1',targets,reports:s.reports.map(r=>({...structuredClone(r),additionalSources:[],rows:targets.map((t,i)=>({target:{category:t.category,name:t.name},memberEvidence:t.members.map(m=>({...m,name:t.name,category:t.category,sourceRow:i+30})),sourceSheet:'Combined',sourceRow:i+30,returnPct:i+0.25,unit:'unknown',termEvidence:{type:'unknown'}})),unavailable:[]}))};return s;
 }
 const topBuild=s=>c.build(s,{...opts,topTargets:s.topHoldings.targets});
+test('top-five inception uses all historical members while accepting the parent directory superset',()=>{
+ const s=topFixture(),row=s.topHoldings.reports[0].rows[0],sold={...row.memberEvidence[0],account:'Account B',sourceRow:99};row.memberEvidence.push(sold);
+ const entries=[...s.reports[0].rows.flatMap(r=>r.members),...s.topHoldings.reports[0].rows.flatMap(r=>r.memberEvidence.map(({account,market,securityCode})=>({account,market,securityCode})))].map(m=>({...m,startDate:m.account==='Account B'?'2021-03-04':'2024-01-03'}));
+ withInceptions(s,entries);const v=topBuild(s),p=v.topHoldings.items[0].periods;assert.equal(p.all.investmentStartDate,'2021-03-04');assert.equal(p.all.startDate,'2020-01-02');assert.equal(p.all.memberCount,2);assert.equal(p.oneYear.memberCount,1);assert.equal(p.oneYear.startDate,'2025-11-04');assert.match(c.renderTop(v.topHoldings.items[0]),/2021-03-04 至 2026-11-04/);
+ s.inceptionEvidence.members=s.inceptionEvidence.members.filter(m=>m.account!=='Account B');assert.equal(topBuild(s).topHoldings.items[0].periods.all.investmentStartDate,null);
+});
 test('stock-only supplemental source cannot be reused by top-five or its annualisation evidence',()=>{
  const make=()=>{const s=stockFixture();s.topHoldings=topFixture().topHoldings;return s;};
  const baseline=make();assert.equal(topBuild(baseline).topHoldings.items.length,20);
