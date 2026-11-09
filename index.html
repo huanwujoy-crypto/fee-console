@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="管理费">
 <meta name="theme-color" content="#fcfcfb">
-<meta name="fee-console-build" content="4.9.48">
+<meta name="fee-console-build" content="4.9.49">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -248,7 +248,7 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
 .ratio-return-pair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.ratio-return-period{display:flex;flex-direction:column;gap:5px;min-width:0}.ratio-return-period small{font-size:12px;line-height:1.4;overflow-wrap:anywhere}.ratio-return-badge{display:inline-block;color:var(--muted,#555)}.ratio-returns{margin:6px 0 10px}.ratio-returns p{font-size:12px;line-height:1.4;overflow-wrap:anywhere}.ratio-performance-class{margin:12px 0}@media(max-width:420px){.ratio-return-pair{grid-template-columns:1fr}}
 
 .ratio-overview-disclosures{position:relative;padding-top:44px;margin-top:8px;min-width:0}#p-ratio .ratio-overview-disclosures>details{margin-top:0}#p-ratio .ratio-overview-disclosures>details>summary{position:absolute;top:0;left:0;box-sizing:border-box;width:calc(50% - 6px);min-height:44px;white-space:nowrap}#p-ratio .ratio-overview-disclosures>.ratio-asset-notes>summary{left:calc(50% + 6px)}#p-ratio .ratio-overview-disclosures>details:only-child>summary{left:0}.ratio-overview-disclosures>details[open]{padding-bottom:8px}.ratio-return-note-list{margin:6px 0;padding-left:22px}.ratio-return-note-list li{margin:6px 0;overflow-wrap:anywhere}.ratio-returns-inline{margin:8px 0;min-width:0}.ratio-return-inline-label{font-size:11px;color:var(--ink-2);margin:0 0 4px}.ratio-returns-inline .ratio-return-compact{font-variant-numeric:tabular-nums}.ratio-returns-inline .ratio-return-compact-line{overflow-wrap:anywhere}.ratio-returns-inline>.ratio-returns{margin-bottom:0}
-.ratio-overview-table{width:100%;table-layout:fixed}.ratio-overview-table th:first-child{width:24%}.ratio-overview-table th:nth-child(2){width:39%}.ratio-overview-table th:nth-child(3){width:37%}.ratio-overview-table td,.ratio-overview-table th{padding:7px 4px;vertical-align:top}.ratio-overview-weights{display:block;font-size:10px;color:var(--ink-2);white-space:nowrap}.ratio-overview-units{font-size:11px;line-height:1.4;color:var(--ink-2)}.ratio-money-precise{font-size:12px;line-height:1.4;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.ratio-return-compact{display:flex;flex-direction:column;gap:4px;font-size:11px;line-height:1.4}.ratio-return-compact-line{display:block}
+.ratio-overview-table{width:100%;table-layout:fixed}#p-ratio .ratio-overview-table th:first-child,#p-ratio .ratio-overview-table td:first-child{width:24%}#p-ratio .ratio-overview-table th:nth-child(2),#p-ratio .ratio-overview-table td:nth-child(2){width:39%}#p-ratio .ratio-overview-table th:nth-child(3),#p-ratio .ratio-overview-table td:nth-child(3){width:37%}.ratio-overview-table td,.ratio-overview-table th{padding:7px 4px;vertical-align:top}.ratio-overview-weights{display:block;font-size:10px;color:var(--ink-2);white-space:nowrap}.ratio-overview-units{font-size:11px;line-height:1.4;color:var(--ink-2)}.ratio-money-precise{font-size:12px;line-height:1.4;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.ratio-return-compact{display:flex;flex-direction:column;gap:4px;font-size:11px;line-height:1.4}.ratio-return-compact-line{display:block}.ratio-return-compact-line>span:first-child,.ratio-return-compact-line>strong{white-space:nowrap}
 /* Compact fund and ranked returns retain one column per period at narrow widths. */
 .ratio-fund-distribution .ratio-returns-inline>.ratio-return-compact,.ratio-holding-row .ratio-returns-inline>.ratio-return-compact{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:12px;row-gap:4px}
 .ratio-fund-distribution .ratio-return-compact-line,.ratio-holding-row .ratio-return-compact-line{min-width:0;overflow-wrap:anywhere}
@@ -259,21 +259,21 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
 /* Ratio layout: exact amounts, distinct scopes and one shared explanation. */
 .ratio-target-gap{display:block;font-size:11px;font-weight:500;line-height:1.5;color:var(--ink-2);font-variant-numeric:tabular-nums;overflow-wrap:anywhere;margin-top:4px}
 .ratio-total-summary{border-top:1px solid var(--line,#ddd);margin-top:8px;padding-top:14px;min-width:0}
-.ratio-total-heading{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:6px 12px;margin-bottom:12px}
+.ratio-total-heading{display:grid;grid-template-columns:minmax(0,1fr);gap:6px;margin-bottom:12px}
 .ratio-total-heading h3{font-size:13px;font-weight:600;margin:0;color:var(--ink-2)}
-.ratio-total-value .ratio-money-precise{font-size:clamp(20px,5.8vw,28px);line-height:1.25;font-weight:700;letter-spacing:-.025em;font-variant-numeric:tabular-nums}
+.ratio-total-value .ratio-money-precise{font-size:clamp(24px,6.8vw,28px);line-height:1.25;font-weight:700;letter-spacing:-.025em;font-variant-numeric:tabular-nums}
 .ratio-total-returns>p{font-size:11px;color:var(--ink-2);margin:0 0 6px}
 .ratio-total-returns>.ratio-return-compact{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;font-size:12px}
 .ratio-total-returns .ratio-return-compact-line{min-width:0;padding:8px 10px;background:var(--surface-1);border-radius:8px}
 .ratio-total-returns .ratio-return-compact-line strong{font-size:15px}.ratio-total-returns .ratio-return-amount{font-size:12px;line-height:1.5;margin-top:5px;font-weight:500}
-.ratio-stock-table{width:100%;table-layout:fixed}.ratio-stock-table th,.ratio-stock-table td{padding:8px 4px;vertical-align:top}.ratio-stock-table th:first-child{width:25%}.ratio-stock-table th:nth-child(2){width:41%}.ratio-stock-table th:nth-child(3){width:34%}.ratio-stock-table .ratio-money-precise{white-space:normal;font-weight:600}
+.ratio-stock-table{width:100%;table-layout:fixed}.ratio-stock-table th,.ratio-stock-table td{padding:8px 4px;vertical-align:top}#p-ratio .ratio-stock-table th:first-child,#p-ratio .ratio-stock-table td:first-child{width:25%}#p-ratio .ratio-stock-table th:nth-child(2),#p-ratio .ratio-stock-table td:nth-child(2){width:41%}#p-ratio .ratio-stock-table th:nth-child(3),#p-ratio .ratio-stock-table td:nth-child(3){width:34%}.ratio-stock-table .ratio-money-precise{white-space:normal;font-weight:600}
 .ratio-distribution-label{display:grid;grid-template-columns:minmax(0,1fr);gap:5px}.ratio-distribution-name{font-size:13px;font-weight:600}.ratio-distribution-values{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:12px;width:100%}.ratio-distribution-metric{display:flex;flex-direction:column;gap:2px}.ratio-distribution-metric>small{font-size:10px;font-weight:400;color:var(--ink-2);line-height:1.4}.ratio-distribution-weight{text-align:right}.ratio-distribution-amount .ratio-money-precise{font-size:15px;font-weight:600;line-height:1.5}.ratio-distribution-amount{white-space:normal}.ratio-distribution-weight>strong{font-size:14px}
 .ratio-fund-distribution .ratio-returns-inline,.ratio-holding-row .ratio-returns-inline{display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:8px;row-gap:2px;align-items:baseline}
-.ratio-return-inline-label{font-size:11px;line-height:1.5;margin:0;color:var(--ink-2);max-width:7em}
+#p-ratio .ratio-return-inline-label{font-size:11px;line-height:1.5;margin:0;color:var(--ink-2);max-width:7em}
 .ratio-fund-distribution .ratio-returns-inline>.ratio-return-compact,.ratio-holding-row .ratio-returns-inline>.ratio-return-compact{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:10px;row-gap:4px;width:100%}
-.ratio-fund-distribution .ratio-returns-inline>.ratio-return-facts,.ratio-holding-row .ratio-returns-inline>.ratio-return-facts{grid-column:1/-1;width:100%;margin:2px 0 0}
-.ratio-return-facts summary{min-height:36px;display:flex;align-items:center;font-size:11px;color:var(--ink-2)}.ratio-return-facts p{font-size:11px;line-height:1.55;margin:4px 0;overflow-wrap:anywhere}
-@media(max-width:360px){.ratio-overview-table th:first-child{width:23%}.ratio-overview-table th:nth-child(2){width:42%}.ratio-overview-table th:nth-child(3){width:35%}.ratio-overview-table .ratio-money-precise{font-size:11px}.ratio-target-gap{font-size:10px}.ratio-total-heading{display:block}.ratio-total-value{display:block;margin-top:5px}.ratio-total-returns .ratio-return-compact-line{padding:8px 5px}.ratio-return-inline-label{max-width:5em}.ratio-stock-table th:first-child{width:24%}.ratio-stock-table th:nth-child(2){width:43%}.ratio-stock-table th:nth-child(3){width:33%}}
+#p-ratio .ratio-fund-distribution .ratio-returns-inline>.ratio-return-facts,#p-ratio .ratio-holding-row .ratio-returns-inline>.ratio-return-facts{grid-column:1/-1;width:100%;margin:2px 0 0}
+#p-ratio .ratio-return-facts summary{min-height:36px;display:flex;align-items:center;font-size:11px;color:var(--ink-2)}#p-ratio .ratio-return-facts p{font-size:11px;line-height:1.55;margin:4px 0;overflow-wrap:anywhere}
+@media(max-width:360px){#p-ratio .ratio-overview-table th:first-child,#p-ratio .ratio-overview-table td:first-child{width:23%}#p-ratio .ratio-overview-table th:nth-child(2),#p-ratio .ratio-overview-table td:nth-child(2){width:42%}#p-ratio .ratio-overview-table th:nth-child(3),#p-ratio .ratio-overview-table td:nth-child(3){width:35%}.ratio-overview-table .ratio-money-precise{font-size:11px}.ratio-overview-table .ratio-return-compact{font-size:10px}.ratio-target-gap{font-size:10px}.ratio-total-heading{display:block}.ratio-total-value{display:block;margin-top:5px}.ratio-total-returns .ratio-return-compact-line{padding:8px 5px}#p-ratio .ratio-return-inline-label{max-width:5em}#p-ratio .ratio-stock-table th:first-child,#p-ratio .ratio-stock-table td:first-child{width:24%}#p-ratio .ratio-stock-table th:nth-child(2),#p-ratio .ratio-stock-table td:nth-child(2){width:43%}#p-ratio .ratio-stock-table th:nth-child(3),#p-ratio .ratio-stock-table td:nth-child(3){width:33%}}
 
 </style>
 </head>
@@ -1134,7 +1134,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.9.48";
+const UI_VERSION_LABEL=" · v4.9.49";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
