@@ -4,9 +4,11 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { webcrypto } from 'node:crypto';
+import { webcrypto, createHash } from 'node:crypto';
+import {aggregateUiFixture,aggregateUiStage} from './fee-ratio-aggregate-ui-fixture.mjs';
 const root=process.env.FUND_UI_ROOT || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const html=fs.readFileSync(path.join(root,'index.html'),'utf8');
+const sourceHtml=fs.readFileSync(path.join(root,'index.html'),'utf8');
+const html=createHash('sha256').update(sourceHtml).digest('hex')===aggregateUiFixture.supportSha256?aggregateUiStage(sourceHtml):sourceHtml;
 const active=html.includes('fund-profile-storage:start') || html.includes('id=\"p-investors\"');
 const fixedRemote=html.includes('fund-remote-storage:start');
 if(active) for(const name of ['fund-investor-core','fund-profile-storage','fund-investor-render']) {
@@ -109,4 +111,13 @@ test('unconfirmed post-inception external cash candidate stops individual valuat
 
 test('importing a newer profile from an old fund link survives a synthetic reload',async()=>{
  const c=context();await importProfile(c);run(c,`HASH.fund=cfg(FUND_PROFILE_KEY);location.hash='#gid='+encodeURIComponent(cfg(K.gid))+'&k='+encodeURIComponent(cfg(K.key))+'&fund='+encodeURIComponent(HASH.fund);profile.fundName='SYNTHETIC RELOADED NEW';`);await importProfile(c);run(c,"HASH.fund=new URLSearchParams(location.hash.slice(1)).get('fund')||'';_fundProfileCache=null");const loaded=await run(c,'readFundProfile()');assert.equal(loaded.profile.fundName,'SYNTHETIC RELOADED NEW');
+});
+
+test('inception gain shows its existing verified interval without changing amounts or inputs',()=>{
+ const c=context();run(c,`globalThis.sourceBefore=JSON.stringify(DAILY);renderInvestors({profile},fixtureFee);`);
+ const body=run(c,'elements.get("fundInvestorBox").innerHTML');
+ assert.match(body,/成立以来盈亏 · 费用前[^]*?class="fund-return-period"> · 2026-08-20 → 2026-08-22<\/span>/);
+ assert.equal(run(c,'JSON.stringify(DAILY)'),run(c,'sourceBefore'));
+ run(c,`DAILY.daily=[];renderInvestors({profile},fixtureFee);`);
+ assert.match(run(c,'elements.get("fundInvestorBox").innerHTML'),/期间待核验/);
 });
