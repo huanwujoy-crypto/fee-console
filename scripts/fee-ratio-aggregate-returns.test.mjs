@@ -372,3 +372,76 @@ test('portfolio amount currency is optional visually but remains explicit to ass
  assert.match(c.renderCompact(item,{showAmount:true}),/>收益 USD 1,234,567\.89<\/span>/);
  const missing={scope:scope('All Together'),periods:{}};assert.equal((c.renderCompact(missing,{showAmount:true,amountCurrency:false}).match(/>收益 —<\/span>/g)||[]).length,2);
 });
+
+function browserInceptions(s=fixture()){
+ const archived={...member('Account B','SYNTHETIC-CLOSED'),startDate:'2021-03-04',dateKind:'holding-inception',sourceFileId:ref(8).libraryFileId,sourceLocator:'Synthetic archived inception field'};
+ const browser={...member(),startDate:'2024-02-03',dateKind:'browser-first-recorded-buy',sourceFileId:ref(9).libraryFileId,sourceLocator:'Synthetic complete All trades & adjustments view',browserEvidence:{view:'All trades & adjustments',complete:true,records:[{type:'Buy',status:'Confirmed',date:'2024-02-03',quantity:2}],currentQuantity:2}};
+ s.inceptionEvidence={schema:'fee-console.ratio-inception-source.v2',capturedAt:'2026-11-04T05:55:00.000Z',includeClosed:true,sources:[ref(8),ref(9)],sourceCaptures:[{libraryFileId:ref(8).libraryFileId,capturedAt:'2026-10-01T04:00:00.000Z',sourceKind:'verified-historical-archive'},{libraryFileId:ref(9).libraryFileId,capturedAt:'2026-11-04T05:55:00.000Z',sourceKind:'browser-first-recorded-buy'}],members:[archived,browser]};return s;
+}
+test('v2 preserves each capture, native returns and genuine browser date kind; source order is immaterial',()=>{
+ const s=browserInceptions(),before=structuredClone(s),v=build(s);
+ assert.equal(v.items[0].periods.all.investmentStartDate,'2024-02-03');assert.equal(v.items[0].periods.all.nativePct,12.5);assert.deepEqual(s,before);
+ s.inceptionEvidence.sources.reverse();s.inceptionEvidence.sourceCaptures.reverse();assert.deepEqual(build(s),v);
+ assert.doesNotMatch(html(s),/libfile_|browser-first-recorded-buy|All trades & adjustments/);
+});
+const v2Mutations={
+ 'missing captures':e=>delete e.sourceCaptures,
+ 'missing one capture':e=>e.sourceCaptures.pop(),
+ 'duplicate capture':e=>e.sourceCaptures[1]=structuredClone(e.sourceCaptures[0]),
+ 'unbound capture':e=>e.sourceCaptures[1].libraryFileId=ref(7).libraryFileId,
+ 'unknown source kind':e=>e.sourceCaptures[1].sourceKind='holding-inception',
+ 'archive mislabeled browser':e=>e.sourceCaptures[0].sourceKind='browser-first-recorded-buy',
+ 'browser mislabeled archive':e=>e.sourceCaptures[1].sourceKind='verified-historical-archive',
+ 'capture missing date':e=>delete e.sourceCaptures[1].capturedAt,
+ 'capture malformed date':e=>e.sourceCaptures[1].capturedAt='2026-13-04T05:55:00.000Z',
+ 'root time is not maximum':e=>e.capturedAt=e.sourceCaptures[0].capturedAt,
+ 'source extension':e=>e.sources[0].token='synthetic-extra',
+ 'capture extension':e=>e.sourceCaptures[0].approved=true,
+ 'member extension':e=>e.members[1].approved=true,
+ 'root extension':e=>e.approved=true,
+ 'duplicate member':e=>e.members.push(structuredClone(e.members[1])),
+ 'missing browser member':e=>e.members.pop(),
+ 'unbound member':e=>e.members[1].sourceFileId=ref(7).libraryFileId,
+ 'browser disguised as archive':e=>e.members[1].dateKind='holding-inception',
+ 'archive with browser proof':e=>e.members[0].browserEvidence=structuredClone(e.members[1].browserEvidence),
+ 'future event':e=>{e.members[1].startDate='2026-11-05';e.members[1].browserEvidence.records[0].date='2026-11-05';},
+ 'missing event date':e=>delete e.members[1].startDate,
+ 'unknown browser date':e=>e.members[1].startDate=null,
+ 'missing archived date':e=>{e.members[0].dateKind='unknown';e.members[0].startDate=null;},
+ 'cash cannot use browser buy':e=>e.members[1].market='CASH',
+ 'incomplete view':e=>e.members[1].browserEvidence.complete=false,
+ 'wrong view':e=>e.members[1].browserEvidence.view='Trades',
+ 'no records':e=>e.members[1].browserEvidence.records=[],
+ 'multiple records':e=>e.members[1].browserEvidence.records.push(structuredClone(e.members[1].browserEvidence.records[0])),
+ 'adjustment':e=>e.members[1].browserEvidence.records[0].type='Opening balance',
+ 'unconfirmed buy':e=>e.members[1].browserEvidence.records[0].status='Pending',
+ 'record date mismatch':e=>e.members[1].browserEvidence.records[0].date='2024-02-04',
+ 'record extension':e=>e.members[1].browserEvidence.records[0].approved=true,
+ 'proof extension':e=>e.members[1].browserEvidence.totalRows=1,
+ 'quantity mismatch':e=>e.members[1].browserEvidence.records[0].quantity=3
+};
+for(const [label,edit]of Object.entries(v2Mutations))test('v2 refuses '+label,()=>{const s=browserInceptions();edit(s.inceptionEvidence);assert.throws(()=>build(s),/REFUSED/);});
+for(const quantity of [0,-1,null,NaN,Infinity,true,'2'])test('v2 refuses non-positive or non-number quantity '+String(quantity),()=>{
+ const s=browserInceptions(),p=s.inceptionEvidence.members[1].browserEvidence;p.currentQuantity=quantity;p.records[0].quantity=quantity;assert.throws(()=>build(s),/REFUSED/);
+});
+test('v2 requires member coverage in both aggregate periods and top-five; v1 partial behavior remains',()=>{
+ const s=browserInceptions();s.reports[1].rows[0].members.push(member('Account B','UNCOVERED'));assert.throws(()=>build(s),/REFUSED/);
+ const top=topFixture();browserInceptions(top);assert.throws(()=>topBuild(top),/REFUSED/);
+ const entries=top.topHoldings.reports[0].rows.flatMap(r=>r.memberEvidence).map(({account,market,securityCode})=>({account,market,securityCode,startDate:'2022-01-03',dateKind:'holding-inception',sourceFileId:ref(8).libraryFileId,sourceLocator:'Synthetic archived member'}));
+ top.inceptionEvidence.members.push(...entries);assert.doesNotThrow(()=>topBuild(top));
+ top.inceptionEvidence.members.pop();assert.throws(()=>topBuild(top),/REFUSED/);
+});
+test('v2 source binding requires a real validation clock and an exact unique current quantity',()=>{
+ const s=browserInceptions(),positions=[{...member(),quantity:2}],now=new Date('2026-11-04T06:00:00.000Z');
+ assert.doesNotThrow(()=>c.validateInceptionBindings(s,positions,{now}));
+ for(const rows of [[],[...positions,...positions],[{...member(),quantity:null}],[{...member(),quantity:2.0000000001}],[{...member(),quantity:'2'}],[{...member('Account B'),quantity:2}],[{...member(),market:'OTHER',quantity:2}],[{...member(),securityCode:'OTHER',quantity:2}]])assert.throws(()=>c.validateInceptionBindings(s,rows,{now}),/REFUSED/);
+ for(const clock of [undefined,new Date(NaN),new Date('2026-11-04T05:54:59.999Z')])assert.throws(()=>c.validateInceptionBindings(s,positions,{now:clock}),/REFUSED/);
+ const old=withInceptions(fixture());assert.doesNotThrow(()=>c.validateInceptionBindings(old,undefined));
+});
+
+test('browser buy cannot postdate its original capture; Hong Kong midnight does not use UTC date',()=>{
+ for(const [capturedAt,accepted]of [['2026-11-03T15:59:59.999Z',false],['2026-11-03T16:00:00.000Z',true],['2026-11-04T05:55:00.000Z',true]]){
+  const s=browserInceptions(),e=s.inceptionEvidence,m=e.members[1];m.startDate=end;m.browserEvidence.records[0].date=end;e.sourceCaptures[1].capturedAt=capturedAt;e.capturedAt=capturedAt;
+  if(accepted)assert.doesNotThrow(()=>build(s));else assert.throws(()=>build(s),/REFUSED/);
+ }
+});

@@ -17,17 +17,51 @@ export function createAggregateReturnsCore(){
  function oneYearBefore(end){if(!date(end))fail();const y=Number(end.slice(0,4))-1,m=Number(end.slice(5,7)),d=Number(end.slice(8,10));return String(y).padStart(4,'0')+'-'+String(m).padStart(2,'0')+'-'+String(Math.min(d,new Date(Date.UTC(y,m,0)).getUTCDate())).padStart(2,'0');}
  const stockScope=s=>s?.type==='classification'&&s.name==='股票市场'&&s.parent===null;
  const stockSourceIds=s=>new Set(s.reports.filter(r=>Array.isArray(r?.additionalSources)&&r.additionalSources.length===2).map(r=>r.additionalSources[1]?.libraryFileId));
+ const INCEPTION_V2='fee-console.ratio-inception-source.v2';
+ const positiveQuantity=n=>typeof n==='number'&&Number.isFinite(n)&&n>0;
  function inceptionDirectory(e,accounts,asOf){
-  const out=new Map();
-  if(!exact(e,['schema','capturedAt','includeClosed','sources','members'])||e.schema!=='fee-console.ratio-inception-source.v1'||!instant(e.capturedAt)||e.includeClosed!==true||!Array.isArray(e.sources)||!e.sources.length||!Array.isArray(e.members)||!e.members.length)fail();
-  const sources=new Set();for(const source of e.sources){ref(source);if(sources.has(source.libraryFileId))fail();sources.add(source.libraryFileId);}
+  const out=new Map(),v2=e?.schema===INCEPTION_V2;
+  if(!exact(e,['schema','capturedAt','includeClosed','sources','members',...(v2?['sourceCaptures']:[])])||!['fee-console.ratio-inception-source.v1',INCEPTION_V2].includes(e.schema)||!instant(e.capturedAt)||e.includeClosed!==true||!Array.isArray(e.sources)||!e.sources.length||!Array.isArray(e.members)||!e.members.length)fail();
+  const sources=new Set(),captures=new Map(),used=new Set();for(const source of e.sources){ref(source);if(sources.has(source.libraryFileId))fail();sources.add(source.libraryFileId);}
+  if(v2){
+   if(!Array.isArray(e.sourceCaptures)||e.sourceCaptures.length!==sources.size)fail();
+   for(const source of e.sourceCaptures){
+    if(!exact(source,['libraryFileId','capturedAt','sourceKind'])||!sources.has(source.libraryFileId)||captures.has(source.libraryFileId)||!instant(source.capturedAt)||!['verified-historical-archive','browser-first-recorded-buy'].includes(source.sourceKind))fail();
+    captures.set(source.libraryFileId,source);
+   }
+   if(e.capturedAt!==[...captures.values()].map(s=>s.capturedAt).sort().at(-1))fail();
+  }
   for(const m of e.members){
-   if(!exact(m,['account','market','securityCode','startDate','dateKind','sourceFileId','sourceLocator'])||![m.account,m.market,m.securityCode,m.sourceLocator].every(text)||!accounts.includes(m.account)||!sources.has(m.sourceFileId)||out.has(memberKey(m)))fail();
+   const browser=v2&&m?.dateKind==='browser-first-recorded-buy';
+   if(!exact(m,['account','market','securityCode','startDate','dateKind','sourceFileId','sourceLocator',...(browser?['browserEvidence']:[])])||![m.account,m.market,m.securityCode,m.sourceLocator].every(text)||!accounts.includes(m.account)||!sources.has(m.sourceFileId)||out.has(memberKey(m)))fail();
    const cash=m.market.trim().toUpperCase()==='CASH';
-   if(m.dateKind==='unknown'){if(m.startDate!==null)fail();}
+   if(v2&&captures.get(m.sourceFileId).sourceKind!==(browser?'browser-first-recorded-buy':'verified-historical-archive'))fail();
+   if(browser){
+    const proof=m.browserEvidence,captureDay=new Date(Date.parse(captures.get(m.sourceFileId).capturedAt)+8*3600000).toISOString().slice(0,10);
+    // A Library-bound collection assertion, not a claim that this pure code
+    // independently inspected the remote page or an unobserved earlier event.
+    if(cash||!date(m.startDate)||m.startDate>asOf||m.startDate>captureDay||!exact(proof,['view','complete','records','currentQuantity'])||proof.view!=='All trades & adjustments'||proof.complete!==true||!positiveQuantity(proof.currentQuantity)||!Array.isArray(proof.records)||proof.records.length!==1)fail();
+    const record=proof.records[0];
+    if(!exact(record,['type','status','date','quantity'])||record.type!=='Buy'||record.status!=='Confirmed'||record.date!==m.startDate||!positiveQuantity(record.quantity)||record.quantity!==proof.currentQuantity)fail();
+   }else if(m.dateKind==='unknown'){if(v2||m.startDate!==null)fail();}
    else if(!date(m.startDate)||m.startDate>asOf||!(cash?['cash-opening-balance','cash-first-transaction']:['holding-inception']).includes(m.dateKind))fail();
-   out.set(memberKey(m),m.startDate);
-  }return out;
+   used.add(m.sourceFileId);out.set(memberKey(m),m.startDate);
+  }
+  if(v2&&used.size!==sources.size)fail();
+  return out;
+ }
+ // Called by the complete-original verifier after classification validation.
+ // UI projection has no current raw quantities and cannot grant this proof.
+ function validateInceptionBindings(performance,classificationPositions,{now}={}){
+  const e=performance?.inceptionEvidence;
+  if(e?.schema!==INCEPTION_V2)return;
+  inceptionDirectory(e,performance.accounts,performance.asOf);
+  const clock=now instanceof Date?now.getTime():NaN;
+  if(!Number.isFinite(clock)||!Array.isArray(classificationPositions)||e.sourceCaptures.some(s=>Date.parse(s.capturedAt)>clock))fail();
+  for(const member of e.members.filter(m=>m.dateKind==='browser-first-recorded-buy')){
+   const rows=classificationPositions.filter(p=>memberKey(p)===memberKey(member));
+   if(rows.length!==1||!positiveQuantity(rows[0].quantity)||rows[0].quantity!==member.browserEvidence.currentQuantity)fail();
+  }
  }
  function investmentStart(members,directory,report){
   if(report.period!=='all')return {};
@@ -84,7 +118,7 @@ export function createAggregateReturnsCore(){
     const hasAmount=Object.hasOwn(row,'returnAmountUSD'),amount=row.returnAmountUSD;
     if(hasAmount&&(row.scope.type!=='portfolio'||amount!==null&&(typeof amount!=='number'||!Number.isFinite(amount)||Math.abs(amount)>1e12||!/^[-]?\d+(?:\.\d{1,2})?$/.test(String(amount))||!Number.isSafeInteger(Math.round(amount*100)))))fail();
     if(row.unit==='unavailable'?row.returnPct!==null:typeof row.returnPct!=='number'||!Number.isFinite(row.returnPct)||Math.abs(row.returnPct)>1e9)fail();
-    const members=row.members.map(m=>{const k=member(m);if(!accounts.includes(m.account)||excluded.has(k))fail();return {...m};});if(new Set(members.map(memberKey)).size!==members.length)fail();
+    const members=row.members.map(m=>{const k=member(m);if(!accounts.includes(m.account)||excluded.has(k)||s.inceptionEvidence?.schema===INCEPTION_V2&&!inceptions.has(k))fail();return {...m};});if(new Set(members.map(memberKey)).size!==members.length)fail();
     const e=row.termEvidence;let short=false;
     if(exact(e,['type'])&&e.type==='unknown'){}
     else{
@@ -254,5 +288,5 @@ export function createAggregateReturnsCore(){
   const note=stockScope(item.scope)?'股票市场小计只包含四个股票分类的历史成员，不含现金账户、防御资产或主题投资。':cash.includes('unknown')?'现金账户收益覆盖未获来源确认。':cash.includes('mixed')||cash.length>1?'现金收益覆盖分别保留各期原报表设置。':cash[0]==='included'?'含现金账户收益。':cash[0]==='excluded'?'未含现金账户收益。':'';
   return '<details class="ratio-returns"><summary>收益率</summary><div class="ratio-return-pair">'+rows+'</div><p class="ratio-return-scope">'+esc(accounts.join(' · '))+' · USD · Sharesight 原生口径</p><p>只显示组合或分类原生收益；已平仓计入历史，不用当前市值权重或穿透敞口重算。'+note+'</p></details>';
  }
- return {SCHEMA,build,select,render:renderAggregate,scopeKey,oneYearBefore,topTargets,buildTop,selectTop,renderTop,renderCompact,renderInline};
+ return {SCHEMA,build,validateInceptionBindings,select,render:renderAggregate,scopeKey,oneYearBefore,topTargets,buildTop,selectTop,renderTop,renderCompact,renderInline};
 }

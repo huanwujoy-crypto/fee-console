@@ -384,3 +384,35 @@ explicitly state that an updated snapshot is required for these details.
 Raw source names and accounts stay inside the existing private authenticated
 snapshot; only synthetic examples belong in public tests. This is a data-model
 and display update, not a fee, ledger, source-date or authentication change.
+
+## Versioned inception evidence
+
+`fee-console.ratio-inception-source.v1` remains readable without changing its
+historical missing-date behavior. Version 2 retains the same source references
+(`libraryFileId`, `version`, `sha256`, `locator`) and adds `sourceCaptures`, one
+exact `{libraryFileId, capturedAt, sourceKind}` entry per source. The root
+`capturedAt` is their maximum; each archived source keeps its original capture
+time. Kinds are `verified-historical-archive` and `browser-first-recorded-buy`.
+All aggregate and top-five members must have a directory entry with a known
+date in v2. Missing or unknown dates are refused; v1 retains its original null
+display behavior and never substitutes an invented scope minimum.
+
+A browser member uses the genuine date kind `browser-first-recorded-buy`, not
+`holding-inception`. Its exact `browserEvidence` contains `view` equal to
+`All trades & adjustments`, `complete: true`, `currentQuantity`, and `records`
+with exactly one `{type: 'Buy', status: 'Confirmed', date, quantity}` record.
+Its date equals the member start date and cannot exceed the report date or the
+Hong Kong calendar date of that source capture. Both
+quantities are equal, positive finite numbers. The complete-original verifier
+also matches the exact account, market and code to one already validated current
+classification row and checks its quantity strictly, without tolerance.
+Every source capture must be no later than the verifier's supplied clock.
+
+This deliberately narrow route applies only when the bound Library original
+shows the complete view with that single record. The completeness field is a
+collection assertion, not independent proof of remote history. Pagination,
+additional records or earlier adjustments require a different reviewed source;
+this contract does not infer their absence. Source files and capture times stay
+in the private authenticated evidence, not the rendered disclosures. Existing
+original-byte authentication binds these assertions; this code change alone
+neither archives new evidence nor authorizes publication.
