@@ -267,8 +267,8 @@ export function envelopeEvidenceTransport({fetchImpl=globalThis.fetch,clock=Date
 }
 
 // ---- exact owner dispatch of this job only; every other input stays off.
-const OFF=['ib_diagnostic_once','source_plan_check_only','source_acceptance_once','run_reviewed_once'];
-const BLANK=['ib_diagnostic_main','ratio_main','ratio_plan','source_from','source_target','source_main','manual_sync_completed_for','confirmed_main','recovery_main','report_kind','report_target','report_markets'];
+const OFF=['ib_diagnostic_once','source_plan_check_only','source_acceptance_once','run_reviewed_once','source_probe_once'];
+const BLANK=['ib_diagnostic_main','ratio_main','ratio_plan','source_from','source_target','source_main','manual_sync_completed_for','confirmed_main','recovery_main','report_kind','report_target','report_markets','source_probe_main','source_probe_target'];
 const PRIVATE=['FEE_CLOUD_SHARESIGHT_CLIENT_ID','FEE_CLOUD_SHARESIGHT_CLIENT_SECRET'];
 const FORBIDDEN=['NODE_OPTIONS','NODE_PATH','GH_TOKEN','GITHUB_TOKEN','FEE_DATA_KEY','FEE_ECON_GIST_ID','FEE_ECON_GITHUB_TOKEN','FEE_ECON_FILE','FEE_ECON_V3_FILE',
   'FEE_CLOUD_GITHUB_TOKEN','FEE_RATIO_MANAGER_TOKEN','FEE_IB_DIAGNOSTIC_ACTIONS_TOKEN','IB_MANAGER_READ_ENABLED','IB_MANAGER_BASELINE_SHA256','RATIO_STORAGE_ACCESS_TOKEN'];

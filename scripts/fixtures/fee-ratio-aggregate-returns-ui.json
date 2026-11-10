@@ -1,7 +1,7 @@
 {
   "schema": "fee-console.ratio-aggregate-ui-stage.v1",
   "priorSha256": "e98b04d9f95353596410cf1f6c7a1f06a3072dca9d6211a5f390afcb6fa2b194",
-  "nextSha256": "0584c86992ab6ab9f030602db808f96024d3028c34a96a04d6dbb5d497338fec",
+  "nextSha256": "24c5fec4206d2e4b97bdb50e2483ae0b6fe243667803e06a024a99216a9e5948",
   "regions": [
     {
       "prior": ".ratio-fund-distribution{margin-bottom:10px}.ratio-fund-distribution h2{margin-bottom:4px}.ratio-fund-distribution>p{font-size:11px;color:var(--ink-2);margin:0 0 8px}.ratio-distribution-row{margin:8px 0}.ratio-distribution-label{display:flex;justify-content:space-between;gap:12px;font-size:12px;line-height:1.5}.ratio-distribution-label span{min-width:0;overflow-wrap:anywhere}.ratio-distribution-label strong{flex-shrink:0;font-variant-numeric:tabular-nums}.ratio-distribution-track{height:6px;background:var(--line);border-radius:4px;overflow:hidden;margin-top:4px}.ratio-distribution-track i{display:block;height:100%;background:var(--accent,#4d8ec9);border-radius:4px}.ratio-fund-distribution details{font-size:11px;color:var(--ink-2);margin-top:10px}\n</style>\n",
@@ -313,8 +313,68 @@
     {
       "prior": "const TOKEN_URL=\"https://github.com/settings/tokens/new?scopes=gist&description=fee-console\";\nconst SHELL_BUILD=document.querySelector('meta[name=\"fee-console-build\"]')?.content||\"\";\nconst UI_VERSION_LABEL=\" · v4.9.50\";\nconst freshFetch=(url,opt)=>fetch(url,opt);\n\n",
       "next": "const TOKEN_URL=\"https://github.com/settings/tokens/new?scopes=gist&description=fee-console\";\nconst SHELL_BUILD=document.querySelector('meta[name=\"fee-console-build\"]')?.content||\"\";\nconst UI_VERSION_LABEL=\" · v4.9.51\";\nconst freshFetch=(url,opt)=>fetch(url,opt);\n\n"
+    },
+    {
+      "name": "ratio-source-hkt-age",
+      "prior": "const date=s=>typeof s==='string'&&/^\\d{4}-\\d{2}-\\d{2}$/.test(s)&&new Date(s+'T00:00:00Z').toISOString().slice(0,10)===s;",
+      "next": "const date=s=>typeof s==='string'&&/^\\d{4}-\\d{2}-\\d{2}$/.test(s)&&new Date(s+'T00:00:00Z').toISOString().slice(0,10)===s;\n// Official exports are dated by the Hong Kong calendar (as in the official\n// source capture check), so a source's age is counted in Hong Kong days.\nconst hkAge=(clock,asOf)=>Math.floor((Date.parse(new Date(clock+8*3600000).toISOString().slice(0,10))-Date.parse(asOf))/86400000);"
+    },
+    {
+      "name": "ratio-source-hkt-age",
+      "prior": "    const captured=time(raw.performanceCapturedAt),clock=now.getTime(),age=Math.floor((Date.parse(now.toISOString().slice(0,10))-Date.parse(performance.asOf))/86400000);",
+      "next": "    const captured=time(raw.performanceCapturedAt),clock=now.getTime(),age=hkAge(clock,performance.asOf);"
+    },
+    {
+      "name": "ratio-source-hkt-age",
+      "prior": "      ||[raw.classification,raw.exposure].some(s=>time(s.capturedAt)>clock||Math.floor((Date.parse(now.toISOString().slice(0,10))-Date.parse(s.asOf))/86400000)<0||Math.floor((Date.parse(now.toISOString().slice(0,10))-Date.parse(s.asOf))/86400000)>4))fail();",
+      "next": "      ||[raw.classification,raw.exposure].some(s=>time(s.capturedAt)>clock||hkAge(clock,s.asOf)<0||hkAge(clock,s.asOf)>4))fail();"
+    },
+    {
+      "name": "ratio-source-hkt-build",
+      "prior": "<meta name=\"fee-console-build\" content=\"4.9.51\">",
+      "next": "<meta name=\"fee-console-build\" content=\"4.9.52\">"
+    },
+    {
+      "name": "ratio-source-hkt-label",
+      "prior": "const UI_VERSION_LABEL=\" · v4.9.51\";",
+      "next": "const UI_VERSION_LABEL=\" · v4.9.52\";"
+    },
+    {
+      "name": "ratio-snapshot-hkt-policy",
+      "prior": "  const hex=v=>typeof v==='string'&&/^[a-f0-9]{64}$/.test(v);",
+      "next": "  const hex=v=>typeof v==='string'&&/^[a-f0-9]{64}$/.test(v);\n  // Signed date policy. New snapshots count source age in Hong Kong calendar\n  // days; the policy is part of the signed source, so it cannot be stripped or\n  // swapped. A signed source without it keeps the original UTC-day semantics.\n  const DATE_POLICY='hkt-calendar-v1';\n  const policyDay=(s,at)=>s?.datePolicy===DATE_POLICY?new Date(Date.parse(at)+8*3600000).toISOString().slice(0,10):at.slice(0,10);"
+    },
+    {
+      "name": "ratio-snapshot-hkt-policy",
+      "prior": "    if(Date.parse(m.report.generatedAt)<Date.parse(capturedAt)||Date.parse(m.report.generatedAt)>now.getTime()||Math.floor((Date.parse(now.toISOString().slice(0,10))-Date.parse(facts.asOf))/86400000)>4)fail();",
+      "next": "    if(Date.parse(m.report.generatedAt)<Date.parse(capturedAt)||Date.parse(m.report.generatedAt)>now.getTime()||Math.floor((Date.parse(policyDay({datePolicy:DATE_POLICY},now.toISOString()))-Date.parse(facts.asOf))/86400000)>4)fail();"
+    },
+    {
+      "name": "ratio-snapshot-hkt-policy",
+      "prior": "    const evidence={provider:'Sharesight',kind:official?'complete-official-workbook-association':'complete-original-browser-association',asOf:facts.asOf,...(official?{sourceDates:structuredClone(facts.sourceDates)}:{}),capturedAt,expiresAt,sourceSha256,inputSha256,scopeHash,libraryVersion,modelSha256:await hash(m)};",
+      "next": "    const evidence={provider:'Sharesight',kind:official?'complete-official-workbook-association':'complete-original-browser-association',datePolicy:DATE_POLICY,asOf:facts.asOf,...(official?{sourceDates:structuredClone(facts.sourceDates)}:{}),capturedAt,expiresAt,sourceSha256,inputSha256,scopeHash,libraryVersion,modelSha256:await hash(m)};"
+    },
+    {
+      "name": "ratio-snapshot-hkt-policy",
+      "prior": "  const recent=(s,at)=>sourceDates(s).every(d=>{const age=Math.floor((Date.parse(at.slice(0,10))-Date.parse(d))/86400000);return age>=0&&age<=4;});",
+      "next": "  const recent=(s,at)=>sourceDates(s).every(d=>{const age=Math.floor((Date.parse(policyDay(s,at))-Date.parse(d))/86400000);return age>=0&&age<=4;});"
+    },
+    {
+      "name": "ratio-snapshot-hkt-policy",
+      "prior": "    if(!exact(s,['provider','kind','asOf','capturedAt','expiresAt','sourceSha256','inputSha256','scopeHash','libraryVersion','modelSha256',...(official?['sourceDates']:[])])||s.provider!=='Sharesight'||!['complete-original-browser-association','complete-official-workbook-association'].includes(s.kind)||!date(s.asOf)||!iso(s.capturedAt)||!iso(s.expiresAt)||Date.parse(s.expiresAt)-Date.parse(s.capturedAt)!==36*3600000||![s.sourceSha256,s.inputSha256,s.scopeHash,s.modelSha256].every(hex)||s.scopeHash!==exposureCore.ALL_TOGETHER_SCOPE_SHA256||!Number.isSafeInteger(s.libraryVersion)||s.libraryVersion<0)fail();",
+      "next": "    if(!exact(s,['provider','kind','asOf','capturedAt','expiresAt','sourceSha256','inputSha256','scopeHash','libraryVersion','modelSha256',...(official?['sourceDates']:[]),...(Object.hasOwn(s||{},'datePolicy')?['datePolicy']:[])])||Object.hasOwn(s,'datePolicy')&&s.datePolicy!==DATE_POLICY||s.provider!=='Sharesight'||!['complete-original-browser-association','complete-official-workbook-association'].includes(s.kind)||!date(s.asOf)||!iso(s.capturedAt)||!iso(s.expiresAt)||Date.parse(s.expiresAt)-Date.parse(s.capturedAt)!==36*3600000||![s.sourceSha256,s.inputSha256,s.scopeHash,s.modelSha256].every(hex)||s.scopeHash!==exposureCore.ALL_TOGETHER_SCOPE_SHA256||!Number.isSafeInteger(s.libraryVersion)||s.libraryVersion<0)fail();"
+    },
+    {
+      "name": "ratio-snapshot-hkt-policy",
+      "prior": "    if(!accepted.has(proof))fail();fresh(proof.evidence,now);",
+      "next": "    if(!accepted.has(proof)||proof.evidence.datePolicy!==DATE_POLICY)fail();fresh(proof.evidence,now);"
+    },
+    {
+      "name": "ratio-snapshot-hkt-policy",
+      "prior": "    const b=await bodyCheck(packet.body);fresh(b.source,now);",
+      "next": "    const b=await bodyCheck(packet.body);if(b.source.datePolicy!==DATE_POLICY)fail();fresh(b.source,now);"
     }
   ],
-  "supportSha256": "34a89dc21f7ee1679f15900a950a5141df173ee0f71683a5ca28501e8cc7a8cb",
-  "supportRegionCount": 72
+  "supportSha256": "0584c86992ab6ab9f030602db808f96024d3028c34a96a04d6dbb5d497338fec",
+  "supportRegionCount": 76
 }

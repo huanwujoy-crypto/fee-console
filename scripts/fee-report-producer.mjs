@@ -7,8 +7,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {fileURLToPath} from 'node:url';
-import {SharesightCloudReader,normalizeRead} from './fee-cloud-source.mjs';
-import {produce,decryptCandidate,readPublicationState,producerFailureCode} from './fee-cloud-producer.mjs';
+import {SharesightCloudReader,normalizeRead,feeSourceTransportDiagnostic} from './fee-cloud-source.mjs';
+import {produce,decryptCandidate,readPublicationState,producerFailureCode,SOURCE_TRANSPORT_DIAGNOSTIC_PREFIX,validateSourceTransportDiagnostic} from './fee-cloud-producer.mjs';
 import {assertIbManagerConfiguration,assertIbManagerPublication} from './ib-manager-report.mjs';
 import {fetchEconomicSnapshot,SourceFetchError} from './fee-economic-source.mjs';
 import {incomeDateEvidenceFromData} from './fee-income-date-policy.mjs';
@@ -41,12 +41,12 @@ function reviewedCloudOnceManual(env,readEvent){
       ||env.GITHUB_RUN_ATTEMPT!=='1'||env.GITHUB_SHA!==env.FEE_REPORT_ONCE_MAIN)return false;
     const event=readEvent?readEvent():(()=>{const p=env.GITHUB_EVENT_PATH;if(!p||fs.statSync(p).size>256*1024)throw Error();return JSON.parse(fs.readFileSync(p,'utf8'));})();
     const i=event?.inputs,off=v=>v===undefined||v===false||v==='false',blank=v=>v===undefined||v==='';
-    const keys=['ib_envelope_once','ib_envelope_main','ib_diagnostic_once','ib_diagnostic_main','run_reviewed_once','report_kind','report_target','report_markets','manual_sync_completed_for','confirmed_main','recovery_main','ratio_main','ratio_plan','source_plan_check_only','source_acceptance_once','source_from','source_target','source_main'];
+    const keys=['ib_envelope_once','ib_envelope_main','ib_diagnostic_once','ib_diagnostic_main','run_reviewed_once','report_kind','report_target','report_markets','manual_sync_completed_for','confirmed_main','recovery_main','ratio_main','ratio_plan','source_plan_check_only','source_acceptance_once','source_from','source_target','source_main','source_probe_once','source_probe_main','source_probe_target'];
     return event.sender?.id===RECOVERY_OWNER&&event.repository?.full_name===ONCE_REPO&&i&&!Array.isArray(i)
       &&Object.keys(i).every(k=>keys.includes(k))&&[true,'true'].includes(i.run_reviewed_once)
       &&i.report_kind==='daily'&&i.report_target===CLOUD_ONCE.target&&i.report_markets==='NASDAQ,NYSE'
       &&['manual_sync_completed_for','confirmed_main','recovery_main','ratio_main','ratio_plan','source_from','source_target','source_main'].every(k=>blank(i[k]))
-      &&off(i.source_plan_check_only)&&off(i.source_acceptance_once)&&off(i.ib_diagnostic_once)&&blank(i.ib_diagnostic_main)&&off(i.ib_envelope_once)&&blank(i.ib_envelope_main);
+      &&off(i.source_plan_check_only)&&off(i.source_acceptance_once)&&off(i.ib_diagnostic_once)&&blank(i.ib_diagnostic_main)&&off(i.ib_envelope_once)&&blank(i.ib_envelope_main)&&off(i.source_probe_once)&&blank(i.source_probe_main)&&blank(i.source_probe_target);
   }catch{return false;}
 }
 export function cloudOnceWindow({main,head,event,attempt,reviewedManual=false,now=new Date()}={}){
@@ -245,14 +245,26 @@ export function normalizePeriodRead(raw,date,cache,{sourceMode='legacy-reconstru
   const benchmark=periodBenchmark(cache,date),input=normalizeRead(raw,date,{spy:benchmark.spy,qqq:benchmark.qqq,spyd:benchmark.spyd,qqqd:benchmark.qqqd},{sourceMode});
   return {...input,benchmark,sourceFingerprint:hash({sourceFingerprint:input.sourceFingerprint,benchmark})};
 }
+// Window position of a failed source read, bound to the propagated error
+// object only (never a mutable "current route" or a call counter).
+const periodWindowByError=new WeakMap();
 export async function captureReportRange({dates,cache,readOnce,sourceMode='legacy-reconstruction'}){
   if(!Array.isArray(dates)||!dates.length||dates.length>10||typeof readOnce!=='function'||dates.some((d,i)=>!reportDate(d)||(i&&d!==reportAddDays(dates[i-1],1))))fail('RANGE');
-  const capture=async()=>{
+  const capture=async round=>{
     const result=[];
-    for(const date of dates)result.push(normalizePeriodRead(await readOnce(date),date,cache,{sourceMode}));
+    for(const [index,date] of dates.entries()){
+      let raw;
+      try{raw=await readOnce(date);}
+      catch(error){
+        const transport=feeSourceTransportDiagnostic(error);
+        if(transport&&!periodWindowByError.has(error))periodWindowByError.set(error,Object.freeze({...transport,dateIndex:index+1,dateCount:dates.length,round}));
+        throw error;
+      }
+      result.push(normalizePeriodRead(raw,date,cache,{sourceMode}));
+    }
     return result;
   };
-  const first=await capture(),second=await capture();
+  const first=await capture(1),second=await capture(2);
   if(canonicalJson(first)!==canonicalJson(second))fail('SOURCE_UNSTABLE');
   return first;
 }
@@ -683,7 +695,18 @@ export async function readPeriodSourceAttempts({plan,now,currentRunId=null,recov
       // Burn a new manual admission even if cancelled/queued/skipped before
       // source entry. Only the exact failures in this target's contract are historical;
       // their already-consumed admission cannot reserve this new exception.
+      // A probe-only run's skipped period never entered admission or source,
+      // so it is not a recovery reservation. Only a trusted owner first-attempt
+      // dispatch at the recovery head whose one probe job actually ran (not
+      // skipped) qualifies; every other job of that run is still judged below,
+      // so a real Produce job in it is still counted.
+      const probeJobs=payload.jobs.filter(x=>x?.name==='Fee source probe');
+      const probeRun=r.event==='workflow_dispatch'&&r.display_title==='Fee source probe'&&r.actor?.id===RECOVERY_OWNER&&r.run_attempt===1
+        &&r.head_branch==='main'&&r.path==='.github/workflows/fee-cloud-producer.yml'&&r.head_sha===recoveryMain&&probeJobs.length===1
+        &&Number.isSafeInteger(probeJobs[0].id)&&probeJobs[0].id>0&&probeJobs[0].run_id===r.id&&probeJobs[0].head_sha===r.head_sha
+        &&['queued','in_progress','completed','waiting','pending','requested'].includes(probeJobs[0].status)&&probeJobs[0].conclusion!=='skipped';
       if(evidence&&j.name==='period'&&r.event==='workflow_dispatch'&&[recoveryMain,scope?.repairBase].includes(r.head_sha)
+          &&!(probeRun&&j.status==='completed'&&j.conclusion==='skipped')
           &&!scope?.failures.some(old=>old.id===r.id&&old.head===r.head_sha))evidence.reservations.push(r.id);
       if(j.conclusion==='skipped'){if(j.status!=='completed')fail('SOURCE_ATTEMPT_METADATA');continue;}
       if(evidence&&j.started_at!==null&&(!Number.isFinite(Date.parse(j.started_at))||Date.parse(j.started_at)<Date.parse(r.created_at)||Date.parse(j.started_at)>now.getTime()+300000))fail('RECOVERY_METADATA');
@@ -691,6 +714,11 @@ export async function readPeriodSourceAttempts({plan,now,currentRunId=null,recov
       // Keep their histories without consuming or resetting production attempts.
       if(j.name==='IB diagnostic 2026-11-04'||j.name==='IB diagnostic 2026-11-06'){
         if(r.event!=='workflow_dispatch'||r.display_title!==j.name||r.actor?.id!==RECOVERY_OWNER||r.run_attempt!==1)fail('SOURCE_ATTEMPT_METADATA');
+        continue;
+      }
+      // The read-only source probe has no ledger, writer or publisher either.
+      if(j.name==='Fee source probe'){
+        if(r.event!=='workflow_dispatch'||r.display_title!=='Fee source probe'||r.actor?.id!==RECOVERY_OWNER||r.run_attempt!==1)fail('SOURCE_ATTEMPT_METADATA');
         continue;
       }
       if(['period','watch','source-plan-check','once-admit','once-finish','ratio-preflight','ratio'].includes(j.name))continue;
@@ -1168,8 +1196,8 @@ export function scheduledDailyContext(args,{env=process.env,now=new Date(),readE
       if(env.GITHUB_EVENT_NAME!=='workflow_dispatch'||env.GITHUB_ACTOR_ID!==String(RECOVERY_OWNER)||env.FEE_REPORT_ONCE_MAIN)throw Error();
       const event=readEvent?readEvent():(()=>{const p=env.GITHUB_EVENT_PATH;if(!p||fs.statSync(p).size>256*1024)throw Error();return JSON.parse(fs.readFileSync(p,'utf8'));})();
       const i=event?.inputs,off=v=>v===undefined||v===false||v==='false',blank=v=>v===undefined||v==='';
-      const bools=['ib_envelope_once','ib_diagnostic_once','run_reviewed_once','source_plan_check_only','source_acceptance_once'];
-      const strings=['ib_envelope_main','ib_diagnostic_main','report_target','report_markets','manual_sync_completed_for','confirmed_main','recovery_main','ratio_main','ratio_plan','source_from','source_target','source_main'];
+      const bools=['ib_envelope_once','ib_diagnostic_once','run_reviewed_once','source_plan_check_only','source_acceptance_once','source_probe_once'];
+      const strings=['ib_envelope_main','ib_diagnostic_main','report_target','report_markets','manual_sync_completed_for','confirmed_main','recovery_main','ratio_main','ratio_plan','source_from','source_target','source_main','source_probe_main','source_probe_target'];
       if(event.sender?.id!==RECOVERY_OWNER||event.repository?.full_name!==ONCE_REPO||!i||Array.isArray(i)
           ||i.report_kind!=='automatic-daily'||Object.keys(i).some(k=>!['report_kind',...bools,...strings].includes(k))
           ||!bools.every(k=>off(i[k]))||!strings.every(k=>blank(i[k])))throw Error();
@@ -1215,10 +1243,26 @@ export function assertPeriodIbRecheckUnchanged(before,after){
 export function reportFailureCode(error,stage='UNKNOWN'){
   return /^FEE_REPORT_[A-Z_]{1,64}$/.test(error?.message||'')?error.message:producerFailureCode(error,stage);
 }
+const periodDiagnosticByError=new WeakMap();
+// The safe diagnostic travels with the wrapped error only when the wrapper
+// keeps the same transport code; it is never produced for any other failure.
+export const periodSourceTransportDiagnostic=error=>error instanceof Error?periodDiagnosticByError.get(error)||null:null;
+export function periodFailureLines(error){
+  const code=reportFailureCode(error),diagnostic=periodSourceTransportDiagnostic(error);
+  return diagnostic&&diagnostic.code===code&&validateSourceTransportDiagnostic(diagnostic)?[SOURCE_TRANSPORT_DIAGNOSTIC_PREFIX+JSON.stringify(diagnostic),code]:[code];
+}
 export async function produceReportPeriod(options={}){
   let stage='CONFIG';
   try{return await produceReportPeriodRun(options,value=>{stage=value;});}
-  catch(error){if(error instanceof SourceFetchError)throw error;throw Error(reportFailureCode(error,stage));}
+  catch(error){
+    if(error instanceof SourceFetchError)throw error;
+    const wrapped=Error(reportFailureCode(error,stage)),window=periodWindowByError.get(error);
+    if(window&&wrapped.message===error.message){
+      const diagnostic={schema:'fee-console.source-transport-diagnostic.v1',code:wrapped.message,route:window.route,phase:window.phase,category:window.category,dateIndex:window.dateIndex,dateCount:window.dateCount,round:window.round};
+      if(validateSourceTransportDiagnostic(diagnostic))periodDiagnosticByError.set(wrapped,Object.freeze(diagnostic));
+    }
+    throw wrapped;
+  }
 }
 async function produceReportPeriodRun({plan,reviewedSyncDate=null,outputDir,benchmarkFile,now=new Date(),readOnce,ibReader,requireIb=false,fetchEconomic=fetchEconomicSnapshot,sourceFile=path.join(ROOT,'data.json'),historicalRevisionAdmission=null},setStage){
   if(process.env.GITHUB_RUN_ATTEMPT!==undefined&&process.env.GITHUB_RUN_ATTEMPT!=='1')fail('SOURCE_RERUN_NOT_ALLOWED');
@@ -1326,9 +1370,10 @@ export function reviewedSyncConfirmation(args,{env=process.env,readEvent}={}){
     if(!['preflight','produce'].includes(args.mode)||args['report-kind']!=='daily'||reportDate(value)!==args['report-target']
         ||env.GITHUB_ACTIONS!=='true'||env.GITHUB_EVENT_NAME!=='workflow_dispatch'||env.GITHUB_RUN_ATTEMPT!=='1'||env.GITHUB_REF!=='refs/heads/main')throw Error();
     const event=readEvent?readEvent():(()=>{const p=env.GITHUB_EVENT_PATH;if(!p||fs.statSync(p).size>256*1024)throw Error();return JSON.parse(fs.readFileSync(p,'utf8'));})();
-    const i=event?.inputs,off=v=>v===undefined||v===false||v==='false';
+    const i=event?.inputs,off=v=>v===undefined||v===false||v==='false',blank=v=>v===undefined||v==='';
     if(!i||![true,'true'].includes(i.run_reviewed_once)||i.report_kind!=='daily'||i.report_target!==value
-        ||i.manual_sync_completed_for!==value||!off(i.source_plan_check_only)||!off(i.source_acceptance_once))throw Error();
+        ||i.manual_sync_completed_for!==value||!off(i.source_plan_check_only)||!off(i.source_acceptance_once)
+        ||!off(i.source_probe_once)||!blank(i.source_probe_main)||!blank(i.source_probe_target))throw Error();
     return value;
   }catch{fail('MANUAL_SYNC_CONFIRMATION');}
 }
@@ -1340,7 +1385,9 @@ export function reviewedRecoveryConfirmation(args,{env=process.env,readEvent}={}
         ||env.GITHUB_SHA!==value||env.GITHUB_REPOSITORY!=='huanwujoy-crypto/fee-console'
         ||env.GITHUB_ACTOR_ID!==String(RECOVERY_OWNER)||!/^[1-9]\d{0,15}$/.test(env.GITHUB_RUN_ID||''))throw Error();
     const event=readEvent?readEvent():(()=>{const p=env.GITHUB_EVENT_PATH;if(!p||fs.statSync(p).size>256*1024)throw Error();return JSON.parse(fs.readFileSync(p,'utf8'));})();
-    if(event.inputs.recovery_main!==value||event.sender?.id!==RECOVERY_OWNER||event.repository?.full_name!=='huanwujoy-crypto/fee-console')throw Error();
+    const probeOff=v=>v===undefined||v===false||v==='false',probeBlank=v=>v===undefined||v==='';
+    if(event.inputs.recovery_main!==value||event.sender?.id!==RECOVERY_OWNER||event.repository?.full_name!=='huanwujoy-crypto/fee-console'
+        ||!probeOff(event.inputs.source_probe_once)||!probeBlank(event.inputs.source_probe_main)||!probeBlank(event.inputs.source_probe_target))throw Error();
     return value;
   }catch{fail('RECOVERY_CONFIRMATION');}
 }
@@ -1362,8 +1409,8 @@ export function reviewedMainConfirmation(args,{env=process.env,readEvent}={}){
     const event=readEvent?readEvent():(()=>{const p=env.GITHUB_EVENT_PATH;if(!p||fs.statSync(p).size>256*1024)throw Error();return JSON.parse(fs.readFileSync(p,'utf8'));})();
     const i=event?.inputs,off=v=>v===undefined||v===false||v==='false',blank=v=>v===undefined||v==='';
     if(value===undefined&&blank(i?.confirmed_main))return null;
-    const bools=['ib_envelope_once','ib_diagnostic_once','source_plan_check_only','source_acceptance_once'];
-    const strings=['ib_envelope_main','ib_diagnostic_main','report_markets','recovery_main','ratio_main','ratio_plan','source_from','source_target','source_main'];
+    const bools=['ib_envelope_once','ib_diagnostic_once','source_plan_check_only','source_acceptance_once','source_probe_once'];
+    const strings=['ib_envelope_main','ib_diagnostic_main','report_markets','recovery_main','ratio_main','ratio_plan','source_from','source_target','source_main','source_probe_main','source_probe_target'];
     if(typeof value!=='string'||!ONCE_SHA.test(value)||env.GITHUB_SHA!==value
         ||env.GITHUB_ACTIONS!=='true'||env.GITHUB_EVENT_NAME!=='workflow_dispatch'||env.GITHUB_REF!=='refs/heads/main'
         ||env.GITHUB_REPOSITORY!==ONCE_REPO||env.GITHUB_ACTOR_ID!==String(RECOVERY_OWNER)||env.GITHUB_RUN_ATTEMPT!=='1'
@@ -1434,4 +1481,4 @@ async function main(){
     ...(isHistoricalRevisionAdmission(recoveryAdmission)?{historicalRevisionAdmission:recoveryAdmission}:{})});
   console.log(JSON.stringify({schema:'fee-console.cloud-producer.v1',targetDate:result.targetDate,outcome:result.outcome,retryCount:result.retryCount,sourceDates:result.sourceDates,dataSha256:result.dataSha256,reportKind:result.reportKind,priceThrough:result.priceThrough,accountingThrough:result.accountingThrough,reconstructedDays:result.reconstructedDays,...(result.ibManager?{ibManager:result.ibManager}:{})}));
 }
-if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url))main().catch(error=>{console.error(reportFailureCode(error));process.exitCode=1;});
+if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url))main().catch(error=>{let lines;try{lines=periodFailureLines(error);}catch{lines=[reportFailureCode(error)];}for(const line of lines)console.error(line);process.exitCode=1;});

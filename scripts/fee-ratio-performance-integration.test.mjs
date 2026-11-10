@@ -231,7 +231,7 @@ test('aggregate-only cloud path keeps one fixed-file write, readback and pinned 
  async patchSnapshot(body){assert.deepEqual(Object.keys(body.files),[RATIO_CLOUD_FILE]);patches++;current=Buffer.from(body.files[RATIO_CLOUD_FILE].content);},
  async saveReceipt(){},async cleanupLocal(){},async deleteInputs(specs){assert.deepEqual(specs,[plan.original,plan.input]);deleted++;},
  // Synthetic stand-in for the verified fee-first handoff; the gate itself is tested separately.
- async verifyFeePublication({handoff}){feeChecks++;return Object.freeze({accountingThrough:handoff.accountingThrough,feeMainSha:handoff.mainSha,dataSha256:handoff.dataSha256,healthSha256:handoff.healthSha256,verifiedAt:f.now.toISOString()});}};
+ async verifyFeePublication({handoff}){feeChecks++;return Object.freeze({accountingThrough:handoff.accountingThrough,feeMainSha:handoff.mainSha,dataSha256:handoff.dataSha256,healthSha256:handoff.healthSha256,verifiedAt:f.now.toISOString(),healthCheckedAt:'2026-10-28T00:00:00.000Z'});}};
  const result=await createRatioCloudPublisher({exposureCore:f.exposure}).run({plan,identity,manager:f.manager,io,clock:()=>f.now});
  assert.equal(result.status,'PUBLISHED_CONFIRMED');assert.equal(patches,1);assert.equal(claimed,1);assert.equal(deleted,1);assert.equal(feeChecks,2);
  const accepted=await f.snapshot.verify(JSON.parse(current),f.manager,{now:f.now});assert.deepEqual(accepted.model.performance,f.raw.performance);

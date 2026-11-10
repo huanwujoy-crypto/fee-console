@@ -174,6 +174,33 @@ the official watermark. Investor archives/share URLs never receive the model.
 
 ## Real-source acceptance and cadence still pending
 
+Capture binding (2026-11-10): before any claim, the pinned original's frozen
+earliest capture instant must not precede the handed-over fee health's
+`checkedAt` (a lower bound of that fee production, from the hash-verified,
+main- and Pages-read-back fee publication). Each official source keeps its own
+real date. The handoff stays an identity: an older fee that is still live may
+be handed over explicitly, so this does not prove the handed fee is the current
+round's; the coordinator must confirm the handoff is the round's approved fee
+target (its own new publication) before dispatching the ratio. The capture instant is the collector's declared
+original download-file mtime (`downloadCompletedAt` is null), so this is a
+misuse guard, not proof of a new official export: a re-audited copy of an old
+workbook can carry a new mtime and the cloud cannot tell, while a genuine
+re-export without changes may be byte-identical to the previous one. Freshness
+therefore relies on the trusted actual export process; an mtime alone never
+proves a new download. Existing verified interfaces do not cover automatic
+Exposure export, and nothing in this repository fetches official workbooks.
+
+Signed date policy (2026-11-10): every new snapshot's signed source carries
+`datePolicy: hkt-calendar-v1`, so source age (future, at most four days) is
+counted in Hong Kong calendar days at signing (`verifyOriginal`, `candidate`,
+`authenticate`) and at its own `confirmedAt` when read (`verify`). The policy is
+inside the MAC-covered body: it cannot be stripped, swapped or downgraded, an
+unknown value is refused, and new signing without it is refused. A signed
+source without the field is an earlier snapshot and keeps its original
+UTC-day semantics. Reading a snapshot after its 36-hour capture window still
+only marks it stale. A pre-policy page refuses new snapshots, so the reviewed
+page update must be deployed before the first new ratio publication.
+
 The file-to-writer-to-health-to-manager-display path is covered with synthetic
 inputs. This does not prove an active Sharesight Tools/export session or that
 existing OAuth scope covers all ten portfolios. No Tools Exposure API endpoint is

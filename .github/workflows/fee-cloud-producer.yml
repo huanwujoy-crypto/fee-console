@@ -1,5 +1,5 @@
 name: Fee console cloud producer
-run-name: ${{ (inputs.ib_diagnostic_once || inputs.ib_envelope_once) && 'IB diagnostic 2026-11-06' || (inputs.ratio_plan != '' || inputs.ratio_main != '') && 'Manual ratio snapshot' || github.workflow }}
+run-name: ${{ inputs.source_probe_once && 'Fee source probe' || (inputs.ib_diagnostic_once || inputs.ib_envelope_once) && 'IB diagnostic 2026-11-06' || (inputs.ratio_plan != '' || inputs.ratio_main != '') && 'Manual ratio snapshot' || github.workflow }}
 
 on:
   schedule:
@@ -100,6 +100,21 @@ on:
         type: string
         required: false
         default: ''
+      source_probe_once:
+        description: Separately approved read-only Sharesight source probe for one target; no ledger, economic source, writer, candidate or publication
+        type: boolean
+        required: false
+        default: false
+      source_probe_main:
+        description: Exact approved main for the one read-only source probe
+        type: string
+        required: false
+        default: ''
+      source_probe_target:
+        description: Owner-chosen source probe date YYYY-MM-DD (at most four Hong Kong days old)
+        type: string
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -112,7 +127,7 @@ concurrency:
 jobs:
   period:
     # The clock has an explicit automatic-daily mode; it never asserts human review.
-    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && !inputs.ratio_plan && !inputs.ratio_main && !inputs.ib_envelope_once && !inputs.ib_envelope_main && (!inputs.confirmed_main || (inputs.run_reviewed_once && inputs.report_kind == 'daily' && inputs.manual_sync_completed_for == inputs.report_target && !inputs.recovery_main && !inputs.report_markets && vars.FEE_REPORT_ONCE_MAIN == '')) && !inputs.source_plan_check_only && !inputs.source_acceptance_once && ((github.event_name == 'schedule' && vars.FEE_REPORT_PERIODS_ENABLED == 'true' && (vars.FEE_REPORT_ONCE_MAIN != '' || (vars.FEE_REPORT_DAILY_ENABLED == 'true' && vars.FEE_CLOUD_MODE == 'publish'))) || (github.event_name == 'workflow_dispatch' && ((inputs.run_reviewed_once && inputs.report_kind != 'automatic-daily') || (!inputs.run_reviewed_once && inputs.report_kind == 'automatic-daily' && vars.FEE_REPORT_ONCE_MAIN == '' && vars.FEE_REPORT_DAILY_ENABLED == 'true' && vars.FEE_REPORT_PERIODS_ENABLED == 'true' && vars.FEE_CLOUD_MODE == 'publish' && github.actor_id == '283054367' && github.ref == 'refs/heads/main' && github.run_attempt == 1)))) && (vars.FEE_CLOUD_MODE == 'shadow' || vars.FEE_CLOUD_MODE == 'publish') }}
+    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && !inputs.ratio_plan && !inputs.ratio_main && !inputs.ib_envelope_once && !inputs.ib_envelope_main && (!inputs.confirmed_main || (inputs.run_reviewed_once && inputs.report_kind == 'daily' && inputs.manual_sync_completed_for == inputs.report_target && !inputs.recovery_main && !inputs.report_markets && vars.FEE_REPORT_ONCE_MAIN == '')) && !inputs.source_plan_check_only && !inputs.source_acceptance_once && ((github.event_name == 'schedule' && vars.FEE_REPORT_PERIODS_ENABLED == 'true' && (vars.FEE_REPORT_ONCE_MAIN != '' || (vars.FEE_REPORT_DAILY_ENABLED == 'true' && vars.FEE_CLOUD_MODE == 'publish'))) || (github.event_name == 'workflow_dispatch' && ((inputs.run_reviewed_once && inputs.report_kind != 'automatic-daily') || (!inputs.run_reviewed_once && inputs.report_kind == 'automatic-daily' && vars.FEE_REPORT_ONCE_MAIN == '' && vars.FEE_REPORT_DAILY_ENABLED == 'true' && vars.FEE_REPORT_PERIODS_ENABLED == 'true' && vars.FEE_CLOUD_MODE == 'publish' && github.actor_id == '283054367' && github.ref == 'refs/heads/main' && github.run_attempt == 1)))) && (vars.FEE_CLOUD_MODE == 'shadow' || vars.FEE_CLOUD_MODE == 'publish') && !inputs.source_probe_once && !inputs.source_probe_main && !inputs.source_probe_target }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -192,7 +207,7 @@ jobs:
 
   once-admit:
     needs: period
-    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && !inputs.ratio_plan && !inputs.ratio_main && !inputs.ib_envelope_once && !inputs.ib_envelope_main && !inputs.confirmed_main && vars.FEE_REPORT_ONCE_MAIN != '' && needs.period.outputs.outcome == 'produce' }}
+    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && !inputs.ratio_plan && !inputs.ratio_main && !inputs.ib_envelope_once && !inputs.ib_envelope_main && !inputs.confirmed_main && vars.FEE_REPORT_ONCE_MAIN != '' && needs.period.outputs.outcome == 'produce' && !inputs.source_probe_once && !inputs.source_probe_main && !inputs.source_probe_target }}
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
@@ -214,7 +229,7 @@ jobs:
   produce:
     name: Produce ${{ needs.period.outputs.kind }} ${{ needs.period.outputs.target }}
     needs: [period, once-admit]
-    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && !inputs.ratio_plan && !inputs.ratio_main && !inputs.ib_envelope_once && !inputs.ib_envelope_main && !cancelled() && !inputs.source_plan_check_only && github.run_attempt == 1 && needs.period.outputs.outcome == 'produce' && (vars.FEE_REPORT_ONCE_MAIN == '' || needs['once-admit'].result == 'success') && (vars.FEE_CLOUD_MODE == 'shadow' || vars.FEE_CLOUD_MODE == 'publish') }}
+    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && !inputs.ratio_plan && !inputs.ratio_main && !inputs.ib_envelope_once && !inputs.ib_envelope_main && !cancelled() && !inputs.source_plan_check_only && github.run_attempt == 1 && needs.period.outputs.outcome == 'produce' && (vars.FEE_REPORT_ONCE_MAIN == '' || needs['once-admit'].result == 'success') && (vars.FEE_CLOUD_MODE == 'shadow' || vars.FEE_CLOUD_MODE == 'publish') && !inputs.source_probe_once && !inputs.source_probe_main && !inputs.source_probe_target }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: fee-cloud-producer
@@ -438,7 +453,7 @@ jobs:
 
   once-finish:
     needs: [period, once-admit, produce]
-    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && !inputs.ratio_plan && !inputs.ratio_main && !inputs.ib_envelope_once && !inputs.ib_envelope_main && !inputs.confirmed_main && always() && vars.FEE_REPORT_ONCE_MAIN != '' }}
+    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && !inputs.ratio_plan && !inputs.ratio_main && !inputs.ib_envelope_once && !inputs.ib_envelope_main && !inputs.confirmed_main && always() && vars.FEE_REPORT_ONCE_MAIN != '' && !inputs.source_probe_once && !inputs.source_probe_main && !inputs.source_probe_target }}
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
@@ -460,7 +475,7 @@ jobs:
 
   source-plan-check:
     name: Public source plan check ${{ inputs.source_target }}
-    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && !inputs.ratio_plan && !inputs.ratio_main && !inputs.ib_envelope_once && !inputs.ib_envelope_main && !inputs.confirmed_main && github.event_name == 'workflow_dispatch' && github.run_attempt == 1 && inputs.report_kind != 'automatic-daily' && inputs.source_plan_check_only && !inputs.source_acceptance_once && !inputs.run_reviewed_once }}
+    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && !inputs.ratio_plan && !inputs.ratio_main && !inputs.ib_envelope_once && !inputs.ib_envelope_main && !inputs.confirmed_main && github.event_name == 'workflow_dispatch' && github.run_attempt == 1 && inputs.report_kind != 'automatic-daily' && inputs.source_plan_check_only && !inputs.source_acceptance_once && !inputs.run_reviewed_once && !inputs.source_probe_once && !inputs.source_probe_main && !inputs.source_probe_target }}
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
@@ -483,7 +498,7 @@ jobs:
 
   source-acceptance:
     name: Source acceptance ${{ inputs.source_target }}
-    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && !inputs.ratio_plan && !inputs.ratio_main && !inputs.ib_envelope_once && !inputs.ib_envelope_main && !inputs.confirmed_main && vars.FEE_REPORT_ONCE_MAIN == '' && github.event_name == 'workflow_dispatch' && github.run_attempt == 1 && inputs.report_kind != 'automatic-daily' && !inputs.source_plan_check_only && inputs.source_acceptance_once && !inputs.run_reviewed_once }}
+    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && !inputs.ratio_plan && !inputs.ratio_main && !inputs.ib_envelope_once && !inputs.ib_envelope_main && !inputs.confirmed_main && vars.FEE_REPORT_ONCE_MAIN == '' && github.event_name == 'workflow_dispatch' && github.run_attempt == 1 && inputs.report_kind != 'automatic-daily' && !inputs.source_plan_check_only && inputs.source_acceptance_once && !inputs.run_reviewed_once && !inputs.source_probe_once && !inputs.source_probe_main && !inputs.source_probe_target }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: fee-cloud-producer
@@ -537,7 +552,7 @@ jobs:
           fi
 
   ratio-preflight:
-    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && !inputs.confirmed_main && !inputs.ib_envelope_once && !inputs.ib_envelope_main && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor_id == '283054367' && github.run_attempt == 1 && inputs.report_kind != 'automatic-daily' && inputs.ratio_plan != '' && inputs.ratio_main == github.sha && !inputs.run_reviewed_once && !inputs.source_plan_check_only && !inputs.source_acceptance_once }}
+    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && !inputs.confirmed_main && !inputs.ib_envelope_once && !inputs.ib_envelope_main && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor_id == '283054367' && github.run_attempt == 1 && inputs.report_kind != 'automatic-daily' && inputs.ratio_plan != '' && inputs.ratio_main == github.sha && !inputs.run_reviewed_once && !inputs.source_plan_check_only && !inputs.source_acceptance_once && !inputs.source_probe_once && !inputs.source_probe_main && !inputs.source_probe_target }}
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
@@ -564,7 +579,7 @@ jobs:
       group: fee-publication-critical
       cancel-in-progress: false
       queue: max
-    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && !inputs.confirmed_main && !inputs.ib_envelope_once && !inputs.ib_envelope_main && needs.ratio-preflight.result == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && inputs.ratio_main == github.sha }}
+    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && !inputs.confirmed_main && !inputs.ib_envelope_once && !inputs.ib_envelope_main && needs.ratio-preflight.result == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && inputs.ratio_main == github.sha && !inputs.source_probe_once && !inputs.source_probe_main && !inputs.source_probe_target }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: fee-cloud-producer
@@ -610,7 +625,7 @@ jobs:
 
   ib-diagnostic:
     name: IB diagnostic 2026-11-06
-    if: ${{ !inputs.confirmed_main && inputs.ib_diagnostic_once && inputs.ib_diagnostic_main == github.sha && !inputs.ib_envelope_once && !inputs.ib_envelope_main && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor_id == '283054367' && github.run_attempt == 1 }}
+    if: ${{ !inputs.confirmed_main && inputs.ib_diagnostic_once && inputs.ib_diagnostic_main == github.sha && !inputs.ib_envelope_once && !inputs.ib_envelope_main && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor_id == '283054367' && github.run_attempt == 1 && !inputs.source_probe_once && !inputs.source_probe_main && !inputs.source_probe_target }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: fee-cloud-producer
@@ -665,7 +680,7 @@ jobs:
     # supervisor treat it as no production. Only the Sharesight OAuth pair is
     # injected: no FEE_DATA_KEY, economic source, writer, storage or publication.
     name: IB diagnostic 2026-11-06
-    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && !inputs.confirmed_main && !inputs.ratio_plan && !inputs.ratio_main && !inputs.recovery_main && !inputs.run_reviewed_once && !inputs.source_plan_check_only && !inputs.source_acceptance_once && inputs.report_kind == '' && inputs.ib_envelope_once && inputs.ib_envelope_main == github.sha && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor_id == '283054367' && github.run_attempt == 1 }}
+    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && !inputs.confirmed_main && !inputs.ratio_plan && !inputs.ratio_main && !inputs.recovery_main && !inputs.run_reviewed_once && !inputs.source_plan_check_only && !inputs.source_acceptance_once && inputs.report_kind == '' && inputs.ib_envelope_once && inputs.ib_envelope_main == github.sha && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor_id == '283054367' && github.run_attempt == 1 && !inputs.source_probe_once && !inputs.source_probe_main && !inputs.source_probe_target }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: fee-cloud-producer
@@ -706,3 +721,55 @@ jobs:
           CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE: ''
           GOOGLE_GHA_CREDS_PATH: ''
         run: node scripts/ib-v3-envelope-evidence.mjs --expected-main="$ENVELOPE_MAIN"
+
+  source-probe:
+    # Separately approved, read-only. Same trusted workflow path, so the existing
+    # Workload Identity provider and the two version-pinned Sharesight secrets
+    # are reused unchanged; only those two values reach the probe step. No
+    # FEE_DATA_KEY, economic source, benchmark, writer, candidate, storage,
+    # issue or publication token. Not a production attempt.
+    name: Fee source probe
+    if: ${{ inputs.source_probe_once && inputs.source_probe_main == github.sha && inputs.source_probe_target != '' && !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && !inputs.ib_envelope_once && !inputs.ib_envelope_main && !inputs.confirmed_main && !inputs.ratio_plan && !inputs.ratio_main && !inputs.recovery_main && !inputs.run_reviewed_once && !inputs.source_plan_check_only && !inputs.source_acceptance_once && !inputs.source_from && !inputs.source_target && !inputs.source_main && !inputs.manual_sync_completed_for && inputs.report_kind == '' && !inputs.report_target && !inputs.report_markets && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor_id == '283054367' && github.run_attempt == 1 }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: fee-cloud-producer
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    steps:
+      # Check out the exact approved commit, never whatever main is by then.
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify the exact probe main, owner run and target before credentials
+        env:
+          PROBE_MAIN: ${{ inputs.source_probe_main }}
+          PROBE_TARGET: ${{ inputs.source_probe_target }}
+          FEE_REPORT_ACTIONS_TOKEN: ${{ github.token }}
+        run: test "$(git rev-parse HEAD)" = "$PROBE_MAIN" && node scripts/fee-source-probe.mjs --check-plan --expected-main="$PROBE_MAIN" --target="$PROBE_TARGET"
+      - name: Reuse the existing read identity
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          project_id: family-portfolio-gateway
+          workload_identity_provider: projects/860729177589/locations/global/workloadIdentityPools/fee-console-github/providers/fee-console-main
+          service_account: fee-cloud-producer@family-portfolio-gateway.iam.gserviceaccount.com
+      - name: Read only the existing Sharesight pair
+        id: probe_credentials
+        uses: google-github-actions/get-secretmanager-secrets@bc9c54b29fdffb8a47776820a7d26e77b379d262
+        with:
+          secrets: |-
+            client_id:family-portfolio-gateway/sharesight-broker-sync-client-id/1
+            client_secret:family-portfolio-gateway/sharesight-broker-sync-client-secret/1
+      - name: Probe the fixed ordinary source routes without a ledger, writer or publication token
+        env:
+          PROBE_MAIN: ${{ inputs.source_probe_main }}
+          PROBE_TARGET: ${{ inputs.source_probe_target }}
+          FEE_REPORT_ACTIONS_TOKEN: ${{ github.token }}
+          FEE_CLOUD_SHARESIGHT_CLIENT_ID: ${{ steps.probe_credentials.outputs.client_id }}
+          FEE_CLOUD_SHARESIGHT_CLIENT_SECRET: ${{ steps.probe_credentials.outputs.client_secret }}
+          GOOGLE_APPLICATION_CREDENTIALS: ''
+          CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE: ''
+          GOOGLE_GHA_CREDS_PATH: ''
+        run: test "$(git rev-parse HEAD)" = "$PROBE_MAIN" && node scripts/fee-source-probe.mjs --expected-main="$PROBE_MAIN" --target="$PROBE_TARGET"

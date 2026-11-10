@@ -6,7 +6,7 @@
 import crypto from "node:crypto";
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { types } from 'node:util';
-import { boundedJson, BoundedJsonError } from './fee-http-json.mjs';
+import { boundedJson, BoundedJsonError, boundedJsonTransportDiagnostic } from './fee-http-json.mjs';
 import {managedTransferCandidates,buildManagedTransferProof,consumeManagedTransferProof,validateManagedTransferIdentities} from './fee-sharesight-transfers.mjs';
 import {validateManagementRegistry} from './fee-management-exemption.mjs';
 import {SHARESIGHT_REFERENCE_SCHEMA,normalizeSharesightReference,classifyFlow} from './daily-core.mjs';
@@ -854,6 +854,35 @@ export function normalizeRead(raw, targetDate, benchmark,{sourceMode='legacy-rec
     cashEvidence: portfolios.map(p => ({ account: p.account, balances: p.cashEvidence, settings: p.cashSettings })) }) };
 }
 
+// Fixed route categories for a failed Sharesight read: derived from the
+// already allowlisted path shape, never from an id, query or URL text.
+export const SOURCE_TRANSPORT_ROUTES = Object.freeze(['TOKEN', 'PORTFOLIOS', 'PERFORMANCE', 'HOLDINGS', 'TRADES',
+  'CASH_ACCOUNTS', 'CASH_TRANSACTIONS', 'PAYOUT', 'PEER_PERFORMANCE', 'PEER_HOLDINGS', 'PEER_TRADES',
+  'PEER_CASH_ACCOUNTS', 'OTHER']);
+const sourceTransportByError = new WeakMap();
+export const feeSourceTransportDiagnostic = error => error instanceof Error ? sourceTransportByError.get(error) || null : null;
+function sourceTransportRoute(url, peer) {
+  if (url === TOKEN_URL) return 'TOKEN';
+  if (url === PORTFOLIOS_URL) return 'PORTFOLIOS';
+  let pathname = '';
+  try { pathname = new URL(url).pathname; } catch { return 'OTHER'; }
+  if (pathname.endsWith('/cash_account_transactions.json')) return 'CASH_TRANSACTIONS';
+  if (/^\/api\/v2\/payouts\/[1-9]\d{0,14}\.json$/.test(pathname)) return 'PAYOUT';
+  const kind = pathname.endsWith('/performance') ? 'PERFORMANCE' : pathname.endsWith('/holdings') ? 'HOLDINGS'
+    : pathname.endsWith('/trades.json') ? 'TRADES' : pathname.endsWith('/cash_accounts.json') ? 'CASH_ACCOUNTS' : null;
+  return kind ? (peer ? 'PEER_' + kind : kind) : 'OTHER';
+}
+// Same message and failure as fail(code); only adds the value-free category.
+function failTransport(code, url, peer, error) {
+  const transport = boundedJsonTransportDiagnostic(error);
+  const diagnostic = Object.freeze({ route: sourceTransportRoute(url, peer),
+    phase: transport ? transport.phase : error instanceof BoundedJsonError ? 'UNKNOWN' : 'LOCAL',
+    category: transport ? transport.category : error instanceof BoundedJsonError ? 'OTHER' : 'NON_TRANSPORT' });
+  const failure = new Error(`FEE_CLOUD_${code}`);
+  sourceTransportByError.set(failure, diagnostic);
+  throw failure;
+}
+
 class FixedHttp {
   constructor(fetchImpl, { timeoutMs = 20_000,onSourceResponse=null } = {}) {
     if (typeof fetchImpl !== "function" || !Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 30_000) {
@@ -888,7 +917,7 @@ class FixedHttp {
       return isPrecisionSource ? parseSourceJson(capturedBody??new TextDecoder('utf-8', { fatal: true }).decode(response.bytes)) : includeBytes?response.json:response;
     } catch (error) {
       const code = error instanceof BoundedJsonError ? error.code : 'NETWORK';
-      if (['NETWORK', 'TIMEOUT', 'ABORTED'].includes(code)) fail(url === TOKEN_URL ? 'AUTH_UNAVAILABLE' : 'SOURCE_UNAVAILABLE');
+      if (['NETWORK', 'TIMEOUT', 'ABORTED'].includes(code)) failTransport(url === TOKEN_URL ? 'AUTH_UNAVAILABLE' : 'SOURCE_UNAVAILABLE', url, !!peerRoute, error);
       if (code === 'HTTP') fail(url === TOKEN_URL ? 'AUTH_REJECTED' : 'HTTP_REJECTED');
       fail(`RESPONSE_${code}`);
     }

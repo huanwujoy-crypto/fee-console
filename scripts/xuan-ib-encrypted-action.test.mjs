@@ -1040,7 +1040,9 @@ test('staged ratio upgrade reads authenticated prior snapshots honestly; old cod
   const companyCandidate=await f.snapshot.candidate({model:f.model,recipient:f.manager.recipient,proof:f.proof,previous:oldSigned,now:f.now});
   const companySigned=await f.snapshot.authenticate(companyCandidate,f.proof,f.manager,{...f.options,previous:oldSigned});
   const verified=await f.snapshot.verify(companySigned,f.manager,{now:f.now});assert.equal(companySigned.body.version,2);assert.ok(verified.model.companyExposure);
-  await assert.rejects(oldSnapshot.verify(companySigned,f.manager,{now:f.now}),/RATIO_MANAGER_REFUSED/);
+  // A new snapshot carries the signed Hong Kong date policy; the old codec
+  // refuses it at the signed body before any decryption.
+  await assert.rejects(oldSnapshot.verify(companySigned,f.manager,{now:f.now}),/RATIO_SNAPSHOT_REFUSED/);
   // No UI rollback may erase the version watermark or make an earlier private
   // snapshot a valid replacement. Prior UI is rollback-compatible only while
   // the still-published snapshot has its prior shape; otherwise it fails shut.

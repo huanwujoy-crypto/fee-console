@@ -32,8 +32,8 @@ export function syntheticOfficialSource(){
  const capture=(asOf,at,rows)=>({asOf,capturedAt:at,captureTimeBasis:'original-download-file-mtime',downloadCompletedAt:null,serverSuggestedOriginalFilename:null,dateEvidence:'Showing as at '+(asOf.endsWith('29')?'29':'30')+' Oct 2026',canonicalDataRows:rows,allWorksheetXmlRows:rows+5});
  return {schemaVersion:'sharesight-private-full-v2',source:{provider:'Sharesight',view:'All Together',transport:'official-workbook-exports'},accounts,sources:['classification.xlsx','exposure.xlsx','capture-metadata.json'].map((file,i)=>({file,sha256:String(i+1).repeat(64),libraryFileId:'libfile_'+String(i+1).repeat(32),libraryVersion:0})),classification:{...capture('2026-10-29','2026-10-30T05:31:53.561Z',positions.length+cashAccounts.length),positions,cashAccounts},exposure:{...capture('2026-10-30','2026-10-30T05:28:49.118Z',rows.length),rows},coverage:{classificationCombinedComplete:true,exposureCombinedComplete:true,groupingSheetsAreDuplicates:true,closedPositionsIncluded:false,transactionHistoryIncluded:false,completeETFUniverseClaimed:false},limitations:['Synthetic complete Combined sheet; other grouping sheets are duplicates.']};
 }
-function projected(raw=syntheticOfficialSource(),options={}){
- const bytes=Buffer.from(JSON.stringify(raw)),sha=hash(bytes),built=createOfficialRatioSourceCore().build(raw,{sourceSha256:sha,sourceBytes:bytes.length,...options}),scope=hash(JSON.stringify([...raw.accounts].sort())),exposure={...createRankedExposureCore(),ALL_TOGETHER_SCOPE_SHA256:scope},ratio=createFeeRatioCore(exposure,crypto.webcrypto),source=createRatioSourceCore(()=>scope),now=new Date('2026-10-30T06:00:00.000Z');
+function projected(raw=syntheticOfficialSource(),options={},clock=new Date('2026-10-30T06:00:00.000Z')){
+ const bytes=Buffer.from(JSON.stringify(raw)),sha=hash(bytes),built=createOfficialRatioSourceCore().build(raw,{sourceSha256:sha,sourceBytes:bytes.length,...options}),scope=hash(JSON.stringify([...raw.accounts].sort())),exposure={...createRankedExposureCore(),ALL_TOGETHER_SCOPE_SHA256:scope},ratio=createFeeRatioCore(exposure,crypto.webcrypto),source=createRatioSourceCore(()=>scope),now=clock;
  return {raw,bytes,sha,built,scope,exposure,ratio,source,now};
 }
 test('mixed official dates keep their own totals, signed residual and same-export parent basis',()=>{
@@ -80,12 +80,12 @@ test('same-name fund securities stay separate and a claimed capture before its v
  assert.equal(new Set(top.map(r=>r.name)).size,5);assert.ok(top[0].name.includes('[F00 · PRIVATE]'));assert.ok(top[1].name.includes('[F01 · PRIVATE]'));
  raw.classification.capturedAt='2026-10-27T00:00:00.000Z';assert.throws(()=>projected(raw));
 });
-export async function authenticated(t,raw=syntheticOfficialSource(),options={}){
- const f=projected(raw,options),dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'ratio-official-synthetic-')));fs.chmodSync(dir,0o700);t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+export async function authenticated(t,raw=syntheticOfficialSource(),options={},{now=new Date('2026-10-30T06:00:00.000Z'),targetDate='2026-10-30'}={}){
+ const f=projected(raw,options,now),dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'ratio-official-synthetic-')));fs.chmodSync(dir,0o700);t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
  const write=(name,value)=>{const bytes=Buffer.isBuffer(value)?value:Buffer.from(JSON.stringify(value)),p=path.join(dir,name);fs.writeFileSync(p,bytes,{mode:0o600});return {path:p,sha256:hash(bytes)};};
  const manager=await f.ratio.deriveSnapshotManager('0'.repeat(32),Buffer.alloc(32,7).toString('base64url'),'synthetic-manager-token-not-real-123'),plan={schema:'fee-console.ratio-browser-evidence-plan.v1',workspace:dir,source:write('original.json',f.bytes),input:write('input.json',f.built.input),library:{libraryFileId:'libfile_'+'9'.repeat(32),version:0},managerScopeId:manager.recipient.scopeId,localOwnerUid:process.getuid()},planPath=write('plan.json',plan).path;
  const proof=readVerifiedBrowserEvidence({planPath,expectedScopeId:manager.recipient.scopeId,input:f.built.input,now:f.now,runtime:{uid:process.getuid(),readIdentity:()=>({libraryFileId:plan.library.libraryFileId,version:0})},exposureCore:f.exposure});
- const model=await buildRatioModel(f.built.input,{kind:'snapshot',targetDate:'2026-10-30',browserEvidence:proof,managerScopeId:manager.recipient.scopeId,viewCore:f.ratio,now:f.now});
+ const model=await buildRatioModel(f.built.input,{kind:'snapshot',targetDate,browserEvidence:proof,managerScopeId:manager.recipient.scopeId,viewCore:f.ratio,now:f.now});
  const snapshot=createRatioSnapshotCore(f.ratio,f.exposure,createRatioSourceCore,b=>JSON.parse(Buffer.from(b)),crypto.webcrypto),args={originalBytes:new Uint8Array(f.bytes),inputBytes:new Uint8Array(fs.readFileSync(plan.input.path)),model,recipient:manager.recipient,sourceSha256:f.sha,inputSha256:plan.input.sha256,libraryVersion:0,now:f.now},original=await snapshot.verifyOriginal(args),packet=await snapshot.candidate({model,recipient:manager.recipient,proof:original,now:f.now}),signed=await snapshot.authenticate(packet,original,manager,{profileSha256:'a'.repeat(64),now:f.now});
  return {...f,model,manager,snapshot,args,signed};
 }
@@ -370,4 +370,24 @@ test('fund grouping uses exactly the existing top-five date/name parser, includi
  const a=module.indexOf('  function fundHoldingDisplayName('),b=module.indexOf('\n  function renderRatioModel(',a);
  const shared=module.slice(a,b).split('\n').map(line=>line.startsWith('  ')?line.slice(2):line).join('\n').trim();
  assert.equal(shared.replace('fundHoldingDisplayName','ratioHoldingDisplayName'),browser.trim());
+});
+
+// Counterexample (2026-11-10): an official export dated by its Hong Kong
+// capture date is valid for the official projection, so its age is counted in
+// Hong Kong days; the UTC date of the same instant is still the day before.
+test('Hong Kong-dated official exports are not future before UTC midnight; future, stale and 36h guards remain',()=>{
+ const check=(asOf,capturedAt,now)=>{
+  const raw=syntheticOfficialSource();
+  for(const r of ['classification','exposure']){raw[r].asOf=asOf;raw[r].capturedAt=capturedAt;raw[r].dateEvidence='Showing as at '+Number(asOf.slice(8))+' Nov 2026';}
+  const bytes=Buffer.from(JSON.stringify(raw)),scope=hash(JSON.stringify([...raw.accounts].sort()));
+  let built;try{built=createOfficialRatioSourceCore().build(raw,{sourceSha256:hash(bytes),sourceBytes:bytes.length});}catch{return 'official-refused';}
+  try{createRatioSourceCore(()=>scope).verifyBrowserSourceAssociations(raw,built.input,{scopeHash:scope,now:new Date(now)});return 'accepted';}catch{return 'source-refused';}
+ };
+ assert.equal(check('2026-11-10','2026-11-09T23:30:00.000Z','2026-11-09T23:45:00.000Z'),'accepted','HKT 07:45 is still UTC 2026-11-09');
+ assert.equal(check('2026-11-10','2026-11-09T23:30:00.000Z','2026-11-10T00:30:00.000Z'),'accepted');
+ assert.equal(check('2026-11-11','2026-11-09T23:30:00.000Z','2026-11-09T23:45:00.000Z'),'official-refused','a date beyond the capture HKT date is future');
+ assert.equal(check('2026-11-05','2026-11-09T23:30:00.000Z','2026-11-09T23:45:00.000Z'),'source-refused','five Hong Kong days old');
+ assert.equal(check('2026-11-06','2026-11-09T23:30:00.000Z','2026-11-09T23:45:00.000Z'),'accepted','four Hong Kong days old');
+ assert.equal(check('2026-11-10','2026-11-09T23:30:00.000Z','2026-11-11T11:30:00.001Z'),'source-refused','capture older than 36 hours');
+ assert.equal(check('2026-11-10','2026-11-09T23:30:00.000Z','2026-11-09T23:29:59.999Z'),'source-refused','capture after the verifier clock');
 });

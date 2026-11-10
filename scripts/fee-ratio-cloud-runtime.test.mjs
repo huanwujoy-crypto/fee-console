@@ -237,3 +237,7 @@ test('fee-first critical section: only the two publishing jobs share one queued 
  assert.deepEqual([...promotion.matchAll(/- cron: '([^']+)'/g)].map(m=>m[1]),['45 2 * * *','15 5,6 * * *']);
  assert.match(job(producer,'ratio'),/permissions:\n      contents: read\n      id-token: write\n/);
 });
+test('ratio admission accepts the inert source-probe defaults and refuses any active probe field',()=>{
+ const inert=admission();Object.assign(inert.event.inputs,{source_probe_once:'false',source_probe_main:'',source_probe_target:''});assert.equal(ratioAdmission(inert.env,inert.event).mode,'verify-current');
+ for(const patch of [{source_probe_once:'true'},{source_probe_once:true},{source_probe_main:head},{source_probe_target:'2026-11-09'}]){const f=admission();Object.assign(f.event.inputs,patch);assert.throws(()=>ratioAdmission(f.env,f.event),/REFUSED/);}
+});

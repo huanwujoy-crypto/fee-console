@@ -138,6 +138,26 @@ class ClockTests(unittest.TestCase):
         self.nonfee_completed('Public source plan check 2026-10-13')
         self.assertEqual(self.go()['outcome'],'dispatch-accepted')
 
+    def test_completed_source_probe_with_all_production_skipped_is_not_a_fee_launch(self):
+        self.nonfee_completed('Fee source probe')
+        self.github.day[0]['display_title']='Fee source probe'
+        self.assertEqual(self.go()['outcome'],'dispatch-accepted')
+        self.assertEqual(self.github.post_count,1)
+
+    def test_source_probe_name_cannot_hide_a_period_or_produce_attempt(self):
+        for index in (0, 1):
+            self.setUp()
+            self.nonfee_completed('Fee source probe')
+            self.github.job[11][index]['conclusion']='success'
+            self.assertEqual(self.go()['outcome'],'already-requested')
+            self.assertEqual(self.github.post_count,0)
+
+    def test_active_source_probe_still_blocks_shared_producer_concurrency(self):
+        row=run_row(status='in_progress'); row['display_title']='Fee source probe'
+        self.github.active['in_progress']=[row]
+        self.error('PRODUCER_BUSY')
+        self.assertEqual(self.github.post_count,0)
+
     def test_nonfee_title_does_not_hide_a_real_fee_attempt(self):
         self.nonfee_completed()
         self.github.job[11][0]['conclusion']='success'

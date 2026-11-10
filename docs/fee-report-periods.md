@@ -404,3 +404,20 @@ exact-release recovery may use its own existing exception. No consumed record,
 schedule, source date or report identifier is reset. See
 [the producer operating contract](fee-cloud-producer.md#start-a-daily-report-after-explicit-completed-sync-confirmation)
 for dispatch and publication verification boundaries.
+
+### Hong Kong D sync recorded at D-1 (owner rule, 2026-11-10)
+
+When the owner synchronizes on Hong Kong date D and enters the round's new
+records at D-1 in Sharesight, dispatch the existing reviewed entry with
+`report_target` and `manual_sync_completed_for` both set to D-1, after New
+York has closed D-1 (about 05:15 HKT in standard time, 04:15 in daylight
+time). The plan, readiness, reader, writer and health gates are unchanged: the
+read happens at run time, every record keeps its own API date (a D-dated row
+inside the D-1 read is refused, never moved), and the price cutoff is the real
+D-1 New York close from the validated cache. Confirming D itself does not
+create a same-day report. A closed New York D-1 (weekend or holiday) reports
+nothing; its records are read by the next open target, whose window covers
+every calendar day since the last publication. A report whose window contains
+a month end still waits for that month's New York natural day to finish. A
+record entered later for an already published date is not read again and is
+not reported; no history is re-read or replaced.
