@@ -673,6 +673,8 @@
     "scripts/fee-source-revision-diagnostic.mjs",
     "scripts/fee-source-revision-diagnostic.test.mjs",
     "scripts/ib-v3-envelope-evidence.mjs",
-    "scripts/ib-v3-envelope-evidence.test.mjs"
+    "scripts/ib-v3-envelope-evidence.test.mjs",
+    "scripts/fee-source-probe.mjs",
+    "scripts/fee-source-probe.test.mjs"
   ]
 }

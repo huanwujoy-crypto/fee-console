@@ -123,8 +123,8 @@ export function validateIbDiagnosticEvent({env,event,expectedMain,now=new Date()
   if(!/^[a-f0-9]{40}$/.test(expectedMain||'')||env.GITHUB_ACTIONS!=='true'||env.GITHUB_REPOSITORY!==REPO||env.GITHUB_REF!=='refs/heads/main'||env.GITHUB_SHA!==expectedMain||env.GITHUB_EVENT_NAME!=='workflow_dispatch'||env.GITHUB_ACTOR_ID!=='283054367'||env.GITHUB_RUN_ATTEMPT!=='1'||!/^\d{8,16}$/.test(env.GITHUB_RUN_ID||''))fail('ENVIRONMENT');
   if(!Number.isFinite(now.getTime())||now<Date.parse(IB_DIAGNOSTIC_PLAN.from)||now>Date.parse(IB_DIAGNOSTIC_PLAN.expires))fail('EXPIRED');
   const inputs=event?.inputs;if(!inputs||![true,'true'].includes(inputs.ib_diagnostic_once)||inputs.ib_diagnostic_main!==expectedMain)fail('ARGUMENT');
-  const empty=['ratio_main','ratio_plan','source_from','source_target','source_main','manual_sync_completed_for','confirmed_main','recovery_main','report_kind','report_target','report_markets'];
-  const disabled=['source_plan_check_only','source_acceptance_once','run_reviewed_once'];
+  const empty=['ratio_main','ratio_plan','source_from','source_target','source_main','manual_sync_completed_for','confirmed_main','recovery_main','report_kind','report_target','report_markets','source_probe_main','source_probe_target'];
+  const disabled=['source_plan_check_only','source_acceptance_once','run_reviewed_once','source_probe_once'];
   if(Object.keys(inputs).some(k=>!['ib_diagnostic_once','ib_diagnostic_main',...empty,...disabled].includes(k))||empty.some(k=>inputs[k]!==undefined&&inputs[k]!=='')||disabled.some(k=>inputs[k]!==undefined&&![false,'false'].includes(inputs[k])))fail('ARGUMENT');
 }
 

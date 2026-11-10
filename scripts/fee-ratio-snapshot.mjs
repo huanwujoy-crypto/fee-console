@@ -5,6 +5,11 @@ export function createRatioSnapshotCore(ratioCore,exposureCore,sourceFactory,par
   const fail=()=>{throw Error('RATIO_SNAPSHOT_REFUSED');},canonical=ratioCore.canonical,hash=ratioCore.digest;
   const exact=(v,k)=>v&&typeof v==='object'&&!Array.isArray(v)&&Object.keys(v).sort().join(',')===[...k].sort().join(',');
   const hex=v=>typeof v==='string'&&/^[a-f0-9]{64}$/.test(v);
+  // Signed date policy. New snapshots count source age in Hong Kong calendar
+  // days; the policy is part of the signed source, so it cannot be stripped or
+  // swapped. A signed source without it keeps the original UTC-day semantics.
+  const DATE_POLICY='hkt-calendar-v1';
+  const policyDay=(s,at)=>s?.datePolicy===DATE_POLICY?new Date(Date.parse(at)+8*3600000).toISOString().slice(0,10):at.slice(0,10);
   const iso=s=>typeof s==='string'&&/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(s)&&Number.isFinite(Date.parse(s))&&new Date(s).toISOString()===s;
   const encode=s=>new TextEncoder().encode(s),digestBytes=async b=>[...new Uint8Array(await cryptoImpl.subtle.digest('SHA-256',b))].map(n=>n.toString(16).padStart(2,'0')).join('');
   const read=b=>{if(!(b instanceof Uint8Array)||b.byteLength<1||b.byteLength>MAX)fail();return parseJson(b);};
@@ -26,18 +31,18 @@ export function createRatioSnapshotCore(ratioCore,exposureCore,sourceFactory,par
     const association=m.book.browserEvidence;
     if(association.integrity!=='verified-original-library-association'||association.managerScopeId!==r.scopeId||association.sourceVersion!==libraryVersion||['migrationPending','classificationDeltaCents','exposureDeltaCents'].some(k=>association[k]!==facts[k]))fail();
     const capturedAt=facts.observedAt,expiresAt=new Date(Date.parse(capturedAt)+36*3600000).toISOString();
-    if(Date.parse(m.report.generatedAt)<Date.parse(capturedAt)||Date.parse(m.report.generatedAt)>now.getTime()||Math.floor((Date.parse(now.toISOString().slice(0,10))-Date.parse(facts.asOf))/86400000)>4)fail();
-    const evidence={provider:'Sharesight',kind:official?'complete-official-workbook-association':'complete-original-browser-association',asOf:facts.asOf,...(official?{sourceDates:structuredClone(facts.sourceDates)}:{}),capturedAt,expiresAt,sourceSha256,inputSha256,scopeHash,libraryVersion,modelSha256:await hash(m)};
+    if(Date.parse(m.report.generatedAt)<Date.parse(capturedAt)||Date.parse(m.report.generatedAt)>now.getTime()||Math.floor((Date.parse(policyDay({datePolicy:DATE_POLICY},now.toISOString()))-Date.parse(facts.asOf))/86400000)>4)fail();
+    const evidence={provider:'Sharesight',kind:official?'complete-official-workbook-association':'complete-original-browser-association',datePolicy:DATE_POLICY,asOf:facts.asOf,...(official?{sourceDates:structuredClone(facts.sourceDates)}:{}),capturedAt,expiresAt,sourceSha256,inputSha256,scopeHash,libraryVersion,modelSha256:await hash(m)};
     Object.freeze(evidence);const proof=Object.freeze({evidence,recipientId:r.recipientId,scopeId:r.scopeId,checkedAt:now.toISOString()});accepted.add(proof);return proof;
   }
   const sourceDates=s=>s.kind==='complete-official-workbook-association'?Object.values(s.sourceDates):[s.asOf];
-  const recent=(s,at)=>sourceDates(s).every(d=>{const age=Math.floor((Date.parse(at.slice(0,10))-Date.parse(d))/86400000);return age>=0&&age<=4;});
+  const recent=(s,at)=>sourceDates(s).every(d=>{const age=Math.floor((Date.parse(policyDay(s,at))-Date.parse(d))/86400000);return age>=0&&age<=4;});
   function fresh(source,now){const n=now.getTime();if(!Number.isFinite(n)||n<Date.parse(source.capturedAt)||n>Date.parse(source.expiresAt)||!recent(source,now.toISOString()))fail();}
   async function bodyCheck(body){
     if(!exact(body,['schema','version','previousSnapshotId','recipientId','scopeId','source','envelope'])||body.schema!==SCHEMA||!Number.isSafeInteger(body.version)||body.version<1||!(body.previousSnapshotId===null||hex(body.previousSnapshotId))||!hex(body.recipientId)||!hex(body.scopeId))fail();
     const s=body.source,official=s?.kind==='complete-official-workbook-association';
     const date=d=>typeof d==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(d)&&Number.isFinite(Date.parse(d))&&new Date(d).toISOString().slice(0,10)===d;
-    if(!exact(s,['provider','kind','asOf','capturedAt','expiresAt','sourceSha256','inputSha256','scopeHash','libraryVersion','modelSha256',...(official?['sourceDates']:[])])||s.provider!=='Sharesight'||!['complete-original-browser-association','complete-official-workbook-association'].includes(s.kind)||!date(s.asOf)||!iso(s.capturedAt)||!iso(s.expiresAt)||Date.parse(s.expiresAt)-Date.parse(s.capturedAt)!==36*3600000||![s.sourceSha256,s.inputSha256,s.scopeHash,s.modelSha256].every(hex)||s.scopeHash!==exposureCore.ALL_TOGETHER_SCOPE_SHA256||!Number.isSafeInteger(s.libraryVersion)||s.libraryVersion<0)fail();
+    if(!exact(s,['provider','kind','asOf','capturedAt','expiresAt','sourceSha256','inputSha256','scopeHash','libraryVersion','modelSha256',...(official?['sourceDates']:[]),...(Object.hasOwn(s||{},'datePolicy')?['datePolicy']:[])])||Object.hasOwn(s,'datePolicy')&&s.datePolicy!==DATE_POLICY||s.provider!=='Sharesight'||!['complete-original-browser-association','complete-official-workbook-association'].includes(s.kind)||!date(s.asOf)||!iso(s.capturedAt)||!iso(s.expiresAt)||Date.parse(s.expiresAt)-Date.parse(s.capturedAt)!==36*3600000||![s.sourceSha256,s.inputSha256,s.scopeHash,s.modelSha256].every(hex)||s.scopeHash!==exposureCore.ALL_TOGETHER_SCOPE_SHA256||!Number.isSafeInteger(s.libraryVersion)||s.libraryVersion<0)fail();
     if(official&&(!exact(s.sourceDates,['classification','exposure',...(Object.hasOwn(s.sourceDates||{},'performance')?['performance']:[])])||!Object.values(s.sourceDates).every(date)||s.sourceDates.classification>s.sourceDates.exposure||s.sourceDates.exposure!==s.asOf||s.sourceDates.performance&&s.sourceDates.performance>s.asOf))fail();
     const e=body.envelope;ratioCore.validateBinding(e?.binding);
     if(e.scopeId!==body.scopeId||e.recipientId!==body.recipientId||e.binding.feeReceiptId!==null||e.binding.sourceDate!==s.asOf||e.binding.feeAsOf!==s.asOf)fail();
@@ -45,7 +50,7 @@ export function createRatioSnapshotCore(ratioCore,exposureCore,sourceFactory,par
     return body;
   }
   async function candidate({model,recipient,proof,previous=null,now=new Date()}){
-    if(!accepted.has(proof))fail();fresh(proof.evidence,now);
+    if(!accepted.has(proof)||proof.evidence.datePolicy!==DATE_POLICY)fail();fresh(proof.evidence,now);
     const r=await ratioCore.validateRecipient(recipient),m=await ratioCore.validateModel(model);
     if(r.recipientId!==proof.recipientId||r.scopeId!==proof.scopeId||await hash(m)!==proof.evidence.modelSha256)fail();
     if(previous)await bodyCheck(previous.body);
@@ -55,7 +60,7 @@ export function createRatioSnapshotCore(ratioCore,exposureCore,sourceFactory,par
   }
   async function authenticate(packet,proof,manager,{previous=null,profileSha256,now=new Date()}={}){
     if(!exact(packet,['body','authentication'])||packet.authentication!==null||!accepted.has(proof)||!hex(profileSha256)||!manager?.authenticationKey||manager.authenticationKey.extractable!==false)fail();
-    const b=await bodyCheck(packet.body);fresh(b.source,now);
+    const b=await bodyCheck(packet.body);if(b.source.datePolicy!==DATE_POLICY)fail();fresh(b.source,now);
     if(canonical(b.source)!==canonical(proof.evidence)||proof.recipientId!==b.recipientId||proof.scopeId!==b.scopeId||manager.recipient.recipientId!==b.recipientId||manager.recipient.scopeId!==b.scopeId||await hash(await ratioCore.open(b.envelope,manager))!==b.source.modelSha256)fail();
     if(previous){await verify(previous,manager,{now});const prior=previous.body.source;if(b.version!==previous.body.version+1||b.previousSnapshotId!==await hash(previous.body)||b.envelope.binding.previousCipherSha256!==await hash(previous.body.envelope)||b.source.asOf<prior.asOf||b.source.capturedAt<prior.capturedAt||(b.source.sourceDates?.classification||b.source.asOf)<(prior.sourceDates?.classification||prior.asOf)||prior.sourceDates?.performance&&(!b.source.sourceDates?.performance||b.source.sourceDates.performance<prior.sourceDates.performance))fail();}
     else if(b.version!==1||b.previousSnapshotId!==null||b.envelope.binding.previousCipherSha256!==null)fail();

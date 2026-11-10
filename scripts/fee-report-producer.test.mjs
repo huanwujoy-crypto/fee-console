@@ -1553,7 +1553,9 @@ test('both production admission checks retain their original ephemeral read toke
  assert.equal((diagnostic[0].match(/FEE_REPORT_ACTIONS_TOKEN:/g)||[]).length,3);
  const envelope=diagnostic[1].split('\n  ib-envelope-evidence:\n');assert.equal(envelope.length,2);
  assert.equal((envelope[0].match(/FEE_REPORT_ACTIONS_TOKEN:/g)||[]).length,2);
- assert.equal((envelope[1].match(/FEE_REPORT_ACTIONS_TOKEN:/g)||[]).length,2);
+ const probe=envelope[1].split('\n  source-probe:\n');assert.equal(probe.length,2);
+ assert.equal((probe[0].match(/FEE_REPORT_ACTIONS_TOKEN:/g)||[]).length,2);
+ assert.equal((probe[1].match(/FEE_REPORT_ACTIONS_TOKEN:/g)||[]).length,2);
  assert.doesNotMatch(produce,/contents: write|actions: write/);
  assert.deepEqual([...wf.matchAll(/cron: '([^']+)'/g)].map(m=>m[1]),['0 1 * * *','30 3 * * *','0 6 * * *']);
  assert.match(wf,/group: fee-cloud-producer\n  cancel-in-progress: false/);assert.match(wf,/github\.run_attempt == 1/);
@@ -1625,8 +1627,8 @@ test('actual period CLI and workflow summary carry the scoped token and safe fai
  assert.match(period,/permissions:\n      contents: read\n      actions: read/);assert.match(period,/FEE_REPORT_ACTIONS_TOKEN: \$\{\{ github.token \}\}/);
  const workflowJobs=[...workflow.matchAll(/^  ([a-z][a-z-]*):\n([\s\S]*?)(?=^  [a-z][a-z-]*:\n|(?![\s\S]))/gm)];
  const tokenJobs=Object.fromEntries(workflowJobs.map(([,name,body])=>[name,(body.match(/FEE_REPORT_ACTIONS_TOKEN:/g)||[]).length]).filter(([,count])=>count));
- assert.deepEqual(tokenJobs,{period:1,produce:2,'ib-diagnostic':2,'ib-envelope-evidence':2});
- assert.equal((workflow.match(/FEE_REPORT_ACTIONS_TOKEN:/g)||[]).length,7);
+ assert.deepEqual(tokenJobs,{period:1,produce:2,'ib-diagnostic':2,'ib-envelope-evidence':2,'source-probe':2});
+ assert.equal((workflow.match(/FEE_REPORT_ACTIONS_TOKEN:/g)||[]).length,9);
  const diagnostic=workflowJobs.find(([,name])=>name==='ib-diagnostic')[2];
  assert.match(diagnostic,/permissions:\n      contents: read\n      actions: read\n      id-token: write/);
  const tokenSteps=[...diagnostic.matchAll(/      - name: ([^\n]+)\n([\s\S]*?)(?=      - name: |(?![\s\S]))/g)].filter(([, ,body])=>body.includes('FEE_REPORT_ACTIONS_TOKEN:'));
@@ -2399,7 +2401,7 @@ test('workflow: the envelope job is the only job for its fields and gets no fee 
  // Every other job is excluded whenever either envelope field is set.
  const everything={...off,ib_diagnostic_once:true,ib_diagnostic_main:head,run_reviewed_once:true,report_kind:'daily',ratio_plan:'{}',ratio_main:head,source_plan_check_only:true,source_acceptance_once:true};
  for(const [,name,body] of jobs)if(name!=='ib-envelope-evidence')for(const field of [{ib_envelope_once:true},{ib_envelope_main:head}])assert.equal(condition(body,{...everything,...field}),false,name);
- assert.match(wf,/run-name: \$\{\{ \(inputs\.ib_diagnostic_once \|\| inputs\.ib_envelope_once\) && 'IB diagnostic 2026-11-06' \|\|/);
+ assert.match(wf,/run-name: \$\{\{ inputs\.source_probe_once && 'Fee source probe' \|\| \(inputs\.ib_diagnostic_once \|\| inputs\.ib_envelope_once\) && 'IB diagnostic 2026-11-06' \|\|/);
  assert.match(job,/^    name: IB diagnostic 2026-11-06\n/m);assert.match(job,/environment: fee-cloud-producer/);
  assert.match(job,/permissions:\n      contents: read\n      actions: read\n      id-token: write\n/);assert.doesNotMatch(job,/contents: write|actions: write|upload-artifact/);
  assert.doesNotMatch(job,/FEE_DATA_KEY|FEE_ECON|IB_MANAGER_|FEE_RATIO|RATIO_STORAGE|secrets\.|access_token_scopes|vars\./);
@@ -2520,4 +2522,129 @@ test('envelope v2 release is pinned to the real main c64b41a with its own exact 
  await assert.rejects(syncAdmission(f,syncRevisionReaders(f)),/RECOVERY_SCOPE/);
  await assert.rejects(readPeriodSourceAttempts({plan:f.plan,now:revisionRecoveryNow,currentRunId:recoveryId,recoveryMain:recoveryHead,recoveryRelease:release,actionsToken:revisionActionsToken}),/RECOVERY_SCOPE/);
  assert.throws(()=>validateReportRecoveryEvidence({plan:f.plan,expectedMain:recoveryHead,currentRunId:recoveryId,release,budget:{attempts:0,recoveryEvidence:{entries:[],reservations:[]}}}),/RECOVERY_SCOPE/);
+});
+
+// Owner rule 2026-11-10: a Hong Kong D sync enters its new records at D-1. The
+// existing reviewed closed-day plan covers it; no same-day target is forced.
+test('HK D sync of D-1 uses the existing reviewed daily preflight with its existing gates',async()=>{
+ const markets=['NYSE','NASDAQ'],prior=state(dailyReportPlan('2026-11-06',markets,{reviewedSyncDate:'2026-11-06'}),'2026-11-07T01:00:00Z');
+ const args={targetDate:'2026-11-09',reviewedSyncDate:'2026-11-09',markets,ibEnabled:false,readState:async()=>prior,readSourceAttempts:async()=>({attempts:0,inProgress:false})};
+ const at=s=>new Date(s);
+ const r=await dailyPublicationPreflight({...args,now:at('2026-11-10T07:30:00+08:00')});
+ assert.equal(r.outcome,'produce');
+ assert.deepEqual([r.plan.accountingThrough,r.plan.priceThrough,r.plan.periodFrom,r.plan.scheduledAt],['2026-11-09','2026-11-09','2026-11-07','2026-11-10T00:00:00+08:00']);
+ assert.equal((await dailyPublicationPreflight({...args,now:at('2026-11-10T05:00:00+08:00'),readState:()=>assert.fail('not-closed source day must not read state')})).reasonCode,'SOURCE_DAY_NOT_CLOSED');
+ assert.equal((await dailyPublicationPreflight({...args,now:at('2026-11-10T08:00:00+08:00'),readState:async()=>({...prior,pending:true})})).outcome,'candidate-pending');
+ for(const [budget,reason]of [[{attempts:1,inProgress:false},'REPORT_DAILY_SOURCE_ALREADY_ATTEMPTED'],[{attempts:0,inProgress:true},'REPORT_SOURCE_RUN_IN_PROGRESS']])
+  assert.equal((await dailyPublicationPreflight({...args,now:at('2026-11-10T08:00:00+08:00'),readSourceAttempts:async()=>budget})).reasonCode,reason);
+ assert.equal((await dailyPublicationPreflight({...args,now:at('2026-11-10T08:00:00+08:00'),readSourceAttempts:async()=>{throw Error('synthetic unknown');}})).reasonCode,'REPORT_SOURCE_ATTEMPT_METADATA_UNVERIFIED');
+ const published=state(dailyReportPlan('2026-11-09',markets,{periodFrom:'2026-11-07',reviewedSyncDate:'2026-11-09'}),'2026-11-09T23:40:00Z');
+ assert.equal((await dailyPublicationPreflight({...args,now:at('2026-11-10T09:00:00+08:00'),readState:async()=>published})).outcome,'already-published');
+ assert.equal((await dailyPublicationPreflight({...args,now:at('2026-11-10T09:00:00+08:00'),runAttempt:'2'})).reasonCode,'REPORT_SOURCE_RERUN_NOT_ALLOWED');
+ // A D-1 that is a closed New York day reports nothing; its records are read
+ // by the next open target's window, which covers every calendar day.
+ assert.equal((await dailyPublicationPreflight({...args,targetDate:'2026-11-08',reviewedSyncDate:'2026-11-08',now:at('2026-11-09T07:30:00+08:00')})).outcome,'not-due');
+ const monday=await dailyPublicationPreflight({...args,now:at('2026-11-10T07:30:00+08:00'),readState:async()=>state(weeklyReportPlan('2026-11-06'),'2026-11-08T16:05:00Z')});
+ assert.equal(monday.plan.periodFrom,'2026-11-07');
+ // Confirming the Hong Kong date itself is not turned into a same-day report.
+ assert.equal((await dailyPublicationPreflight({...args,targetDate:'2026-11-10',reviewedSyncDate:'2026-11-10',now:at('2026-11-10T07:30:00+08:00')})).reasonCode,'REPORT_NOT_DUE');
+ await assert.rejects(dailyPublicationPreflight({...args,reviewedSyncDate:'2026-11-10',now:at('2026-11-10T07:30:00+08:00')}),/MANUAL_SYNC_CONFIRMATION/);
+});
+
+// The public filter keeps exactly one prefixed diagnostic line whose canonical
+// JSON names the same allowlisted code as the final line. Real produced lines
+// come from the end-to-end test; these edits probe the filter's own contract.
+test('the source transport diagnostic passes the workflow filter only with exact keys, fixed values and the matching final code',async()=>{
+ const {SOURCE_TRANSPORT_DIAGNOSTIC_PREFIX,WRITER_DIAGNOSTIC_PREFIX}=await import('./fee-cloud-producer.mjs');
+ const {periodFailureLines}=await import('./fee-report-producer.mjs');
+ const base={schema:'fee-console.source-transport-diagnostic.v1',code:'FEE_CLOUD_SOURCE_UNAVAILABLE',route:'TRADES',phase:'FETCH',category:'ECONNRESET',dateIndex:1,dateCount:1,round:2};
+ const run=(line,last='FEE_CLOUD_SOURCE_UNAVAILABLE',before='')=>safeProducerFailureSummary(before+line+'\n'+last+'\n');
+ const line=d=>SOURCE_TRANSPORT_DIAGNOSTIC_PREFIX+JSON.stringify(d);
+ assert.deepEqual(run(line(base)),{code:'FEE_CLOUD_SOURCE_UNAVAILABLE',diagnostic:base});
+ assert.deepEqual(run(line({...base,code:'FEE_CLOUD_AUTH_UNAVAILABLE',route:'TOKEN'}),'FEE_CLOUD_AUTH_UNAVAILABLE').diagnostic.route,'TOKEN');
+ for(const d of [{...base,extra:1},(({round,...x})=>x)(base),{...base,route:'UNLISTED'},{...base,phase:'NEW'},{...base,category:'REDIRECT'},
+   {...base,phase:'LOCAL'},{...base,category:'NON_TRANSPORT'},{...base,dateIndex:0},{...base,dateIndex:2},{...base,dateCount:11,dateIndex:11},{...base,round:3},{...base,dateIndex:1.5},
+   {...base,route:'TOKEN'},{...base,code:'FEE_CLOUD_AUTH_UNAVAILABLE'},{...base,schema:'fee-console.source-transport-diagnostic.v2'},{...base,dateIndex:'1'}])
+   assert.equal(run(line(d)).diagnostic,null,JSON.stringify(d));
+ assert.equal(run(SOURCE_TRANSPORT_DIAGNOSTIC_PREFIX+JSON.stringify(base,null,1).replaceAll('\n','')).diagnostic,null,'non-canonical JSON');
+ assert.equal(run(SOURCE_TRANSPORT_DIAGNOSTIC_PREFIX+JSON.stringify(base).replace('"round":2','"round":1,"round":2')).diagnostic,null,'duplicate key');
+ assert.equal(run(line(base),'FEE_CLOUD_HTTP_REJECTED').diagnostic,null,'code mismatch with the final line');
+ assert.deepEqual(run(line(base),'FEE_CLOUD_PRIVATE_CANARY'),{code:'FEE_CLOUD_FAILED',diagnostic:null});
+ assert.equal(run(line(base),'FEE_CLOUD_SOURCE_UNAVAILABLE',line(base)+'\n').diagnostic,null,'two source lines');
+ assert.equal(run(line(base),'FEE_CLOUD_SOURCE_UNAVAILABLE',WRITER_DIAGNOSTIC_PREFIX+'{}\n').diagnostic,null,'old and new prefixes together are still more than one');
+ // Byte limits: the 64 KiB stderr bound and the 16 KiB single-line bound, in UTF-8 bytes.
+ const tailBytes=Buffer.byteLength(line(base)+'\nFEE_CLOUD_SOURCE_UNAVAILABLE\n');
+ const pad=n=>'港'.repeat(Math.floor(n/3))+'x'.repeat(n%3);
+ assert.deepEqual(safeProducerFailureSummary(pad(65536-tailBytes-1)+'\n'+line(base)+'\nFEE_CLOUD_SOURCE_UNAVAILABLE\n').diagnostic,base,'exactly 64 KiB');
+ assert.deepEqual(safeProducerFailureSummary(pad(65536-tailBytes)+'\n'+line(base)+'\nFEE_CLOUD_SOURCE_UNAVAILABLE\n'),{code:'FEE_CLOUD_FAILED',diagnostic:null},'one byte over');
+ const long=SOURCE_TRANSPORT_DIAGNOSTIC_PREFIX+'{"schema":"'+pad(16384)+'"}';assert.ok(Buffer.byteLength(long)>16384);
+ assert.equal(run(long).diagnostic,null,'over the single-line bound');
+ // Lines are emitted only from a wrapped period error that carries its own diagnostic.
+ assert.deepEqual(periodFailureLines(Error('FEE_REPORT_CLEANUP')),['FEE_REPORT_CLEANUP']);
+ assert.deepEqual(periodFailureLines(Error('FEE_CLOUD_SOURCE_UNAVAILABLE')),['FEE_CLOUD_SOURCE_UNAVAILABLE']);
+});
+
+// Read-only source probe isolation (synthetic metadata only). A probe field in
+// any closed production gate is refused; the inert defaults are accepted.
+const probeOn=[{source_probe_once:'true'},{source_probe_once:true},{source_probe_main:'a'.repeat(40)},{source_probe_target:'2026-11-09'}];
+const probeDefaults={source_probe_once:'false',source_probe_main:'',source_probe_target:''};
+test('source probe inputs cannot be mixed into automatic, reviewed, confirmed, recovery or cloud-once gates',async()=>{
+ const a=automaticDailyFixture(),daily=inputs=>scheduledDailyContext({mode:'preflight'},{...a,readEvent:()=>({...a.event,inputs:{...a.event.inputs,...inputs}})});
+ assert.equal(daily(probeDefaults),true);for(const p of probeOn)assert.throws(()=>daily(p),/DAILY_SCOPE/);
+ const target='2026-10-28',sargs={mode:'preflight','report-kind':'daily','report-target':target,'manual-sync-completed-for':target};
+ const senv={GITHUB_ACTIONS:'true',GITHUB_EVENT_NAME:'workflow_dispatch',GITHUB_RUN_ATTEMPT:'1',GITHUB_REF:'refs/heads/main'};
+ const sinputs={run_reviewed_once:'true',report_kind:'daily',report_target:target,manual_sync_completed_for:target,source_plan_check_only:'false',source_acceptance_once:'false'};
+ const sync=inputs=>reviewedSyncConfirmation(sargs,{env:senv,readEvent:()=>({inputs:{...sinputs,...inputs}})});
+ assert.equal(sync(probeDefaults),target);for(const p of probeOn)assert.throws(()=>sync(p),/MANUAL_SYNC_CONFIRMATION/);
+ const rargs={...sargs,'recovery-main':recoveryHead},renv={...senv,GITHUB_SHA:recoveryHead,GITHUB_REPOSITORY:'huanwujoy-crypto/fee-console',GITHUB_ACTOR_ID:'283054367',GITHUB_RUN_ID:String(recoveryId)};
+ const recovery=inputs=>reviewedRecoveryConfirmation(rargs,{env:renv,readEvent:()=>({inputs:{...sinputs,recovery_main:recoveryHead,...inputs},sender:{id:283054367},repository:{full_name:'huanwujoy-crypto/fee-console'}})});
+ assert.equal(recovery(probeDefaults),recoveryHead);for(const p of probeOn)assert.throws(()=>recovery(p),/RECOVERY_CONFIRMATION/);
+ const c=confirmedDailyFixture(),confirmed=inputs=>reviewedMainConfirmation(c.args,{env:c.env,readEvent:()=>({...c.event,inputs:{...c.event.inputs,...inputs}})});
+ assert.equal(confirmed(probeDefaults),c.head);for(const p of probeOn)assert.throws(()=>confirmed(p),/CONFIRMED_MAIN_SCOPE/);
+ const scope=async inputs=>{const f=manualCloudOnceFixture();Object.assign(f.event.inputs,inputs);return (await f.control('once-scope')).state;};
+ assert.equal(await scope(probeDefaults),'active');for(const p of probeOn)assert.notEqual(await scope(p),'active');
+});
+test('source probe jobs never consume or reset attempts, and a mixed real source job in a probe run still counts',async()=>{
+ const name='Fee source probe',r={...budgetRun(),event:'workflow_dispatch',display_title:name,actor:{id:283054367},run_attempt:1},j=budgetJob(r,31,name);
+ const read=(jobs,run=r)=>readPeriodSourceAttempts({plan:budgetPlan,now:budgetNow,fetchImpl:budgetWire([run],jobs)});
+ const skipped=(id,n)=>({...budgetJob(r,id,n),conclusion:'skipped',started_at:null});
+ for(const conclusion of ['success','failure','timed_out','cancelled'])assert.deepEqual(await read([{...j,conclusion},skipped(12,'period'),skipped(13,'Produce  ')]),{attempts:0,inProgress:false});
+ assert.deepEqual(await read([{...j,status:'in_progress',conclusion:null}]),{attempts:0,inProgress:false});
+ assert.deepEqual(await read([j,budgetJob(r)]),{attempts:1,inProgress:false},'a real Produce job inside a probe-titled run still counts');
+ assert.deepEqual(await read([j,{...budgetJob(r),status:'in_progress',conclusion:null}]),{attempts:1,inProgress:true});
+ for(const change of [x=>x.event='schedule',x=>x.display_title='IB diagnostic 2026-11-06',x=>x.display_title='Fee source probe ',x=>x.actor.id=1,x=>x.actor=null,x=>x.run_attempt=2])
+  {const bad=structuredClone(r);change(bad);await assert.rejects(read([j],bad),/SOURCE_ATTEMPT_METADATA/);}
+ for(const n of ['fee source probe','Fee source probe ','Fee source probe 2026-11-09'])await assert.rejects(read([{...j,name:n}],{...r,display_title:n}),/SOURCE_ATTEMPT_METADATA/);
+ // An ordinary run carries the probe job only as skipped; that never matters.
+ const ordinary=budgetRun();assert.deepEqual(await readPeriodSourceAttempts({plan:budgetPlan,now:budgetNow,fetchImpl:budgetWire([ordinary],[{...budgetJob(ordinary,31,name),conclusion:'skipped',started_at:null},budgetJob(ordinary)])}),{attempts:1,inProgress:false});
+});
+test('a probe-only run on the recovery head is not a recovery reservation, but a skipped period without its probe job still is',async()=>{
+ const reservations=async(title,jobs)=>{const f=recoveryFixture(),r={...f.run(90000000020,recoveryHead,'2026-10-29T13:30:00Z'),display_title:title};f.runs.push(r);f.jobs[r.id]=jobs(r,f.job);
+  return (await readPeriodSourceAttempts({plan:f.plan,now:recoveryNow,currentRunId:recoveryId,recoveryMain:recoveryHead,fetchImpl:recoveryWire(f)})).recoveryEvidence.reservations;};
+ const probe=(r,job)=>[{...job(r,90000000021,'period','completed','skipped'),started_at:null},{...job(r,90000000022,'Produce  ','completed','skipped'),started_at:null},job(r,90000000023,'Fee source probe','completed','success')];
+ assert.ok(!(await reservations('Fee source probe',probe)).includes(90000000020));
+ assert.ok((await reservations('Fee console cloud producer',(r,job)=>probe(r,job).slice(0,2))).includes(90000000020),'skipped period of an ordinary dispatch still reserves');
+ assert.ok((await reservations('Fee source probe',(r,job)=>probe(r,job).slice(0,2))).includes(90000000020),'title alone never removes a reservation');
+ assert.ok((await reservations('Fee source probe',(r,job)=>[job(r,90000000021,'period','completed','success'),...probe(r,job).slice(1)])).includes(90000000020),'an entered period still reserves');
+});
+test('probe reservation exemption needs a trusted identity and an actually run probe job; skipped or forged ones still reserve, real Produce still counts',async()=>{
+ const read=async(change,jobs)=>{const f=recoveryFixture(),r={...f.run(90000000020,recoveryHead,'2026-10-29T13:30:00Z'),display_title:'Fee source probe'};change(r);f.runs.push(r);f.jobs[r.id]=jobs(r,f.job);
+  return readPeriodSourceAttempts({plan:f.plan,now:recoveryNow,currentRunId:recoveryId,recoveryMain:recoveryHead,fetchImpl:recoveryWire(f)});};
+ const skip=(job,r,id,name)=>({...job(r,id,name,'completed','skipped'),started_at:null});
+ const base=(r,job)=>[skip(job,r,90000000021,'period'),skip(job,r,90000000022,'Produce  ')];
+ const ran=(r,job)=>[...base(r,job),job(r,90000000023,'Fee source probe','completed','success')];
+ const baseline=await read(()=>{},ran);assert.ok(!baseline.recoveryEvidence.reservations.includes(90000000020));
+ // Present but skipped probe job: the run is not a probe run; its skipped period reserves.
+ assert.ok((await read(()=>{},(r,job)=>[...base(r,job),skip(job,r,90000000023,'Fee source probe')])).recoveryEvidence.reservations.includes(90000000020));
+ // Wrong identity with only skipped jobs: never exempt (and never an error, since nothing ran).
+ for(const change of [r=>r.actor={id:1},r=>r.run_attempt=2,r=>{r.display_title='IB diagnostic 2026-11-06';}])
+  assert.ok((await read(change,(r,job)=>[...base(r,job),skip(job,r,90000000023,'Fee source probe')])).recoveryEvidence.reservations.includes(90000000020));
+ // Wrong identity with a probe job that ran: the strict job check still refuses the whole history.
+ for(const change of [r=>r.actor={id:1},r=>r.run_attempt=2])await assert.rejects(read(change,ran),/SOURCE_ATTEMPT_METADATA/);
+ // Two probe jobs: not exempt.
+ assert.ok((await read(()=>{},(r,job)=>[...ran(r,job),{...job(r,90000000024,'Fee source probe','completed','skipped'),started_at:null}])).recoveryEvidence.reservations.includes(90000000020));
+ // A real Produce job inside a trusted probe run is still counted as a source attempt.
+ const mixed=await read(()=>{},(r,job)=>[...ran(r,job),job(r,90000000025,'Produce daily 2026-10-28')]);
+ assert.equal(mixed.attempts,baseline.attempts+1);
+ assert.ok(!mixed.recoveryEvidence.reservations.includes(90000000020),'the reservation is about the skipped period only; the Produce attempt is counted separately');
 });

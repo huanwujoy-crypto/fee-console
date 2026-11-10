@@ -171,7 +171,8 @@ def nonfinancial_run(github, run):
         return False
     if any(row.get('conclusion') != 'skipped' for row in producers):
         return False
-    return any((row['name'] == 'ratio' or row['name'].startswith('Public source plan check '))
+    return any((row['name'] == 'ratio' or row['name'].startswith('Public source plan check ')
+                or row['name'] == 'Fee source probe')
                and row.get('conclusion') in ('success', 'failure', 'cancelled', 'timed_out') for row in rows)
 
 

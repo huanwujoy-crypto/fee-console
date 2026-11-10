@@ -25,7 +25,7 @@ export function ratioAdmission(env,event){
   if(env.GITHUB_ACTIONS!=='true'||env.GITHUB_EVENT_NAME!=='workflow_dispatch'||env.GITHUB_RUN_ATTEMPT!=='1'||env.GITHUB_REF!=='refs/heads/main'||env.GITHUB_REPOSITORY!==REPO||env.GITHUB_ACTOR_ID!==String(RATIO_OWNER)||!/^[a-f0-9]{40}$/.test(env.GITHUB_SHA||'')||event?.sender?.id!==RATIO_OWNER||event?.repository?.full_name!==REPO)fail();
   const i=event.inputs;
   if(!i||i.ratio_main!==env.GITHUB_SHA||typeof i.ratio_plan!=='string'||i.ratio_plan.length>8192||env.RATIO_PLAN!==i.ratio_plan)fail();
-  const defaults={ib_envelope_once:'false',ib_envelope_main:'',ib_diagnostic_once:'false',ib_diagnostic_main:'',source_plan_check_only:'false',source_acceptance_once:'false',run_reviewed_once:'false',source_from:'',source_target:'',source_main:'',manual_sync_completed_for:'',confirmed_main:'',recovery_main:'',report_kind:'',report_target:'',report_markets:''};
+  const defaults={ib_envelope_once:'false',ib_envelope_main:'',ib_diagnostic_once:'false',ib_diagnostic_main:'',source_plan_check_only:'false',source_acceptance_once:'false',run_reviewed_once:'false',source_from:'',source_target:'',source_main:'',manual_sync_completed_for:'',confirmed_main:'',recovery_main:'',report_kind:'',report_target:'',report_markets:'',source_probe_once:'false',source_probe_main:'',source_probe_target:''};
   if(Object.keys(i).some(k=>!Object.hasOwn(defaults,k)&&!['ratio_main','ratio_plan'].includes(k))||Object.entries(defaults).some(([k,v])=>Object.hasOwn(i,k)&&i[k]!==v))fail();
   const plan=parse(Buffer.from(i.ratio_plan));validateRatioCloudPlan(plan);return plan;
 }
@@ -97,7 +97,7 @@ export function createRatioTransport({fetchImpl=fetch,gistId,managerToken,access
 }
 
 const statuses=['REFUSED','VERIFIED_CURRENT_NO_WRITE','UNCHANGED_SOURCE_NO_WRITE','WAITING_FEE_READBACK_NO_WRITE','PUBLISHED_CONFIRMED','WRITE_UNCONFIRMED'];
-const stages=['ADMISSION','MAIN','MAIN_TOKEN','MAIN_FETCH','MAIN_HTTP','MAIN_RESPONSE','MAIN_HEAD','CREDENTIALS','PLAN','CURRENT','INPUT','SOURCE','FEE_READBACK','CLAIM','PREWRITE','FEE_RECHECK','WRITE_INTENT','READBACK','COMPLETE',
+const stages=['ADMISSION','MAIN','MAIN_TOKEN','MAIN_FETCH','MAIN_HTTP','MAIN_RESPONSE','MAIN_HEAD','CREDENTIALS','PLAN','CURRENT','INPUT','SOURCE','SOURCE_ROUND','FEE_READBACK','CLAIM','PREWRITE','FEE_RECHECK','WRITE_INTENT','READBACK','COMPLETE',
   ...['FEE_READBACK','FEE_RECHECK'].flatMap(stage=>FEE_PUBLICATION_CODES.map(code=>stage+':'+code))];
 export function safeRatioReceipt(v){
   const keys=['schema','status','stage','claim','patchAttempts','bodySha256','contentSha256','cleanup'];

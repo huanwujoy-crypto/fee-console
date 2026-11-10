@@ -28,7 +28,15 @@ function pinnedObject(spec,prefix,file){
 }
 // `fee` is the coordinator's handoff of the already published fee report this
 // ratio follows (fee main, accounting cutoff, data/health byte hashes). It is
-// an identity to verify, never a date the ratio source must match.
+// an identity to verify, never a date the ratio source must match: every
+// official source keeps its own real date. The round binding is the capture
+// itself: the pinned original's frozen earliest capture must not precede the
+// handed-over, hash-verified fee health's checkedAt (a lower bound of that fee
+// production). This keeps "fee first, then ratio" for the handed fee. It does
+// not prove the handed fee is this round's: an older fee that is still live may
+// be handed over explicitly, so the coordinator must check that the handoff is
+// the round's approved fee target before dispatch. A capture mtime is also not
+// proof of a new official export.
 export function validateRatioCloudPlan(plan){
   if(!exact(plan,['mode','previousBodySha256','bundleId','original','input','library','fee'])||!['verify-current','publish'].includes(plan.mode)||!hex(plan.previousBodySha256))refuse();
   if(plan.mode==='verify-current'){
@@ -65,6 +73,7 @@ export function createRatioCloudPublisher({exposureCore=createRankedExposureCore
     const facts=source.verifyBrowserSourceAssociations(raw,input,{scopeHash:exposureCore.ALL_TOGETHER_SCOPE_SHA256,now});
     const model=await buildRatioModel(input,{kind:'snapshot',targetDate:input.exposure.summary.asOf,feeAccountingThrough:null,now,viewCore:ratio,previewOnly:true});
     const {companyExposure,sourceDates,classificationSummary,performance,...association}=facts;
+    const capturedAt=Date.parse(association.observedAt);if(!Number.isFinite(capturedAt))refuse();
     model.book.browserEvidence={...model.book.browserEvidence,integrity:'verified-original-library-association',associationId:await ratio.digest([plan.original.sha256,plan.input.sha256,plan.library,manager.recipient.scopeId]),managerScopeId:manager.recipient.scopeId,sourceVersion:plan.library.version,migrationPending:association.migrationPending,classificationDeltaCents:association.classificationDeltaCents,exposureDeltaCents:association.exposureDeltaCents};
     model.companyExposure=companyExposure;model.sourceDates=sourceDates;model.classificationSummary=classificationSummary;if(performance)model.performance=performance;
     const proof=await snapshot.verifyOriginal({originalBytes,inputBytes,model,recipient:manager.recipient,sourceSha256:plan.original.sha256,inputSha256:plan.input.sha256,libraryVersion:plan.library.version,now});
@@ -72,7 +81,7 @@ export function createRatioCloudPublisher({exposureCore=createRankedExposureCore
     const candidate=await snapshot.candidate({model,recipient:manager.recipient,proof,previous,now});
     const signed=await snapshot.authenticate(candidate,proof,manager,{previous,profileSha256:await profile(),now});
     await snapshot.verify(signed,manager,{now});
-    return {sameSource:false,signed};
+    return {sameSource:false,signed,capturedAt};
   }
 
   // Caller holds the approved fixed-destination capability. In this local
@@ -120,6 +129,10 @@ export function createRatioCloudPublisher({exposureCore=createRankedExposureCore
       receipt.stage='FEE_READBACK';
       if(typeof io.verifyFeePublication!=='function')refuse();
       const firstFee=feeProof(await readFee({handoff:structuredClone(plan.fee)}));
+      // Same-round capture, decided before any claim can be consumed.
+      receipt.stage='SOURCE_ROUND';
+      const roundStart=Date.parse(firstFee.healthCheckedAt);
+      if(!Number.isFinite(roundStart)||prepared.capturedAt<roundStart)refuse();
       const raw=Buffer.from(JSON.stringify(prepared.signed));
       receipt.bodySha256=await ratio.digest(prepared.signed.body);receipt.contentSha256=sha(raw);
       // The claim key binds the input pair and previous accepted body, not a

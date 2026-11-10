@@ -12,6 +12,9 @@ const amount=n=>{signed(n);if(n<0)fail();return n;};
 const cents=n=>Math.round(amount(n)*100),near=(a,b)=>Math.abs(a-b)<=1e-7;
 const time=s=>{if(typeof s!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/.test(s)||!Number.isFinite(Date.parse(s)))fail();return Date.parse(s);};
 const date=s=>typeof s==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(s)&&new Date(s+'T00:00:00Z').toISOString().slice(0,10)===s;
+// Official exports are dated by the Hong Kong calendar (as in the official
+// source capture check), so a source's age is counted in Hong Kong days.
+const hkAge=(clock,asOf)=>Math.floor((Date.parse(new Date(clock+8*3600000).toISOString().slice(0,10))-Date.parse(asOf))/86400000);
 const total=rows=>rows.reduce((s,r)=>s+signed(r.valueUSD),0);
 const normalize=s=>String(s).replaceAll('&amp;','&');
 const esc=s=>String(s).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
@@ -25,7 +28,7 @@ function verifyBrowserSourceAssociations(raw,input,{scopeHash,now=new Date()}={}
     // Native returns retain the owner's accepted small benchmark positions.
     // Membership-derived disclosure does not change allocation exclusions.
     core.build(performance,{expectedAccounts:raw.accounts,expectedAsOf:performance?.asOf,topTargets:core.topTargets(input.exposure,createFeeCompanyExposureCore().validate(facts.companyExposure,input.exposure,input.book.sourceSha256).top)});
-    const captured=time(raw.performanceCapturedAt),clock=now.getTime(),age=Math.floor((Date.parse(now.toISOString().slice(0,10))-Date.parse(performance.asOf))/86400000);
+    const captured=time(raw.performanceCapturedAt),clock=now.getTime(),age=hkAge(clock,performance.asOf);
     if(performance.asOf>facts.asOf||age<0||age>4||clock<captured||clock-captured>36*3600000||createOfficialRatioSourceCore().canonical(input.performance)!==createOfficialRatioSourceCore().canonical(performance))fail();
     return {...facts,observedAt:new Date(Math.min(Date.parse(facts.observedAt),captured)).toISOString(),sourceDates:{...facts.sourceDates,performance:performance.asOf},performance:structuredClone(performance)};
   }
@@ -36,7 +39,7 @@ function verifyBrowserSourceAssociations(raw,input,{scopeHash,now=new Date()}={}
     if(core.canonical(input)!==core.canonical(built.input)||hashScope(raw.accounts)!==scopeHash)fail();
     const clock=now.getTime(),captured=time(built.capturedAt);
     if(!Number.isFinite(clock)||clock<captured||clock-captured>36*3600000
-      ||[raw.classification,raw.exposure].some(s=>time(s.capturedAt)>clock||Math.floor((Date.parse(now.toISOString().slice(0,10))-Date.parse(s.asOf))/86400000)<0||Math.floor((Date.parse(now.toISOString().slice(0,10))-Date.parse(s.asOf))/86400000)>4))fail();
+      ||[raw.classification,raw.exposure].some(s=>time(s.capturedAt)>clock||hkAge(clock,s.asOf)<0||hkAge(clock,s.asOf)>4))fail();
     return {observedAt:built.capturedAt,asOf:built.targetDate,sourceDates:built.sourceDates,classificationSummary:built.classificationSummary,migrationPending:false,classificationDeltaCents:0,exposureDeltaCents:0,companyExposure:createFeeCompanyExposureCore().build(raw,input,built.companyContext)};
   }
   if(!exact(input,['schema','exposure','book'])||input.schema!=='fee-console.ratio-sources.v1'||input.book?.schema!=='fee-console.ratio-sharesight-browser-book.v1')fail();

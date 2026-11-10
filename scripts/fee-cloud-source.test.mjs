@@ -2585,3 +2585,247 @@ test('target30 real writer keeps successful receipts and separates missing-recei
     else {assert.equal(result.status,0,result.stderr);assert.match(result.stdout,/^ok 2026-10-30 /);}
   });
 });
+
+// Hong Kong D sync with new records entered at D-1 (owner rule, 2026-11-10):
+// the existing reviewed closed-day path reads D-1 after New York closes it,
+// keeps each record's own API date and uses the real D-1 New York close.
+test('HK D sync of D-1 records runs the real reviewed produce, writer, health and metadata path',async t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'fee-d1-sync-'));fs.chmodSync(dir,0o700);t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+ const root=path.join(dir,'checkout');fs.mkdirSync(root,{mode:0o700});fs.cpSync(new URL('.',import.meta.url),path.join(root,'scripts'),{recursive:true});
+ fs.mkdirSync(path.join(root,'claude'));fs.copyFileSync(new URL('../claude/fee-style-mapping.json',import.meta.url),path.join(root,'claude/fee-style-mapping.json'));
+ const key=randomBytes(32),encrypt=(o,v)=>{const iv=randomBytes(12),c=createCipheriv('aes-256-gcm',key,iv);return JSON.stringify({enc:true,v,data:Buffer.concat([iv,c.update(JSON.stringify(o)),c.final(),c.getAuthTag()]).toString('base64')});};
+ const decrypt=text=>{const o=JSON.parse(text),b=Buffer.from(o.data,'base64'),d=createDecipheriv('aes-256-gcm',key,b.subarray(0,12));d.setAuthTag(b.subarray(b.length-16));return JSON.parse(Buffer.concat([d.update(b.subarray(12,b.length-16)),d.final()]).toString());};
+ const original=encrypt({daily:[{d:'2026-11-06',schwab:100,webull:100,cash:200,stock:0,other:0,spy:100,qqq:200,bd:'2026-11-06',bstate:'session',acctCash:{schwab:100,webull:100}}],flowsAuto:[],flowsUnresolved:[],status:{asOf:'2026-11-06',provisional:false,calibrated:false,unresolvedCount:0,notes:[],splitDelta:0}},3);
+ const econ=path.join(dir,'econ.json');fs.writeFileSync(econ,encrypt({v:4,settings:{start:'2026-11-06',mgmt:2,carry:20},accounts:[{id:'schwab',opening:100},{id:'webull',opening:100}],months:[],fees:[]},4),{mode:0o600});
+ // The cache has the real D-1 close (with a synthetic SPY dividend); no D row exists yet.
+ const benchmark=path.join(dir,'benchmark.json');fs.writeFileSync(benchmark,JSON.stringify({v:1,benchmarks:{spy:{symbol:'SPY',currency:'USD',exchange:'NYSEArca',series:[{d:'2026-11-06',p:100},{d:'2026-11-09',p:101,div:0.5}]},qqq:{symbol:'QQQ',currency:'USD',exchange:'NasdaqGS',series:[{d:'2026-11-06',p:200},{d:'2026-11-09',p:202}]}}}),{mode:0o600});
+ const dates=['2026-11-07','2026-11-08','2026-11-09'],raws=Object.fromEntries(dates.map(d=>[d,writerDiagnosticCashOnly(d)]));
+ const snapshots=path.join(dir,'snapshots.json'),script=path.join(root,'exercise.mjs'),clock=path.join(dir,'clock.mjs');
+ fs.writeFileSync(clock,"const D=Date,n=D.parse(process.env.SYNTHETIC_NOW);globalThis.Date=class extends D{constructor(...a){super(...(a.length?a:[n]));}static now(){return n;}};globalThis.fetch=()=>{throw Error('NETWORK_FORBIDDEN');};");
+ fs.writeFileSync(script,`
+  import fs from 'node:fs';import path from 'node:path';
+  import {produceReportPeriod,reportFailureCode} from './scripts/fee-report-producer.mjs';import {dailyReportPlan} from './scripts/fee-report-period.mjs';import {parseSourceJson} from './scripts/fee-cloud-source.mjs';
+  const snaps=JSON.parse(fs.readFileSync(process.env.SYNTHETIC_SNAPSHOTS)),out=fs.mkdtempSync(path.join(path.dirname(process.env.SYNTHETIC_SNAPSHOTS),'out-'));let reads=[];
+  const parse=raw=>{for(const p of Object.values(raw)){for(const k of ['performance','cashAccounts','previousPerformance'])if(p[k])p[k]=parseSourceJson(JSON.stringify(p[k]));for(const k of ['cashTransactions','cashLedgerHistory'])if(p[k])p[k]=Object.fromEntries(Object.entries(p[k]).map(([id,v])=>[id,parseSourceJson(JSON.stringify(v))]));}return raw;};
+  const readOnce=async d=>{reads.push(d);const n=reads.filter(x=>x===d).length,v=snaps[d+'#'+n]||snaps[d];if(!v)throw Error('SYNTHETIC_SOURCE_MISSING');return parse(structuredClone(v));};
+  try{const plan=dailyReportPlan('2026-11-09',['NYSE','NASDAQ'],{periodFrom:'2026-11-07',reviewedSyncDate:'2026-11-09'});
+   const r=await produceReportPeriod({plan,reviewedSyncDate:'2026-11-09',outputDir:out,benchmarkFile:process.env.SYNTHETIC_BENCHMARK,readOnce,fetchEconomic:async()=>({envelopeVersion:4,sourcePath:process.env.FEE_ECON_FILE,async checkCurrent(){},cleanup(){}})});
+   console.log(JSON.stringify({ok:true,outcome:r.outcome,targetDate:r.targetDate,priceThrough:r.priceThrough,sourceDates:r.sourceDates,reads,out}));
+  }catch(error){console.log(JSON.stringify({ok:false,code:reportFailureCode(error),reads,files:fs.readdirSync(out)}));}
+ `);
+ const run=(variant,now='2026-11-09T23:30:00.000Z')=>{
+  fs.writeFileSync(path.join(root,'data.json'),original,{mode:0o600});fs.writeFileSync(snapshots,JSON.stringify(variant),{mode:0o600});
+  const child=spawnSync(process.execPath,[script],{cwd:root,encoding:'utf8',timeout:60000,env:{...process.env,NODE_OPTIONS:[process.env.NODE_OPTIONS||'','--import='+clock].join(' ').trim(),SYNTHETIC_NOW:now,GITHUB_RUN_ID:'123',GITHUB_SHA:'a'.repeat(40),GITHUB_RUN_ATTEMPT:'1',FEE_DATA_KEY:key.toString('base64url'),FEE_ECON_FILE:econ,IB_MANAGER_READ_ENABLED:'',FEE_STYLE_INPUT_FILE:'',FEE_MANAGEMENT_INPUT_FILE:'',SYNTHETIC_SNAPSHOTS:snapshots,SYNTHETIC_BENCHMARK:benchmark}});
+  assert.equal(fs.readFileSync(path.join(root,'data.json'),'utf8'),original,'the published base is never rewritten');
+  const line=child.stdout.trim().split('\n').at(-1);assert.ok(line,child.stderr);return JSON.parse(line);
+ };
+ await t.test('HK D 07:30 publishes D-1 with its real New York close and dividend',()=>{
+  const r=run(raws);assert.equal(r.ok,true,JSON.stringify(r));
+  assert.deepEqual([r.targetDate,r.priceThrough],['2026-11-09','2026-11-09']);assert.deepEqual(r.sourceDates,{schwab:'2026-11-09',webull:'2026-11-09',benchmark:'2026-11-09'});
+  assert.deepEqual([...new Set(r.reads)],dates);assert.equal(r.reads.length,6,'each date is read twice for stability');
+  const payload=decrypt(fs.readFileSync(path.join(r.out,'data.json'),'utf8')),health=JSON.parse(fs.readFileSync(path.join(r.out,'fee-data-health.json'),'utf8'));
+  assert.deepEqual(payload.daily.map(p=>[p.d,p.bd,p.bstate]),[['2026-11-06','2026-11-06','session'],['2026-11-07','2026-11-06','closed'],['2026-11-08','2026-11-06','closed'],['2026-11-09','2026-11-09','session']]);
+  assert.equal(payload.daily.at(-1).spyd,0.5);assert.equal(payload.daily.find(p=>p.d==='2026-11-08').spyd,undefined);
+  assert.equal(payload.feeCalculationReceipt.asOf,'2026-11-09');assert.equal(payload.feeReportPublication.plan.priceThrough,'2026-11-09');
+  assert.deepEqual(validateHealth(health,{now:new Date('2026-11-09T23:31:00Z')}),[]);assert.equal(health.checkedAt,'2026-11-09T23:30:00.000Z');
+ });
+ await t.test('a D-1 cash record keeps its D-1 date and an unresolved one fails closed',()=>{
+  const v=structuredClone(raws),cash=v['2026-11-09'].webull.cashAccounts.cash_accounts[0];
+  v['2026-11-09'].webull.cashTransactions[cash.id]={cash_account_transactions:[{id:880001,cash_account_id:cash.id,date_time:'2026-11-09T15:00:00Z',amount:1,description:'SYNTHETIC',foreign_identifier:'',cash_account_transaction_type:{name:'DEPOSIT'}}]};
+  const r=run(v);assert.equal(r.ok,false);assert.equal(r.code,'FEE_CLOUD_WRITER_REPORT_RECEIPT_UNRESOLVED_FLOW');assert.deepEqual(r.files,[]);
+ });
+ await t.test('a D-dated record inside the D-1 read is refused, never moved to D-1',()=>{
+  const v=structuredClone(raws),cash=v['2026-11-09'].webull.cashAccounts.cash_accounts[0];
+  v['2026-11-09'].webull.cashTransactions[cash.id]={cash_account_transactions:[{id:880002,cash_account_id:cash.id,date_time:'2026-11-10T01:00:00Z',amount:1,description:'SYNTHETIC',foreign_identifier:'',cash_account_transaction_type:{name:'DEPOSIT'}}]};
+  const r=run(v);assert.equal(r.ok,false);assert.equal(r.code,'FEE_CLOUD_CASH_TRANSACTION_IDENTITY');assert.deepEqual(r.files,[]);
+ });
+ await t.test('a source that changes between the two reads, or is missing, publishes nothing',()=>{
+  const changed={...structuredClone(raws),'2026-11-09#2':(()=>{const x=structuredClone(raws['2026-11-09']);x.schwab.cashAccounts.cash_accounts[0].balance=101;x.schwab.cashAccounts.cash_accounts[0].balance_in_portfolio_currency=101;return x;})()};
+  const unstable=run(changed);assert.equal(unstable.ok,false);assert.match(unstable.code,/^FEE_(?:REPORT|CLOUD)_[A-Z_]+$/);assert.deepEqual(unstable.files,[]);
+  const missing={...raws};delete missing['2026-11-08'];const gone=run(missing);assert.equal(gone.ok,false);assert.deepEqual(gone.files,[]);
+ });
+ await t.test('before New York closes D-1 (HK 05:00) nothing is read',()=>{
+  const r=run(raws,'2026-11-09T21:00:00.000Z');assert.equal(r.ok,false);assert.equal(r.code,'FEE_REPORT_NOT_READY');assert.deepEqual(r.reads,[]);
+ });
+});
+
+/* ---------- Value-free source transport diagnostics (real reader -> FixedHttp -> boundedJson) ---------- */
+
+const TRANSPORT_CANARY='SECRET_CANARY_TRANSPORT token=not-real https://private.invalid/?q=1';
+const transportResponse=(url,{status=200,type='application/json',body='{}',bodyError=null,hang=false}={})=>({url,status,redirected:false,
+  headers:{get:k=>String(k).toLowerCase()==='content-type'?type:null},
+  body:{getReader(){let sent=false;return {read:async()=>{if(hang)return new Promise(()=>{});
+    if(bodyError&&!sent){sent=true;return {done:false,value:new TextEncoder().encode('{"partial":')};}
+    if(bodyError)throw bodyError;if(sent)return {done:true};sent=true;return {done:false,value:new TextEncoder().encode(body)};},cancel(){},releaseLock(){}};}}});
+const causeError=code=>{const e=new TypeError('fetch failed '+TRANSPORT_CANARY);e.cause=Object.assign(new Error('cause '+TRANSPORT_CANARY),{code});return e;};
+const SOURCE_API='https://api.sharesight.com';
+const transportRoutes=()=>{const a=CLOUD_ACCOUNTS.schwab.portfolioId;return {
+  PORTFOLIOS:SOURCE_API+'/api/v2/portfolios.json',
+  PERFORMANCE:`${SOURCE_API}/api/v3/portfolios/${a}/performance?start_date=2026-11-09&end_date=2026-11-09`,
+  HOLDINGS:`${SOURCE_API}/api/v3/portfolios/${a}/holdings?consolidated=false`,
+  TRADES:`${SOURCE_API}/api/v3/portfolios/${a}/trades.json?start_date=2026-11-09&end_date=2026-11-09`,
+  CASH_ACCOUNTS:`${SOURCE_API}/api/v2/portfolios/${a}/cash_accounts.json?date=2026-11-09`,
+  CASH_TRANSACTIONS:`${SOURCE_API}/api/v2/cash_accounts/987654/cash_account_transactions.json?from=2026-11-09&to=2026-11-09`,
+  PAYOUT:`${SOURCE_API}/api/v2/payouts/55501.json`,
+  PEER_PERFORMANCE:`${SOURCE_API}/api/v3/portfolios/777001/performance?start_date=2026-11-09&end_date=2026-11-09`,
+  PEER_HOLDINGS:`${SOURCE_API}/api/v3/portfolios/777001/holdings?consolidated=false`,
+  PEER_TRADES:`${SOURCE_API}/api/v3/portfolios/777001/trades.json?start_date=2026-11-09&end_date=2026-11-09`,
+  PEER_CASH_ACCOUNTS:`${SOURCE_API}/api/v2/portfolios/777001/cash_accounts.json?date=2026-11-09`};};
+const transportReader=(fetchImpl,extra={})=>{const r=new SharesightCloudReader({clientId:'synthetic-client',clientSecret:'synthetic-secret-'+TRANSPORT_CANARY,fetchImpl,timeoutMs:1000,...extra});r.http.registerIbPeer({name:'IB-HK',currency_code:'USD',id:777001});return r;};
+const assertNoTransportLeak=value=>{const text=JSON.stringify(value);for(const s of ['SECRET_CANARY','private.invalid','token=','987654','55501','777001',String(CLOUD_ACCOUNTS.schwab.portfolioId),String(CLOUD_ACCOUNTS.webull.portfolioId),'2026-11-09','http'])assert.equal(text.includes(s),false,s);};
+
+test('source transport diagnostics carry only fixed route, phase and cause categories from the real failing request',async()=>{
+  const {feeSourceTransportDiagnostic}=await import('./fee-cloud-source.mjs');
+  const bearer='synthetic-bearer-token-value-123456';
+  const failWith=async(url,fetchImpl,extra)=>{
+    const error=await transportReader(fetchImpl,extra).get(url,bearer).then(()=>assert.fail('expected failure'),e=>e);
+    return {message:error.message,diagnostic:feeSourceTransportDiagnostic(error)};
+  };
+  // Every route category, via the same allowlisted fixed GET path.
+  for(const [route,url] of Object.entries(transportRoutes())){
+    const r=await failWith(url,async()=>{throw causeError('ECONNRESET');});
+    assert.equal(r.message,'FEE_CLOUD_SOURCE_UNAVAILABLE',route);
+    assert.deepEqual(r.diagnostic,{route,phase:'FETCH',category:'ECONNRESET'});assert.ok(Object.isFrozen(r.diagnostic));assertNoTransportLeak(r.diagnostic);
+  }
+  const trades=transportRoutes().TRADES;
+  for(const [label,fetchImpl,expected] of [
+    ['unknown cause code',async()=>{throw causeError('E_SYNTHETIC_UNKNOWN');},{phase:'FETCH',category:'FETCH_REJECTED_OTHER'}],
+    ['throwing cause getter',async()=>{throw Object.defineProperty(new TypeError('x'),'cause',{get(){throw Error(TRANSPORT_CANARY);}});},{phase:'FETCH',category:'FETCH_REJECTED_OTHER'}],
+    ['redirect-like message is not a redirect claim',async()=>{throw new TypeError('fetch failed: unexpected redirect '+TRANSPORT_CANARY);},{phase:'FETCH',category:'FETCH_REJECTED_OTHER'}],
+    ['fast underlying connect timeout stays distinct from the local deadline',async()=>{throw causeError('UND_ERR_CONNECT_TIMEOUT');},{phase:'FETCH',category:'UND_ERR_CONNECT_TIMEOUT'}],
+    ['response body interrupted',async url=>transportResponse(url,{bodyError:causeError('UND_ERR_SOCKET')}),{phase:'BODY',category:'UND_ERR_SOCKET'}],
+    ['response body interrupted, unknown cause',async url=>transportResponse(url,{bodyError:new TypeError('terminated '+TRANSPORT_CANARY)}),{phase:'BODY',category:'RESPONSE_OTHER'}],
+    ['local deadline while connecting',async()=>new Promise(()=>{}),{phase:'FETCH',category:'DEADLINE'}],
+    ['local deadline while reading the body',async url=>transportResponse(url,{hang:true}),{phase:'BODY',category:'DEADLINE'}],
+  ]){
+    const r=await failWith(trades,fetchImpl);
+    assert.equal(r.message,'FEE_CLOUD_SOURCE_UNAVAILABLE',label);assert.deepEqual(r.diagnostic,{route:'TRADES',...expected},label);assertNoTransportLeak(r.diagnostic);
+  }
+  // Token failures keep their own code and carry the TOKEN route.
+  const token=await transportReader(async()=>{throw causeError('ENOTFOUND');}).token().then(()=>assert.fail(),e=>e);
+  assert.equal(token.message,'FEE_CLOUD_AUTH_UNAVAILABLE');assert.deepEqual(feeSourceTransportDiagnostic(token),{route:'TOKEN',phase:'FETCH',category:'ENOTFOUND'});
+  // HTTP, type and JSON failures keep their original codes and get no diagnostic.
+  for(const [fetchImpl,code] of [[async url=>transportResponse(url,{status:503,body:TRANSPORT_CANARY}),'FEE_CLOUD_HTTP_REJECTED'],
+    [async url=>transportResponse(url,{body:'{"bad":'}),'FEE_CLOUD_RESPONSE_JSON'],[async url=>transportResponse(url,{type:'text/html'}),'FEE_CLOUD_RESPONSE_TYPE']]){
+    const r=await failWith(trades,fetchImpl);assert.equal(r.message,code);assert.equal(r.diagnostic,null);
+  }
+  const rejectedToken=await transportReader(async url=>transportResponse(url,{status:401})).token().then(()=>assert.fail(),e=>e);
+  assert.equal(rejectedToken.message,'FEE_CLOUD_AUTH_REJECTED');assert.equal(feeSourceTransportDiagnostic(rejectedToken),null);
+  // A local processing exception keeps its existing code; the diagnostic says it was not transport.
+  const local=await failWith(transportRoutes().HOLDINGS,async url=>transportResponse(url,{body:'{"holdings":[]}'}),{onSourceResponse:async()=>{throw Error(TRANSPORT_CANARY);}});
+  assert.equal(local.message,'FEE_CLOUD_SOURCE_UNAVAILABLE');assert.deepEqual(local.diagnostic,{route:'HOLDINGS',phase:'LOCAL',category:'NON_TRANSPORT'});
+  // An external abort is recorded by the shared helper (the source reader never passes one).
+  const {boundedJson,boundedJsonTransportDiagnostic}=await import('./fee-http-json.mjs');
+  const controller=new AbortController();controller.abort();
+  const aborted=await boundedJson(async()=>assert.fail('aborted before fetch'),trades,{signal:controller.signal}).then(()=>assert.fail(),e=>e);
+  assert.equal(aborted.code,'ABORTED');assert.deepEqual(boundedJsonTransportDiagnostic(aborted),{phase:'FETCH',category:'EXTERNAL_ABORT'});
+  assert.equal(boundedJsonTransportDiagnostic(new BoundedJsonError('NETWORK')),null,'only errors the helper itself created carry facts');
+});
+
+test('the propagated concurrent rejection owns the diagnostic; later sibling outcomes never change it',async()=>{
+  const {feeSourceTransportDiagnostic}=await import('./fee-cloud-source.mjs');
+  let release;const later=new Promise(r=>{release=r;});const events=[];
+  const fetchImpl=async(url,init)=>{
+    if(url.endsWith('/oauth2/token'))return transportResponse(url,{body:JSON.stringify({access_token:'synthetic-access-token-0123456789',token_type:'bearer'})});
+    if(url.endsWith('/portfolios.json'))return transportResponse(url,{body:JSON.stringify({portfolios:Object.values(CLOUD_ACCOUNTS).map(a=>({id:a.portfolioId,name:a.name,currency_code:'USD'}))})});
+    const p=new URL(url).pathname;
+    if(p.endsWith('/holdings')){events.push('holdings-rejected');throw causeError('ECONNRESET');}
+    if(p.endsWith('/performance')){await later;events.push('performance-rejected');throw causeError('ENOTFOUND');}
+    await later;events.push('sibling-resolved');return transportResponse(url,{body:'{}'});
+  };
+  const error=await new SharesightCloudReader({clientId:'synthetic-client',clientSecret:'synthetic-secret',fetchImpl,sourceMode:'sharesight-reference',managementExemptionRegistry:undefined}).readOnce('2026-11-09').then(()=>assert.fail(),e=>e);
+  const first=feeSourceTransportDiagnostic(error);
+  assert.equal(error.message,'FEE_CLOUD_SOURCE_UNAVAILABLE');assert.deepEqual(first,{route:'HOLDINGS',phase:'FETCH',category:'ECONNRESET'});
+  release();await new Promise(r=>setTimeout(r,50));
+  assert.ok(events.includes('performance-rejected')&&events.includes('sibling-resolved'),JSON.stringify(events));
+  assert.equal(feeSourceTransportDiagnostic(error),first);assert.ok(Object.isFrozen(first));assert.deepEqual(first,{route:'HOLDINGS',phase:'FETCH',category:'ECONNRESET'});
+});
+
+test('a period source failure is visible as a value-free diagnostic through produceReportPeriod, the CLI lines and the unchanged workflow filter',async t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'fee-transport-e2e-'));fs.chmodSync(dir,0o700);t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+ const root=path.join(dir,'checkout');fs.mkdirSync(root,{mode:0o700});fs.cpSync(new URL('.',import.meta.url),path.join(root,'scripts'),{recursive:true});
+ fs.mkdirSync(path.join(root,'claude'));fs.copyFileSync(new URL('../claude/fee-style-mapping.json',import.meta.url),path.join(root,'claude/fee-style-mapping.json'));
+ const key=randomBytes(32),encrypt=(o,v)=>{const iv=randomBytes(12),c=createCipheriv('aes-256-gcm',key,iv);return JSON.stringify({enc:true,v,data:Buffer.concat([iv,c.update(JSON.stringify(o)),c.final(),c.getAuthTag()]).toString('base64')});};
+ const econ=path.join(dir,'econ.json');fs.writeFileSync(econ,encrypt({v:4,settings:{start:'2026-10-30',mgmt:2,carry:20},accounts:[{id:'schwab',opening:100},{id:'webull',opening:100}],months:[],fees:[]},4),{mode:0o600});
+ const sessions=['2026-10-30','2026-11-02','2026-11-03','2026-11-04','2026-11-05','2026-11-06','2026-11-09'];
+ const benchmark=path.join(dir,'benchmark.json');fs.writeFileSync(benchmark,JSON.stringify({v:1,benchmarks:{spy:{symbol:'SPY',currency:'USD',exchange:'NYSEArca',series:sessions.map(d=>({d,p:100}))},qqq:{symbol:'QQQ',currency:'USD',exchange:'NasdaqGS',series:sessions.map(d=>({d,p:200}))}}}),{mode:0o600});
+ const all=[];for(let d='2026-10-31';d<='2026-11-09';d=reportAddDays(d,1))all.push(d);
+ fs.writeFileSync(path.join(dir,'snapshots.json'),JSON.stringify(Object.fromEntries(all.map(d=>[d,writerDiagnosticCashOnly(d)]))),{mode:0o600});
+ const clock=path.join(dir,'clock.mjs');fs.writeFileSync(clock,"const D=Date,n=D.parse('2026-11-09T23:30:00.000Z');globalThis.Date=class extends D{constructor(...a){super(...(a.length?a:[n]));}static now(){return n;}};globalThis.fetch=()=>{throw Error('NETWORK_FORBIDDEN');};");
+ const script=path.join(root,'exercise.mjs');fs.writeFileSync(script,`
+  import fs from 'node:fs';import path from 'node:path';
+  import {produceReportPeriod,periodFailureLines} from './scripts/fee-report-producer.mjs';import {dailyReportPlan,reportAddDays} from './scripts/fee-report-period.mjs';
+  import {parseSourceJson,SharesightCloudReader,CLOUD_ACCOUNTS} from './scripts/fee-cloud-source.mjs';
+  const s=JSON.parse(process.env.SCENARIO),dir=path.dirname(process.env.SYNTHETIC_SNAPSHOTS),snaps=JSON.parse(fs.readFileSync(process.env.SYNTHETIC_SNAPSHOTS)),out=fs.mkdtempSync(path.join(dir,'out-'));
+  const canary='SECRET_CANARY_TRANSPORT token=not-real https://private.invalid/?q=1';
+  const parse=raw=>{for(const p of Object.values(raw)){for(const k of ['performance','cashAccounts','previousPerformance'])if(p[k])p[k]=parseSourceJson(JSON.stringify(p[k]));for(const k of ['cashTransactions','cashLedgerHistory'])if(p[k])p[k]=Object.fromEntries(Object.entries(p[k]).map(([id,v])=>[id,parseSourceJson(JSON.stringify(v))]));}return raw;};
+  const enc=new TextEncoder(),response=(url,{status=200,body='{}'}={})=>({url,status,redirected:false,headers:{get:k=>String(k).toLowerCase()==='content-type'?'application/json':null},body:{getReader(){let sent=false;return {read:async()=>sent?{done:true}:(sent=true,{done:false,value:enc.encode(body)}),cancel(){},releaseLock(){}};}}});
+  const cause=code=>{const e=new TypeError('fetch failed '+canary);e.cause=Object.assign(new Error(canary),{code});return e;};
+  const failing=kind=>{let release;const later=new Promise(r=>{release=r;});return async url=>{
+    if(url.endsWith('/oauth2/token')){if(kind==='token')throw cause('ENOTFOUND');return response(url,{body:JSON.stringify({access_token:'synthetic-access-token-0123456789',token_type:'bearer'})});}
+    if(url.endsWith('/portfolios.json'))return response(url,{body:JSON.stringify({portfolios:Object.values(CLOUD_ACCOUNTS).map(a=>({id:a.portfolioId,name:a.name,currency_code:'USD'}))})});
+    const p=new URL(url).pathname;
+    if(kind==='http'&&p.endsWith('/performance'))return response(url,{status:503,body:canary});
+    if(kind==='reset'&&p.endsWith('/trades.json'))throw cause('ECONNRESET');
+    if(kind==='concurrent'&&p.endsWith('/holdings')){setTimeout(release,5);throw cause('ECONNRESET');}
+    if(kind==='concurrent'&&p.endsWith('/performance')){await later;throw cause('ENOTFOUND');}
+    if(kind==='concurrent'){await later;}
+    return response(url,{body:'{}'});
+  };};
+  const seen={};
+  const readOnce=async date=>{const n=(seen[date]=(seen[date]||0)+1);
+    if(s.failDate===date&&s.failRound===n)return new SharesightCloudReader({clientId:'synthetic-client',clientSecret:'synthetic-secret-'+canary,fetchImpl:failing(s.kind),sourceMode:'sharesight-reference',
+      ...(s.kind==='local'?{onSourceResponse:async()=>{throw Error(canary);}}:{})}).readOnce(date);
+    return parse(structuredClone(snaps[date]));};
+  const plan=dailyReportPlan('2026-11-09',['NYSE','NASDAQ'],{periodFrom:s.latest==='2026-11-09'?'2026-11-09':reportAddDays(s.latest,1),reviewedSyncDate:'2026-11-09'});
+  try{await produceReportPeriod({plan,reviewedSyncDate:'2026-11-09',outputDir:out,benchmarkFile:process.env.SYNTHETIC_BENCHMARK,readOnce,fetchEconomic:async()=>({envelopeVersion:4,sourcePath:process.env.FEE_ECON_FILE,async checkCurrent(){},cleanup(){if(s.cleanupThrows)throw Error(canary);}})});console.log('UNEXPECTED_SUCCESS');}
+  catch(error){let lines;try{lines=periodFailureLines(error);}catch{lines=['UNEXPECTED_LINES_FAILURE'];}for(const line of lines)console.error(line);console.log(JSON.stringify({files:fs.readdirSync(out),reads:seen}));process.exitCode=1;}
+ `);
+ const workflow=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8');
+ const failureScript=workflow.match(/node --input-type=module - \"\$error_file\" <<'NODE'\n([\s\S]+?)\n          NODE/)[1];
+ const leaks=['SECRET_CANARY','private.invalid','token=','synthetic-secret','synthetic-access-token',String(CLOUD_ACCOUNTS.schwab.portfolioId),String(CLOUD_ACCOUNTS.webull.portfolioId),'2026-1','http','stack','    at '];
+ const scenario=(s,expectedCode,expectedDiagnostic)=>{
+  const point=d=>({d,schwab:100,webull:100,cash:200,stock:0,other:0,spy:100,qqq:200,bd:d,bstate:'session',acctCash:{schwab:100,webull:100}});
+  fs.writeFileSync(path.join(root,'data.json'),encrypt({daily:[point(s.latest)],flowsAuto:[],flowsUnresolved:[],status:{asOf:s.latest,provisional:false,calibrated:false,unresolvedCount:0,notes:[],splitDelta:0}},3),{mode:0o600});
+  const child=spawnSync(process.execPath,[script],{cwd:root,encoding:'utf8',timeout:60000,env:{...process.env,NODE_OPTIONS:[process.env.NODE_OPTIONS||'','--import='+clock].join(' ').trim(),SCENARIO:JSON.stringify(s),GITHUB_RUN_ID:'123',GITHUB_SHA:'a'.repeat(40),GITHUB_RUN_ATTEMPT:'1',FEE_DATA_KEY:key.toString('base64url'),FEE_ECON_FILE:econ,IB_MANAGER_READ_ENABLED:'',FEE_STYLE_INPUT_FILE:'',FEE_MANAGEMENT_INPUT_FILE:'',SYNTHETIC_SNAPSHOTS:path.join(dir,'snapshots.json'),SYNTHETIC_BENCHMARK:benchmark}});
+  assert.equal(child.status,1,child.stderr+child.stdout);
+  const tail=JSON.parse(child.stdout.trim().split('\n').at(-1));assert.deepEqual(tail.files,[],'nothing is written');
+  const lines=child.stderr.trim().split('\n');assert.equal(lines.at(-1),expectedCode);assert.equal(lines.length,expectedDiagnostic?2:1,child.stderr);
+  for(const s2 of leaks)assert.equal(child.stderr.includes(s2),false,'private stderr leak '+s2);
+  const privateFile=path.join(dir,'private.stderr'),summary=path.join(dir,'summary.md');fs.writeFileSync(privateFile,child.stderr,{mode:0o600});fs.writeFileSync(summary,'',{mode:0o600});
+  const filtered=spawnSync(process.execPath,['--input-type=module','-',privateFile],{cwd:new URL('..',import.meta.url),input:failureScript,encoding:'utf8',env:{PATH:process.env.PATH,GITHUB_STEP_SUMMARY:summary}});
+  assert.equal(filtered.status,0,filtered.stderr);const publicText=filtered.stdout+fs.readFileSync(summary,'utf8');
+  for(const s2 of leaks)assert.equal(publicText.includes(s2),false,'public leak '+s2);
+  assert.equal(filtered.stdout.trim().split('\n').at(-1),expectedCode);
+  const shown=filtered.stdout.trim().split('\n').filter(l=>l.startsWith('{'));
+  if(expectedDiagnostic){assert.equal(shown.length,1);assert.deepEqual(JSON.parse(shown[0]),{schema:'fee-console.source-transport-diagnostic.v1',code:expectedCode,...expectedDiagnostic});}
+  else assert.equal(shown.length,0);
+  return tail.reads;
+ };
+ await t.test('same-target refresh (one date): second pass, first date',()=>{
+  const reads=scenario({latest:'2026-11-09',failDate:'2026-11-09',failRound:2,kind:'reset'},'FEE_CLOUD_SOURCE_UNAVAILABLE',{route:'TRADES',phase:'FETCH',category:'ECONNRESET',dateIndex:1,dateCount:1,round:2});
+  assert.deepEqual(reads,{'2026-11-09':2});
+ });
+ await t.test('three-date window: the second pass restarts at index 1',()=>{
+  const reads=scenario({latest:'2026-11-06',failDate:'2026-11-07',failRound:2,kind:'reset'},'FEE_CLOUD_SOURCE_UNAVAILABLE',{route:'TRADES',phase:'FETCH',category:'ECONNRESET',dateIndex:1,dateCount:3,round:2});
+  assert.deepEqual(reads,{'2026-11-07':2,'2026-11-08':1,'2026-11-09':1});
+ });
+ await t.test('ten-date maximum window: first pass, last date',()=>{
+  scenario({latest:'2026-10-30',failDate:'2026-11-09',failRound:1,kind:'reset'},'FEE_CLOUD_SOURCE_UNAVAILABLE',{route:'TRADES',phase:'FETCH',category:'ECONNRESET',dateIndex:10,dateCount:10,round:1});
+ });
+ await t.test('token unavailability keeps its code and route',()=>{
+  scenario({latest:'2026-11-06',failDate:'2026-11-08',failRound:1,kind:'token'},'FEE_CLOUD_AUTH_UNAVAILABLE',{route:'TOKEN',phase:'FETCH',category:'ENOTFOUND',dateIndex:2,dateCount:3,round:1});
+ });
+ await t.test('the propagated concurrent rejection, last date of the second pass',()=>{
+  scenario({latest:'2026-11-06',failDate:'2026-11-09',failRound:2,kind:'concurrent'},'FEE_CLOUD_SOURCE_UNAVAILABLE',{route:'HOLDINGS',phase:'FETCH',category:'ECONNRESET',dateIndex:3,dateCount:3,round:2});
+ });
+ await t.test('a local processing exception keeps its existing code and says it was not transport',()=>{
+  scenario({latest:'2026-11-06',failDate:'2026-11-07',failRound:1,kind:'local'},'FEE_CLOUD_SOURCE_UNAVAILABLE',{route:'PORTFOLIOS',phase:'LOCAL',category:'NON_TRANSPORT',dateIndex:1,dateCount:3,round:1});
+ });
+ await t.test('a cleanup failure that becomes the final error never carries the earlier source diagnostic',()=>{
+  scenario({latest:'2026-11-06',failDate:'2026-11-07',failRound:1,kind:'reset',cleanupThrows:true},'FEE_REPORT_CLEANUP',null);
+ });
+ await t.test('an HTTP rejection keeps its code and shows no diagnostic',()=>{
+  scenario({latest:'2026-11-06',failDate:'2026-11-07',failRound:1,kind:'http'},'FEE_CLOUD_HTTP_REJECTED',null);
+ });
+});

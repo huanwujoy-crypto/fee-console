@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
-import {authenticated} from './fee-ratio-official-source.test.mjs';
+import {authenticated,syntheticOfficialSource} from './fee-ratio-official-source.test.mjs';
 import {createOfficialRatioSourceCore} from './fee-ratio-official-source.mjs';
 import {createRatioCloudPublisher,RATIO_CLOUD_FILE} from './fee-ratio-cloud-publish.mjs';
 const hash=b=>crypto.createHash('sha256').update(b).digest('hex');
@@ -14,9 +14,9 @@ const FEE={mainSha:'e'.repeat(40),accountingThrough:'2026-10-27',dataSha256:'1'.
 const feeProofOf=(handoff,at)=>Object.freeze({schema:'synthetic',status:'FEE_FINAL_PUBLICATION_VERIFIED',accountingThrough:handoff.accountingThrough,feeMainSha:handoff.mainSha,
   runMainSha:'a'.repeat(40),dataSha256:handoff.dataSha256,healthSha256:handoff.healthSha256,verifiedAt:at.toISOString(),healthCheckedAt:'2026-10-27T22:00:00.000Z'});
 
-async function fixture(t,{sameSource=false}={}){
-  const f=await authenticated(t),raw=structuredClone(f.raw);
-  if(!sameSource){raw.classification.capturedAt='2026-10-30T05:45:00.000Z';raw.exposure.capturedAt='2026-10-30T05:44:00.000Z';}
+async function fixture(t,{sameSource=false,prior=[],edit=null,now=null}={}){
+  const f=await authenticated(t,...prior),raw=structuredClone(f.raw);if(now)f.now=now;
+  if(edit)edit(raw);else if(!sameSource){raw.classification.capturedAt='2026-10-30T05:45:00.000Z';raw.exposure.capturedAt='2026-10-30T05:44:00.000Z';}
   const original=json(raw),input=json(createOfficialRatioSourceCore().build(raw,{sourceSha256:hash(original),sourceBytes:original.length}).input);
   const bundleId=hash(Buffer.concat([original,input])),prefix='inputs/'+bundleId+'/';
   const plan={mode:'publish',previousBodySha256:await f.ratio.digest(f.signed.body),bundleId,original:{name:prefix+'original.json',generation:'101',sha256:hash(original)},input:{name:prefix+'input.json',generation:'102',sha256:hash(input)},library:{fileId:'libfile_'+'9'.repeat(32),version:0},fee:{...FEE}};
@@ -224,4 +224,115 @@ test('a promotion that replaces the handed fee pair between readback and recheck
 test('an old handoff for a superseded fee report never reaches the claim',async t=>{
  const f=await fixture(t);f.io.verifyFeePublication=async()=>{throw Error('FEE_PUBLICATION_LIVE');};
  const r=await f.run();assert.equal(r.status,'WAITING_FEE_READBACK_NO_WRITE');assert.equal(r.stage,'FEE_READBACK:FEE_PUBLICATION_LIVE');assert.equal(f.state.claimCalls,0);
+});
+
+// The binding compares the pinned original's frozen capture instant (the
+// earliest original download-file mtime the official projection verified) with
+// the handed fee health's checkedAt, a lower bound of that fee production. It
+// is a misuse guard: it neither proves an export is new nor that the handed
+// fee is the current round's.
+test('an original captured before the handed fee production is refused before any claim, even on the same Hong Kong date',async t=>{
+  const at=checked=>async({handoff,previousProof})=>Object.freeze({...feeProofOf(handoff,new Date('2026-10-30T06:00:00.000Z')),healthCheckedAt:checked});
+  const earliest='2026-10-30T05:44:00.000Z';
+  for(const [checked,status] of [['2026-10-30T05:44:00.001Z','REFUSED'],['2026-10-30T06:00:00.000Z','REFUSED'],[earliest,'PUBLISHED_CONFIRMED'],['2026-10-27T22:00:00.000Z','PUBLISHED_CONFIRMED']]){
+    const f=await fixture(t);f.io.verifyFeePublication=at(checked);
+    const result=await f.run();
+    assert.equal(result.status,status,checked);
+    if(status==='REFUSED'){assert.equal(result.stage,'SOURCE_ROUND');assert.equal(result.claim,'NOT_ATTEMPTED');assert.equal(f.state.claimCalls,0);assert.equal(f.state.patches.length,0);}
+  }
+  // A re-upload of the same pinned original under a new storage generation is
+  // still the same frozen capture: generation/upload time never refreshes it.
+  const f=await fixture(t);f.io.verifyFeePublication=at('2026-10-30T06:00:00.000Z');
+  for(const spec of [f.plan.original,f.plan.input])spec.generation=String(Number(spec.generation)+1000);
+  const reuploaded=await f.run();assert.equal(reuploaded.status,'REFUSED');assert.equal(reuploaded.stage,'SOURCE_ROUND');assert.equal(f.state.patches.length,0);
+  // A proof without a valid fee health time cannot pass the binding.
+  const g=await fixture(t);g.io.verifyFeePublication=at('not-a-time');assert.equal((await g.run()).stage,'SOURCE_ROUND');
+});
+
+/* ---------- Signed Hong Kong date policy across the complete snapshot chain ---------- */
+
+const MONTH=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const dated=(raw,{classification,exposure,capturedAt})=>{
+  for(const [role,asOf] of [['classification',classification],['exposure',exposure]]){
+    raw[role].asOf=asOf;raw[role].capturedAt=capturedAt;raw[role].dateEvidence='Showing as at '+Number(asOf.slice(8))+' '+MONTH[Number(asOf.slice(5,7))-1]+' '+asOf.slice(0,4);
+  }
+  return raw;
+};
+const priorFor=(day,at)=>[dated(syntheticOfficialSource(),{classification:day,exposure:day,capturedAt:at}),{},{now:new Date(Date.parse(at)+60000),targetDate:day}];
+
+test('a Hong Kong-dated official source publishes through source, verifyOriginal, candidate, authenticate, verify and run before UTC midnight',async t=>{
+  for(const [label,day,captured,clock,previousDay,previousAt] of [
+    ['HKT 07:45 is UTC previous day','2026-11-10','2026-11-09T23:30:00.000Z','2026-11-09T23:45:00.000Z','2026-11-08','2026-11-08T02:00:00.000Z'],
+    ['month boundary','2026-12-01','2026-11-30T23:30:00.000Z','2026-11-30T23:45:00.000Z','2026-11-29','2026-11-29T02:00:00.000Z'],
+    ['year boundary','2027-01-01','2026-12-31T23:30:00.000Z','2026-12-31T23:45:00.000Z','2026-12-30','2026-12-30T02:00:00.000Z'],
+  ]){
+    const f=await fixture(t,{prior:priorFor(previousDay,previousAt),now:new Date(clock),edit:raw=>dated(raw,{classification:day,exposure:day,capturedAt:captured})});
+    const result=await f.run();
+    assert.equal(result.status,'PUBLISHED_CONFIRMED',label);assert.equal(f.state.patches.length,1,label);
+    const published=JSON.parse(f.state.raw);
+    assert.equal(published.body.source.datePolicy,'hkt-calendar-v1',label);assert.equal(published.body.source.asOf,day,label);
+    assert.equal(published.authentication.confirmedAt,clock,label);
+    // The same signed packet stays readable later: signing-time freshness is
+    // judged at its own confirmation; reading after expiry only marks it stale.
+    for(const [at,stale] of [[clock,false],[new Date(Date.parse(clock)+12*3600000).toISOString(),false],[new Date(Date.parse(captured)+36*3600000+1).toISOString(),true],[new Date(Date.parse(captured)+30*86400000).toISOString(),true]]){
+      const read=await f.snapshot.verify(published,f.manager,{now:new Date(at)});assert.equal(read.stale,stale,label+' '+at);assert.equal(read.source.datePolicy,'hkt-calendar-v1');
+    }
+  }
+});
+
+test('future, stale, over-36h and changed sources are refused before signing under the Hong Kong policy',async t=>{
+  const prior=priorFor('2026-11-08','2026-11-08T02:00:00.000Z');
+  // A date beyond its capture's Hong Kong date is refused by the official
+  // projection itself, before any input pair or plan can exist.
+  await assert.rejects(fixture(t,{prior,now:new Date('2026-11-09T23:45:00.000Z'),edit:raw=>dated(raw,{classification:'2026-11-11',exposure:'2026-11-11',capturedAt:'2026-11-09T23:30:00.000Z'})}),/RATIO_OFFICIAL_SOURCE_REFUSED/);
+  for(const [label,edit,clock,stage] of [
+    ['five Hong Kong days old',raw=>dated(raw,{classification:'2026-11-05',exposure:'2026-11-05',capturedAt:'2026-11-09T23:30:00.000Z'}),'2026-11-09T23:45:00.000Z','SOURCE'],
+    ['capture older than 36 hours',raw=>dated(raw,{classification:'2026-11-10',exposure:'2026-11-10',capturedAt:'2026-11-09T23:30:00.000Z'}),'2026-11-11T11:30:00.001Z','SOURCE'],
+  ]){
+    const f=await fixture(t,{prior,now:new Date(clock),edit});const result=await f.run();
+    assert.equal(result.status,'REFUSED',label);assert.equal(result.stage,stage,label);assert.equal(f.state.patches.length,0,label);assert.equal(f.state.claimCalls,0,label);
+  }
+  const f=await fixture(t,{prior,now:new Date('2026-11-09T23:45:00.000Z'),edit:raw=>dated(raw,{classification:'2026-11-10',exposure:'2026-11-10',capturedAt:'2026-11-09T23:30:00.000Z'})});
+  const changed=JSON.parse(f.values.get(f.plan.original.name));changed.exposure.rows[0].valueUSD+=1;f.values.set(f.plan.original.name,json(changed));
+  const result=await f.run();assert.equal(result.status,'REFUSED');assert.equal(result.stage,'INPUT');assert.equal(f.state.patches.length,0);
+});
+
+test('the date policy is signed: unknown, downgraded, stripped or missing policies are refused; old UTC packets keep their semantics',async t=>{
+  // Classification is four UTC days (five Hong Kong days) older than this
+  // confirmation instant, inside the 36-hour capture window.
+  const raw=dated(syntheticOfficialSource(),{classification:'2026-10-30',exposure:'2026-10-30',capturedAt:'2026-10-30T05:30:00.000Z'});raw.classification.asOf='2026-10-26';raw.classification.dateEvidence='Showing as at 26 Oct 2026';
+  const f=await authenticated(t,raw,{},{now:new Date('2026-10-30T06:00:00.000Z'),targetDate:'2026-10-30'});
+  const signed=f.signed;assert.equal(signed.body.source.datePolicy,'hkt-calendar-v1');
+  await f.snapshot.verify(signed,f.manager,{now:new Date('2026-10-30T06:00:00.000Z')});
+  const ratio=f.ratio,sign=async(body,confirmedAt)=>{
+    const auth={schema:'fee-console.ratio-snapshot-manager-auth.v1',confirmedAt,profileSha256:'a'.repeat(64),bodySha256:await ratio.digest(body)};
+    const mac=ratio.encode(new Uint8Array(await crypto.webcrypto.subtle.sign('HMAC',f.manager.authenticationKey,new TextEncoder().encode(ratio.canonical(auth)))));
+    return {body,authentication:{...auth,mac}};
+  };
+  const legacyBody=structuredClone(signed.body);delete legacyBody.source.datePolicy;
+  // An old signed packet (no policy) keeps UTC-day semantics, including its
+  // four-day boundary at 23:00Z, which the Hong Kong policy would count as five.
+  const boundary='2026-10-30T23:00:00.000Z';
+  assert.equal((await f.snapshot.verify(await sign(legacyBody,boundary),f.manager,{now:new Date(boundary)})).stale,false);
+  await assert.rejects(f.snapshot.verify(await sign(structuredClone(signed.body),boundary),f.manager,{now:new Date(boundary)}),/RATIO_SNAPSHOT_REFUSED/);
+  // Old UTC semantics are not rewritten: a UTC-future source stays invalid.
+  const early=structuredClone(legacyBody);
+  await assert.rejects(f.snapshot.verify(await sign(early,'2026-10-25T23:59:59.000Z'),f.manager,{now:new Date(boundary)}),/RATIO_SNAPSHOT_REFUSED/);
+  // Unknown or downgraded policy values are refused even with a valid MAC.
+  for(const value of ['legacy-utc','hkt-calendar-v2','',null,1]){
+    const body=structuredClone(signed.body);body.source.datePolicy=value;
+    await assert.rejects(f.snapshot.verify(await sign(body,'2026-10-30T06:00:00.000Z'),f.manager,{now:new Date('2026-10-30T06:00:00.000Z')}),/RATIO_SNAPSHOT_REFUSED/,String(value));
+  }
+  // Stripping or changing the signed policy without re-signing breaks the MAC.
+  for(const edit of [s=>{delete s.datePolicy;},s=>{s.datePolicy='legacy-utc';}]){
+    const tampered=structuredClone(signed);edit(tampered.body.source);
+    await assert.rejects(f.snapshot.verify(tampered,f.manager,{now:new Date('2026-10-30T06:00:00.000Z')}),/RATIO_SNAPSHOT_REFUSED/);
+  }
+  // New signing always carries the policy: a candidate without it is refused.
+  const unsigned=structuredClone(await f.snapshot.candidate({model:f.model,recipient:f.manager.recipient,proof:await f.snapshot.verifyOriginal(f.args),now:new Date('2026-10-30T06:00:00.000Z')}));
+  delete unsigned.body.source.datePolicy;
+  await assert.rejects(f.snapshot.authenticate(unsigned,await f.snapshot.verifyOriginal(f.args),f.manager,{profileSha256:'a'.repeat(64),now:new Date('2026-10-30T06:00:00.000Z')}),/RATIO_SNAPSHOT_REFUSED/);
+  // A legacy-signed previous snapshot may still precede a new policy snapshot.
+  const legacyPrevious=await sign(legacyBody,'2026-10-30T06:00:00.000Z');
+  assert.equal((await f.snapshot.verify(legacyPrevious,f.manager,{now:new Date('2026-10-30T06:01:00.000Z')})).source.datePolicy,undefined);
 });

@@ -13,8 +13,8 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import { fetchEconomicSnapshot, SourceFetchError, sourceFailureCode } from "./fee-economic-source.mjs";
-import { expectedTargetDate, selectBenchmark, SharesightCloudReader } from "./fee-cloud-source.mjs";
-import { boundedJson } from './fee-http-json.mjs';
+import { expectedTargetDate, selectBenchmark, SharesightCloudReader, SOURCE_TRANSPORT_ROUTES } from "./fee-cloud-source.mjs";
+import { boundedJson, TRANSPORT_PHASES, TRANSPORT_CATEGORIES } from './fee-http-json.mjs';
 import { isIsoDate, isWeekend, classifyFlow, flowId, inKindBusinessKey, notificationIncomeFlowAudit } from "./daily-core.mjs";
 import { validateHealth } from "./fee-data-health.mjs";
 import { STYLE_ACCOUNTS } from './fee-style-registry.mjs';
@@ -493,6 +493,25 @@ export function assertCandidateReceiptable(payload) {
 // metadata. Raw rows, identifiers and reasons remain in memory only. This does
 // not grant event identity, change classification or remove persisted rows.
 export const UNRESOLVED_FLOW_DIAGNOSTIC_PREFIX = 'FEE_CLOUD_UNRESOLVED_FLOW_DIAGNOSTIC=';
+// A failed period source read, value-free: fixed route/phase/category plus the
+// window position. dateCount is the actual report window (at most ten dates,
+// the existing captureReportRange/reportWindowDates bound) and round is the
+// read pass (each window is read twice). No date, id, URL, message or body.
+export const SOURCE_TRANSPORT_DIAGNOSTIC_PREFIX = 'FEE_CLOUD_SOURCE_TRANSPORT_DIAGNOSTIC=';
+export const SOURCE_TRANSPORT_DIAGNOSTIC_KEYS = Object.freeze(['schema', 'code', 'route', 'phase', 'category', 'dateIndex', 'dateCount', 'round']);
+const SOURCE_TRANSPORT_CODES = new Set(['FEE_CLOUD_SOURCE_UNAVAILABLE', 'FEE_CLOUD_AUTH_UNAVAILABLE']);
+export function validateSourceTransportDiagnostic(value) {
+  return !!value && typeof value === 'object' && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype
+    && Object.keys(value).join(',') === SOURCE_TRANSPORT_DIAGNOSTIC_KEYS.join(',')
+    && value.schema === 'fee-console.source-transport-diagnostic.v1' && SOURCE_TRANSPORT_CODES.has(value.code)
+    && SOURCE_TRANSPORT_ROUTES.includes(value.route) && (value.route === 'TOKEN') === (value.code === 'FEE_CLOUD_AUTH_UNAVAILABLE')
+    && ([...TRANSPORT_PHASES, 'LOCAL', 'UNKNOWN'].includes(value.phase))
+    && ([...TRANSPORT_CATEGORIES, 'NON_TRANSPORT', 'OTHER'].includes(value.category))
+    && (value.phase === 'LOCAL') === (value.category === 'NON_TRANSPORT') && (value.phase === 'UNKNOWN') === (value.category === 'OTHER')
+    && Number.isSafeInteger(value.dateCount) && value.dateCount >= 1 && value.dateCount <= 10
+    && Number.isSafeInteger(value.dateIndex) && value.dateIndex >= 1 && value.dateIndex <= value.dateCount
+    && (value.round === 1 || value.round === 2);
+}
 const FLOW_DIAGNOSTIC_SCHEMA = 'fee-console.unresolved-flow-diagnostic.v1';
 const FLOW_DIAGNOSTIC_LIMIT = 10000, FLOW_DIAGNOSTIC_GROUP_LIMIT = 32;
 const FLOW_DIAGNOSTIC_REASON = new Map([
@@ -624,12 +643,13 @@ export function safeProducerFailureSummary(privateStderr) {
   if (typeof privateStderr !== 'string' || Buffer.byteLength(privateStderr) > 65536) return fallback;
   const lines = privateStderr.replace(/\n$/, '').split('\n'), last = lines.at(-1);
   const code = SAFE_PRODUCER_FAILURE_CODES.has(last) ? last : fallback.code;
-  const prefixes = [UNRESOLVED_FLOW_DIAGNOSTIC_PREFIX, WRITER_DIAGNOSTIC_PREFIX, IB_PUBLICATION_DIAGNOSTIC_PREFIX];
+  const prefixes = [UNRESOLVED_FLOW_DIAGNOSTIC_PREFIX, WRITER_DIAGNOSTIC_PREFIX, IB_PUBLICATION_DIAGNOSTIC_PREFIX, SOURCE_TRANSPORT_DIAGNOSTIC_PREFIX];
   const candidates = lines.filter(line => prefixes.some(prefix => line.includes(prefix)));
   let diagnostic = null;
   const prefix = code === 'FEE_CLOUD_UNRESOLVED_FLOW' ? UNRESOLVED_FLOW_DIAGNOSTIC_PREFIX
     : WRITER_FAILURE_CODES.has(code) ? WRITER_DIAGNOSTIC_PREFIX
-    : code === 'FEE_CLOUD_IB_INCOMPLETE' ? IB_PUBLICATION_DIAGNOSTIC_PREFIX : null;
+    : code === 'FEE_CLOUD_IB_INCOMPLETE' ? IB_PUBLICATION_DIAGNOSTIC_PREFIX
+    : SOURCE_TRANSPORT_CODES.has(code) ? SOURCE_TRANSPORT_DIAGNOSTIC_PREFIX : null;
   if (prefix && candidates.length === 1) {
     const line = candidates[0];
     if (line.startsWith(prefix) && Buffer.byteLength(line) <= 16384) try {
@@ -638,6 +658,7 @@ export function safeProducerFailureSummary(privateStderr) {
       if (JSON.stringify(parsed) === json && parsed.code === code
           && (prefix === WRITER_DIAGNOSTIC_PREFIX ? validateWriterFailureDiagnostic(parsed)
             : prefix === IB_PUBLICATION_DIAGNOSTIC_PREFIX ? validateIbPublicationDiagnostic(parsed)
+            : prefix === SOURCE_TRANSPORT_DIAGNOSTIC_PREFIX ? validateSourceTransportDiagnostic(parsed)
             : validateUnresolvedFlowDiagnostic(parsed))) diagnostic = parsed;
     } catch { /* private malformed metadata remains private */ }
   }
