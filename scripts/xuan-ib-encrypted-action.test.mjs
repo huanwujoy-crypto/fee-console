@@ -23,13 +23,29 @@ const other = Buffer.alloc(32, 8).toString('base64url');
 
 // Unified manager migration: synthetic sources/credentials only. These tests
 // remain in the existing formal encrypted-viewer suite; no CI lane is added.
-function ratioFixture(){
+function ratioFixture(cryptoImpl=ratioCrypto.webcrypto){
   const accounts=Array.from({length:10},(_,i)=>'Invented account '+i),scopeHash=ratioCrypto.createHash('sha256').update(JSON.stringify([...accounts].sort())).digest('hex');
-  const exp={...createRankedExposureCore(),ALL_TOGETHER_SCOPE_SHA256:scopeHash},core=createFeeRatioCore(exp,ratioCrypto.webcrypto);
+  const exp={...createRankedExposureCore(),ALL_TOGETHER_SCOPE_SHA256:scopeHash},core=createFeeRatioCore(exp,cryptoImpl);
   const exposure={schema:exp.RANKED_EXPOSURE_SCHEMA,retrievedAtBasis:exp.EXPOSURE_OBSERVED_TIME_BASIS,retrievedAt:'2000-01-03T02:00:00.000Z',summary:{asOf:'2000-01-03',currency:'USD',source:{provider:'Sharesight',view:'All Together',report:'Tools Exposure',groupBy:'No grouping',show:'Top 500',classification:'Investments→资产类别',url:'https://portfolio.sharesight.com/portfolios/1/tools/exposure/2?consolidated=true'},totalValueUSD:4000,accounts,classes:['PE/VC','对冲基金','常青基金','二级市场'].map((name,i)=>({name,...(i===0?{sourceCategory:'VC/PE'}:{}),totalValueUSD:1000,basis:i===3?'Exposure individual security direct plus ETF look-through, includes cash in class denominator':'direct',top5:Array.from({length:5},(_,j)=>({name:'Invented '+i+' security '+j,valueUSD:100-j*10,...(i===3?{securityCode:'SYNTH'+j,market:'TEST'}:{})}))})),residualETFs:{valueUSD:40,weightTotalPct:1,weightSecondaryClassPct:4},limitations:['Synthetic residual coverage'],transferStatus:'Synthetic source reconciliation incomplete',sourceXlsxSHA256:'e'.repeat(64)}};
   const model={schema:core.SCHEMA,source:'Sharesight',report:{kind:'snapshot',targetDate:'2000-01-03',feeAccountingThrough:'1999-12-31',generatedAt:'2000-01-03T03:00:00.000Z'},exposure,book:null,limitations:['Synthetic missing whole-book source']};
   return {core,exposure,model,scopeHash};
 }
+// Leak check over the whole envelope and every string inside it (escaped JSON
+// would hide a fragment from the raw text alone). The two fixture values are
+// exact JSON member fragments, which cannot occur in base64url or UUID hex by
+// chance; a bare short number or prefix could, and did, match random encodings.
+// This is a regression guard for named values only, not proof against every
+// leak: authenticated encryption is exercised by the real open/refusal tests below.
+const RATIO_LEAK_VALUES=[master,'synthetic-owner-token-for-ratio-123','Invented account','Invented 0 security','"totalValueUSD":4000','"sourceXlsxSHA256":'];
+const ratioStrings=x=>typeof x==='string'?[x]:x&&typeof x==='object'?Object.values(x).flatMap(ratioStrings):[];
+const ratioLeaks=cipher=>{const texts=[JSON.stringify(cipher),...ratioStrings(cipher)];return RATIO_LEAK_VALUES.filter(v=>texts.some(t=>t.includes(v)));};
+// Real webcrypto underneath; only counts AES-GCM decrypt calls and can pin randomUUID.
+function ratioCryptoProbe(uuid=null){
+  const web=ratioCrypto.webcrypto,stats={decrypt:0,rejected:0};
+  const subtle=new Proxy(web.subtle,{get:(t,k)=>k==='decrypt'?async(...a)=>{stats.decrypt++;try{return await t.decrypt(...a);}catch(e){stats.rejected++;throw e;}}:typeof t[k]==='function'?t[k].bind(t):t[k]});
+  return {stats,impl:{subtle,getRandomValues:a=>web.getRandomValues(a),randomUUID:()=>uuid??web.randomUUID()}};
+}
+const RATIO_UUID_4000='3f2b8c1e-9d4a-4000-8b2c-1a2b3c4d5e6f';
 test('manager recipient needs original manager secret; investor fee key cannot decrypt ratio holdings',async()=>{
   const {core,model}=ratioFixture(),manager=await core.deriveManager('0'.repeat(32),master,'synthetic-owner-token-for-ratio-123'),cipher=await core.seal(model,manager.recipient);
   assert.equal(manager.privateKey.extractable,false);assert.deepEqual(await core.open(cipher,manager),model);
@@ -37,8 +53,36 @@ test('manager recipient needs original manager secret; investor fee key cannot d
     const wrong=await core.deriveManager('0'.repeat(32),master,token);await assert.rejects(core.open(cipher,wrong),/RATIO_MANAGER_REFUSED/);
   }
   const wrongGid=await core.deriveManager('1'.repeat(32),master,'synthetic-owner-token-for-ratio-123');await assert.rejects(core.open(cipher,wrongGid));
-  const raw=JSON.stringify(cipher);for(const value of [master,'synthetic-owner-token-for-ratio-123','Invented account','Invented 0 security','4000','sourceXlsx'])assert.ok(!raw.includes(value));
+  const plain=core.canonical(model);for(const value of RATIO_LEAK_VALUES.slice(2))assert.ok(plain.includes(value),'the fixture really contains each checked value');
+  assert.deepEqual(ratioLeaks(cipher),[]);
   await assert.rejects(ratioCrypto.webcrypto.subtle.exportKey('pkcs8',manager.privateKey));
+});
+test('ratio leak check: a legal UUID containing 4000 passes, while direct or string-embedded leaks are rejected',async()=>{
+  const {core,model}=ratioFixture(ratioCryptoProbe(RATIO_UUID_4000).impl),m=await core.deriveManager('0'.repeat(32),master,'synthetic-owner-token-for-ratio-123'),cipher=await core.seal(model,m.recipient);
+  assert.equal(cipher.binding.revision,RATIO_UUID_4000);assert.match(cipher.binding.revision,/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
+  assert.ok(JSON.stringify(cipher).includes('4000'),'the former bare-substring check fails on this legal envelope');
+  assert.deepEqual(ratioLeaks(cipher),[]);assert.deepEqual(await core.open(cipher,m),model);
+  const plain=core.canonical(model);
+  for(const [edit,leaked] of [[x=>x.totalValueUSD=4000,'"totalValueUSD":4000'],[x=>x.note='"totalValueUSD":4000','"totalValueUSD":4000'],[x=>x.note='{"sourceXlsxSHA256":"x"}','"sourceXlsxSHA256":'],
+    [x=>x.note=plain,'"totalValueUSD":4000'],[x=>x.binding={...x.binding,note:'Invented account 3'},'Invented account'],[x=>x.note=master,master]]){
+    const bad=structuredClone(cipher);edit(bad);assert.ok(ratioLeaks(bad).includes(leaked),leaked);
+  }
+});
+test('ratio wrong private key, legal-shape tampering and encoded plaintext all reach real AES-GCM and are refused',async()=>{
+  const probe=ratioCryptoProbe(RATIO_UUID_4000),{core,model}=ratioFixture(probe.impl),token='synthetic-owner-token-for-ratio-123';
+  const m=await core.deriveManager('0'.repeat(32),master,token),cipher=await core.seal(model,m.recipient);
+  const refusedByDecrypt=async(envelope,manager)=>{const before={...probe.stats};await assert.rejects(core.open(envelope,manager),/RATIO_MANAGER_REFUSED/);
+    assert.equal(probe.stats.decrypt,before.decrypt+1,'reached AES-GCM');assert.equal(probe.stats.rejected,before.rejected+1,'AES-GCM authentication failed');};
+  // Original recipient metadata, wrong private key: refused by the cipher itself, not by an id check.
+  const other=await core.deriveManager('0'.repeat(32),master,'synthetic-rotated-owner-token-789');
+  await refusedByDecrypt(cipher,{privateKey:other.privateKey,recipient:m.recipient});
+  const flip=(s,i)=>s.slice(0,i)+(s[i]==='A'?'B':'A')+s.slice(i+1);
+  for(const edit of [x=>x.binding={...x.binding,revision:'3f2b8c1e-9d4a-4001-8b2c-1a2b3c4d5e6f'},x=>x.binding={...x.binding,sourceDate:'2000-01-02'},x=>x.ciphertext=flip(x.ciphertext,10),x=>x.iv=flip(x.iv,2)]){
+    const bad=structuredClone(cipher);edit(bad);await refusedByDecrypt(bad,m);
+  }
+  // Plaintext merely base64url-encoded as ciphertext: no named-value check can see it; real open refuses it.
+  const disguised=structuredClone(cipher);disguised.ciphertext=core.encode(new TextEncoder().encode(core.canonical(model)));await refusedByDecrypt(disguised,m);
+  const before=probe.stats.decrypt;assert.deepEqual(await core.open(cipher,m),model);assert.equal(probe.stats.decrypt,before+1);
 });
 test('ratio ciphertext authenticates recipient, scope, header, nonce and content; no shared-key fallback',async()=>{
   const {core,model}=ratioFixture(),m=await core.deriveManager('0'.repeat(32),master,'synthetic-owner-token-for-ratio-123'),cipher=await core.seal(model,m.recipient);
