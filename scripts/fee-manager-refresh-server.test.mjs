@@ -100,16 +100,55 @@ test('GCS client: create-only with ifGenerationMatch=0; 412 is a conflict', asyn
   assert.deepEqual(await b.names('p/'), ['p/a']);
 });
 
-test('producer dispatch: exact existing confirmed-sync inputs; 204 or rate limit is unknown', async () => {
-  const sent = []; let status = 200;
-  const http = async (method, url, opts = {}) => { if (method === 'POST') { sent.push({ url, body: JSON.parse(opts.body) }); return status === 200 ? { status, bytes: enc({ workflow_run_id: 42 }) } : { status, bytes: enc('') }; } return { status: 404 }; };
-  const { publisher } = createGitHubFeeAdapters({ http, readToken: () => 'synthetic-token-not-real-0000', now: () => NOW });
+const RUN_OK = { workflow_run_id: 42, run_url: API + '/actions/runs/42', html_url: 'https://github.com/huanwujoy-crypto/fee-console/actions/runs/42' };
+function dispatchWorld() {
+  const sent = [], w = { reply: { status: 200, bytes: enc(RUN_OK) } };
+  const http = async (method, url, opts = {}) => { if (method === 'POST') { sent.push({ url, headers: opts.headers, body: JSON.parse(opts.body) }); return w.reply; } return { status: 404 }; };
+  w.sent = sent; w.publisher = createGitHubFeeAdapters({ http, readToken: () => 'synthetic-token-not-real-0000', now: () => NOW }).publisher;
+  return w;
+}
+
+test('producer dispatch: exact existing confirmed-sync inputs, pinned API version, full run identity', async () => {
+  const w = dispatchWorld(), main = 'c'.repeat(40);
+  assert.deepEqual(await w.publisher.start({ dataDate: '2026-11-10', claimMainSha: main }), { state: 'started', handle: '42' });
+  assert.equal(w.sent[0].url, API + '/actions/workflows/fee-cloud-producer.yml/dispatches');
+  assert.equal(w.sent[0].headers['X-GitHub-Api-Version'], '2026-03-10');
+  assert.deepEqual(w.sent[0].body, { ref: 'main', return_run_details: true, inputs: { run_reviewed_once: 'true', report_kind: 'daily', report_target: '2026-11-10', manual_sync_completed_for: '2026-11-10', confirmed_main: main } });
+  w.reply = { status: 422, bytes: enc('') };
+  assert.deepEqual(await w.publisher.start({ dataDate: '2026-11-10', claimMainSha: main }), { state: 'refused' });
+});
+
+test('producer dispatch: 204, missing fields, cross-repository URLs, error bodies and rate limits are unknown', async () => {
   const main = 'c'.repeat(40);
-  assert.deepEqual(await publisher.start({ dataDate: '2026-11-10', claimMainSha: main }), { state: 'started', handle: '42' });
-  assert.equal(sent[0].url, API + '/actions/workflows/fee-cloud-producer.yml/dispatches');
-  assert.deepEqual(sent[0].body, { ref: 'main', return_run_details: true, inputs: { run_reviewed_once: 'true', report_kind: 'daily', report_target: '2026-11-10', manual_sync_completed_for: '2026-11-10', confirmed_main: main } });
-  for (const s of [204, 403, 429, 502]) { status = s; await assert.rejects(publisher.start({ dataDate: '2026-11-10', claimMainSha: main })); }
-  status = 422; assert.deepEqual(await publisher.start({ dataDate: '2026-11-10', claimMainSha: main }), { state: 'refused' });
+  const unknown = {
+    '204 legacy': { status: 204, bytes: enc('') },
+    'missing run_url': { status: 200, bytes: enc({ workflow_run_id: 42, html_url: RUN_OK.html_url }) },
+    'missing html_url': { status: 200, bytes: enc({ workflow_run_id: 42, run_url: RUN_OK.run_url }) },
+    'other repository run_url': { status: 200, bytes: enc({ ...RUN_OK, run_url: 'https://api.github.com/repos/someone/fee-console/actions/runs/42' }) },
+    'other repository html_url': { status: 200, bytes: enc({ ...RUN_OK, html_url: 'https://github.com/someone/fee-console/actions/runs/42' }) },
+    'mismatched run id': { status: 200, bytes: enc({ ...RUN_OK, run_url: API + '/actions/runs/43' }) },
+    'string run id': { status: 200, bytes: enc({ ...RUN_OK, workflow_run_id: '42' }) },
+    '200 error structure': { status: 200, bytes: enc({ message: 'Server Error' }) },
+    '200 not JSON': { status: 200, bytes: enc('<html>') },
+    '403': { status: 403, bytes: enc('') }, '429': { status: 429, bytes: enc('') }, '502': { status: 502, bytes: enc('') },
+  };
+  for (const [name, reply] of Object.entries(unknown)) {
+    const w = dispatchWorld(); w.reply = reply;
+    await assert.rejects(w.publisher.start({ dataDate: '2026-11-10', claimMainSha: main }), /uncertain/, name);
+    assert.equal(w.sent.length, 1, name + ': one POST, never resent');
+  }
+});
+
+test('unknown dispatch reply is never resent by the coordinator', async () => {
+  const core = await import('./fee-manager-refresh.mjs');
+  const w = dispatchWorld(); w.reply = { status: 200, bytes: enc({ workflow_run_id: 42 }) };
+  const ledger = core.createMemoryLedger();
+  const verifier = { coverage: async () => ({ mainSha: 'c'.repeat(40), targetDate: '2026-11-09' }), verify: async () => ({ state: 'not-published', targetDate: '2026-11-09' }), isAncestor: async () => false };
+  const c = core.createRefreshCoordinator({ ledger, now: () => NOW, wait: async () => {}, feePublisher: w.publisher, feeVerifier: verifier, pipelineIdle: async () => false });
+  const id = { verified: true, ownerId: OWNER_ID, method: 'owner-gist-authored-request' };
+  assert.equal((await c.submit(request(), id)).fee.code, 'START_UNKNOWN');
+  assert.equal((await c.submit(request(), id)).fee.code, 'ATTEMPT_IN_FLIGHT');
+  assert.equal(w.sent.length, 1);
 });
 
 const MAIN0 = '1'.repeat(40), CAND = '2'.repeat(40);

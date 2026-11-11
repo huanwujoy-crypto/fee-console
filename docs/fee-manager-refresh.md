@@ -79,7 +79,13 @@ Buckets (bucket-level IAM only; no IAM conditions, because an objects.list
    with exactly the existing reviewed completed-sync inputs and
    `return_run_details`, wait, verify, record, project status. Stale, forged
    or invalid entries are recorded once and never executed. 204 without a run
-   id, 403/429 and 5xx are `START_UNKNOWN` (never resent).
+   id, 403/429 and 5xx are `START_UNKNOWN` (never resent). The dispatch pins
+   `X-GitHub-Api-Version: 2026-03-10` and accepts a run only when
+   `workflow_run_id`, `run_url` and `html_url` all name this repository's run,
+   matching the reviewed clock dispatcher (`cloud/fee-clock/runtime.py`
+   `_dispatch`). Any other 200 body is unknown. Deliberate difference: the
+   clock treats 403 as a definite failure; here 403 may be a secondary rate
+   limit, so it stays unknown and is never resent.
 
 A queued request whose wake was lost stays `queued`; once it is older than 10
 minutes the next execution records `REQUEST_STALE` and nothing runs, so the

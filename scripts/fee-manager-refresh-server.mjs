@@ -21,6 +21,8 @@ export const API = 'https://api.github.com/repos/' + REPO;
 export const PAGES = 'https://huanwujoy-crypto.github.io/fee-console/';
 export const ALLOWED_ORIGIN = 'https://huanwujoy-crypto.github.io';
 export const PRODUCER_WORKFLOW = 'fee-cloud-producer.yml';
+// Pinned to the version the reviewed clock dispatcher already uses.
+export const DISPATCH_API_VERSION = '2026-03-10';
 export const REQUEST_FILE = 'fee-manager-refresh-request.json';
 export const FRESH_MS = 10 * 60_000;
 export const MAX_TARGET_AGE_DAYS = 4; // the promotion window's own bound
@@ -209,12 +211,18 @@ export function createGitHubFeeAdapters({ http, readToken, now }) {
     async start({ dataDate, claimMainSha }) {
       if (!isDay(dataDate) || !isSha40(claimMainSha)) return { state: 'refused' };
       const r = await http('POST', API + '/actions/workflows/' + PRODUCER_WORKFLOW + '/dispatches', {
-        headers: { Accept: 'application/vnd.github+json', 'Content-Type': 'application/json', ...auth() },
+        headers: { Accept: 'application/vnd.github+json', 'Content-Type': 'application/json', 'X-GitHub-Api-Version': DISPATCH_API_VERSION, ...auth() },
         body: JSON.stringify({ ref: 'main', return_run_details: true, inputs: { run_reviewed_once: 'true', report_kind: 'daily', report_target: dataDate, manual_sync_completed_for: dataDate, confirmed_main: claimMainSha } }),
       });
+      // Same acceptance rule as the reviewed clock dispatcher
+      // (cloud/fee-clock/runtime.py _dispatch): run id, run_url and html_url
+      // must all name this repository's run. Anything else is unknown.
       if (r.status === 200) {
         let v; try { v = json(r.bytes); } catch { throw new Error('uncertain'); }
-        if (Number.isSafeInteger(v.workflow_run_id) && v.workflow_run_id > 0) return { state: 'started', handle: String(v.workflow_run_id) };
+        const id = v?.workflow_run_id;
+        if (Number.isSafeInteger(id) && id > 0 && v.run_url === API + '/actions/runs/' + id
+          && v.html_url === 'https://github.com/' + REPO + '/actions/runs/' + id) return { state: 'started', handle: String(id) };
+        throw new Error('uncertain');
       }
       // 204 has no run id, so it cannot be bound: unknown, never resent.
       if ([400, 401, 404, 422].includes(r.status)) return { state: 'refused' };
