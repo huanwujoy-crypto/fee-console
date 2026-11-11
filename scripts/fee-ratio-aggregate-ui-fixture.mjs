@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 const hash=s=>crypto.createHash('sha256').update(s).digest('hex');
 const bytes=fs.readFileSync(new URL('./fixtures/fee-ratio-aggregate-returns-ui.json',import.meta.url));
-assert.equal(hash(bytes),'cea1a15227ee7e7a311924914cf3cd42b978a645fcb7e47fc3ca5d77939ca78e');
+assert.equal(hash(bytes),'4dbf6b2a5d32d51407eedc5f48d213d6596a030d366908c95f56a2ab0dceae5e');
 export const aggregateUiFixture=JSON.parse(bytes);
 export function aggregateUiStage(page,forward=true){
  const f=aggregateUiFixture;

@@ -122,6 +122,10 @@ jobs:
         if: ${{ github.event.pull_request.draft == false }}
         run: node --test scripts/fee-ratio-fee-publication.test.mjs scripts/fee-ratio-cloud-publish.test.mjs scripts/fee-ratio-cloud-runtime.test.mjs scripts/fee-ratio-aggregate-returns.test.mjs scripts/fee-ratio-performance-integration.test.mjs scripts/fee-ratio-session-view.test.mjs
 
+      - name: Test default-inactive manager refresh orchestration with synthetic inputs
+        if: ${{ github.event.pull_request.draft == false }}
+        run: node --test scripts/fee-manager-refresh.test.mjs scripts/fee-manager-refresh-ui.test.mjs
+
       - name: IB daily read-only comparison fixtures
         if: ${{ github.event.pull_request.draft == false }}
         run: python3 cloud/ib-daily/test_daily_wiring.py -v
