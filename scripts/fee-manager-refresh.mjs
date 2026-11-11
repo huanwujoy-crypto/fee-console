@@ -31,6 +31,7 @@ export const SCHEMA = Object.freeze({
   result: 'fee-console.manager-refresh-result.v1',
   published: 'fee-console.manager-refresh-published.v1',
   ratioStep: 'fee-console.manager-refresh-ratio-step.v1',
+  feeBlocked: 'fee-console.manager-refresh-fee-blocked.v1',
 });
 export const OWNER_ID = 283054367;
 export const KINDS = Object.freeze(['fee', 'ratio']);
@@ -102,6 +103,8 @@ export function validateIdentity(identity) {
 export const keys = Object.freeze({
   batch: id => `${PREFIX}/batch/${id}/request`,
   ratioStep: (id, n) => `${PREFIX}/batch/${id}/ratio-${n}`,
+  feeBlocked: id => `${PREFIX}/batch/${id}/fee-blocked`,
+  done: id => `${PREFIX}/done/${id}`,
   attempt: (kind, date, n) => `${PREFIX}/${kind}/${date}/attempt-${n}`,
   started: (kind, date, n) => `${PREFIX}/${kind}/${date}/attempt-${n}-started`,
   result: (kind, date, n) => `${PREFIX}/${kind}/${date}/attempt-${n}-result`,
@@ -275,6 +278,37 @@ export function createRefreshCoordinator(deps) {
     return { batchId: batch.batchId, fee: null, ratio };
   }
 
+  // Crash recovery for an existing batch. Never a retry: a new attempt is
+  // made only when this batch has claimed nothing and recorded no final
+  // outcome yet, and only when the caller re-proved a fresh owner request.
+  // Existing attempts are reconciled from evidence only.
+  async function resumeBatch(batchId, { fresh = false } = {}) {
+    const batch = await d.ledger.get(keys.batch(batchId));
+    if (!batch || batch.schema !== SCHEMA.batch || !validateRequest(batch.request) || batch.batchId !== batchId) fail('LEDGER_CORRUPT');
+    const { request } = batch;
+    if (request.contents.includes('fee')) {
+      const s = await kindState(d.ledger, 'fee', request.feeDataDate);
+      const own = s.attempts.filter(x => x.attempt.batchId === batchId);
+      const blocked = await d.ledger.get(keys.feeBlocked(batchId));
+      const publishedHere = s.state === 'published' && s.published.batchId === batchId;
+      if (!publishedHere && !blocked) {
+        if (own.length && !own.at(-1).result) await reconcile('fee', request.feeDataDate).catch(() => null);
+        else if (!own.length) { if (fresh) await publicationStep('fee', request.feeDataDate, batch, {}); else await preClaim(batch, 'blocked', 'REQUEST_STALE'); }
+      }
+    }
+    if (request.contents.includes('ratio')) {
+      const steps = await d.ledger.list(`${PREFIX}/batch/${batchId}/ratio-`);
+      if (!steps.length) {
+        const st = await batchStatus(batchId);
+        const fee = st.fee;
+        if (!request.contents.includes('fee')) await recordRatio(batch, request.requestId, { state: 'blocked', code: 'RATIO_REQUIRES_SAME_BATCH_FEE' });
+        else if (fee?.state === 'published') { if (fresh) await ratioStep(batch, request.requestId, {}); else await recordRatio(batch, request.requestId, { state: 'blocked', code: 'REQUEST_STALE' }); }
+        else if (fee && ['failed', 'blocked'].includes(fee.state)) await recordRatio(batch, request.requestId, { state: 'blocked', code: 'FEE_NOT_VERIFIED' });
+      }
+    }
+    return batchStatus(batchId);
+  }
+
   async function runBatch(batch, { signal }) {
     const { request } = batch;
     let fee = null;
@@ -291,32 +325,41 @@ export function createRefreshCoordinator(deps) {
   }
 
   // Fee step. Each branch is labelled with the boundary it covers.
+  // A final outcome reached before this batch claimed anything is persisted
+  // create-only, so a later status read can never fall back to "waiting".
+  async function preClaim(batch, state, code) {
+    try { await createOnce(d.ledger, keys.feeBlocked(batch.batchId), { schema: SCHEMA.feeBlocked, state, code, nonce: nonce() }); } catch { /* first record wins */ }
+    const kept = await d.ledger.get(keys.feeBlocked(batch.batchId));
+    return kept && ['blocked', 'failed'].includes(kept.state) && CODE_SET.has(kept.code) ? { state: kept.state, code: kept.code } : { state, code };
+  }
+
   async function publicationStep(kind, date, batch, { signal }) {
     if (kind !== 'fee') fail('REQUEST_INVALID');
-    if (!d.feePublisher || !d.feeVerifier || typeof d.pipelineIdle !== 'function') return { state: 'blocked', code: 'FEE_PUBLISHER_NOT_CONFIGURED' };
+    if (!d.feePublisher || !d.feeVerifier || typeof d.pipelineIdle !== 'function') return preClaim(batch, 'blocked', 'FEE_PUBLISHER_NOT_CONFIGURED');
     let s = await kindState(d.ledger, kind, date);
-    if (s.state === 'published') return s.published.batchId === batch.batchId ? { state: 'published', code: 'ALREADY_PUBLISHED_IN_BATCH', evidence: s.published.evidence } : { state: 'blocked', code: 'DATE_ALREADY_PUBLISHED_ELSEWHERE' };
+    if (s.state === 'published') return s.published.batchId === batch.batchId ? { state: 'published', code: 'ALREADY_PUBLISHED_IN_BATCH', evidence: s.published.evidence } : preClaim(batch, 'blocked', 'DATE_ALREADY_PUBLISHED_ELSEWHERE');
     if (s.state === 'in-flight') {
       // Unknown earlier outcome: only evidence can close it; never re-run.
+      const owner = s.last.attempt.batchId;
       const r = await reconcile(kind, date);
-      if (r.code === 'RECONCILED_PUBLISHED') return r.batchId === batch.batchId ? { state: 'published', code: 'PUBLISHED', evidence: r.evidence } : { state: 'blocked', code: 'DATE_ALREADY_PUBLISHED_ELSEWHERE' };
-      if (r.state !== 'closed') return { state: 'unknown', code: 'ATTEMPT_IN_FLIGHT' };
+      if (r.code === 'RECONCILED_PUBLISHED') return r.batchId === batch.batchId ? { state: 'published', code: 'PUBLISHED', evidence: r.evidence } : preClaim(batch, 'blocked', 'DATE_ALREADY_PUBLISHED_ELSEWHERE');
+      if (r.state !== 'closed') return owner === batch.batchId ? { state: 'unknown', code: 'ATTEMPT_IN_FLIGHT' } : preClaim(batch, 'blocked', 'ATTEMPT_IN_FLIGHT');
       s = await kindState(d.ledger, kind, date);
     }
-    if (s.state === 'exhausted') return { state: 'blocked', code: 'ATTEMPTS_EXHAUSTED' };
+    if (s.state === 'exhausted') return preClaim(batch, 'blocked', 'ATTEMPTS_EXHAUSTED');
     if (s.state !== 'open' && s.state !== 'retryable') return { state: 'unknown', code: 'ATTEMPT_IN_FLIGHT' };
     // Admission against the real publication, not the ledger alone.
     let coverage;
-    try { coverage = await d.feeVerifier.coverage(); } catch { return { state: 'blocked', code: 'VERIFY_UNAVAILABLE' }; }
-    if (coverage.targetDate === date) return { state: 'blocked', code: 'DATE_ALREADY_PUBLISHED_ELSEWHERE' };
-    if (coverage.targetDate > date) return { state: 'blocked', code: 'HISTORY_AHEAD_OF_TARGET' };
-    if (signal?.aborted) return { state: 'failed', code: 'CANCELLED_BEFORE_START' };
+    try { coverage = await d.feeVerifier.coverage(); } catch { return preClaim(batch, 'blocked', 'VERIFY_UNAVAILABLE'); }
+    if (coverage.targetDate === date) return preClaim(batch, 'blocked', 'DATE_ALREADY_PUBLISHED_ELSEWHERE');
+    if (coverage.targetDate > date) return preClaim(batch, 'blocked', 'HISTORY_AHEAD_OF_TARGET');
+    if (signal?.aborted) return preClaim(batch, 'failed', 'CANCELLED_BEFORE_START');
     const n = s.next;
     const attempt = { schema: SCHEMA.attempt, kind, dataDate: date, attempt: n, batchId: batch.batchId, requestId: batch.request.requestId, claimMainSha: coverage.mainSha, claimedAt: nowIso(), nonce: nonce() };
     let claimed;
     try { claimed = await createOnce(d.ledger, keys.attempt(kind, date, n), attempt); }
     catch (e) { if (e.code === 'CLAIM_UNKNOWN') return { state: 'unknown', code: 'CLAIM_UNKNOWN' }; throw e; }
-    if (claimed === 'conflict') return { state: 'blocked', code: 'LOST_RACE' };
+    if (claimed === 'conflict') return preClaim(batch, 'blocked', 'LOST_RACE');
     const close = async (outcome, code) => { await createOnce(d.ledger, keys.result(kind, date, n), { schema: SCHEMA.result, attempt: n, batchId: batch.batchId, outcome, code, nonce: nonce() }); return { state: outcome, code }; };
     // Cancelled between claim and start: provably nothing started.
     if (signal?.aborted) return close('failed', 'CANCELLED_BEFORE_START');
@@ -410,6 +453,11 @@ export function createRefreshCoordinator(deps) {
     return safe;
   }
 
+  async function feeBlockedStatus(batchId, dataDate) {
+    const b = await d.ledger.get(keys.feeBlocked(batchId));
+    return b && ['blocked', 'failed'].includes(b.state) && CODE_SET.has(b.code) ? { state: b.state, code: b.code, dataDate } : { state: 'none', dataDate };
+  }
+
   async function batchStatus(batchId) {
     const batch = await d.ledger.get(keys.batch(batchId));
     if (!batch) return null;
@@ -420,7 +468,7 @@ export function createRefreshCoordinator(deps) {
       out.fee = s.state === 'published' && s.published.batchId === batchId ? { state: 'published', code: 'PUBLISHED', dataDate: batch.request.feeDataDate }
         : mine.length && !mine.at(-1).result ? { state: 'unknown', code: 'ATTEMPT_IN_FLIGHT', dataDate: batch.request.feeDataDate }
         : mine.length ? { state: mine.at(-1).result.outcome, code: mine.at(-1).result.code, dataDate: batch.request.feeDataDate }
-        : { state: 'none', dataDate: batch.request.feeDataDate };
+        : await feeBlockedStatus(batchId, batch.request.feeDataDate);
     }
     if (batch.request.contents.includes('ratio')) {
       const steps = await d.ledger.list(`${PREFIX}/batch/${batchId}/ratio-`);
@@ -429,7 +477,16 @@ export function createRefreshCoordinator(deps) {
     return out;
   }
 
-  return Object.freeze({ submit, resumeRatio, reconcile, batchStatus, kindState: (k, dt) => kindState(d.ledger, k, dt) });
+  return Object.freeze({ submit, resumeRatio, resumeBatch, reconcile, batchStatus, kindState: (k, dt) => kindState(d.ledger, k, dt) });
+}
+
+// A projection is final only when every requested kind has a final state
+// and code. Final projections are never overwritten (see the job).
+export function isFinalStatus(st) {
+  if (!st || typeof st !== 'object') return false;
+  if (['REQUEST_STALE', 'REQUEST_INVALID', 'IDENTITY_UNVERIFIED'].includes(st.code) && !st.fee && !st.ratio) return true;
+  const kinds = Array.isArray(st.contents) ? st.contents : [];
+  return kinds.length > 0 && kinds.every(k => st[k] && ['published', 'failed', 'blocked'].includes(st[k].state) && typeof st[k].code === 'string');
 }
 
 // ------------------------------------------------------------- intake gate

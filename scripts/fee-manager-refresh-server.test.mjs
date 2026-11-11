@@ -305,11 +305,14 @@ test('job acceptance: full path with zero dispatch; concurrent executions handle
     return { status: 503, bytes: enc('') }; // GitHub reads unavailable: never success
   };
   const args = { ...jobArgs(w, r, NOW), http };
-  const [a, b] = await Promise.all([runRefreshJob(args), runRefreshJob(args)]);
-  assert.equal(a.length + b.length, 1);
+  await Promise.all([runRefreshJob(args), runRefreshJob(args)]);
   const st = await w.ledger.get(keys.batch(r.requestId));
   assert.equal(st.request.requestId, r.requestId);
-  assert.equal([...a, ...b][0].fee, 'VERIFY_UNAVAILABLE');
+  const rows = [...w.ledger.rows.keys()];
+  assert.equal(rows.filter(k => k.endsWith('/request')).length, 1, 'one batch');
+  assert.equal(rows.filter(k => k.includes('/fee/')).length, 0, 'no claim: admission read was unavailable');
+  assert.deepEqual((await w.ledger.get(keys.feeBlocked(r.requestId))).code, 'VERIFY_UNAVAILABLE');
+  assert.ok(await w.ledger.get(keys.done(r.requestId)), 'final once');
 });
 
 test('job disabled by default does nothing; acceptance never dispatches', async () => {
@@ -345,4 +348,112 @@ test('entry http: fixed hosts, no redirects, Google token only to Google hosts; 
   await startJob(async (m, u, o) => { calls.push({ m, u, o }); return { status: 200 }; }, 'projects/p1234/locations/asia-east2/jobs/fee-refresh-launch')();
   assert.equal(calls[0].u, 'https://run.googleapis.com/v2/projects/p1234/locations/asia-east2/jobs/fee-refresh-launch:run');
   assert.equal(calls[0].o.body, '{}');
+});
+
+// ---- independent review of c465923: crash recovery, final-state keeping, >100 queue
+const queued = async (w, r, at = NOW) => w.queue.create('queue/' + r.requestId, { schema: 'fee-console.manager-refresh-queue.v1', requestId: r.requestId, gistVersion: VER, queuedAt: at.toISOString() });
+const latest = async (w, id) => { const l = await w.status.list('status/' + id + '/'); return l.at(-1)?.record; };
+
+test('crash after the batch record but before any claim: resumed once on a fresh proof, never lost', async () => {
+  const core = await import('./fee-manager-refresh.mjs');
+  const r = request(), w = jobWorld();
+  await queued(w, r);
+  // Simulate the crash: the batch exists, nothing else does.
+  await w.ledger.create(keys.batch(r.requestId), { schema: SCHEMA.batch, batchId: r.requestId, request: r, nonce: crypto.randomUUID() });
+  const http = async (method, url, opts) => url === 'https://api.github.com/gists/' + GIST ? gistHttp(r).http(method, url, opts) : { status: 503, bytes: enc('') };
+  const out = await runRefreshJob({ ...jobArgs(w, r, NOW), http });
+  assert.equal(out[0].resumed, true);
+  assert.equal((await w.ledger.get(keys.feeBlocked(r.requestId))).code, 'VERIFY_UNAVAILABLE', 'resumed admission ran');
+  assert.ok(await w.ledger.get(keys.done(r.requestId)));
+  assert.equal((await latest(w, r.requestId)).fee.code, 'VERIFY_UNAVAILABLE');
+  assert.ok(core.isFinalStatus(await latest(w, r.requestId)));
+});
+
+test('crash recovery when the proof is no longer fresh: recorded stale, nothing started', async () => {
+  const r = request(), w = jobWorld();
+  await queued(w, r);
+  await w.ledger.create(keys.batch(r.requestId), { schema: SCHEMA.batch, batchId: r.requestId, request: r, nonce: crypto.randomUUID() });
+  const later = new Date(NOW.getTime() + 60 * 60_000);
+  await runRefreshJob(jobArgs(w, r, later));
+  assert.equal((await w.ledger.get(keys.feeBlocked(r.requestId))).code, 'REQUEST_STALE');
+  assert.equal([...w.ledger.rows.keys()].filter(k => k.includes('/fee/')).length, 0);
+  assert.equal((await latest(w, r.requestId)).fee.code, 'REQUEST_STALE');
+});
+
+test('crash after a claim: the attempt is reconciled from evidence only, never re-claimed', async () => {
+  const r = request(), w = jobWorld();
+  await queued(w, r);
+  await w.ledger.create(keys.batch(r.requestId), { schema: SCHEMA.batch, batchId: r.requestId, request: r, nonce: crypto.randomUUID() });
+  await w.ledger.create(keys.attempt('fee', '2026-11-10', 1), { schema: SCHEMA.attempt, kind: 'fee', dataDate: '2026-11-10', attempt: 1, batchId: r.requestId, requestId: r.requestId, claimMainSha: 'c'.repeat(40), claimedAt: NOW.toISOString(), nonce: crypto.randomUUID() });
+  const http = async (method, url, opts) => { if (method === 'POST') throw new Error('must not dispatch'); return url === 'https://api.github.com/gists/' + GIST ? gistHttp(r).http(method, url, opts) : { status: 503, bytes: enc('') }; };
+  await runRefreshJob({ ...jobArgs(w, r, NOW), http, mode: 'launch' });
+  assert.equal([...w.ledger.rows.keys()].filter(k => /attempt-2$/.test(k)).length, 0, 'no second claim');
+  assert.equal(await w.ledger.get(keys.done(r.requestId)), null, 'unknown stays open');
+  assert.equal((await latest(w, r.requestId)).fee.state, 'unknown');
+});
+
+test('a pre-claim final outcome is kept: later executions never project waiting over it', async () => {
+  const r = request(), w = jobWorld();
+  await queued(w, r);
+  const verifierHttp = async (method, url, opts) => url === 'https://api.github.com/gists/' + GIST ? gistHttp(r).http(method, url, opts) : { status: 503, bytes: enc('') };
+  await runRefreshJob({ ...jobArgs(w, r, NOW), http: verifierHttp });
+  const first = await latest(w, r.requestId);
+  assert.equal(first.fee.state, 'blocked');
+  const count = (await w.status.list('status/' + r.requestId + '/')).length;
+  // Later executions, fresh or not: no new projection, the final one stays latest.
+  await runRefreshJob({ ...jobArgs(w, r, NOW), http: verifierHttp });
+  await runRefreshJob({ ...jobArgs(w, r, new Date(NOW.getTime() + 3600_000)), http: verifierHttp });
+  assert.equal((await w.status.list('status/' + r.requestId + '/')).length, count);
+  assert.deepEqual(await latest(w, r.requestId), first);
+});
+
+test('batchStatus keeps a pre-claim outcome recorded in the ledger (no fallback to none)', async () => {
+  const core = await import('./fee-manager-refresh.mjs');
+  const r = request(), ledger = core.createMemoryLedger();
+  const c = core.createRefreshCoordinator({ ledger, now: () => NOW, wait: async () => {},
+    feePublisher: acceptancePublisher, pipelineIdle: async () => true,
+    feeVerifier: { coverage: async () => ({ mainSha: 'c'.repeat(40), targetDate: '2026-11-10' }), verify: async () => ({ state: 'not-published' }), isAncestor: async () => false } });
+  const res = await c.submit(r, { verified: true, ownerId: OWNER_ID, method: 'owner-gist-authored-request' });
+  assert.equal(res.fee.code, 'DATE_ALREADY_PUBLISHED_ELSEWHERE');
+  assert.deepEqual((await c.batchStatus(r.requestId)).fee, { state: 'blocked', code: 'DATE_ALREADY_PUBLISHED_ELSEWHERE', dataDate: '2026-11-10' });
+});
+
+test('queue over 100 entries: finished and stale ones never starve a fresh request', async () => {
+  const r = request(), w = jobWorld();
+  const old = new Date(NOW.getTime() - 3600_000);
+  for (let i = 0; i < 130; i++) await w.queue.create('queue/' + crypto.randomUUID(), { schema: 'fee-console.manager-refresh-queue.v1', requestId: 'x', gistVersion: VER, queuedAt: old.toISOString() });
+  // 130 malformed/stale entries (ids sort anywhere), plus 40 already done.
+  for (let i = 0; i < 40; i++) { const id = crypto.randomUUID(); await w.queue.create('queue/' + id, { schema: 'fee-console.manager-refresh-queue.v1', requestId: id, gistVersion: VER, queuedAt: old.toISOString() }); await w.ledger.create(keys.done(id), { requestId: id }); }
+  await queued(w, r);
+  const reads = { gist: 0 };
+  const http = async (method, url, opts) => { if (url === 'https://api.github.com/gists/' + GIST) { reads.gist++; return gistHttp(r).http(method, url, opts); } return { status: 503, bytes: enc('') }; };
+  await runRefreshJob({ ...jobArgs(w, r, NOW), http, maxRequests: 1 });
+  assert.ok(await w.ledger.get(keys.batch(r.requestId)), 'fresh request processed despite 170 earlier entries');
+  assert.equal(reads.gist, 1, 'stale/invalid/done entries cost no Gist read');
+  assert.equal((await w.ledger.names('fee-manager-refresh-v1/done/')).length, 40 + 130 + 1);
+});
+
+test('GCS names() follows nextPageToken past the first page', async () => {
+  const names = Array.from({ length: 2500 }, (_, i) => 'queue/' + String(i).padStart(5, '0'));
+  const http = async (method, url) => {
+    const u = new URL(url), token = Number(u.searchParams.get('pageToken') || 0);
+    const page = names.slice(token, token + 1000);
+    return { status: 200, bytes: enc({ items: page.map(name => ({ name })), ...(token + 1000 < names.length ? { nextPageToken: String(token + 1000) } : {}) }) };
+  };
+  assert.equal((await createGcsBucket({ http, bucket: 'synthetic-queue' }).names('queue/')).length, 2500);
+});
+
+test('done is written only after the final projection is stored', async () => {
+  const r = request(), w = jobWorld();
+  await queued(w, r);
+  const create = w.status.create.bind(w.status);
+  let fail = true;
+  w.status.create = async (k, v) => { if (fail) throw new Error('status write lost'); return create(k, v); };
+  const http = async (method, url, opts) => url === 'https://api.github.com/gists/' + GIST ? gistHttp(r).http(method, url, opts) : { status: 503, bytes: enc('') };
+  await runRefreshJob({ ...jobArgs(w, r, NOW), http });
+  assert.equal(await w.ledger.get(keys.done(r.requestId)), null, 'not done without its projection');
+  fail = false;
+  await runRefreshJob({ ...jobArgs(w, r, NOW), http });
+  assert.ok(await w.ledger.get(keys.done(r.requestId)));
+  assert.equal((await latest(w, r.requestId)).fee.code, 'VERIFY_UNAVAILABLE');
 });

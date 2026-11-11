@@ -12,7 +12,7 @@
 // is injected so tests run on synthetic transports only.
 import crypto from 'node:crypto';
 import {
-  createRefreshCoordinator, createFeePublicationVerifier, validateRequest, isDay,
+  createRefreshCoordinator, createFeePublicationVerifier, validateRequest, isDay, isFinalStatus,
   OWNER_ID, RefreshError, keys as ledgerKeys,
 } from './fee-manager-refresh.mjs';
 
@@ -350,9 +350,14 @@ export const acceptancePublisher = Object.freeze({
 });
 
 // --------------------------------------------------------------- the Job
-// One execution drains the queue. Each request is verified again against
-// the REAL current time (never queuedAt), handled once (create-only
-// `processed/` marker in the job-only ledger), and projected to status.
+// One execution walks the whole queue (paginated). Idempotency comes from
+// the job-only ledger, never from a "handled" flag set before the work:
+//   - `done/<id>` (written only after the final projection) skips a request;
+//   - an existing batch is resumed: attempts are reconciled from evidence,
+//     and a batch that claimed nothing starts only on a fresh re-proof;
+//   - a request with no batch is either stale (recorded, no Gist read, no
+//     work budget used) or verified against the REAL current time and run.
+// Final projections are written once and never overwritten.
 export async function runRefreshJob({ ledger, queue, status, http, gistId, now, wait, readToken, validateHealth, ratioCollector, mode = 'disabled', maxRequests = 5 }) {
   if (mode !== 'acceptance' && mode !== 'launch') return [];
   const gh = createGitHubFeeAdapters({ http, readToken, now });
@@ -363,39 +368,52 @@ export async function runRefreshJob({ ledger, queue, status, http, gistId, now, 
     feeVerifier: createFeePublicationVerifier({ ...gh.readers, validateHealth }),
   });
   let seq = 0;
-  const project = async (id, value) => { try { await status.create('status/' + id + '/' + now().toISOString() + '-' + (seq++), redactStatus(id, value)); } catch {} };
+  const project = async (id, value) => { try { await status.create('status/' + id + '/' + now().toISOString() + '-' + String(seq++).padStart(4, '0'), redactStatus(id, value)); return true; } catch { return false; } };
+  // `done` only after the final projection is stored, so the page never
+  // keeps an older non-final answer for a finished request.
+  const finish = async (id, value) => {
+    if (!(await project(id, value))) return;
+    if (isFinalStatus(value)) { try { await ledger.create(ledgerKeys.done(id), { requestId: id, at: now().toISOString(), nonce: crypto.randomUUID() }); } catch {} }
+  };
+  const done = new Set((await ledger.names('fee-manager-refresh-v1/done/')).map(k => k.slice(k.lastIndexOf('/') + 1)));
   const out = [];
-  for (const key of (await queue.names('queue/')).slice(0, 100)) {
+  let worked = 0;
+  for (const key of await queue.names('queue/')) {
     const id = key.slice('queue/'.length);
-    if (!isUuid(id)) continue;
-    const marker = 'fee-manager-refresh-v1/processed/' + id;
-    if (await ledger.get(marker)) {
-      // Unresolved attempts are reconciled from evidence only.
-      const batch = await ledger.get(ledgerKeys.batch(id));
-      const fee = batch?.request?.feeDataDate;
-      if (fee) { const r = await coordinator.reconcile('fee', fee).catch(() => null); if (r?.state === 'closed') await project(id, await coordinator.batchStatus(id)); }
-      continue;
-    }
-    if (out.length >= maxRequests) break;
+    if (!isUuid(id) || done.has(id)) continue;
+    // Re-check: another execution may have finished it meanwhile.
+    if (await ledger.get(ledgerKeys.done(id))) continue;
     const entry = await queue.get(key);
-    let result;
+    const wellFormed = exact(entry, ['schema', 'requestId', 'gistVersion', 'queuedAt']) && entry.requestId === id && isSha40(entry.gistVersion) && Number.isFinite(Date.parse(entry.queuedAt));
+    const fresh = wellFormed && now().getTime() - Date.parse(entry.queuedAt) <= FRESH_MS;
+    const proveFresh = async () => verifyOwnerRequest({ requestId: id, gistVersion: entry.gistVersion }, { http, gistId, now, auth: readToken });
     try {
-      if (!exact(entry, ['schema', 'requestId', 'gistVersion', 'queuedAt']) || entry.requestId !== id) fail('REQUEST_INVALID');
-      if (now().getTime() - Date.parse(entry.queuedAt) > FRESH_MS) fail('REQUEST_STALE');
-      const proof = await verifyOwnerRequest({ requestId: id, gistVersion: entry.gistVersion }, { http, gistId, now, auth: readToken });
-      // Mark handled BEFORE side effects: a crash never replays the request;
-      // the coordinator's own ledger then governs the attempt.
-      try { await ledger.create(marker, { requestId: id, at: now().toISOString() }); } catch (e) { if (e.conflict) continue; throw e; }
-      result = await coordinator.submit(proof.request, proof.identity);
-      await project(id, { contents: proof.request.contents, fee: result.fee, ratio: result.ratio });
+      const batch = await ledger.get(ledgerKeys.batch(id));
+      if (batch) {
+        let freshProof = false;
+        if (fresh) { try { await proveFresh(); freshProof = true; } catch { freshProof = false; } }
+        const st = await coordinator.resumeBatch(id, { fresh: freshProof });
+        await finish(id, st);
+        out.push({ requestId: id, resumed: true, fee: st.fee?.code || st.fee?.state || null, ratio: st.ratio?.code || null, code: null });
+        continue;
+      }
+      if (!wellFormed) { await finish(id, { code: 'REQUEST_INVALID' }); out.push({ requestId: id, code: 'REQUEST_INVALID' }); continue; }
+      if (!fresh) { await finish(id, { code: 'REQUEST_STALE' }); out.push({ requestId: id, code: 'REQUEST_STALE' }); continue; }
+      if (worked >= maxRequests) continue; // left queued; still fresh for the next wake
+      worked++;
+      const proof = await proveFresh();
+      const result = await coordinator.submit(proof.request, proof.identity);
+      const st = await coordinator.batchStatus(id);
+      await finish(id, st || { contents: proof.request.contents, fee: result.fee, ratio: result.ratio });
+      out.push({ requestId: id, fee: result.fee?.code || null, ratio: result.ratio?.code || null, code: result.code || null });
     } catch (e) {
       const code = e instanceof RefreshError ? e.code : 'VERIFY_UNAVAILABLE';
-      if (code === 'VERIFY_UNAVAILABLE') { out.push({ requestId: id, code }); continue; } // transient: retried next wake while still fresh
-      try { await ledger.create(marker, { requestId: id, at: now().toISOString(), code }); } catch {}
-      await project(id, { code });
-      result = { requestId: id, code };
+      // Transient reads leave the request queued (it may still be fresh next wake).
+      if (code === 'VERIFY_UNAVAILABLE') { out.push({ requestId: id, code }); continue; }
+      if (await ledger.get(ledgerKeys.batch(id)).catch(() => null)) { out.push({ requestId: id, code }); continue; }
+      await finish(id, { code: ['REQUEST_STALE', 'REQUEST_INVALID', 'IDENTITY_UNVERIFIED'].includes(code) ? code : 'REQUEST_INVALID' });
+      out.push({ requestId: id, code });
     }
-    out.push({ requestId: id, fee: result.fee?.code || null, ratio: result.ratio?.code || null, code: result.code || null });
   }
   return out;
 }

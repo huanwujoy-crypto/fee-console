@@ -73,9 +73,18 @@ Buckets (bucket-level IAM only; no IAM conditions, because an objects.list
    per minute (create-only `wake/<UTC minute>`); duplicates never wake. GET
    reads only the latest status projection; it has no side effect.
 3. Job (fixed image digest, fixed args, no overrides, mode `disabled` by
-   default) re-verifies each queued request against the **real current time**
-   (never `queuedAt`), marks it `processed/` create-only before any side
-   effect, then runs the coordinator: claim, dispatch the existing producer
+   default) walks the whole queue (paginated). Idempotency comes from the
+   job-only ledger, not from a flag set before the work: `done/<id>` is
+   written only after the final projection is stored and skips a request
+   for good; an existing batch is resumed (attempts reconciled from evidence
+   only; a batch that claimed nothing starts only on a fresh re-proof,
+   otherwise it is recorded `REQUEST_STALE`); a request without a batch is
+   either stale (recorded without a Gist read and without using the
+   per-execution work budget) or re-verified against the **real current
+   time** (never `queuedAt`). A final outcome reached before any claim is
+   stored create-only in the ledger (`batch/<id>/fee-blocked`), so status
+   never falls back to waiting, and a final projection is never overwritten.
+   It then runs the coordinator: claim, dispatch the existing producer
    with exactly the existing reviewed completed-sync inputs and
    `return_run_details`, wait, verify, record, project status. Stale, forged
    or invalid entries are recorded once and never executed. 204 without a run
