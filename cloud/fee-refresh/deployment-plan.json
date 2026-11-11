@@ -1,0 +1,124 @@
+{
+  "schema": "fee-console.manager-refresh-deployment-plan.v1",
+  "status": "local-code-only-not-approved-not-deployed",
+  "project": "family-portfolio-gateway",
+  "region": "asia-east2",
+  "repository": "huanwujoy-crypto/fee-console",
+  "baseImage": {
+    "reference": "node:22.23.4-bookworm-slim@sha256:5ec23b7c622b00547753bc6ffd78085dd868a68aeb41c8e0a1418f033e13d96d",
+    "source": "registry-1.docker.io/library/node (official image)",
+    "verifiedAt": "2026-11-11T06:00:10Z",
+    "linuxAmd64Manifest": "sha256:aaa4b5baf1ecff3b283486bb1f90405cdda225a3e6f79660d2c559fa510a7292"
+  },
+  "releaseImage": {
+    "repository": "asia-east2-docker.pkg.dev/family-portfolio-gateway/cloud-run-source-deploy/fee-refresh",
+    "digest": null,
+    "rule": "Build only from the exact reviewed merge commit with cloud/fee-refresh/Dockerfile; record the resulting digest here through a reviewed change; never deploy by tag or without a recorded digest."
+  },
+  "bucketPolicy": {
+    "uniformBucketLevelAccess": true,
+    "publicAccessPrevention": "enforced",
+    "lifecycle": null,
+    "runtimeDelete": false,
+    "reason": "A missing object must never read as never received or never executed."
+  },
+  "environments": {
+    "acceptance": {
+      "mode": "acceptance",
+      "githubCredential": null,
+      "buckets": {
+        "queue": "family-portfolio-gateway-fee-refresh-queue-acceptance",
+        "ledger": "family-portfolio-gateway-fee-refresh-ledger-acceptance",
+        "status": "family-portfolio-gateway-fee-refresh-status-acceptance"
+      },
+      "serviceAccounts": {
+        "intake": "fee-refresh-intake-acc@family-portfolio-gateway.iam.gserviceaccount.com",
+        "job": "fee-refresh-launch-acc@family-portfolio-gateway.iam.gserviceaccount.com"
+      },
+      "job": {
+        "name": "fee-refresh-launch-acceptance",
+        "args": ["job"],
+        "taskCount": 1,
+        "parallelism": 1,
+        "maxRetries": 0,
+        "timeout": "1200s",
+        "serviceAccount": "job",
+        "secretMounts": [],
+        "env": { "FEE_REFRESH_MODE": "acceptance", "FEE_REFRESH_GIST_ID": "OWNER_SUPPLIED_LEDGER_GIST_ID", "FEE_REFRESH_QUEUE_BUCKET": "queue", "FEE_REFRESH_LEDGER_BUCKET": "ledger", "FEE_REFRESH_STATUS_BUCKET": "status" }
+      },
+      "service": {
+        "name": "fee-refresh-intake-acceptance",
+        "args": ["serve"],
+        "publicInvoker": true,
+        "maxInstances": 1,
+        "serviceAccount": "intake",
+        "secretMounts": [],
+        "env": { "FEE_REFRESH_MODE": "acceptance", "FEE_REFRESH_GIST_ID": "OWNER_SUPPLIED_LEDGER_GIST_ID", "FEE_REFRESH_QUEUE_BUCKET": "queue", "FEE_REFRESH_STATUS_BUCKET": "status", "FEE_REFRESH_JOB": "projects/family-portfolio-gateway/locations/asia-east2/jobs/fee-refresh-launch-acceptance" }
+      }
+    },
+    "production": {
+      "mode": "launch",
+      "activation": "Separately approved by the owner for a named first date, only after acceptance passed.",
+      "githubCredential": {
+        "secret": "fee-refresh-github-actions",
+        "version": "1",
+        "mountPath": "/secrets/github/token",
+        "accessor": "job",
+        "ownerEntryOnly": true,
+        "githubScope": { "repositories": ["huanwujoy-crypto/fee-console"], "actions": "read and write", "otherPermissions": "none" }
+      },
+      "buckets": {
+        "queue": "family-portfolio-gateway-fee-refresh-queue",
+        "ledger": "family-portfolio-gateway-fee-refresh-ledger",
+        "status": "family-portfolio-gateway-fee-refresh-status"
+      },
+      "serviceAccounts": {
+        "intake": "fee-refresh-intake@family-portfolio-gateway.iam.gserviceaccount.com",
+        "job": "fee-refresh-launch@family-portfolio-gateway.iam.gserviceaccount.com"
+      },
+      "job": {
+        "name": "fee-refresh-launch",
+        "args": ["job"],
+        "taskCount": 1,
+        "parallelism": 1,
+        "maxRetries": 0,
+        "timeout": "1200s",
+        "serviceAccount": "job",
+        "secretMounts": ["githubCredential"],
+        "env": { "FEE_REFRESH_MODE": "launch", "FEE_REFRESH_GIST_ID": "OWNER_SUPPLIED_LEDGER_GIST_ID", "FEE_REFRESH_QUEUE_BUCKET": "queue", "FEE_REFRESH_LEDGER_BUCKET": "ledger", "FEE_REFRESH_STATUS_BUCKET": "status" }
+      },
+      "service": {
+        "name": "fee-refresh-intake",
+        "args": ["serve"],
+        "publicInvoker": true,
+        "maxInstances": 1,
+        "serviceAccount": "intake",
+        "secretMounts": [],
+        "env": { "FEE_REFRESH_MODE": "launch", "FEE_REFRESH_GIST_ID": "OWNER_SUPPLIED_LEDGER_GIST_ID", "FEE_REFRESH_QUEUE_BUCKET": "queue", "FEE_REFRESH_STATUS_BUCKET": "status", "FEE_REFRESH_JOB": "projects/family-portfolio-gateway/locations/asia-east2/jobs/fee-refresh-launch" }
+      }
+    }
+  },
+  "iamPerEnvironment": {
+    "bucketRoles": "Derived from ROLE_ACCESS in scripts/fee-manager-refresh-server.mjs: create -> roles/storage.objectCreator; get/list -> roles/storage.objectViewer; on that environment's own buckets only.",
+    "jobStart": {
+      "member": "intake",
+      "resource": "job",
+      "permission": "run.jobs.run",
+      "role": "roles/run.invoker only if B0 shows it excludes run.jobs.runWithOverrides; otherwise a custom role holding only run.jobs.run",
+      "decidedBy": "B0 read-only check"
+    },
+    "crossEnvironment": "none: no acceptance identity is granted anything on production resources and no production identity on acceptance resources"
+  },
+  "notInThisPlan": ["schedules", "fee-clock resources", "producer or promotion workflows", "ratio collector or publisher", "page activation (MR_INTAKE_ORIGIN) and security/allowed-origins.txt"],
+  "approvalsRequired": [
+    "B0 read-only checks by the coordinator",
+    "independent review, then exact-head owner approval of the code PRs",
+    "owner: create the six buckets",
+    "owner: create the four service accounts and grant exactly the bindings derived above",
+    "owner: enter the production GitHub credential personally (acceptance has none)",
+    "owner: build from the reviewed commit, record the image digest, deploy acceptance only",
+    "coordinator: run the acceptance runner; owner observes",
+    "owner: separate security PR for the intake origin and index-only activation PR",
+    "owner: separately approve production launch for a named first date"
+  ]
+}

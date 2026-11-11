@@ -271,6 +271,30 @@ gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name=
 The `ls …/v1/intent/` line shows whether an intent object exists; list names
 only, do not `cat`, and never delete, overwrite or retry based on it.
 
+## Deployment preparation files (code only; nothing deployed)
+
+- `cloud/fee-refresh/Dockerfile` — official `node:22.23.4-bookworm-slim`
+  pinned by its multi-arch index digest (verified 2026-11-11T06:00Z), only
+  the entry point's import closure, non-root, `FEE_REFRESH_MODE=disabled`.
+- `cloud/fee-refresh/deployment-plan.json` — exact names for two strictly
+  separate environments (acceptance: every bucket/job/service ends in
+  `-acceptance`, service accounts end in `-acc`, **no GitHub credential**;
+  production: the only one with the credential, mounted into the job only),
+  IAM derived from `ROLE_ACCESS`, no lifecycle, no runtime delete.
+- `cloud/fee-refresh/verify-readonly.sh` — describe/get-iam-policy only.
+- `scripts/fee-manager-refresh-acceptance.mjs` — the acceptance runner; it
+  refuses any host other than the acceptance service and any service whose
+  `GET /v1/mode` is not `acceptance`.
+- `scripts/fee-manager-refresh-deploy.test.mjs`,
+  `scripts/fee-manager-refresh-acceptance.test.mjs` — drift and isolation
+  checks; `docs/fee-manager-refresh-activation.md` — activation drafts.
+
+Isolation is enforced in code too: `readConfig` refuses acceptance
+names without `-acceptance` and production names with it (buckets and the
+job the intake may start); an acceptance job refuses to start if a GitHub
+credential is mounted; a launch job refuses to start without one; the
+acceptance adapters send no Authorization header.
+
 ## Minimal-privilege deployment (nothing here is done; each step needs the named approval)
 
 | # | Step | Scope / permission | Approval |
@@ -281,12 +305,12 @@ only, do not `cat`, and never delete, overwrite or retry based on it.
 | 3 | SA `fee-refresh-intake@`: objectCreator + objectViewer on queue, objectViewer on status; nothing on ledger | bucket-level IAM | owner (IAM) |
 | 4 | Intake start permission on job `fee-refresh-launch` only: `run.jobs.run` without `run.jobs.runWithOverrides` (custom role if `roles/run.invoker` includes overrides) | job-level IAM | owner (IAM) |
 | 5 | SA `fee-refresh-launch@`: objectViewer on queue; objectCreator+objectViewer on ledger; objectCreator+objectViewer on status | bucket-level IAM | owner (IAM) |
-| 6 | Job credential: owner enters a new fine-grained token (this repository; Actions read/write only) as a secret readable only by SA 5. Alternative: reuse `fee-clock-github-actions` (second identity on a repository-wide Actions-write token) | secret | owner (credential; owner enters it personally) |
-| 7 | Deploy job `fee-refresh-launch` (verified image digest, `node scripts/fee-manager-refresh-entry.mjs job`, maxRetries 0, timeout 20 min, `FEE_REFRESH_MODE=acceptance`, `-acceptance` buckets) | deploy | owner (deploy) |
-| 8 | Deploy service `fee-refresh-intake` (`… serve`, public invoker, max instances 1, no secret, no ledger env, acceptance buckets) | deploy | owner (deploy) |
-| 9 | Isolated acceptance (below) | — | coordinator; owner observes |
+| 6 | Production job credential only: owner enters a new fine-grained token (this repository; Actions read/write only) as secret `fee-refresh-github-actions`, readable only by the production job SA. Acceptance has no credential. Alternative: reuse `fee-clock-github-actions` (second identity on a repository-wide Actions-write token) | secret | owner (credential; owner enters it personally) |
+| 7 | Build the image from the reviewed commit and record its digest; deploy job `fee-refresh-launch-acceptance` (args `job`, maxRetries 0, timeout 20 min, `-acceptance` buckets, acceptance job SA, no secret) | deploy | owner (deploy) |
+| 8 | Deploy service `fee-refresh-intake-acceptance` (args `serve`, public invoker, max instances 1, no secret, no ledger env, acceptance intake SA) | deploy | owner (deploy) |
+| 9 | Isolated acceptance: `node scripts/fee-manager-refresh-acceptance.mjs --intake=<acceptance URL> [--request-id --gist-version]` (below) | — | coordinator; owner observes |
 | 10 | Security-policy PR adding the exact intake origin to `security/allowed-origins.txt`, and an index-only PR setting `MR_INTAKE_ORIGIN` to that literal | page now calls the service | owner, exact-head OWNER |
-| 11 | Switch job and service to production buckets, then `FEE_REFRESH_MODE=launch` | enables real dispatch | owner, separately, for a named first date |
+| 11 | Deploy the separate production job/service (`fee-refresh-launch`, `fee-refresh-intake`, production SAs and buckets, credential on the job only) in `launch` mode | enables real dispatch | owner, separately, for a named first date |
 
 No schedule is added: the job runs only when the intake starts it (no
 overrides). Ratio remains disabled (`MR_RATIO_READY=false`, no collector or

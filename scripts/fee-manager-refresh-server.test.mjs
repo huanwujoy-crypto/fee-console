@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { createGcsBucket, verifyOwnerRequest, handleIntake, createGitHubFeeAdapters, runRefreshJob, acceptancePublisher, candidateFromLog, stepScript, ALLOWED_ORIGIN, REQUEST_FILE, API, ROLE_ACCESS, CLOSED_SCHEMA } from './fee-manager-refresh-server.mjs';
 import { createMemoryLedger, OWNER_ID, SCHEMA, keys } from './fee-manager-refresh.mjs';
-import { readConfig, createHttp, startJob, createIntakeHandler, runJob } from './fee-manager-refresh-entry.mjs';
+import { readConfig, createHttp, startJob, createIntakeHandler, runJob, credentialFor } from './fee-manager-refresh-entry.mjs';
 
 const enc = v => new TextEncoder().encode(typeof v === 'string' ? v : JSON.stringify(v));
 const sha = s => crypto.createHash('sha256').update(s).digest('hex');
@@ -327,7 +327,10 @@ test('entry config: disabled by default, intake never configured with the ledger
   const base = { FEE_REFRESH_GIST_ID: GIST, FEE_REFRESH_QUEUE_BUCKET: 'q', FEE_REFRESH_STATUS_BUCKET: 's', FEE_REFRESH_JOB: 'projects/family-portfolio-gateway/locations/asia-east2/jobs/fee-refresh-launch' };
   assert.throws(() => readConfig({ ...base, FEE_REFRESH_MODE: 'launch', FEE_REFRESH_LEDGER_BUCKET: 'l' }, 'serve'), /CONFIG/);
   assert.throws(() => readConfig({ ...base, FEE_REFRESH_MODE: 'acceptance' }, 'serve'), /CONFIG/);
-  assert.equal(readConfig({ ...base, FEE_REFRESH_MODE: 'acceptance', FEE_REFRESH_QUEUE_BUCKET: 'q-acceptance', FEE_REFRESH_STATUS_BUCKET: 's-acceptance' }, 'serve').mode, 'acceptance');
+  const acc = { ...base, FEE_REFRESH_MODE: 'acceptance', FEE_REFRESH_QUEUE_BUCKET: 'q-acceptance', FEE_REFRESH_STATUS_BUCKET: 's-acceptance', FEE_REFRESH_JOB: 'projects/family-portfolio-gateway/locations/asia-east2/jobs/fee-refresh-launch-acceptance' };
+  assert.equal(readConfig(acc, 'serve').mode, 'acceptance');
+  assert.throws(() => readConfig({ ...acc, FEE_REFRESH_JOB: base.FEE_REFRESH_JOB }, 'serve'), /CONFIG/, 'acceptance intake may not start the production job');
+  assert.throws(() => readConfig({ ...base, FEE_REFRESH_MODE: 'launch', FEE_REFRESH_JOB: acc.FEE_REFRESH_JOB }, 'serve'), /CONFIG/, 'production intake may not start the acceptance job');
   assert.throws(() => readConfig({ ...base, FEE_REFRESH_MODE: 'launch', FEE_REFRESH_QUEUE_BUCKET: 'x-acceptance' }, 'serve'), /CONFIG/);
   assert.throws(() => readConfig({ ...base, FEE_REFRESH_MODE: 'nope' }, 'serve'), /CONFIG/);
   const h = createIntakeHandler({ mode: 'disabled' }, {});
@@ -648,4 +651,29 @@ test('end-to-end under enforced permissions: POST, close, GET, job (acceptance) 
   await runRefreshJob({ ...job3, http: http3, gistId: GIST, now: () => NOW, wait: async () => {}, readToken: () => 'synthetic-token-not-real-0000', validateHealth: () => [], mode: 'launch' });
   assert.ok(log3.includes('job/status:get'), 'job reads status before a non-final projection');
   assert.ok(log3.includes('job/status:create'));
+});
+
+test('credential isolation: acceptance job refuses a mounted GitHub credential; launch job requires one', () => {
+  const acc = { mode: 'acceptance' }, launch = { mode: 'launch' };
+  assert.equal(credentialFor(acc, 'job', () => false), null);
+  assert.throws(() => credentialFor(acc, 'job', () => true), /FEE_REFRESH_ISOLATION/);
+  assert.throws(() => credentialFor(launch, 'job', () => false), /FEE_REFRESH_TOKEN/);
+  assert.equal(typeof credentialFor(launch, 'job', () => true), 'function');
+  assert.equal(credentialFor(launch, 'serve', () => true), null, 'the intake never reads it');
+});
+
+test('acceptance adapters send no Authorization header at all', async () => {
+  const seen = [];
+  const http = async (method, url, opts = {}) => { seen.push(opts.headers || {}); return { status: 200, bytes: enc({ object: { sha: 'a'.repeat(40) } }) }; };
+  const { readers } = createGitHubFeeAdapters({ http, readToken: null, now: () => NOW });
+  await readers.readMain();
+  assert.ok(seen.every(h => !('Authorization' in h)));
+});
+
+test('GET /v1/mode reports only the mode', async () => {
+  const r = request(), x = intakeDeps(r);
+  for (const mode of ['acceptance', 'launch', undefined]) {
+    const res = await handleIntake({ method: 'GET', path: '/v1/mode', headers: { origin: ALLOWED_ORIGIN } }, { ...x.deps, mode });
+    assert.deepEqual(JSON.parse(res.body), { mode: mode || 'unknown' });
+  }
 });
