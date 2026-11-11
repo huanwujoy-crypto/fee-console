@@ -2,7 +2,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
-import { createGcsBucket, verifyOwnerRequest, handleIntake, createGitHubFeeAdapters, runRefreshJob, acceptancePublisher, candidateFromLog, ALLOWED_ORIGIN, REQUEST_FILE, API } from './fee-manager-refresh-server.mjs';
+import fs from 'node:fs';
+import { createGcsBucket, verifyOwnerRequest, handleIntake, createGitHubFeeAdapters, runRefreshJob, acceptancePublisher, candidateFromLog, stepScript, ALLOWED_ORIGIN, REQUEST_FILE, API } from './fee-manager-refresh-server.mjs';
 import { createMemoryLedger, OWNER_ID, SCHEMA, keys } from './fee-manager-refresh.mjs';
 import { readConfig, createHttp, startJob, createIntakeHandler, runJob } from './fee-manager-refresh-entry.mjs';
 
@@ -151,59 +152,104 @@ test('unknown dispatch reply is never resent by the coordinator', async () => {
   assert.equal(w.sent.length, 1);
 });
 
-const MAIN0 = '1'.repeat(40), CAND = '2'.repeat(40);
-const LOG = ['2026-11-11T02:10:00.0000000Z ##[group]Run node scripts/refresh-benchmark-cache.mjs --sharesight-cloud', '2026-11-11T02:10:01Z ##[endgroup]',
-  '2026-11-11T02:12:00Z ##[group]Run node scripts/fee-cloud-commit.mjs \\', '2026-11-11T02:12:00Z ##[endgroup]', '2026-11-11T02:12:05Z candidate ' + CAND,
-  '2026-11-11T02:12:06Z ##[group]Run if [[ -d "$RUNNER_TEMP/fee-cloud-private" ]]; then'].join('\n');
+const MAIN0 = '1'.repeat(40);
+// Minimal redacted fixture shaped like job 129766463139 (run 42797516508,
+// Produce daily 2026-11-09). Observed verbatim and supplied by the
+// coordinator: the group header at 10:16:06.4373403Z, the ANSI-wrapped
+// `node scripts/fee-cloud-commit.mjs` echo, and the candidate line at
+// 10:16:10.1547988Z. The remaining echo/shell/env lines follow GitHub's
+// standard run-step format and are reconstructed from the workflow text;
+// confirm them against the real log in acceptance. No values or secrets.
+const CAND = '153630773b26137f86943acfcae2bbb95ad141b8';
+const WORKFLOW = fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml', import.meta.url), 'utf8');
+const SCRIPT = stepScript(WORKFLOW);
+const A = l => '\x1b[36;1m' + l + '\x1b[0m';
+const LOG = [
+  '2026-11-10T10:15:58.1000000Z ##[group]Run set -euo pipefail',
+  '2026-11-10T10:15:58.1000000Z ' + A('set -euo pipefail'),
+  '2026-11-10T10:15:58.1000000Z ' + A('error_file="$RUNNER_TEMP/fee-cloud-private/producer-error.txt"'),
+  '2026-11-10T10:15:58.1000000Z ##[endgroup]',
+  '2026-11-10T10:16:06.4373403Z ##[group]Run set -euo pipefail',
+  '2026-11-10T10:16:06.4374000Z ' + A('set -euo pipefail'),
+  '2026-11-10T10:16:06.4374000Z ' + A('node scripts/fee-cloud-commit.mjs \\'),
+  '2026-11-10T10:16:06.4374000Z ' + A('  --data="$RUNNER_TEMP/fee-cloud-private/data.json" \\'),
+  '2026-11-10T10:16:06.4374000Z ' + A('  --health="$RUNNER_TEMP/fee-cloud-private/fee-data-health.json" \\'),
+  '2026-11-10T10:16:06.4374000Z ' + A('  --base-sha="$(git rev-parse HEAD)"'),
+  '2026-11-10T10:16:06.4374000Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}',
+  '2026-11-10T10:16:06.4374000Z env:',
+  '2026-11-10T10:16:06.4374000Z   FEE_CLOUD_GITHUB_TOKEN: ***',
+  '2026-11-10T10:16:06.4375000Z ##[endgroup]',
+  '2026-11-10T10:16:10.1547988Z candidate ' + CAND,
+  '2026-11-10T10:16:10.3000000Z ##[group]Run if [[ -d "$RUNNER_TEMP/fee-cloud-private" ]]; then',
+].join('\n');
+const STEP = { name: 'Create a signed owner candidate', number: 11, conclusion: 'success', started_at: '2026-11-10T10:16:06Z', completed_at: '2026-11-10T10:16:10Z' };
+const OPTS = { script: SCRIPT, stepStart: STEP.started_at, stepEnd: STEP.completed_at };
 function provenanceWorld(over = {}) {
-  const o = { log: LOG, verified: true, author: 'huanwujoy-crypto', committer: 'web-flow', parent: MAIN0, actor: OWNER_ID, message: 'daily 2026-11-10',
-    jobName: 'Produce daily 2026-11-10', stepOk: 'success', branchSha: CAND, mainSha: CAND, logHost: 'productionresultssa12.blob.core.windows.net', ...over };
+  const o = { log: LOG, verified: true, author: 'huanwujoy-crypto', committer: 'web-flow', parent: MAIN0, actor: OWNER_ID, message: 'daily 2026-11-09',
+    jobName: 'Produce daily 2026-11-09', step: STEP, branchSha: CAND, mainSha: CAND, workflow: WORKFLOW, logHost: 'productionresultssa12.blob.core.windows.net', ...over };
   const seen = [];
   const http = async (method, url, opts = {}) => {
     seen.push({ url, opts });
     const ok = v => ({ status: 200, bytes: enc(v) });
-    if (url.endsWith('/actions/runs/42')) return ok({ id: 42, status: 'completed', conclusion: 'success', event: 'workflow_dispatch', path: '.github/workflows/fee-cloud-producer.yml', head_branch: 'main', run_attempt: 1, actor: { id: o.actor }, head_sha: MAIN0 });
-    if (url.includes('/actions/runs/42/attempts/1/jobs')) return ok({ total_count: 2, jobs: [{ id: 7, run_id: 42, name: 'period' }, { id: 9, run_id: 42, name: o.jobName, head_sha: MAIN0, conclusion: 'success', steps: [{ name: 'Create a signed owner candidate', conclusion: o.stepOk }] }] });
-    if (url.endsWith('/actions/jobs/9/logs')) { assert.equal(opts.redirect, 'manual'); return { status: 302, bytes: enc(''), location: 'https://' + o.logHost + '/logs/9?sig=x' }; }
+    if (url.endsWith('/actions/runs/42797516508')) return ok({ id: 42797516508, status: 'completed', conclusion: 'success', event: 'workflow_dispatch', path: '.github/workflows/fee-cloud-producer.yml', head_branch: 'main', run_attempt: 1, actor: { id: o.actor }, head_sha: MAIN0 });
+    if (url.includes('/actions/runs/42797516508/attempts/1/jobs')) return ok({ total_count: 2, jobs: [{ id: 7, run_id: 42797516508, name: 'period' }, { id: 129766463139, run_id: 42797516508, name: o.jobName, head_sha: MAIN0, conclusion: 'success', steps: [o.step] }] });
+    if (url.endsWith('/actions/jobs/129766463139/logs')) { assert.equal(opts.redirect, 'manual'); return { status: 302, bytes: enc(''), location: 'https://' + o.logHost + '/logs/9?sig=x' }; }
     if (url.startsWith('https://' + o.logHost + '/')) { assert.equal(opts.external, true); assert.deepEqual(opts.headers, {}); return ok(o.log); }
     if (url.endsWith('/commits/' + CAND)) return ok({ sha: CAND, parents: [{ sha: o.parent }], author: { login: o.author }, committer: { login: o.committer }, commit: { message: o.message, verification: { verified: o.verified } } });
-    if (url.includes('/git/matching-refs/heads/codex/fee-daily-20261110-')) return ok([{ ref: 'refs/heads/codex/fee-daily-20261110-a1b2c3', object: { sha: o.branchSha } }]);
+    if (url.includes('/git/matching-refs/heads/codex/fee-daily-20261109-')) return ok([{ ref: 'refs/heads/codex/fee-daily-20261109-a1b2c3', object: { sha: o.branchSha } }]);
     if (url.endsWith('/git/ref/heads/main')) return ok({ object: { sha: o.mainSha } });
     if (url.includes('/compare/')) return ok({ status: 'diverged', behind_by: 1 });
     const m = /\/contents\/(.+)\?ref=([a-f0-9]{40})$/.exec(url);
+    if (m && m[1] === '.github/workflows/fee-cloud-producer.yml') { assert.equal(m[2], MAIN0, 'workflow read at the run head'); return ok(o.workflow); }
     if (m) return { status: 200, bytes: enc(m[1] === 'data.json' ? 'D' : 'H') };
     return { status: 404 };
   };
   return { seen, publisher: createGitHubFeeAdapters({ http, readToken: () => 'synthetic-token-not-real-0000', now: () => NOW }).publisher };
 }
+const RUN = '42797516508', DAY = '2026-11-09';
 
-test('provenance: run -> its produce job -> candidate log line -> signed owner commit -> promoted main', async () => {
+test('provenance: run -> its produce job -> trusted command group -> candidate -> signed owner commit -> promoted main', async () => {
   const w = provenanceWorld();
-  assert.deepEqual(await w.publisher.provenance({ handle: '42', dataDate: '2026-11-10' }), { accountingThrough: '2026-11-10', dataSha256: sha('D'), healthSha256: sha('H'), promotedMainSha: CAND });
+  assert.deepEqual(await w.publisher.provenance({ handle: RUN, dataDate: DAY }), { accountingThrough: DAY, dataSha256: sha('D'), healthSha256: sha('H'), promotedMainSha: CAND });
   assert.ok(w.seen.filter(x => x.url.includes('blob.core.windows.net')).every(x => !JSON.stringify(x.opts).includes('synthetic-token')), 'no credential to the log host');
 });
 
-test('provenance blocked on any missing or ambiguous link', async () => {
-  const twice = LOG + '\n2026-11-11T02:13:00Z candidate ' + CAND;
+test('trusted step script is read from the producer workflow itself', () => {
+  assert.deepEqual(SCRIPT, ['set -euo pipefail', 'node scripts/fee-cloud-commit.mjs \\', '--data="$RUNNER_TEMP/fee-cloud-private/data.json" \\', '--health="$RUNNER_TEMP/fee-cloud-private/fee-data-health.json" \\', '--base-sha="$(git rev-parse HEAD)"']);
+  assert.equal(stepScript(WORKFLOW.replace('- name: Create a signed owner candidate', '- name: Renamed')), null);
+  assert.equal(stepScript(''), null);
+});
+
+test('provenance blocked on any missing, extra, cross-group or out-of-step link', async () => {
+  const L = LOG.split('\n');
+  const edit = (i, v) => L.map((x, k) => (k === i ? v : x)).join('\n');
   const cases = {
-    'duplicate candidate text': { log: twice },
-    'candidate outside the commit step group': { log: LOG.replace('##[group]Run node scripts/fee-cloud-commit.mjs', '##[group]Run node scripts/other.mjs') },
-    'embedded look-alike text': { log: LOG + '\n2026-11-11T02:13:00Z note: candidate ' + '3'.repeat(40) },
+    'second candidate line': { log: LOG + '\n2026-11-10T10:16:10.2000000Z candidate ' + CAND },
+    'look-alike candidate text elsewhere': { log: LOG + '\n2026-11-10T10:16:11Z note: candidate ' + '3'.repeat(40) },
+    'candidate inside another group': { log: [...L.slice(0, 3), '2026-11-10T10:15:58.2Z candidate ' + CAND, ...L.slice(3, 14), ...L.slice(15)].join('\n') },
+    'candidate after the next group starts': { log: [...L.slice(0, 14), L[15], L[14]].join('\n') },
+    'echoed command differs from the workflow': { log: edit(6, '2026-11-10T10:16:06.4374000Z ' + A('node scripts/other.mjs \\')) },
+    'echoed command not ANSI-wrapped (forged plain text)': { log: L.map(x => x.replace(/\x1b\[[0-9;]*m/g, '')).join('\n') },
+    'extra echoed command line': { log: [...L.slice(0, 10), '2026-11-10T10:16:06.4374000Z ' + A('curl x'), ...L.slice(10)].join('\n') },
+    'two identical trusted groups': { log: [...L.slice(0, 14), ...L.slice(4, 14), ...L.slice(14)].join('\n') },
+    'candidate outside the step time': { step: { ...STEP, completed_at: '2026-11-10T10:16:08Z' } },
+    'workflow at head has no such step': { workflow: WORKFLOW.replace('- name: Create a signed owner candidate', '- name: Something else') },
     'unexpected log host': { logHost: 'evil.example' },
     'unsigned commit': { verified: false }, 'other author': { author: 'someone-else' }, 'other committer': { committer: 'x' },
-    'same-parent forged? parent differs': { parent: '9'.repeat(40) }, 'other date subject': { message: 'daily 2026-11-09' },
-    'not owner actor': { actor: 999 }, 'job for another date': { jobName: 'Produce daily 2026-11-09' }, 'commit step failed': { stepOk: 'failure' },
+    'parent differs': { parent: '9'.repeat(40) }, 'other date subject': { message: 'daily 2026-11-08' },
+    'not owner actor': { actor: 999 }, 'job for another date': { jobName: 'Produce daily 2026-11-08' }, 'commit step failed': { step: { ...STEP, conclusion: 'failure' } },
     'branch points elsewhere': { branchSha: '8'.repeat(40) }, 'not promoted to main': { mainSha: '4'.repeat(40) },
   };
   // Blocked = null, or a thrown read error (the coordinator treats both as unbound, never success).
-  for (const [name, c] of Object.entries(cases)) assert.equal(await provenanceWorld(c).publisher.provenance({ handle: '42', dataDate: '2026-11-10' }).catch(() => null), null, name);
-  assert.equal(await provenanceWorld().publisher.provenance({ handle: null, dataDate: '2026-11-10' }), null);
+  for (const [name, c] of Object.entries(cases)) assert.equal(await provenanceWorld(c).publisher.provenance({ handle: RUN, dataDate: DAY }).catch(() => null), null, name);
+  assert.equal(await provenanceWorld().publisher.provenance({ handle: null, dataDate: DAY }), null);
 });
 
-test('candidate log parser is strict', () => {
-  assert.equal(candidateFromLog(LOG), CAND);
-  assert.equal(candidateFromLog(''), null);
-  assert.equal(candidateFromLog(LOG.replace('candidate ' + CAND, 'candidate ' + CAND.slice(1))), null);
+test('candidate log parser on the real shape', () => {
+  assert.equal(candidateFromLog(LOG, OPTS), CAND);
+  assert.equal(candidateFromLog(LOG, {}), null, 'no trusted script, no answer');
+  assert.equal(candidateFromLog('', OPTS), null);
+  assert.equal(candidateFromLog(LOG.replace('candidate ' + CAND, 'candidate ' + CAND.slice(1)), OPTS), null);
 });
 
 test('pipeline idle: one bounded run listing; active fee run or unincorporated candidate keeps it pending', async () => {

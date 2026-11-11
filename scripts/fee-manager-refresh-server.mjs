@@ -149,19 +149,64 @@ export function redactStatus(requestId, s) {
   return { requestId, contents: s?.contents || null, fee: step(s?.fee), ratio: step(s?.ratio), ...(s?.code ? { code: s.code } : {}) };
 }
 
-// Strict job-log parse: exactly one `candidate <sha>` line in the whole job
-// log, located inside the single fee-cloud-commit.mjs step group.
+// The trusted command group: the exact `run:` script of the
+// `Create a signed owner candidate` step, read from the producer workflow at
+// the run's own head commit (never a hand-copied expectation).
+export const CANDIDATE_STEP = 'Create a signed owner candidate';
+export function stepScript(workflowText, stepName = CANDIDATE_STEP) {
+  if (typeof workflowText !== 'string') return null;
+  const lines = workflowText.split('\n');
+  const starts = lines.map((l, i) => [i, /^(\s*)- name: (.*)$/.exec(l)]).filter(([, m]) => m);
+  const hit = starts.filter(([, m]) => m[2].trim() === stepName);
+  if (hit.length !== 1) return null;
+  const [at, m] = hit[0], indent = m[1].length;
+  const end = (starts.find(([i, x]) => i > at && x[1].length <= indent) || [lines.length])[0];
+  const runAt = lines.findIndex((l, i) => i > at && i < end && /^\s+run: \|\s*$/.test(l));
+  if (runAt < 0) return null;
+  const runIndent = lines[runAt].search(/\S/), body = [];
+  for (let i = runAt + 1; i < end; i++) {
+    const l = lines[i];
+    if (!l.trim()) { if (body.length) break; continue; }
+    if (l.search(/\S/) <= runIndent) break;
+    body.push(l.trim());
+  }
+  return body.length ? body : null;
+}
+
+// Strict job-log parse. Requires exactly one `##[group]Run <first line>` whose
+// echoed ANSI-wrapped command lines equal the trusted script line for line,
+// exactly one `candidate <sha>` line in the whole log, located after that
+// group's `##[endgroup]` and before the next group, timestamped inside the
+// step's own start/end. Any other shape returns null.
 export const LOG_HOSTS = Object.freeze([/^productionresultssa\d{1,3}\.blob\.core\.windows\.net$/, /^results-receiver\.actions\.githubusercontent\.com$/]);
-export function candidateFromLog(text) {
-  if (typeof text !== 'string' || text.length > 4 * 1024 * 1024) return null;
-  const lines = text.split(/\r?\n/).map(l => l.replace(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z ?/, ''));
-  const hits = lines.map((l, i) => [i, /^candidate ([a-f0-9]{40})$/.exec(l)]).filter(([, m]) => m);
-  const loose = lines.filter(l => /candidate [a-f0-9]{40}/.test(l)).length;
-  const groups = lines.map((l, i) => [i, l]).filter(([, l]) => l.startsWith('##[group]Run node scripts/fee-cloud-commit.mjs'));
-  if (hits.length !== 1 || loose !== 1 || groups.length !== 1) return null;
-  const [at, m] = hits[0], start = groups[0][0];
-  const next = lines.findIndex((l, i) => i > start && l.startsWith('##[group]'));
-  if (at <= start || (next !== -1 && at >= next)) return null;
+const ANSI = /\x1b\[[0-9;]*m/g;
+export function candidateFromLog(text, { script, stepStart, stepEnd } = {}) {
+  if (typeof text !== 'string' || text.length > 4 * 1024 * 1024 || !Array.isArray(script) || !script.length) return null;
+  const t0 = Date.parse(stepStart), t1 = Date.parse(stepEnd);
+  if (!Number.isFinite(t0) || !Number.isFinite(t1) || t1 < t0) return null;
+  const rows = text.split(/\r?\n/).map(raw => {
+    const m = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z) ?(.*)$/.exec(raw);
+    return m ? { ts: Date.parse(m[1]), raw: m[2], text: m[2].replace(ANSI, ''), ansi: /^\x1b\[36;1m/.test(m[2]) } : { ts: NaN, raw, text: raw.replace(ANSI, ''), ansi: false };
+  });
+  const loose = rows.filter(r => /candidate [a-f0-9]{40}/.test(r.text)).length;
+  const hits = rows.map((r, i) => [i, /^candidate ([a-f0-9]{40})$/.exec(r.text)]).filter(([, m]) => m);
+  if (loose !== 1 || hits.length !== 1) return null;
+  const header = '##[group]Run ' + script[0];
+  const groups = [];
+  rows.forEach((r, i) => {
+    if (r.text !== header) return;
+    const close = rows.findIndex((x, j) => j > i && x.text === '##[endgroup]');
+    if (close < 0) return;
+    const echoed = rows.slice(i + 1, close).filter(x => x.ansi).map(x => x.text.trim());
+    if (echoed.length === script.length && echoed.every((l, k) => l === script[k])) groups.push([i, close]);
+  });
+  if (groups.length !== 1) return null;
+  const [start, close] = groups[0], [at, m] = hits[0];
+  const next = rows.findIndex((r, i) => i > close && r.text.startsWith('##[group]'));
+  if (at <= close || (next !== -1 && at >= next)) return null;
+  // Step times have second precision; allow that rounding only.
+  const inStep = ts => Number.isFinite(ts) && ts >= t0 - 1000 && ts <= t1 + 1000;
+  if (!inStep(rows[start].ts) || !inStep(rows[at].ts)) return null;
   return m[1];
 }
 
@@ -252,8 +297,11 @@ export function createGitHubFeeAdapters({ http, readToken, now }) {
       const job = produce[0];
       const step = (job.steps || []).filter(x => x.name === 'Create a signed owner candidate');
       if (job.run_id !== Number(handle) || job.head_sha !== run.head_sha || job.conclusion !== 'success' || step.length !== 1 || step[0].conclusion !== 'success') return null;
+      const workflow = new TextDecoder('utf-8', { fatal: true }).decode(await readRepoFile(run.head_sha, '.github/workflows/' + PRODUCER_WORKFLOW));
+      const script = stepScript(workflow);
+      if (!script) return null;
       const log = await readJobLog(job.id);
-      const sha = candidateFromLog(log);
+      const sha = candidateFromLog(log, { script, stepStart: step[0].started_at, stepEnd: step[0].completed_at });
       if (!sha) return null;
       const c = await getJson(API + '/commits/' + sha);
       if (c.sha !== sha || c.commit?.verification?.verified !== true || c.author?.login !== 'huanwujoy-crypto'

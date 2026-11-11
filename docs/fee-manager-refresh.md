@@ -96,13 +96,25 @@ manager confirms again. In-flight attempts are reconciled only by the job.
 Implemented without changing the producer, from evidence GitHub records:
 producer run (dispatched, attempt 1, owner actor, main, success) → its single
 `Produce daily <date>` job and successful `Create a signed owner candidate`
-step → the job log (server-side Actions read) must contain exactly one
-`candidate <sha>` line, inside the single `##[group]Run node
-scripts/fee-cloud-commit.mjs` group → that commit is signed, owner-authored,
+step → the trusted command group: the exact `run:` script of that step,
+read from `.github/workflows/fee-cloud-producer.yml` at the run's own head
+commit → the job log (server-side Actions read) must contain exactly one
+`##[group]Run <first script line>` group whose ANSI-echoed command lines
+equal that script line for line, and exactly one `candidate <sha>` line in
+the whole log, after that group's `##[endgroup]`, before the next group,
+timestamped within the step's own `started_at`..`completed_at` (±1 s for
+second precision) → that commit is signed, owner-authored,
 committer owner/web-flow, sole parent = run head, subject `daily <date>`,
 pointed to by exactly one `codex/fee-daily-<yyyymmdd>-xxxxxx` branch → main
 contains that very commit (promotion fast-forwards). Any missing, duplicate
 or ambiguous link is blocked (`PROVENANCE_UNBOUND`), never success.
+
+The real shape was confirmed read-only on job 129766463139 (run
+42797516508, Produce daily 2026-11-09): header `##[group]Run set -euo
+pipefail`, ANSI-wrapped `node scripts/fee-cloud-commit.mjs` echo, then
+`candidate <sha>` four seconds later. The test fixture keeps those three
+observed lines; its other echo/shell/env lines are reconstructed from the
+standard format and must be confirmed against the real log in acceptance.
 
 Unverified link: the job-log endpoint redirects to a pre-signed storage URL.
 The client follows one redirect only to `productionresultssa<N>.blob.core.windows.net`
