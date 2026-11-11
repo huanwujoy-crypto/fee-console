@@ -26,6 +26,7 @@ export const DISPATCH_API_VERSION = '2026-03-10';
 export const REQUEST_FILE = 'fee-manager-refresh-request.json';
 export const FRESH_MS = 10 * 60_000;
 export const MAX_TARGET_AGE_DAYS = 4; // the promotion window's own bound
+export const LOOKUP_BEFORE_MS = 5_000, LOOKUP_AFTER_MS = 60_000, LOOKUP_GRACE_MS = 10 * 60_000;
 const sha256 = b => crypto.createHash('sha256').update(b).digest('hex');
 const isSha40 = v => typeof v === 'string' && /^[a-f0-9]{40}$/.test(v);
 const isUuid = v => typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(v);
@@ -86,7 +87,9 @@ export async function verifyOwnerRequest(body, { http, gistId, now, auth = null 
   if (!/^[a-f0-9]{20,40}$/.test(gistId || '')) fail('VERIFY_UNAVAILABLE');
   const headers = { Accept: 'application/vnd.github+json', ...(auth ? { Authorization: 'Bearer ' + auth() } : {}) };
   const r = await http('GET', 'https://api.github.com/gists/' + gistId, { headers });
-  if (r.status === 403 || r.status === 429) fail('VERIFY_UNAVAILABLE'); // rate limit: never success
+  // Temporarily unavailable (rate limit, timeout, server error) is never a
+  // verdict on the request: neither success nor staleness.
+  if ([403, 408, 429].includes(r.status) || r.status >= 500 || !Number.isInteger(r.status)) fail('VERIFY_UNAVAILABLE');
   if (r.status !== 200) fail('IDENTITY_UNVERIFIED');
   const g = json(r.bytes), head = g.history?.[0];
   if (g.id !== gistId || g.owner?.id !== OWNER_ID || g.public !== false) fail('IDENTITY_UNVERIFIED');
@@ -132,7 +135,11 @@ export async function handleIntake(req, { http, queue, status, gistId, now, runJ
     }
     const m = /^\/v1\/requests\/([0-9a-f-]{36})$/.exec(req.path || '');
     if (req.method === 'GET' && m && isUuid(m[1])) {
-      const names = await status.names('status/' + m[1] + '/');
+      // A final answer is stored once under `final` and always wins over any
+      // non-final projection, whenever that one was written.
+      const final = await status.get('status/' + m[1] + '/final');
+      if (final) return reply(200, final);
+      const names = (await status.names('status/' + m[1] + '/')).filter(n => !n.endsWith('/final'));
       const latest = names.length ? await status.get(names.at(-1)) : null;
       return reply(200, latest || { requestId: m[1], state: 'none' });
     }
@@ -274,7 +281,35 @@ export function createGitHubFeeAdapters({ http, readToken, now }) {
       throw new Error('uncertain'); // includes 403/429 rate limit
     },
     async status(handle) { const r = await runOf(handle); return r.status === 'completed' ? 'ended' : 'running'; },
-    async lookup() { return 'unknown'; },
+    // Lost run id: find this attempt's run only inside its recorded dispatch
+    // window. Adopt exactly one run whose Produce job is for this date while
+    // every other candidate is provably for another date or produced nothing.
+    // Anything undetermined, ambiguous or incomplete stays unknown; `none`
+    // only after a grace period with a complete, empty window.
+    async lookup({ dataDate, dispatchAt }) {
+      const at = Date.parse(dispatchAt);
+      if (!isDay(dataDate) || !Number.isFinite(at)) return 'unknown';
+      const iso = t => new Date(t).toISOString().slice(0, 19) + 'Z';
+      const from = at - LOOKUP_BEFORE_MS, to = at + LOOKUP_AFTER_MS;
+      const list = await getJson(API + '/actions/workflows/' + PRODUCER_WORKFLOW + '/runs?event=workflow_dispatch&per_page=100&created=' + iso(from) + '..' + iso(to));
+      if (!Array.isArray(list.workflow_runs) || list.total_count !== list.workflow_runs.length) return 'unknown';
+      const candidates = list.workflow_runs.filter(r => { const c = Date.parse(r.created_at); return c >= from && c <= to; });
+      if (candidates.some(r => r.path !== '.github/workflows/' + PRODUCER_WORKFLOW)) return 'unknown';
+      const ours = candidates.filter(r => r.actor?.id === OWNER_ID && r.head_branch === 'main' && r.run_attempt === 1);
+      if (!ours.length) return now().getTime() - at >= LOOKUP_GRACE_MS ? 'none' : 'unknown';
+      const matching = [];
+      for (const r of ours) {
+        const jobs = await getJson(API + '/actions/runs/' + r.id + '/attempts/1/jobs?per_page=100');
+        if (!Array.isArray(jobs.jobs) || jobs.total_count !== jobs.jobs.length) return 'unknown';
+        const produce = jobs.jobs.filter(j => typeof j.name === 'string' && j.name.startsWith('Produce'));
+        if (produce.some(j => j.name === 'Produce daily ' + dataDate)) { matching.push(r); continue; }
+        const decided = r.status === 'completed' && produce.every(j => /^Produce (daily|weekly|monthly) \d{4}-\d{2}-\d{2}$/.test(j.name) || j.conclusion === 'skipped');
+        if (!decided) return 'unknown';
+      }
+      if (matching.length === 1) return { handle: String(matching[0].id) };
+      if (matching.length === 0) return now().getTime() - at >= LOOKUP_GRACE_MS ? 'none' : 'unknown';
+      return 'unknown';
+    },
     // Bound only by trusted evidence, with no time-window guessing:
     //   run (dispatched, attempt 1, owner actor, main, success)
     //   -> its single `Produce daily <date>` job and its successful
@@ -368,7 +403,20 @@ export async function runRefreshJob({ ledger, queue, status, http, gistId, now, 
     feeVerifier: createFeePublicationVerifier({ ...gh.readers, validateHealth }),
   });
   let seq = 0;
-  const project = async (id, value) => { try { await status.create('status/' + id + '/' + now().toISOString() + '-' + String(seq++).padStart(4, '0'), redactStatus(id, value)); return true; } catch { return false; } };
+  // Final projections go to one create-only key that readers always prefer,
+  // so a slower execution can never make a finished request look waiting.
+  const project = async (id, value) => {
+    const body = redactStatus(id, value);
+    if (isFinalStatus(value)) {
+      try { await status.create('status/' + id + '/final', body); return true; }
+      catch (e) { return e?.conflict === true; } // an earlier final stands
+    }
+    try {
+      if (await status.get('status/' + id + '/final')) return false;
+      await status.create('status/' + id + '/' + now().toISOString() + '-' + String(seq++).padStart(4, '0'), body);
+      return true;
+    } catch { return false; }
+  };
   // `done` only after the final projection is stored, so the page never
   // keeps an older non-final answer for a finished request.
   const finish = async (id, value) => {
@@ -390,8 +438,14 @@ export async function runRefreshJob({ ledger, queue, status, http, gistId, now, 
     try {
       const batch = await ledger.get(ledgerKeys.batch(id));
       if (batch) {
+        // Temporarily unavailable is NOT stale: skip this round and write
+        // nothing. Only real elapsed time or an explicit stale proof ends it,
+        // and even then through the batch gate, never beside a dispatch.
         let freshProof = false;
-        if (fresh) { try { await proveFresh(); freshProof = true; } catch { freshProof = false; } }
+        if (fresh) {
+          try { await proveFresh(); freshProof = true; }
+          catch (e) { if (!(e instanceof RefreshError) || e.code === 'VERIFY_UNAVAILABLE') { out.push({ requestId: id, code: 'VERIFY_UNAVAILABLE' }); continue; } }
+        }
         const st = await coordinator.resumeBatch(id, { fresh: freshProof });
         await finish(id, st);
         out.push({ requestId: id, resumed: true, fee: st.fee?.code || st.fee?.state || null, ratio: st.ratio?.code || null, code: null });

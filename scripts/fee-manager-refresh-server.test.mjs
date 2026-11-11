@@ -284,8 +284,7 @@ test('job: stale queue entry is rejected against the real current time, recorded
   assert.equal(out[0].code, 'REQUEST_STALE');
   assert.equal(await w.ledger.get(keys.batch(r.requestId)), null);
   assert.equal((await runRefreshJob(jobArgs(w, r, later))).length, 0, 'handled once');
-  const proj = await w.status.list('status/' + r.requestId + '/');
-  assert.equal(proj.at(-1).record.code, 'REQUEST_STALE');
+  assert.equal((await latest(w, r.requestId)).code, 'REQUEST_STALE');
 });
 
 test('job: forged queue entry without a matching owner revision never reaches the ledger', async () => {
@@ -311,7 +310,7 @@ test('job acceptance: full path with zero dispatch; concurrent executions handle
   const rows = [...w.ledger.rows.keys()];
   assert.equal(rows.filter(k => k.endsWith('/request')).length, 1, 'one batch');
   assert.equal(rows.filter(k => k.includes('/fee/')).length, 0, 'no claim: admission read was unavailable');
-  assert.deepEqual((await w.ledger.get(keys.feeBlocked(r.requestId))).code, 'VERIFY_UNAVAILABLE');
+  assert.deepEqual((await w.ledger.get(keys.feeGate(r.requestId))).code, 'VERIFY_UNAVAILABLE');
   assert.ok(await w.ledger.get(keys.done(r.requestId)), 'final once');
 });
 
@@ -352,7 +351,8 @@ test('entry http: fixed hosts, no redirects, Google token only to Google hosts; 
 
 // ---- independent review of c465923: crash recovery, final-state keeping, >100 queue
 const queued = async (w, r, at = NOW) => w.queue.create('queue/' + r.requestId, { schema: 'fee-console.manager-refresh-queue.v1', requestId: r.requestId, gistVersion: VER, queuedAt: at.toISOString() });
-const latest = async (w, id) => { const l = await w.status.list('status/' + id + '/'); return l.at(-1)?.record; };
+// What the page sees: the intake's own GET.
+const latest = async (w, id) => JSON.parse((await handleIntake({ method: 'GET', path: '/v1/requests/' + id, headers: { origin: ALLOWED_ORIGIN } }, { queue: w.queue, status: w.status })).body);
 
 test('crash after the batch record but before any claim: resumed once on a fresh proof, never lost', async () => {
   const core = await import('./fee-manager-refresh.mjs');
@@ -363,7 +363,7 @@ test('crash after the batch record but before any claim: resumed once on a fresh
   const http = async (method, url, opts) => url === 'https://api.github.com/gists/' + GIST ? gistHttp(r).http(method, url, opts) : { status: 503, bytes: enc('') };
   const out = await runRefreshJob({ ...jobArgs(w, r, NOW), http });
   assert.equal(out[0].resumed, true);
-  assert.equal((await w.ledger.get(keys.feeBlocked(r.requestId))).code, 'VERIFY_UNAVAILABLE', 'resumed admission ran');
+  assert.equal((await w.ledger.get(keys.feeGate(r.requestId))).code, 'VERIFY_UNAVAILABLE', 'resumed admission ran');
   assert.ok(await w.ledger.get(keys.done(r.requestId)));
   assert.equal((await latest(w, r.requestId)).fee.code, 'VERIFY_UNAVAILABLE');
   assert.ok(core.isFinalStatus(await latest(w, r.requestId)));
@@ -375,7 +375,7 @@ test('crash recovery when the proof is no longer fresh: recorded stale, nothing 
   await w.ledger.create(keys.batch(r.requestId), { schema: SCHEMA.batch, batchId: r.requestId, request: r, nonce: crypto.randomUUID() });
   const later = new Date(NOW.getTime() + 60 * 60_000);
   await runRefreshJob(jobArgs(w, r, later));
-  assert.equal((await w.ledger.get(keys.feeBlocked(r.requestId))).code, 'REQUEST_STALE');
+  assert.equal((await w.ledger.get(keys.feeGate(r.requestId))).code, 'REQUEST_STALE');
   assert.equal([...w.ledger.rows.keys()].filter(k => k.includes('/fee/')).length, 0);
   assert.equal((await latest(w, r.requestId)).fee.code, 'REQUEST_STALE');
 });
@@ -456,4 +456,126 @@ test('done is written only after the final projection is stored', async () => {
   await runRefreshJob({ ...jobArgs(w, r, NOW), http });
   assert.ok(await w.ledger.get(keys.done(r.requestId)));
   assert.equal((await latest(w, r.requestId)).fee.code, 'VERIFY_UNAVAILABLE');
+});
+
+// ---- concurrency: final states never go back; ending and dispatching are exclusive
+const gateOpen = () => { let release; const p = new Promise(r => { release = r; }); return { p, release }; };
+const tick = () => new Promise(r => setImmediate(r));
+async function until(cond) { for (let i = 0; i < 500 && !cond(); i++) await tick(); assert.ok(cond(), 'interleaving point reached'); }
+const claimRecords = async (w, r, n = 1, dispatchAt = NOW.toISOString()) => {
+  await w.ledger.create(keys.batch(r.requestId), { schema: SCHEMA.batch, batchId: r.requestId, request: r, nonce: crypto.randomUUID() });
+  await w.ledger.create(keys.attempt('fee', '2026-11-10', n), { schema: SCHEMA.attempt, kind: 'fee', dataDate: '2026-11-10', attempt: n, batchId: r.requestId, requestId: r.requestId, claimMainSha: 'c'.repeat(40), claimedAt: dispatchAt, nonce: crypto.randomUUID() });
+  await w.ledger.create(keys.feeGate(r.requestId), { schema: SCHEMA.feeGate, mode: 'dispatch', attempt: n, nonce: crypto.randomUUID() });
+  await w.ledger.create(keys.dispatching('fee', '2026-11-10', n), { schema: SCHEMA.dispatching, attempt: n, batchId: r.requestId, mode: 'dispatch', at: dispatchAt, nonce: crypto.randomUUID() });
+};
+
+test('two jobs: A reads unknown and pauses, B writes failed + done, A resumes: the page still sees failed', async () => {
+  const r = request(), w = jobWorld();
+  await queued(w, r);
+  await claimRecords(w, r);
+  const http = async (method, url, opts) => { if (method === 'POST') throw new Error('must not dispatch'); return url === 'https://api.github.com/gists/' + GIST ? gistHttp(r).http(method, url, opts) : { status: 503, bytes: enc('') }; };
+  // Job A: its status writes are held until we release them.
+  const hold = gateOpen(); let aPaused = false;
+  const statusA = { ...w.status, names: w.status.names, get: w.status.get.bind(w.status), list: w.status.list.bind(w.status),
+    create: async (k, v) => { aPaused = true; await hold.p; return w.status.create(k, v); } };
+  const a = runRefreshJob({ ...jobArgs(w, r, NOW), http, mode: 'launch', status: statusA });
+  await until(() => aPaused);
+  // Meanwhile evidence closes the attempt and job B projects the final state.
+  await w.ledger.create(keys.result('fee', '2026-11-10', 1), { schema: SCHEMA.result, attempt: 1, batchId: r.requestId, outcome: 'failed', code: 'RUN_ENDED_UNPUBLISHED', nonce: crypto.randomUUID() });
+  await runRefreshJob({ ...jobArgs(w, r, NOW), http, mode: 'launch' });
+  assert.ok(await w.ledger.get(keys.done(r.requestId)));
+  assert.deepEqual((await latest(w, r.requestId)).fee, { state: 'failed', code: 'RUN_ENDED_UNPUBLISHED', dataDate: '2026-11-10' });
+  hold.release(); await a; // A writes its stale "unknown" now
+  assert.ok((await w.status.names('status/' + r.requestId + '/')).length >= 2, 'A did write a later non-final projection');
+  assert.deepEqual((await latest(w, r.requestId)).fee, { state: 'failed', code: 'RUN_ENDED_UNPUBLISHED', dataDate: '2026-11-10' }, 'final never goes back');
+});
+
+test('A verified but not yet claimed; B re-verification gets 503: B writes nothing, A proceeds normally', async () => {
+  const core = await import('./fee-manager-refresh.mjs');
+  const r = request(), w = jobWorld();
+  await queued(w, r);
+  const starts = [];
+  const hold = gateOpen(); let aPaused = false;
+  const verifier = { coverage: async () => { aPaused = true; await hold.p; return { mainSha: 'c'.repeat(40), targetDate: '2026-11-09' }; }, verify: async () => ({ state: 'not-published', targetDate: '2026-11-09' }), isAncestor: async () => false };
+  const A = core.createRefreshCoordinator({ ledger: w.ledger, now: () => NOW, wait: async () => {}, deadlineMs: 0, pipelineIdle: async () => false, feeVerifier: verifier,
+    feePublisher: { start: async x => { starts.push(x); return { state: 'started', handle: '77' }; }, status: async () => 'running', lookup: async () => 'unknown', provenance: async () => null } });
+  const a = A.submit(r, { verified: true, ownerId: OWNER_ID, method: 'owner-gist-authored-request' });
+  await until(() => aPaused);
+  const unavailable = async (method, url, opts) => url === 'https://api.github.com/gists/' + GIST ? { status: 503, bytes: enc('') } : { status: 503, bytes: enc('') };
+  const out = await runRefreshJob({ ...jobArgs(w, r, NOW), http: unavailable });
+  assert.equal(out[0].code, 'VERIFY_UNAVAILABLE');
+  assert.equal(await w.ledger.get(keys.feeGate(r.requestId)), null, 'no terminal decision from a transient failure');
+  assert.equal(await w.ledger.get(keys.done(r.requestId)), null);
+  assert.equal((await w.status.names('status/' + r.requestId + '/')).length, 0);
+  hold.release(); await a;
+  assert.equal(starts.length, 1);
+  assert.equal((await w.ledger.get(keys.feeGate(r.requestId))).mode, 'dispatch');
+});
+
+test('A verified but not yet claimed; B finds it truly stale: the shared gate makes "ended" and "dispatch" exclusive', async () => {
+  const core = await import('./fee-manager-refresh.mjs');
+  const r = request(), w = jobWorld();
+  await queued(w, r);
+  const starts = [];
+  const hold = gateOpen(); let aPaused = false;
+  const verifier = { coverage: async () => { aPaused = true; await hold.p; return { mainSha: 'c'.repeat(40), targetDate: '2026-11-09' }; }, verify: async () => ({ state: 'not-published', targetDate: '2026-11-09' }), isAncestor: async () => false };
+  const A = core.createRefreshCoordinator({ ledger: w.ledger, now: () => NOW, wait: async () => {}, deadlineMs: 0, pipelineIdle: async () => false, feeVerifier: verifier,
+    feePublisher: { start: async x => { starts.push(x); return { state: 'started', handle: '77' }; }, status: async () => 'running', lookup: async () => 'unknown', provenance: async () => null } });
+  const a = A.submit(r, { verified: true, ownerId: OWNER_ID, method: 'owner-gist-authored-request' });
+  await until(() => aPaused);
+  const later = new Date(NOW.getTime() + 60 * 60_000);
+  await runRefreshJob(jobArgs(w, r, later)); // real elapsed time: stale, ended through the gate
+  assert.equal((await w.ledger.get(keys.feeGate(r.requestId))).mode, 'blocked');
+  assert.equal((await latest(w, r.requestId)).fee.code, 'REQUEST_STALE');
+  hold.release();
+  const res = await a;
+  assert.equal(starts.length, 0, 'never dispatched after the request was ended');
+  assert.equal(res.fee.code, 'REQUEST_STALE');
+  const s = await core.kindState(w.ledger, 'fee', '2026-11-10');
+  assert.equal(s.attempts[0].result.code, 'RECONCILED_NOT_STARTED', 'its claim is closed, retryable by a new request');
+  assert.equal(s.state, 'retryable');
+  assert.equal((await latest(w, r.requestId)).fee.code, 'REQUEST_STALE', 'the page never flips to running');
+});
+
+// ---- lost run id
+function lookupWorld({ runs, jobs = {}, now = NOW }) {
+  const http = async (method, url) => {
+    const ok = v => ({ status: 200, bytes: enc(v) });
+    if (url.includes('/actions/workflows/fee-cloud-producer.yml/runs?')) return ok({ total_count: runs.length, workflow_runs: runs });
+    const m = /\/actions\/runs\/(\d+)\/attempts\/1\/jobs/.exec(url);
+    if (m) { const j = jobs[m[1]] || []; return ok({ total_count: j.length, jobs: j }); }
+    return { status: 404 };
+  };
+  return createGitHubFeeAdapters({ http, readToken: () => 'synthetic-token-not-real-0000', now: () => now }).publisher;
+}
+const R = (id, over = {}) => ({ id, path: '.github/workflows/fee-cloud-producer.yml', actor: { id: OWNER_ID }, head_branch: 'main', run_attempt: 1, status: 'completed', created_at: '2026-11-11T02:05:10Z', ...over });
+const DISPATCH = '2026-11-11T02:05:00.000Z';
+
+test('lost run id: exactly one run of the dispatch window for this date is adopted', async () => {
+  const p = lookupWorld({ runs: [R(77), R(78)], jobs: { 77: [{ name: 'Produce daily 2026-11-10' }], 78: [{ name: 'Produce daily 2026-11-09' }] } });
+  assert.deepEqual(await p.lookup({ dataDate: '2026-11-10', dispatchAt: DISPATCH }), { handle: '77' });
+});
+
+test('lost run id: ambiguous, undetermined, foreign or incomplete windows stay unknown', async () => {
+  const cases = {
+    'two runs for the date': lookupWorld({ runs: [R(77), R(79)], jobs: { 77: [{ name: 'Produce daily 2026-11-10' }], 79: [{ name: 'Produce daily 2026-11-10' }] } }),
+    'a run not yet decided': lookupWorld({ runs: [R(77), R(80, { status: 'in_progress' })], jobs: { 77: [{ name: 'Produce daily 2026-11-10' }], 80: [] } }),
+    'other workflow path in the list': lookupWorld({ runs: [R(77, { path: '.github/workflows/x.yml' })], jobs: { 77: [{ name: 'Produce daily 2026-11-10' }] } }),
+    'nothing yet, inside the grace period': lookupWorld({ runs: [], now: new Date(Date.parse(DISPATCH) + 60_000) }),
+  };
+  for (const [name, p] of Object.entries(cases)) assert.equal(await p.lookup({ dataDate: '2026-11-10', dispatchAt: DISPATCH }), 'unknown', name);
+  assert.equal(await lookupWorld({ runs: [] }).lookup({ dataDate: '2026-11-10', dispatchAt: null }), 'unknown', 'no recorded dispatch moment');
+});
+
+test('lost run id: an empty complete window after the grace period is none', async () => {
+  const later = new Date(Date.parse(DISPATCH) + 11 * 60_000);
+  assert.equal(await lookupWorld({ runs: [], now: later }).lookup({ dataDate: '2026-11-10', dispatchAt: DISPATCH }), 'none');
+  assert.equal(await lookupWorld({ runs: [R(81, { actor: { id: 5 } })], now: later }).lookup({ dataDate: '2026-11-10', dispatchAt: DISPATCH }), 'none', 'another actor is not ours');
+});
+
+test('verification outcome classes: unavailable is never stale or unverified', async () => {
+  const r = request(), body = { requestId: r.requestId, gistVersion: VER };
+  for (const s of [403, 408, 429, 500, 502, 503, 504]) await assert.rejects(verifyOwnerRequest(body, { http: gistHttp(r, {}, s).http, gistId: GIST, now: () => NOW }), { code: 'VERIFY_UNAVAILABLE' }, String(s));
+  for (const s of [401, 404, 410]) await assert.rejects(verifyOwnerRequest(body, { http: gistHttp(r, {}, s).http, gistId: GIST, now: () => NOW }), { code: 'IDENTITY_UNVERIFIED' }, String(s));
+  await assert.rejects(verifyOwnerRequest(body, { http: gistHttp(r).http, gistId: GIST, now: () => new Date(NOW.getTime() + 3600_000) }), { code: 'REQUEST_STALE' });
 });

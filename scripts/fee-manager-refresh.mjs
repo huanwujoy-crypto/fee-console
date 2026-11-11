@@ -28,15 +28,18 @@ export const SCHEMA = Object.freeze({
   batch: 'fee-console.manager-refresh-batch.v1',
   attempt: 'fee-console.manager-refresh-attempt.v1',
   started: 'fee-console.manager-refresh-started.v1',
+  dispatching: 'fee-console.manager-refresh-dispatching.v1',
   result: 'fee-console.manager-refresh-result.v1',
   published: 'fee-console.manager-refresh-published.v1',
   ratioStep: 'fee-console.manager-refresh-ratio-step.v1',
-  feeBlocked: 'fee-console.manager-refresh-fee-blocked.v1',
+  feeGate: 'fee-console.manager-refresh-fee-gate.v1',
 });
 export const OWNER_ID = 283054367;
 export const KINDS = Object.freeze(['fee', 'ratio']);
 export const MAX_ATTEMPTS = 5;
 export const MAX_RATIO_STEPS = 5;
+// A claim with no dispatch record after this long may be voided by reconcile.
+export const VOID_AFTER_MS = 2 * 60_000;
 export const PREFIX = 'fee-manager-refresh-v1';
 
 // Fixed, amount-free outcome codes. Nothing else is ever returned or stored.
@@ -103,10 +106,11 @@ export function validateIdentity(identity) {
 export const keys = Object.freeze({
   batch: id => `${PREFIX}/batch/${id}/request`,
   ratioStep: (id, n) => `${PREFIX}/batch/${id}/ratio-${n}`,
-  feeBlocked: id => `${PREFIX}/batch/${id}/fee-blocked`,
+  feeGate: id => `${PREFIX}/batch/${id}/fee-gate`,
   done: id => `${PREFIX}/done/${id}`,
   attempt: (kind, date, n) => `${PREFIX}/${kind}/${date}/attempt-${n}`,
   started: (kind, date, n) => `${PREFIX}/${kind}/${date}/attempt-${n}-started`,
+  dispatching: (kind, date, n) => `${PREFIX}/${kind}/${date}/attempt-${n}-dispatching`,
   result: (kind, date, n) => `${PREFIX}/${kind}/${date}/attempt-${n}-result`,
   published: (kind, date) => `${PREFIX}/${kind}/${date}/published`,
 });
@@ -139,12 +143,14 @@ export async function kindState(ledger, kind, date) {
     if (!a) break;
     if (!validAttempt(a, kind, date, n)) fail('LEDGER_CORRUPT');
     const started = byKey.get(keys.started(kind, date, n)) || null;
+    const dispatching = byKey.get(keys.dispatching(kind, date, n)) || null;
+    if (dispatching && !(exact(dispatching, ['schema', 'attempt', 'batchId', 'mode', 'at', 'nonce']) && dispatching.schema === SCHEMA.dispatching && dispatching.attempt === n && dispatching.batchId === a.batchId && ['dispatch', 'void'].includes(dispatching.mode) && isIso(dispatching.at))) fail('LEDGER_CORRUPT');
     const result = byKey.get(keys.result(kind, date, n)) || null;
-    if (started && !(exact(started, ['schema', 'attempt', 'batchId', 'handle', 'nonce']) && started.schema === SCHEMA.started && started.attempt === n && started.batchId === a.batchId)) fail('LEDGER_CORRUPT');
+    if (started && !(exact(started, ['schema', 'attempt', 'batchId', 'handle', 'nonce']) && started.schema === SCHEMA.started && started.attempt === n && started.batchId === a.batchId && typeof started.handle === 'string' && /^\d{1,20}$/.test(started.handle))) fail('LEDGER_CORRUPT');
     if (result && !(exact(result, ['schema', 'attempt', 'batchId', 'outcome', 'code', 'nonce']) && result.schema === SCHEMA.result && result.attempt === n && result.batchId === a.batchId && ['failed', 'blocked'].includes(result.outcome) && CODE_SET.has(result.code))) fail('LEDGER_CORRUPT');
-    attempts.push({ n, attempt: a, started, result });
+    attempts.push({ n, attempt: a, started, dispatching, result });
   }
-  const known = new Set(attempts.flatMap(x => [keys.attempt(kind, date, x.n), keys.started(kind, date, x.n), keys.result(kind, date, x.n)]));
+  const known = new Set(attempts.flatMap(x => [keys.attempt(kind, date, x.n), keys.started(kind, date, x.n), keys.dispatching(kind, date, x.n), keys.result(kind, date, x.n)]));
   const published = byKey.get(keys.published(kind, date)) || null;
   if (published) known.add(keys.published(kind, date));
   for (const k of byKey.keys()) if (!known.has(k)) fail('LEDGER_CORRUPT');
@@ -289,9 +295,9 @@ export function createRefreshCoordinator(deps) {
     if (request.contents.includes('fee')) {
       const s = await kindState(d.ledger, 'fee', request.feeDataDate);
       const own = s.attempts.filter(x => x.attempt.batchId === batchId);
-      const blocked = await d.ledger.get(keys.feeBlocked(batchId));
+      const gate = await readGate(batchId);
       const publishedHere = s.state === 'published' && s.published.batchId === batchId;
-      if (!publishedHere && !blocked) {
+      if (!publishedHere && gate?.mode !== 'blocked') {
         if (own.length && !own.at(-1).result) await reconcile('fee', request.feeDataDate).catch(() => null);
         else if (!own.length) { if (fresh) await publicationStep('fee', request.feeDataDate, batch, {}); else await preClaim(batch, 'blocked', 'REQUEST_STALE'); }
       }
@@ -325,12 +331,15 @@ export function createRefreshCoordinator(deps) {
   }
 
   // Fee step. Each branch is labelled with the boundary it covers.
-  // A final outcome reached before this batch claimed anything is persisted
-  // create-only, so a later status read can never fall back to "waiting".
+  // One create-only gate per batch arbitrates "end without dispatch" against
+  // "dispatch": exactly one of {mode:'blocked'} / {mode:'dispatch'} can exist.
+  const validGate = g => g && g.schema === SCHEMA.feeGate && ((g.mode === 'blocked' && ['blocked', 'failed'].includes(g.state) && CODE_SET.has(g.code)) || (g.mode === 'dispatch' && Number.isSafeInteger(g.attempt)));
+  async function readGate(batchId) { const g = await d.ledger.get(keys.feeGate(batchId)); if (g && !validGate(g)) fail('LEDGER_CORRUPT'); return g; }
   async function preClaim(batch, state, code) {
-    try { await createOnce(d.ledger, keys.feeBlocked(batch.batchId), { schema: SCHEMA.feeBlocked, state, code, nonce: nonce() }); } catch { /* first record wins */ }
-    const kept = await d.ledger.get(keys.feeBlocked(batch.batchId));
-    return kept && ['blocked', 'failed'].includes(kept.state) && CODE_SET.has(kept.code) ? { state: kept.state, code: kept.code } : { state, code };
+    try { await createOnce(d.ledger, keys.feeGate(batch.batchId), { schema: SCHEMA.feeGate, mode: 'blocked', state, code, nonce: nonce() }); } catch { return { state: 'unknown', code: 'CLAIM_UNKNOWN' }; }
+    const g = await readGate(batch.batchId);
+    if (g?.mode === 'blocked') return { state: g.state, code: g.code };
+    return { state: 'unknown', code: 'ATTEMPT_IN_FLIGHT' }; // the batch already dispatched: never "ended"
   }
 
   async function publicationStep(kind, date, batch, { signal }) {
@@ -359,15 +368,42 @@ export function createRefreshCoordinator(deps) {
     let claimed;
     try { claimed = await createOnce(d.ledger, keys.attempt(kind, date, n), attempt); }
     catch (e) { if (e.code === 'CLAIM_UNKNOWN') return { state: 'unknown', code: 'CLAIM_UNKNOWN' }; throw e; }
-    if (claimed === 'conflict') return preClaim(batch, 'blocked', 'LOST_RACE');
+    if (claimed === 'conflict') {
+      const winner = await d.ledger.get(keys.attempt(kind, date, n)).catch(() => null);
+      if (winner?.batchId === batch.batchId) return { state: 'unknown', code: 'ATTEMPT_IN_FLIGHT' }; // same batch, another execution
+      return preClaim(batch, 'blocked', 'LOST_RACE');
+    }
     const close = async (outcome, code) => { await createOnce(d.ledger, keys.result(kind, date, n), { schema: SCHEMA.result, attempt: n, batchId: batch.batchId, outcome, code, nonce: nonce() }); return { state: outcome, code }; };
     // Cancelled between claim and start: provably nothing started.
     if (signal?.aborted) return close('failed', 'CANCELLED_BEFORE_START');
+    // Win the batch gate for dispatch; a terminal decision for this batch
+    // that got there first means this claim must never dispatch.
+    let gate;
+    try { gate = await createOnce(d.ledger, keys.feeGate(batch.batchId), { schema: SCHEMA.feeGate, mode: 'dispatch', attempt: n, nonce: nonce() }); }
+    catch { return { state: 'unknown', code: 'CLAIM_UNKNOWN' }; }
+    if (gate !== 'created') {
+      const g = await readGate(batch.batchId);
+      if (g?.mode === 'blocked') { await close('failed', 'RECONCILED_NOT_STARTED').catch(() => null); return { state: g.state, code: g.code }; }
+      return { state: 'unknown', code: 'ATTEMPT_IN_FLIGHT' };
+    }
+    // Record the dispatch moment BEFORE the POST: if the run id is lost, the
+    // reconcile looks for this attempt's run only in a window around it.
+    const dispatchAt = nowIso();
+    let marked;
+    // The same create-only key arbitrates against a reconcile that voids a
+    // stalled claim: exactly one of `dispatch` / `void` can ever exist.
+    try { marked = await createOnce(d.ledger, keys.dispatching(kind, date, n), { schema: SCHEMA.dispatching, attempt: n, batchId: batch.batchId, mode: 'dispatch', at: dispatchAt, nonce: nonce() }); }
+    catch { return { state: 'unknown', code: 'CLAIM_UNKNOWN' }; } // never POST without the record
+    if (marked !== 'created') {
+      const other = await d.ledger.get(keys.dispatching(kind, date, n)).catch(() => null);
+      if (other?.mode === 'void') return close('failed', 'RECONCILED_NOT_STARTED').catch(() => ({ state: 'failed', code: 'RECONCILED_NOT_STARTED' }));
+      return { state: 'unknown', code: 'CLAIM_UNKNOWN' };
+    }
     let started;
-    try { started = await d.feePublisher.start({ dataDate: date, batchId: batch.batchId, attempt: n, claimMainSha: coverage.mainSha }); }
+    try { started = await d.feePublisher.start({ dataDate: date, batchId: batch.batchId, attempt: n, claimMainSha: coverage.mainSha, dispatchAt }); }
     catch { return { state: 'unknown', code: 'START_UNKNOWN' }; }
     if (started?.state === 'refused') return close('failed', 'PUBLISHER_REFUSED');
-    if (started?.state !== 'started' || typeof started.handle !== 'string' || !started.handle) return { state: 'unknown', code: 'START_UNKNOWN' };
+    if (started?.state !== 'started' || typeof started.handle !== 'string' || !/^\d{1,20}$/.test(started.handle)) return { state: 'unknown', code: 'START_UNKNOWN' };
     try { await createOnce(d.ledger, keys.started(kind, date, n), { schema: SCHEMA.started, attempt: n, batchId: batch.batchId, handle: started.handle, nonce: nonce() }); } catch { /* reconcile uses lookup() */ }
     return awaitPublication(kind, date, attempt, started.handle);
   }
@@ -384,12 +420,43 @@ export function createRefreshCoordinator(deps) {
 
   // One evidence observation. Returns a terminal outcome or null to keep waiting.
   async function observe(kind, date, attempt, handle, seen = {}) {
+    const close = async code => {
+      await createOnce(d.ledger, keys.result(kind, date, attempt.attempt), { schema: SCHEMA.result, attempt: attempt.attempt, batchId: attempt.batchId, outcome: 'failed', code, nonce: nonce() });
+      return { state: 'failed', code };
+    };
+    let run = null;
+    if (!handle) {
+      // The POST is only ever sent after winning the create-only `dispatch`
+      // record. A stalled claim (no record after VOID_AFTER_MS) is voided by
+      // winning that same key; if the claimant won it first, it dispatched.
+      if (seen.neverDispatched === true) {
+        if (d.now().getTime() - Date.parse(attempt.claimedAt) < VOID_AFTER_MS) return null;
+        let won;
+        try { won = await createOnce(d.ledger, keys.dispatching(kind, date, attempt.attempt), { schema: SCHEMA.dispatching, attempt: attempt.attempt, batchId: attempt.batchId, mode: 'void', at: nowIso(), nonce: nonce() }); } catch { return null; }
+        if (won === 'created') return close('RECONCILED_NOT_STARTED');
+        const rec = await d.ledger.get(keys.dispatching(kind, date, attempt.attempt)).catch(() => null);
+        if (rec?.mode !== 'dispatch') return null;
+        seen.neverDispatched = false; seen.dispatchAt = rec.at;
+      }
+      // Lost run id: only the reviewed lookup may adopt exactly one run of
+      // this attempt's dispatch window; adoption is recorded create-only and
+      // the full provenance chain still applies to the adopted run.
+      let found;
+      try { found = await d.feePublisher.lookup({ dataDate: date, batchId: attempt.batchId, attempt: attempt.attempt, dispatchAt: seen.dispatchAt || null }); } catch { found = 'unknown'; }
+      if (found && typeof found === 'object' && typeof found.handle === 'string' && /^\d{1,20}$/.test(found.handle)) {
+        try { await createOnce(d.ledger, keys.started(kind, date, attempt.attempt), { schema: SCHEMA.started, attempt: attempt.attempt, batchId: attempt.batchId, handle: found.handle, nonce: nonce() }); } catch { return null; }
+        const rec = (await kindState(d.ledger, kind, date)).attempts.find(x => x.n === attempt.attempt)?.started;
+        return rec ? observe(kind, date, attempt, rec.handle, seen) : null;
+      }
+      run = found === 'none' && seen.dispatchAt ? 'none' : 'unknown';
+    }
     let v;
     try { v = await d.feeVerifier.verify(date, { claimMainSha: attempt.claimMainSha }); } catch { v = { state: 'unavailable' }; }
     if (v.state === 'verified') {
       // Bind the readback to THIS attempt's own protected run: the producer
       // candidate and the promotion it caused must carry the same bytes. A
       // later main that merely covers the same date is not this success.
+      if (!handle) { seen.unbound = true; return null; }
       let prov = null;
       try { prov = await d.feePublisher.provenance({ handle, dataDate: date, batchId: attempt.batchId, attempt: attempt.attempt }); } catch { prov = null; }
       const bound = exact(prov, ['accountingThrough', 'dataSha256', 'healthSha256', 'promotedMainSha']) && prov.accountingThrough === date
@@ -401,18 +468,15 @@ export function createRefreshCoordinator(deps) {
       if (r === 'conflict') { const p = await d.ledger.get(keys.published(kind, date)); if (p?.batchId !== attempt.batchId || !validFeeEvidence(p.evidence, date)) fail('LEDGER_CORRUPT'); return { state: 'published', code: 'PUBLISHED', evidence: p.evidence }; }
       return { state: 'published', code: 'PUBLISHED', evidence: v.evidence };
     }
-    let run;
-    try { run = handle ? await d.feePublisher.status(handle) : await d.feePublisher.lookup({ dataDate: date, batchId: attempt.batchId, attempt: attempt.attempt }); } catch { run = 'unknown'; }
+    if (handle) { try { run = await d.feePublisher.status(handle); } catch { run = 'unknown'; } }
     if (run !== 'ended' && run !== 'none') return null;
     if (v.state !== 'not-published') return null;
     let idle = false;
     try { idle = (await d.pipelineIdle(date)) === true; } catch { idle = false; }
     if (!idle) return null;
-    // Definite: run ended (or never existed), main does not carry `date`,
-    // and nothing for `date` is pending downstream.
-    const code = run === 'none' ? 'RECONCILED_NOT_STARTED' : 'RUN_ENDED_UNPUBLISHED';
-    await createOnce(d.ledger, keys.result(kind, date, attempt.attempt), { schema: SCHEMA.result, attempt: attempt.attempt, batchId: attempt.batchId, outcome: 'failed', code, nonce: nonce() });
-    return { state: 'failed', code };
+    // Definite: run ended (or provably none in the dispatch window), main
+    // does not carry `date`, and nothing for `date` is pending downstream.
+    return close(run === 'none' ? 'RECONCILED_NOT_STARTED' : 'RUN_ENDED_UNPUBLISHED');
   }
 
   // Close an unresolved attempt only from evidence; otherwise leave it open.
@@ -420,7 +484,14 @@ export function createRefreshCoordinator(deps) {
     const s = await kindState(d.ledger, kind, date);
     if (s.state !== 'in-flight') return { state: 'closed', code: 'DUPLICATE_REQUEST' };
     if (!d.feePublisher || !d.feeVerifier) return { state: 'open', code: 'ATTEMPT_IN_FLIGHT' };
-    const o = await observe(kind, date, s.last.attempt, s.last.started?.handle || null);
+    // An attempt whose dispatch was never recorded never POSTed (the POST
+    // follows the record), so it is closed as not started once idle.
+    if (s.last.dispatching?.mode === 'void') {
+      // Voided before any dispatch: close it (idempotent).
+      try { await createOnce(d.ledger, keys.result(kind, date, s.last.n), { schema: SCHEMA.result, attempt: s.last.n, batchId: s.last.attempt.batchId, outcome: 'failed', code: 'RECONCILED_NOT_STARTED', nonce: nonce() }); } catch {}
+      return { state: 'closed', code: 'RECONCILED_NOT_STARTED' };
+    }
+    const o = await observe(kind, date, s.last.attempt, s.last.started?.handle || null, { dispatchAt: s.last.dispatching?.at || null, neverDispatched: !s.last.dispatching });
     if (!o) return { state: 'open', code: 'ATTEMPT_IN_FLIGHT' };
     if (o.state === 'published') return { state: 'closed', code: 'RECONCILED_PUBLISHED', batchId: s.last.attempt.batchId, evidence: o.evidence };
     return { state: 'closed', code: o.code };
@@ -454,8 +525,8 @@ export function createRefreshCoordinator(deps) {
   }
 
   async function feeBlockedStatus(batchId, dataDate) {
-    const b = await d.ledger.get(keys.feeBlocked(batchId));
-    return b && ['blocked', 'failed'].includes(b.state) && CODE_SET.has(b.code) ? { state: b.state, code: b.code, dataDate } : { state: 'none', dataDate };
+    const g = await readGate(batchId);
+    return g?.mode === 'blocked' ? { state: g.state, code: g.code, dataDate } : { state: 'none', dataDate };
   }
 
   async function batchStatus(batchId) {
@@ -465,7 +536,9 @@ export function createRefreshCoordinator(deps) {
     if (batch.request.contents.includes('fee')) {
       const s = await kindState(d.ledger, 'fee', batch.request.feeDataDate);
       const mine = s.attempts.filter(x => x.attempt.batchId === batchId);
+      const gate = await readGate(batchId);
       out.fee = s.state === 'published' && s.published.batchId === batchId ? { state: 'published', code: 'PUBLISHED', dataDate: batch.request.feeDataDate }
+        : gate?.mode === 'blocked' ? { state: gate.state, code: gate.code, dataDate: batch.request.feeDataDate }
         : mine.length && !mine.at(-1).result ? { state: 'unknown', code: 'ATTEMPT_IN_FLIGHT', dataDate: batch.request.feeDataDate }
         : mine.length ? { state: mine.at(-1).result.outcome, code: mine.at(-1).result.code, dataDate: batch.request.feeDataDate }
         : await feeBlockedStatus(batchId, batch.request.feeDataDate);

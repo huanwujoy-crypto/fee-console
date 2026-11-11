@@ -84,6 +84,32 @@ Buckets (bucket-level IAM only; no IAM conditions, because an objects.list
    time** (never `queuedAt`). A final outcome reached before any claim is
    stored create-only in the ledger (`batch/<id>/fee-blocked`), so status
    never falls back to waiting, and a final projection is never overwritten.
+   Concurrency guarantees between executions:
+   - **Ending vs dispatching**: each batch has one create-only gate,
+     `batch/<id>/fee-gate`, holding either `{mode:'blocked'}` (ended: stale,
+     already published elsewhere, lost race, …) or `{mode:'dispatch'}`. A
+     claim may POST only after winning `dispatch`; if `blocked` won first, the
+     claim is closed `RECONCILED_NOT_STARTED` without a POST.
+   - **Temporarily unavailable is not stale**: 403/408/429/5xx on the owner
+     proof is `VERIFY_UNAVAILABLE`; that execution writes nothing for the
+     request and leaves it for the next wake. Only real elapsed time or an
+     explicit stale proof ends it, and only through the gate.
+   - **Final states never go back**: the final projection is written once to
+     `status/<id>/final`; the intake GET always prefers it, so a slower
+     execution's later non-final projection cannot make it look waiting.
+   - **Lost run id**: before the POST, a create-only
+     `attempt-<n>-dispatching` record stores the dispatch moment (mode
+     `dispatch`). If the run id is lost, the reconcile looks only at
+     owner-dispatched `main` producer runs created 5 s before to 60 s after
+     that moment, with a complete listing, and adopts exactly one whose
+     `Produce daily <date>` job matches while every other candidate is
+     provably for another date; adoption is recorded create-only and the full
+     provenance chain still applies. Ambiguous or undecided windows stay
+     unknown; an empty complete window after 10 minutes, with an idle pipeline
+     and main not carrying the date, is `RECONCILED_NOT_STARTED` (retryable).
+     A claim that never wrote its dispatch record is voided after 2 minutes by
+     winning that same key with `mode:'void'`, so a slow claimant can no
+     longer POST.
    It then runs the coordinator: claim, dispatch the existing producer
    with exactly the existing reviewed completed-sync inputs and
    `return_run_details`, wait, verify, record, project status. Stale, forged

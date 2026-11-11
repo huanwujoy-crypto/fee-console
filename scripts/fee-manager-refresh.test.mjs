@@ -50,9 +50,9 @@ function world({ publishAfter = 1, startMode = 'started', runEnds = false, pages
         w.starts.push(args);
         if (w.startMode === 'refused') return { state: 'refused' };
         if (w.startMode === 'throw') throw new Error('network');
-        if (w.startMode === 'commit-then-throw') { w.pending = { at: w.polls + w.publishAfter, date: args.dataDate }; throw new Error('network'); }
+        if (w.startMode === 'commit-then-throw') { w.pending = { at: w.polls + w.publishAfter, date: args.dataDate }; w.lostHandle = String(1000 + w.starts.length); throw new Error('network'); }
         w.pending = { at: w.polls + w.publishAfter, date: args.dataDate };
-        return { state: 'started', handle: 'run-' + w.starts.length };
+        return { state: 'started', handle: String(1000 + w.starts.length) };
       },
       provenance: async ({ dataDate }) => {
         if (w.foreign) return null; // publication not caused by this attempt
@@ -60,7 +60,7 @@ function world({ publishAfter = 1, startMode = 'started', runEnds = false, pages
         return h.targetDate === dataDate ? { accountingThrough: dataDate, dataSha256: sha256(c.data), healthSha256: sha256(c.healthBytes), promotedMainSha: c.sha } : null;
       },
       status: async () => (w.ended ? 'ended' : 'running'),
-      lookup: async () => (w.lookup ?? (w.pending ? 'running' : 'none')),
+      lookup: async () => (w.lookup ?? (w.lostHandle ? { handle: w.lostHandle } : w.pending ? 'unknown' : 'none')),
     },
     pipelineIdle: async () => w.idle,
     wait: async () => {
@@ -121,7 +121,7 @@ test('concurrent requests for one date: exactly one claim and one start', async 
   assert.equal(w.starts.length, 1);
   assert.equal(codes.filter(x => x === 'PUBLISHED').length, 1);
   assert.ok(codes.every(x => ['PUBLISHED', 'LOST_RACE', 'ATTEMPT_IN_FLIGHT', 'DATE_ALREADY_PUBLISHED_ELSEWHERE'].includes(x)), codes.join());
-  assert.equal([...ledger.rows.keys()].filter(k => k.includes('/fee/' + D + '/attempt-') && !k.includes('-result') && !k.includes('-started')).length, 1);
+  assert.equal([...ledger.rows.keys()].filter(k => /\/fee\/\d{4}-\d{2}-\d{2}\/attempt-\d+$/.test(k)).length, 1, 'one attempt claim');
 });
 
 test('network drop after claim committed: read-back recognises own claim, no double POST', async () => {
@@ -300,4 +300,43 @@ test('a same-date main not produced by this attempt is not this success', async 
   assert.equal((await kindState(ledger, 'fee', D)).state, 'in-flight');
   w.foreign = false;
   assert.equal((await c.reconcile('fee', D)).code, 'RECONCILED_PUBLISHED');
+});
+
+// ---- lost run id and stalled claims (coordinator)
+test('lost run id: adopted run still needs the full provenance chain; adoption is recorded once', async () => {
+  const w = world({ startMode: 'commit-then-throw', publishAfter: 1 }), { c, ledger } = coordinator(w);
+  assert.equal((await c.submit(req(), ID)).fee.code, 'START_UNKNOWN');
+  await w.wait();
+  w.foreign = true; // provenance not bound yet
+  assert.equal((await c.reconcile('fee', D)).state, 'open');
+  const s = await kindState(ledger, 'fee', D);
+  assert.equal(s.attempts[0].started.handle, w.lostHandle, 'adoption recorded');
+  w.foreign = false;
+  assert.equal((await c.reconcile('fee', D)).code, 'RECONCILED_PUBLISHED');
+  assert.equal(w.starts.length, 1);
+});
+
+test('lost run id: no run in the window after grace and idle pipeline is a definite failure, retryable', async () => {
+  const w = world({ startMode: 'throw' }), { c, ledger } = coordinator(w);
+  assert.equal((await c.submit(req(), ID)).fee.code, 'START_UNKNOWN');
+  w.lookup = 'unknown'; assert.equal((await c.reconcile('fee', D)).state, 'open', 'inside grace: unknown');
+  w.lookup = 'none'; w.idle = false; assert.equal((await c.reconcile('fee', D)).state, 'open', 'pipeline busy: still open');
+  w.idle = true; assert.equal((await c.reconcile('fee', D)).code, 'RECONCILED_NOT_STARTED');
+  assert.equal((await kindState(ledger, 'fee', D)).state, 'retryable');
+});
+
+test('stalled claim without a dispatch record: voided only after the delay, and void and dispatch are exclusive', async () => {
+  const core = await import('./fee-manager-refresh.mjs');
+  const w = world(), ledger = createMemoryLedger();
+  const b = req();
+  await ledger.create(keys.batch(b.requestId), { schema: SCHEMA.batch, batchId: b.requestId, request: b, nonce: crypto.randomUUID() });
+  await ledger.create(keys.attempt('fee', D, 1), { schema: SCHEMA.attempt, kind: 'fee', dataDate: D, attempt: 1, batchId: b.requestId, requestId: b.requestId, claimMainSha: w.head().sha, claimedAt: w.clock().toISOString(), nonce: crypto.randomUUID() });
+  const c = createRefreshCoordinator({ ledger, now: w.clock, wait: w.wait, feePublisher: w.publisher, feeVerifier: w.verifier, pipelineIdle: w.pipelineIdle });
+  assert.equal((await c.reconcile('fee', D)).state, 'open', 'a live claimant may still be about to dispatch');
+  w.advance(core.VOID_AFTER_MS + 1000);
+  assert.equal((await c.reconcile('fee', D)).code, 'RECONCILED_NOT_STARTED');
+  assert.equal((await ledger.get(keys.dispatching('fee', D, 1))).mode, 'void');
+  // The slow claimant now tries to record its dispatch: it loses and never POSTs.
+  await assert.rejects(ledger.create(keys.dispatching('fee', D, 1), { schema: SCHEMA.dispatching, attempt: 1, batchId: b.requestId, mode: 'dispatch', at: w.clock().toISOString(), nonce: crypto.randomUUID() }), e => e.conflict === true);
+  assert.equal(w.starts.length, 0);
 });
