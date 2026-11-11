@@ -26,7 +26,6 @@ export const DISPATCH_API_VERSION = '2026-03-10';
 export const REQUEST_FILE = 'fee-manager-refresh-request.json';
 export const FRESH_MS = 10 * 60_000;
 export const MAX_TARGET_AGE_DAYS = 4; // the promotion window's own bound
-export const LOOKUP_BEFORE_MS = 5_000, LOOKUP_AFTER_MS = 60_000, LOOKUP_GRACE_MS = 10 * 60_000;
 const sha256 = b => crypto.createHash('sha256').update(b).digest('hex');
 const isSha40 = v => typeof v === 'string' && /^[a-f0-9]{40}$/.test(v);
 const isUuid = v => typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(v);
@@ -281,35 +280,9 @@ export function createGitHubFeeAdapters({ http, readToken, now }) {
       throw new Error('uncertain'); // includes 403/429 rate limit
     },
     async status(handle) { const r = await runOf(handle); return r.status === 'completed' ? 'ended' : 'running'; },
-    // Lost run id: find this attempt's run only inside its recorded dispatch
-    // window. Adopt exactly one run whose Produce job is for this date while
-    // every other candidate is provably for another date or produced nothing.
-    // Anything undetermined, ambiguous or incomplete stays unknown; `none`
-    // only after a grace period with a complete, empty window.
-    async lookup({ dataDate, dispatchAt }) {
-      const at = Date.parse(dispatchAt);
-      if (!isDay(dataDate) || !Number.isFinite(at)) return 'unknown';
-      const iso = t => new Date(t).toISOString().slice(0, 19) + 'Z';
-      const from = at - LOOKUP_BEFORE_MS, to = at + LOOKUP_AFTER_MS;
-      const list = await getJson(API + '/actions/workflows/' + PRODUCER_WORKFLOW + '/runs?event=workflow_dispatch&per_page=100&created=' + iso(from) + '..' + iso(to));
-      if (!Array.isArray(list.workflow_runs) || list.total_count !== list.workflow_runs.length) return 'unknown';
-      const candidates = list.workflow_runs.filter(r => { const c = Date.parse(r.created_at); return c >= from && c <= to; });
-      if (candidates.some(r => r.path !== '.github/workflows/' + PRODUCER_WORKFLOW)) return 'unknown';
-      const ours = candidates.filter(r => r.actor?.id === OWNER_ID && r.head_branch === 'main' && r.run_attempt === 1);
-      if (!ours.length) return now().getTime() - at >= LOOKUP_GRACE_MS ? 'none' : 'unknown';
-      const matching = [];
-      for (const r of ours) {
-        const jobs = await getJson(API + '/actions/runs/' + r.id + '/attempts/1/jobs?per_page=100');
-        if (!Array.isArray(jobs.jobs) || jobs.total_count !== jobs.jobs.length) return 'unknown';
-        const produce = jobs.jobs.filter(j => typeof j.name === 'string' && j.name.startsWith('Produce'));
-        if (produce.some(j => j.name === 'Produce daily ' + dataDate)) { matching.push(r); continue; }
-        const decided = r.status === 'completed' && produce.every(j => /^Produce (daily|weekly|monthly) \d{4}-\d{2}-\d{2}$/.test(j.name) || j.conclusion === 'skipped');
-        if (!decided) return 'unknown';
-      }
-      if (matching.length === 1) return { handle: String(matching[0].id) };
-      if (matching.length === 0) return now().getTime() - at >= LOOKUP_GRACE_MS ? 'none' : 'unknown';
-      return 'unknown';
-    },
+    // No time-window lookup: a run created near the dispatch moment by the
+    // same owner for the same date is not proof it came from this request.
+    async lookup() { return 'unknown'; },
     // Bound only by trusted evidence, with no time-window guessing:
     //   run (dispatched, attempt 1, owner actor, main, success)
     //   -> its single `Produce daily <date>` job and its successful
@@ -380,7 +353,7 @@ export function createGitHubFeeAdapters({ http, readToken, now }) {
 export const acceptancePublisher = Object.freeze({
   async start() { return { state: 'refused' }; },
   async status() { return 'ended'; },
-  async lookup() { return 'none'; },
+  async lookup() { return 'unknown'; },
   async provenance() { return null; },
 });
 

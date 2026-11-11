@@ -248,12 +248,14 @@ export const notConfiguredRatioCollector = Object.freeze({
 //   now()            -> Date
 //   feePublisher     {start({dataDate,batchId,attempt,claimMainSha,signal}) -> {state:'started',handle}|{state:'refused'}
 //                     status(handle) -> 'running'|'ended'
-//                     lookup({dataDate,batchId,attempt}) -> 'running'|'ended'|'none'|'unknown'
+//                     (no lookup by time window: a lost run id stays frozen)
 //                     provenance({handle,dataDate,batchId,attempt}) -> null | {accountingThrough,
 //                       dataSha256, healthSha256, promotedMainSha} from this attempt's own
 //                       producer candidate and protected promotion run}
 //   feeVerifier      createFeePublicationVerifier(...)
 //   pipelineIdle(d)  -> true only when no producer/validate/promote run or candidate for d is pending
+//   executorTerminated({...}) -> true only with proof the dispatching executor
+//                     can never send again (default: absent -> frozen)
 //   ratioCollector   default notConfiguredRatioCollector
 //   ratioPublisher   default null (not part of this phase)
 //   wait(ms, signal) / pollMs / deadlineMs
@@ -404,7 +406,7 @@ export function createRefreshCoordinator(deps) {
     catch { return { state: 'unknown', code: 'START_UNKNOWN' }; }
     if (started?.state === 'refused') return close('failed', 'PUBLISHER_REFUSED');
     if (started?.state !== 'started' || typeof started.handle !== 'string' || !/^\d{1,20}$/.test(started.handle)) return { state: 'unknown', code: 'START_UNKNOWN' };
-    try { await createOnce(d.ledger, keys.started(kind, date, n), { schema: SCHEMA.started, attempt: n, batchId: batch.batchId, handle: started.handle, nonce: nonce() }); } catch { /* reconcile uses lookup() */ }
+    try { await createOnce(d.ledger, keys.started(kind, date, n), { schema: SCHEMA.started, attempt: n, batchId: batch.batchId, handle: started.handle, nonce: nonce() }); } catch { /* this execution keeps the in-memory run id; after a crash the attempt stays frozen */ }
     return awaitPublication(kind, date, attempt, started.handle);
   }
 
@@ -438,17 +440,16 @@ export function createRefreshCoordinator(deps) {
         if (rec?.mode !== 'dispatch') return null;
         seen.neverDispatched = false; seen.dispatchAt = rec.at;
       }
-      // Lost run id: only the reviewed lookup may adopt exactly one run of
-      // this attempt's dispatch window; adoption is recorded create-only and
-      // the full provenance chain still applies to the adopted run.
-      let found;
-      try { found = await d.feePublisher.lookup({ dataDate: date, batchId: attempt.batchId, attempt: attempt.attempt, dispatchAt: seen.dispatchAt || null }); } catch { found = 'unknown'; }
-      if (found && typeof found === 'object' && typeof found.handle === 'string' && /^\d{1,20}$/.test(found.handle)) {
-        try { await createOnce(d.ledger, keys.started(kind, date, attempt.attempt), { schema: SCHEMA.started, attempt: attempt.attempt, batchId: attempt.batchId, handle: found.handle, nonce: nonce() }); } catch { return null; }
-        const rec = (await kindState(d.ledger, kind, date)).attempts.find(x => x.n === attempt.attempt)?.started;
-        return rec ? observe(kind, date, attempt, rec.handle, seen) : null;
-      }
-      run = found === 'none' && seen.dispatchAt ? 'none' : 'unknown';
+      // A dispatch record exists but the run id was lost: the POST may have
+      // been sent, or may still be sent by a paused executor. Stay frozen
+      // until either a verifiable request->run association exists (only the
+      // dispatch response's own run id counts today) or the original
+      // executor is proven terminated AND nothing for the date is active.
+      // Time proximity or an empty run listing is never such proof.
+      let terminated = false;
+      try { terminated = (await d.executorTerminated?.({ dataDate: date, batchId: attempt.batchId, attempt: attempt.attempt, dispatchAt: seen.dispatchAt || null })) === true; } catch { terminated = false; }
+      if (!terminated) return null;
+      run = 'executor-terminated';
     }
     let v;
     try { v = await d.feeVerifier.verify(date, { claimMainSha: attempt.claimMainSha }); } catch { v = { state: 'unavailable' }; }
@@ -469,14 +470,14 @@ export function createRefreshCoordinator(deps) {
       return { state: 'published', code: 'PUBLISHED', evidence: v.evidence };
     }
     if (handle) { try { run = await d.feePublisher.status(handle); } catch { run = 'unknown'; } }
-    if (run !== 'ended' && run !== 'none') return null;
+    if (run !== 'ended' && run !== 'executor-terminated') return null;
     if (v.state !== 'not-published') return null;
     let idle = false;
     try { idle = (await d.pipelineIdle(date)) === true; } catch { idle = false; }
     if (!idle) return null;
-    // Definite: run ended (or provably none in the dispatch window), main
-    // does not carry `date`, and nothing for `date` is pending downstream.
-    return close(run === 'none' ? 'RECONCILED_NOT_STARTED' : 'RUN_ENDED_UNPUBLISHED');
+    // Definite: this attempt's own run ended (or its executor provably can no
+    // longer send), main does not carry `date`, nothing for it is pending.
+    return close(run === 'executor-terminated' ? 'RECONCILED_NOT_STARTED' : 'RUN_ENDED_UNPUBLISHED');
   }
 
   // Close an unresolved attempt only from evidence; otherwise leave it open.

@@ -537,40 +537,13 @@ test('A verified but not yet claimed; B finds it truly stale: the shared gate ma
   assert.equal((await latest(w, r.requestId)).fee.code, 'REQUEST_STALE', 'the page never flips to running');
 });
 
-// ---- lost run id
-function lookupWorld({ runs, jobs = {}, now = NOW }) {
-  const http = async (method, url) => {
-    const ok = v => ({ status: 200, bytes: enc(v) });
-    if (url.includes('/actions/workflows/fee-cloud-producer.yml/runs?')) return ok({ total_count: runs.length, workflow_runs: runs });
-    const m = /\/actions\/runs\/(\d+)\/attempts\/1\/jobs/.exec(url);
-    if (m) { const j = jobs[m[1]] || []; return ok({ total_count: j.length, jobs: j }); }
-    return { status: 404 };
-  };
-  return createGitHubFeeAdapters({ http, readToken: () => 'synthetic-token-not-real-0000', now: () => now }).publisher;
-}
-const R = (id, over = {}) => ({ id, path: '.github/workflows/fee-cloud-producer.yml', actor: { id: OWNER_ID }, head_branch: 'main', run_attempt: 1, status: 'completed', created_at: '2026-11-11T02:05:10Z', ...over });
-const DISPATCH = '2026-11-11T02:05:00.000Z';
-
-test('lost run id: exactly one run of the dispatch window for this date is adopted', async () => {
-  const p = lookupWorld({ runs: [R(77), R(78)], jobs: { 77: [{ name: 'Produce daily 2026-11-10' }], 78: [{ name: 'Produce daily 2026-11-09' }] } });
-  assert.deepEqual(await p.lookup({ dataDate: '2026-11-10', dispatchAt: DISPATCH }), { handle: '77' });
-});
-
-test('lost run id: ambiguous, undetermined, foreign or incomplete windows stay unknown', async () => {
-  const cases = {
-    'two runs for the date': lookupWorld({ runs: [R(77), R(79)], jobs: { 77: [{ name: 'Produce daily 2026-11-10' }], 79: [{ name: 'Produce daily 2026-11-10' }] } }),
-    'a run not yet decided': lookupWorld({ runs: [R(77), R(80, { status: 'in_progress' })], jobs: { 77: [{ name: 'Produce daily 2026-11-10' }], 80: [] } }),
-    'other workflow path in the list': lookupWorld({ runs: [R(77, { path: '.github/workflows/x.yml' })], jobs: { 77: [{ name: 'Produce daily 2026-11-10' }] } }),
-    'nothing yet, inside the grace period': lookupWorld({ runs: [], now: new Date(Date.parse(DISPATCH) + 60_000) }),
-  };
-  for (const [name, p] of Object.entries(cases)) assert.equal(await p.lookup({ dataDate: '2026-11-10', dispatchAt: DISPATCH }), 'unknown', name);
-  assert.equal(await lookupWorld({ runs: [] }).lookup({ dataDate: '2026-11-10', dispatchAt: null }), 'unknown', 'no recorded dispatch moment');
-});
-
-test('lost run id: an empty complete window after the grace period is none', async () => {
-  const later = new Date(Date.parse(DISPATCH) + 11 * 60_000);
-  assert.equal(await lookupWorld({ runs: [], now: later }).lookup({ dataDate: '2026-11-10', dispatchAt: DISPATCH }), 'none');
-  assert.equal(await lookupWorld({ runs: [R(81, { actor: { id: 5 } })], now: later }).lookup({ dataDate: '2026-11-10', dispatchAt: DISPATCH }), 'none', 'another actor is not ours');
+// ---- lost run id: the adapter never adopts by time proximity
+test('lookup never adopts a run, even a unique same-owner same-date run in the dispatch window', async () => {
+  let calls = 0;
+  const http = async () => { calls++; return { status: 200, bytes: enc({ total_count: 1, workflow_runs: [{ id: 77 }] }) }; };
+  const p = createGitHubFeeAdapters({ http, readToken: () => 'synthetic-token-not-real-0000', now: () => NOW }).publisher;
+  assert.equal(await p.lookup({ dataDate: '2026-11-10', dispatchAt: NOW.toISOString() }), 'unknown');
+  assert.equal(calls, 0);
 });
 
 test('verification outcome classes: unavailable is never stale or unverified', async () => {

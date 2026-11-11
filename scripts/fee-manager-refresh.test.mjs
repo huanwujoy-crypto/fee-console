@@ -141,21 +141,17 @@ test('network drop before claim committed: unknown, nothing started, no retry in
   assert.equal(w.starts.length, 0);
 });
 
-test('start result unknown: never re-started; later reconcile from evidence', async () => {
+test('start result unknown: never re-started, and stays frozen even after the date is published', async () => {
   const w = world({ startMode: 'commit-then-throw', publishAfter: 1 }), { c, ledger } = coordinator(w);
   const r = await c.submit(req(), ID);
   assert.equal(r.fee.code, 'START_UNKNOWN');
   assert.equal(w.starts.length, 1);
-  // A new request while unresolved: no new start.
   w.startMode = 'started';
-  const blocked = await c.submit(req(), ID);
-  assert.equal(blocked.fee.code, 'ATTEMPT_IN_FLIGHT');
+  assert.equal((await c.submit(req(), ID)).fee.code, 'ATTEMPT_IN_FLIGHT');
+  await w.wait(); // the protected chain publishes the date
+  assert.equal((await c.reconcile('fee', D)).state, 'open', 'no verifiable request->run association: frozen');
+  assert.equal((await kindState(ledger, 'fee', D)).state, 'in-flight');
   assert.equal(w.starts.length, 1);
-  // The real chain later publishes; reconcile records it from readback.
-  await w.wait();
-  const rc = await c.reconcile('fee', D);
-  assert.equal(rc.code, 'RECONCILED_PUBLISHED');
-  assert.equal((await kindState(ledger, 'fee', D)).state, 'published');
 });
 
 test('definite failure before publication is retryable; unknown is not', async () => {
@@ -302,26 +298,55 @@ test('a same-date main not produced by this attempt is not this success', async 
   assert.equal((await c.reconcile('fee', D)).code, 'RECONCILED_PUBLISHED');
 });
 
-// ---- lost run id and stalled claims (coordinator)
-test('lost run id: adopted run still needs the full provenance chain; adoption is recorded once', async () => {
-  const w = world({ startMode: 'commit-then-throw', publishAfter: 1 }), { c, ledger } = coordinator(w);
+// ---- lost run id: frozen; paused dispatcher; stalled claims (coordinator)
+test('lost run id stays frozen: no time-window adoption, no empty-window failure, no retry', async () => {
+  const w = world({ startMode: 'throw' }), { c, ledger } = coordinator(w);
   assert.equal((await c.submit(req(), ID)).fee.code, 'START_UNKNOWN');
-  await w.wait();
-  w.foreign = true; // provenance not bound yet
-  assert.equal((await c.reconcile('fee', D)).state, 'open');
+  w.lostHandle = '1001'; w.lookup = { handle: '1001' }; // a unique same-window run must not be adopted
+  for (const advance of [60_000, 11 * 60_000, 24 * 3600_000]) {
+    w.advance(advance);
+    assert.equal((await c.reconcile('fee', D)).state, 'open');
+  }
   const s = await kindState(ledger, 'fee', D);
-  assert.equal(s.attempts[0].started.handle, w.lostHandle, 'adoption recorded');
-  w.foreign = false;
-  assert.equal((await c.reconcile('fee', D)).code, 'RECONCILED_PUBLISHED');
+  assert.equal(s.state, 'in-flight');
+  assert.equal(s.attempts[0].started, null, 'nothing adopted');
+  w.startMode = 'started';
+  assert.equal((await c.submit(req(), ID)).fee.code, 'ATTEMPT_IN_FLIGHT');
   assert.equal(w.starts.length, 1);
 });
 
-test('lost run id: no run in the window after grace and idle pipeline is a definite failure, retryable', async () => {
-  const w = world({ startMode: 'throw' }), { c, ledger } = coordinator(w);
+test('paused dispatcher: A writes dispatching then pauses before sending; 11 minutes of reconcile and new requests never dispatch again; A sends once', async () => {
+  const w = world({ publishAfter: Infinity }), ledger = createMemoryLedger();
+  let release, aPaused = false; const hold = new Promise(r => { release = r; });
+  const sent = [];
+  const publisher = { ...w.publisher,
+    start: async args => { aPaused = true; await hold; sent.push(args); return { state: 'started', handle: '5001' }; },
+    status: async () => 'running' };
+  const A = createRefreshCoordinator({ ledger, now: w.clock, wait: w.wait, feePublisher: publisher, feeVerifier: w.verifier, pipelineIdle: async () => true, deadlineMs: 0 });
+  const B = createRefreshCoordinator({ ledger, now: w.clock, wait: w.wait, feePublisher: { ...publisher, start: async x => { sent.push(x); return { state: 'started', handle: '6001' }; } }, feeVerifier: w.verifier, pipelineIdle: async () => true, deadlineMs: 0 });
+  const a = A.submit(req(), ID);
+  for (let i = 0; i < 200 && !aPaused; i++) await new Promise(r => setImmediate(r));
+  assert.ok(aPaused);
+  assert.equal((await ledger.get(keys.dispatching('fee', D, 1))).mode, 'dispatch');
+  w.advance(11 * 60_000);
+  assert.equal((await B.reconcile('fee', D)).state, 'open', 'frozen: no not-started verdict');
+  assert.equal((await B.submit(req(), ID)).fee.code, 'ATTEMPT_IN_FLIGHT');
+  assert.equal(sent.length, 0);
+  release(); await a;
+  assert.equal(sent.length, 1, 'exactly one dispatch for the date');
+  assert.equal((await kindState(ledger, 'fee', D)).attempts.length, 1);
+});
+
+test('frozen attempt is released only with proof the executor can never send, an idle pipeline and an unpublished date', async () => {
+  const w = world({ startMode: 'throw' }), ledger = createMemoryLedger();
+  let terminated = false;
+  const c = createRefreshCoordinator({ ledger, now: w.clock, wait: w.wait, feePublisher: w.publisher, feeVerifier: w.verifier, pipelineIdle: w.pipelineIdle, executorTerminated: async () => terminated });
   assert.equal((await c.submit(req(), ID)).fee.code, 'START_UNKNOWN');
-  w.lookup = 'unknown'; assert.equal((await c.reconcile('fee', D)).state, 'open', 'inside grace: unknown');
-  w.lookup = 'none'; w.idle = false; assert.equal((await c.reconcile('fee', D)).state, 'open', 'pipeline busy: still open');
-  w.idle = true; assert.equal((await c.reconcile('fee', D)).code, 'RECONCILED_NOT_STARTED');
+  assert.equal((await c.reconcile('fee', D)).state, 'open');
+  terminated = true; w.idle = false;
+  assert.equal((await c.reconcile('fee', D)).state, 'open', 'pipeline busy');
+  w.idle = true;
+  assert.equal((await c.reconcile('fee', D)).code, 'RECONCILED_NOT_STARTED');
   assert.equal((await kindState(ledger, 'fee', D)).state, 'retryable');
 });
 
@@ -339,4 +364,30 @@ test('stalled claim without a dispatch record: voided only after the delay, and 
   // The slow claimant now tries to record its dispatch: it loses and never POSTs.
   await assert.rejects(ledger.create(keys.dispatching('fee', D, 1), { schema: SCHEMA.dispatching, attempt: 1, batchId: b.requestId, mode: 'dispatch', at: w.clock().toISOString(), nonce: crypto.randomUUID() }), e => e.conflict === true);
   assert.equal(w.starts.length, 0);
+});
+
+test('POST not accepted while an independent same-owner same-date run publishes: never adopted, never success, never retried', async () => {
+  const w = world({ publishAfter: Infinity }), ledger = createMemoryLedger();
+  let lookups = 0, provenanceCalls = 0;
+  const publisher = {
+    start: async () => { throw new Error('network: request not accepted'); },
+    status: async () => 'ended',
+    // Worst case: something offers the independent run as if it were ours.
+    lookup: async () => { lookups++; return { handle: '424242' }; },
+    // And that run's full chain (run -> candidate -> main/Pages) is genuine.
+    provenance: async ({ dataDate }) => { provenanceCalls++; const c = w.head(); return { accountingThrough: dataDate, dataSha256: crypto.createHash('sha256').update(c.data).digest('hex'), healthSha256: crypto.createHash('sha256').update(c.healthBytes).digest('hex'), promotedMainSha: c.sha }; },
+  };
+  const c = createRefreshCoordinator({ ledger, now: w.clock, wait: w.wait, feePublisher: publisher, feeVerifier: w.verifier, pipelineIdle: async () => true, deadlineMs: 0 });
+  const b = req();
+  assert.equal((await c.submit(b, ID)).fee.code, 'START_UNKNOWN');
+  w.commit(D); // the independent run is signed, promoted and served by Pages
+  for (const t of [60_000, 11 * 60_000, 3600_000]) { w.advance(t); assert.equal((await c.reconcile('fee', D)).state, 'open'); }
+  assert.equal(lookups, 0, 'no time-window lookup is consulted');
+  assert.equal(provenanceCalls, 0, 'no provenance without this attempt\'s own run id');
+  const s = await kindState(ledger, 'fee', D);
+  assert.equal(s.state, 'in-flight');
+  assert.equal(s.published, undefined);
+  assert.equal(await ledger.get(keys.published('fee', D)), null, 'never RECONCILED_PUBLISHED');
+  assert.deepEqual((await c.batchStatus(b.requestId)).fee, { state: 'unknown', code: 'ATTEMPT_IN_FLIGHT', dataDate: D });
+  assert.equal((await c.submit(req(), ID)).fee.code, 'ATTEMPT_IN_FLIGHT', 'no retry either');
 });

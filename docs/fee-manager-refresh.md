@@ -97,19 +97,29 @@ Buckets (bucket-level IAM only; no IAM conditions, because an objects.list
    - **Final states never go back**: the final projection is written once to
      `status/<id>/final`; the intake GET always prefers it, so a slower
      execution's later non-final projection cannot make it look waiting.
-   - **Lost run id**: before the POST, a create-only
-     `attempt-<n>-dispatching` record stores the dispatch moment (mode
-     `dispatch`). If the run id is lost, the reconcile looks only at
-     owner-dispatched `main` producer runs created 5 s before to 60 s after
-     that moment, with a complete listing, and adopts exactly one whose
-     `Produce daily <date>` job matches while every other candidate is
-     provably for another date; adoption is recorded create-only and the full
-     provenance chain still applies. Ambiguous or undecided windows stay
-     unknown; an empty complete window after 10 minutes, with an idle pipeline
-     and main not carrying the date, is `RECONCILED_NOT_STARTED` (retryable).
-     A claim that never wrote its dispatch record is voided after 2 minutes by
-     winning that same key with `mode:'void'`, so a slow claimant can no
+   - **Lost run id stays frozen**: before the POST, a create-only
+     `attempt-<n>-dispatching` record (mode `dispatch`) is won; the POST is
+     sent only after winning it. The only accepted request->run association
+     today is the dispatch response's own `workflow_run_id` (with matching
+     `run_url`/`html_url`). Without it the attempt stays unknown and blocks
+     the date: no time-window lookup, no adoption of a same-owner same-date
+     run (its genuine run->candidate->main/Pages chain proves that run
+     produced a result, not that this request did), and no "nothing found,
+     so not started" verdict. It is released only by a verifiable
+     association or by proof the dispatching executor can never send again
+     (`executorTerminated`, not implemented: needs the executor identity in
+     the record and read access to Cloud Run execution state) together with
+     an idle pipeline and an unpublished date. Otherwise manual investigation.
+     A claim that never wrote its dispatch record is voided after 2 minutes
+     by winning that same key with `mode:'void'`, so a slow claimant can no
      longer POST.
+   - **Verifiable attempt id (not implemented, protected change)**: the
+     minimal change that would make lost run ids recoverable is a new
+     `workflow_dispatch` input on `fee-cloud-producer.yml` (e.g.
+     `refresh_attempt`, a fixed-format id) echoed in its `run-name`, so the
+     run's `display_title` carries the exact attempt id; the job would then
+     associate only a run whose title equals it. This touches the protected
+     producer and needs its own review; until then lost run ids stay frozen.
    It then runs the coordinator: claim, dispatch the existing producer
    with exactly the existing reviewed completed-sync inputs and
    `return_run_details`, wait, verify, record, project status. Stale, forged
