@@ -123,7 +123,7 @@ export async function verifyOwnerRequest(body, { http, gistId, now, auth = null 
 // CORS is not authentication; it only limits which page may read replies.
 // POST: verify, queue create-only; only a NEW request may wake the job, and
 // at most once per minute (atomic `wake/<minute>` slot). GET: read-only.
-export async function handleIntake(req, { http, queue, status, gistId, now, runJob }) {
+export async function handleIntake(req, { http, queue, status, gistId, now, runJob, mode = null }) {
   const headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', Vary: 'Origin' };
   const reply = (code, value) => ({ status: code, headers, body: JSON.stringify(value) });
   if (req.headers?.origin !== ALLOWED_ORIGIN) return { status: 403, headers: { 'Cache-Control': 'no-store' }, body: '' };
@@ -152,6 +152,9 @@ export async function handleIntake(req, { http, queue, status, gistId, now, runJ
       if (woke) { try { await runJob(); } catch { /* request stays queued; status shows it */ } }
       return reply(202, { requestId: id, state: 'queued' });
     }
+    // Read-only mode report, so an acceptance runner can refuse to touch a
+    // service that is not in acceptance mode. No other information.
+    if (req.method === 'GET' && req.path === '/v1/mode') return reply(200, { mode: ['acceptance', 'launch'].includes(mode) ? mode : 'unknown' });
     // Close: the only way to prove "never received, never will be". It takes
     // the same create-only key a POST must take to queue, so exactly one of
     // {queued, closed} can ever exist. Refused if anything was ever projected.
@@ -262,7 +265,9 @@ export function candidateFromLog(text, { script, stepStart, stepEnd } = {}) {
 // added permission) to get the authenticated rate limit; the intake never
 // holds it. A rate-limited or failed read throws -> unknown, never success.
 export function createGitHubFeeAdapters({ http, readToken, now }) {
-  const auth = () => ({ Authorization: 'Bearer ' + readToken() });
+  // Acceptance runs with no GitHub credential at all (readToken null): reads
+  // are anonymous and the acceptance publisher never dispatches.
+  const auth = () => (typeof readToken === 'function' ? { Authorization: 'Bearer ' + readToken() } : {});
   const get = async (url, accept = 'application/vnd.github+json', authed = true) => {
     const r = await http('GET', url, { headers: { Accept: accept, ...(authed ? auth() : {}) } });
     if (r.status !== 200) fail('VERIFY_UNAVAILABLE');
