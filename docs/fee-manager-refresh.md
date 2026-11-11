@@ -80,18 +80,22 @@ Recorded as reported; this repository did not observe them itself.
   args `launch`, `FEE_CLOCK_ENABLED=true`, maxRetries 0, timeout 120 s,
   service account `fee-clock-launch@…`.
 - Execution `fee-clock-launch-kss8b` 2026-11-11 09:00:13 HKT logged
-  `FEE_CLOCK_LIST_INCOMPLETE` and exited 1. In repository source that code is
-  raised in `inspect_runs` (`cloud/fee-clock/clock.py:241` →
-  `complete_list` line 113, or `runtime.py:33` on `rel="next"`), which runs
-  before `store.claim` (line 278) and dispatch. If the image matches the
-  source, that execution wrote no intent and dispatched nothing. Whether the
-  image matches the source is **unverified**.
+  `FEE_CLOCK_LIST_INCOMPLETE` and exited 1 with no retry. In repository
+  source scheduled `launch` calls `inspect_runs` both before `store.claim`
+  (`cloud/fee-clock/clock.py:241`, claim at line 278) and again after it
+  (line 285); `complete_list` (line 113) or `runtime.py:33` can raise
+  `LIST_INCOMPLETE` at either point. The log therefore does **not** show
+  whether the target intent was written. The existing claim state is
+  unverified: never clear, reset, overwrite or retry it.
+- Artifact Registry tags this digest `clock-probe-68bd0a1-20261110-0915`
+  (built 2026-11-10 17:13:55 HKT). The tag is a source hint only, not image
+  provenance; build attestation could not be read (API disabled, not enabled).
 - `family-portfolio-gateway-fee-clock` deletes every object older than 90
   days; launch SA has objectCreator+objectViewer, check SA objectViewer.
   It therefore cannot hold a permanent success limit and is not used here.
 - No `fee-refresh`/intake Cloud Run service exists.
-- Whether the live image contains `launch-confirmed` is **blocked**: the
-  repository records no digest-to-source binding. This design does not need
+- Whether the live image contains `launch-confirmed` is **blocked**: no
+  verified digest-to-source provenance exists (tag hint `68bd0a1` only). This design does not need
   it (it does not use `fee-clock-launch`).
 
 ## Read-only checks for the coordinator (no writes, no secret values)
@@ -114,8 +118,8 @@ gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name=
 ```
 
 `gcloud secrets describe` returns metadata only; never run `versions access`.
-The `ls …/v1/intent/` line is the only way to confirm the 09:00 execution
-left no intent for its target; list names only, do not `cat`.
+The `ls …/v1/intent/` line shows whether an intent object exists; list names
+only, do not `cat`, and never delete, overwrite or retry based on it.
 
 ## Exact permission and deployment actions still requiring approval
 
