@@ -44,32 +44,82 @@ so a reload or lost reply never resends it.
   read plus local writes, never publication. No ratio publisher is wired:
   a collected result stops at `RATIO_PUBLISHER_NOT_CONFIGURED`.
 
-## Proposed server shape (scripts/fee-manager-refresh-server.mjs)
+## Proposed server shape (scripts/fee-manager-refresh-server.mjs, -entry.mjs)
 
-Isolated from the existing fee clock: its own bucket, its own job, no use of
-`fee-clock-launch`, its overrides, or its 90-day bucket.
+Isolated from the existing fee clock: its own buckets, its own job, no use of
+`fee-clock-launch`, of `runWithOverrides`, or of the 90-day clock bucket.
+
+Buckets (bucket-level IAM only; no IAM conditions, because an objects.list
+`prefix` is not an IAM resource restriction):
+
+| bucket | intake SA | job SA |
+|---|---|---|
+| `…-fee-refresh-queue` (`queue/`, `wake/`) | objectCreator | objectViewer |
+| `…-fee-refresh-ledger` (claims, attempts, `published`, `processed`) — **no lifecycle rule** | none | objectCreator + objectViewer |
+| `…-fee-refresh-status` (redacted projections) | objectViewer | objectCreator |
 
 1. Browser writes `fee-manager-refresh-request.json` into the existing ledger
    Gist with the manager's existing Gist write ability (activation-stage page
-   change, not in this release), then POSTs `{requestId, gistVersion}` to the
-   intake. No token leaves the browser; the browser holds no Actions token.
-2. Intake (public Cloud Run service, CORS exactly `https://huanwujoy-crypto.github.io`;
-   CORS is not authentication) reads the ONE configured Gist anonymously and
-   requires: owner id 283054367, private, the given version is the latest
-   revision and was committed by the owner within 10 minutes, request schema
-   exact, `requestId` match, `createdAt` fresh. The caller cannot name a Gist
-   or URL. It writes `queue/<requestId>` create-only and starts the fixed Job
-   with **no overrides**. Replies carry only fixed codes, states and dates.
-3. Job (fixed image digest, fixed args, no overrides) re-verifies each queued
-   request independently, then runs the coordinator: claim, dispatch the
-   existing producer with exactly the existing reviewed completed-sync inputs
-   (`run_reviewed_once`, `report_kind=daily`, `report_target`,
-   `manual_sync_completed_for`, `confirmed_main`) and `return_run_details`,
-   wait, verify, record. 204 without a run id is `START_UNKNOWN` (never resent).
-   The producer keeps every existing actor, main, source and publication gate;
-   the dispatch actor is the credential's owner, so no guard is relaxed.
+   change, not in this release), then POSTs `{requestId, gistVersion}`.
+   No token leaves the browser; the browser holds no Actions token.
+2. Intake (CORS exactly `https://huanwujoy-crypto.github.io`; CORS is not
+   authentication) makes **one** anonymous read of the ONE configured Gist and
+   requires owner 283054367, private, the given version is the latest
+   revision committed by the owner within 10 minutes of the real time, exact
+   request schema, matching `requestId`, fresh `createdAt`, data date inside
+   the promotion window (≤ 4 HKT days old). Rate limit (403/429) is
+   `VERIFY_UNAVAILABLE`, never success. It writes `queue/<requestId>`
+   create-only. Only a newly created entry may wake the job, and at most once
+   per minute (create-only `wake/<UTC minute>`); duplicates never wake. GET
+   reads only the latest status projection; it has no side effect.
+3. Job (fixed image digest, fixed args, no overrides, mode `disabled` by
+   default) re-verifies each queued request against the **real current time**
+   (never `queuedAt`), marks it `processed/` create-only before any side
+   effect, then runs the coordinator: claim, dispatch the existing producer
+   with exactly the existing reviewed completed-sync inputs and
+   `return_run_details`, wait, verify, record, project status. Stale, forged
+   or invalid entries are recorded once and never executed. 204 without a run
+   id, 403/429 and 5xx are `START_UNKNOWN` (never resent).
 
-The status GET may start another Job execution (no overrides) to reconcile.
+A queued request whose wake was lost stays `queued`; once it is older than 10
+minutes the next execution records `REQUEST_STALE` and nothing runs, so the
+manager confirms again. In-flight attempts are reconciled only by the job.
+
+### Provenance (run → candidate → promotion)
+
+Implemented without changing the producer, from evidence GitHub records:
+producer run (dispatched, attempt 1, owner actor, main, success) → its single
+`Produce daily <date>` job and successful `Create a signed owner candidate`
+step → the job log (server-side Actions read) must contain exactly one
+`candidate <sha>` line, inside the single `##[group]Run node
+scripts/fee-cloud-commit.mjs` group → that commit is signed, owner-authored,
+committer owner/web-flow, sole parent = run head, subject `daily <date>`,
+pointed to by exactly one `codex/fee-daily-<yyyymmdd>-xxxxxx` branch → main
+contains that very commit (promotion fast-forwards). Any missing, duplicate
+or ambiguous link is blocked (`PROVENANCE_UNBOUND`), never success.
+
+Unverified link: the job-log endpoint redirects to a pre-signed storage URL.
+The client follows one redirect only to `productionresultssa<N>.blob.core.windows.net`
+or `results-receiver.actions.githubusercontent.com`, with no credential. The
+real live host is not verified here; any other host blocks provenance.
+
+Fallback if logs prove unavailable (protected-producer change, separately
+reviewed, NOT made here): `scripts/fee-cloud-commit.mjs` adds the commit body
+`Fee-Producer-Run: ${GITHUB_RUN_ID}` and `scripts/fee-cloud-producer.mjs:174`
+accepts exactly that body after `daily <date>`.
+
+### GitHub API budget per button flow
+
+| actor | reads | identity |
+|---|---|---|
+| intake | 1 Gist read per new request | anonymous (60/h per egress IP) |
+| job, admission | 1 Gist read + main ref + 2 file reads | job credential, public reads |
+| job, per 60 s poll (≤15) | main ref ×2, run status; file reads only when main changes (per-sha cache); Pages 2 (not API) | job credential |
+| job, end of run | provenance ≈ 9; pipelineIdle 1–4 | job credential |
+
+Roughly ≤ 80 authenticated reads per flow against 5,000/h, using the job's
+existing credential for public resources only (no added permission). The
+intake never holds it. Any rate-limited read is an unknown, never success.
 
 ## Live facts reported by the coordinator (read-only, 2026-11-11 HKT)
 
@@ -125,17 +175,18 @@ only, do not `cat`, and never delete, overwrite or retry based on it.
 
 None is performed by this change. Each is a separate owner decision.
 
-| # | Action | Scope |
-|---|--------|-------|
-| 1 | Create bucket `family-portfolio-gateway-fee-refresh` (asia-east2, uniform access, public access prevention, **no lifecycle rule**, no delete grant to any runtime) | permanent per-date success/claim ledger |
-| 2 | Create SA `fee-refresh-intake@…`; grant `roles/storage.objectCreator` + `roles/storage.objectViewer` on bucket 1 only (IAM condition `resource.name.startsWith("projects/_/buckets/family-portfolio-gateway-fee-refresh/objects/fee-manager-refresh-v1/")`) | queue + status read |
-| 3 | Grant SA 2 `roles/run.invoker` on job `fee-refresh-launch` only — **after** confirming with the `roles/run.invoker` describe above that it lacks `run.jobs.runWithOverrides`; if it includes it, stop and use a custom role with only `run.jobs.run` | start fixed job, no overrides |
-| 4 | Create SA `fee-refresh-launch@…`; grant objectCreator + objectViewer on bucket 1 only | ledger |
-| 5 | Credential for producer dispatch: either (a) grant SA 4 `roles/secretmanager.secretAccessor` on existing `fee-clock-github-actions` (second identity using a repository-wide Actions-write token), or (b) owner enters a new fine-grained token (this repository, Actions write only) as a new secret accessible to SA 4 only. (b) keeps the clock credential isolated | owner choice |
-| 6 | Create job `fee-refresh-launch`: verified image digest, args `refresh-job`, maxRetries 0, parallelism 1, timeout 20 min, SA 4, secret mounted as a file; env `FEE_REFRESH_GIST_ID`, `FEE_REFRESH_BUCKET` | fixed execution |
-| 7 | Create service `fee-refresh-intake`: SA 2, `--allow-unauthenticated` (public invoker), max instances 1, request body ≤ 512 B, env as above, no secret | public entry |
-| 8 | Separate security-policy PR adding the exact intake origin to `security/allowed-origins.txt` | page may call it |
-| 9 | Activation-stage `index.html` PR: request-file Gist write (new reviewed `ghApi` PATCH allowance for exactly that file) and `MANAGER_REFRESH_INTAKE` client | page |
+| # | Action |
+|---|--------|
+| 1 | Create buckets `family-portfolio-gateway-fee-refresh-queue`, `-ledger`, `-status` (asia-east2, uniform access, public access prevention). Ledger: **no lifecycle**. Queue/status: lifecycle optional (losing them only makes a request stale). |
+| 2 | Create SA `fee-refresh-intake@family-portfolio-gateway.iam.gserviceaccount.com`: `roles/storage.objectCreator` on the queue bucket; `roles/storage.objectViewer` on the status bucket. Nothing on the ledger. |
+| 3 | Grant SA 2 the start-only permission on job `fee-refresh-launch` only. First check `gcloud iam roles describe roles/run.invoker`: if it lists `run.jobs.runWithOverrides`, do not use it; create a custom role with only `run.jobs.run` (+ `run.executions.get` not needed). |
+| 4 | Create SA `fee-refresh-launch@…`: objectViewer on queue; objectCreator + objectViewer on ledger; objectCreator on status. |
+| 5 | Credential for SA 4 (owner choice): (a) `roles/secretmanager.secretAccessor` on existing `fee-clock-github-actions`, making a second identity use that repository-wide Actions-write token; or (b, recommended) the owner enters a new fine-grained token (this repository; Actions read/write; nothing else) as a new secret readable only by SA 4. Job logs need Actions read, which this token has. |
+| 6 | Create job `fee-refresh-launch`: verified image digest, command `node scripts/fee-manager-refresh-entry.mjs job`, maxRetries 0, parallelism 1, task timeout 20 min, SA 4, secret mounted at `/secrets/github/token`, env `FEE_REFRESH_MODE=acceptance` first, `FEE_REFRESH_GIST_ID`, three bucket names. |
+| 7 | Create service `fee-refresh-intake`: command `… entry.mjs serve`, SA 2, public invoker (`--allow-unauthenticated`), max instances 1, no secret, no ledger env. |
+| 8 | Separate security-policy PR adding the exact intake origin to `security/allowed-origins.txt`. |
+| 9 | Activation-stage `index.html` PR: request-file Gist write (a new reviewed `ghApi` PATCH allowance for exactly that file) and the `MANAGER_REFRESH_INTAKE` client. Cannot be finished before 7–8 give a real origin. |
+| 10 | After acceptance, change only `FEE_REFRESH_MODE` to `launch`, with separate approval. |
 
 Residual risks for review: the intake is public (rate limiting and Gist-API
 quota exhaustion can deny service but cannot publish); anonymous Gist reads
@@ -158,21 +209,22 @@ repository-wide (GitHub cannot narrow it to one workflow).
 ## Acceptance without real production
 
 1. Synthetic: `node --test scripts/fee-manager-refresh*.test.mjs`.
-2. Deployed acceptance mode (after approval): job env
-   `FEE_REFRESH_MODE=acceptance` uses the prefix `acceptance/` and a
-   publisher that refuses before dispatch (`PUBLISHER_REFUSED`) — exercises
-   identity, origin, queue, claim, duplicate, concurrent and status paths
-   with zero producer runs. Verify with `gcloud run jobs executions list` and
-   that `fee-cloud-producer.yml` has no new run.
-3. Only then a separately approved first real fee date.
+2. Deployed acceptance (after approval): `FEE_REFRESH_MODE=acceptance` with
+   `-acceptance` buckets (enforced by `readConfig`). The publisher refuses
+   before any dispatch, so identity, origin, queue, wake limit, claim,
+   duplicate, concurrent, stale and status paths run with zero producer runs.
+   Also read one recent completed producer run's job log through the job to
+   confirm the log redirect host. Verify with `gcloud run jobs executions
+   list` and that `fee-cloud-producer.yml` has no new run.
+3. Only then a separately approved first real fee date in `launch` mode.
 
-Not implemented yet: the container entry points, acceptance-mode switch,
-and the activation-stage page client (items 6, 7, 9 and step 2).
+Still not implemented: the activation-stage page client (item 9), container
+image build/digest, and any deployment.
 
 ## Shared test files changed for the UI page pin (test-only)
 
-Registered the new page hash `32b6c1f901ad3e76fee36aee36d16e99a39d439b12a903791b6665bf546b1d31`
-(build 4.9.54) by appending, never replacing, existing entries:
+Registered the page hash `5da8b0566a04bfa72ac3b8215139f067b9ce34233ecd9aea6c3d0ceb73d22769`
+(build 4.9.54, UI branch head) by appending, never replacing, existing entries:
 
 - `scripts/fixtures/fee-ratio-aggregate-returns-ui.json` — `nextSha256` →
   new page; `supportSha256` → previous main page `8a5a9671…685d`;
