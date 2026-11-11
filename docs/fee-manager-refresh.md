@@ -10,7 +10,7 @@ created or changed by this repository change.
 Ordinary users: the `↻ 刷新` button is unchanged (`manualRefresh`).
 Managers (`isMgr()`): the button opens a chooser — 管理费 / 比例管理 / 全选 —
 with a real-data-date per kind, plus `仅重新读取（不发布）` that runs the
-original refresh. In this release `MANAGER_REFRESH_INTAKE` is `null` and
+original refresh. In this release `MR_INTAKE_ORIGIN` is `null` (so `MANAGER_REFRESH_CLIENT` is not constructed) and
 `MR_RATIO_READY` is `false`: publishing is disabled with a visible reason and
 nothing is simulated. A sent request is remembered before the network call,
 so a reload or lost reply never resends it.
@@ -59,8 +59,9 @@ Buckets (bucket-level IAM only; no IAM conditions, because an objects.list
 | `…-fee-refresh-status` (redacted projections) | objectViewer | objectCreator |
 
 1. Browser writes `fee-manager-refresh-request.json` into the existing ledger
-   Gist with the manager's existing Gist write ability (activation-stage page
-   change, not in this release), then POSTs `{requestId, gistVersion}`.
+   Gist with the manager's existing Gist write ability (implemented in the
+   UI PR as one reviewed `ghApi` allowance for exactly that file, read back
+   for content and owner; inactive while `MR_INTAKE_ORIGIN` is `null`), then POSTs `{requestId, gistVersion}`.
    No token leaves the browser; the browser holds no Actions token.
 2. Intake (CORS exactly `https://huanwujoy-crypto.github.io`; CORS is not
    authentication) makes **one** anonymous read of the ONE configured Gist and
@@ -243,64 +244,93 @@ gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name=
 The `ls …/v1/intent/` line shows whether an intent object exists; list names
 only, do not `cat`, and never delete, overwrite or retry based on it.
 
-## Exact permission and deployment actions still requiring approval
+## Minimal-privilege deployment (nothing here is done; each step needs the named approval)
 
-None is performed by this change. Each is a separate owner decision.
+| # | Step | Scope / permission | Approval |
+|---|------|--------------------|----------|
+| 0 | Read-only checks above (`roles/run.invoker` contents, job-log redirect host, real log group shape) | read only | coordinator |
+| 1 | Merge support PR, then UI PR (exact head) | code only, default off | owner, exact-head OWNER |
+| 2 | Create buckets `family-portfolio-gateway-fee-refresh-{queue,ledger,status}` (+ `-acceptance` copies for step 9), asia-east2, uniform access, public access prevention; ledger: **no lifecycle**, no runtime delete grant | storage | owner (new resources) |
+| 3 | SA `fee-refresh-intake@`: objectCreator on queue, objectViewer on status; nothing on ledger | bucket-level IAM | owner (IAM) |
+| 4 | Intake start permission on job `fee-refresh-launch` only: `run.jobs.run` without `run.jobs.runWithOverrides` (custom role if `roles/run.invoker` includes overrides) | job-level IAM | owner (IAM) |
+| 5 | SA `fee-refresh-launch@`: objectViewer on queue; objectCreator+objectViewer on ledger; objectCreator on status | bucket-level IAM | owner (IAM) |
+| 6 | Job credential: owner enters a new fine-grained token (this repository; Actions read/write only) as a secret readable only by SA 5. Alternative: reuse `fee-clock-github-actions` (second identity on a repository-wide Actions-write token) | secret | owner (credential; owner enters it personally) |
+| 7 | Deploy job `fee-refresh-launch` (verified image digest, `node scripts/fee-manager-refresh-entry.mjs job`, maxRetries 0, timeout 20 min, `FEE_REFRESH_MODE=acceptance`, `-acceptance` buckets) | deploy | owner (deploy) |
+| 8 | Deploy service `fee-refresh-intake` (`… serve`, public invoker, max instances 1, no secret, no ledger env, acceptance buckets) | deploy | owner (deploy) |
+| 9 | Isolated acceptance (below) | — | coordinator; owner observes |
+| 10 | Security-policy PR adding the exact intake origin to `security/allowed-origins.txt`, and an index-only PR setting `MR_INTAKE_ORIGIN` to that literal | page now calls the service | owner, exact-head OWNER |
+| 11 | Switch job and service to production buckets, then `FEE_REFRESH_MODE=launch` | enables real dispatch | owner, separately, for a named first date |
 
-| # | Action |
-|---|--------|
-| 1 | Create buckets `family-portfolio-gateway-fee-refresh-queue`, `-ledger`, `-status` (asia-east2, uniform access, public access prevention). Ledger: **no lifecycle**. Queue/status: lifecycle optional (losing them only makes a request stale). |
-| 2 | Create SA `fee-refresh-intake@family-portfolio-gateway.iam.gserviceaccount.com`: `roles/storage.objectCreator` on the queue bucket; `roles/storage.objectViewer` on the status bucket. Nothing on the ledger. |
-| 3 | Grant SA 2 the start-only permission on job `fee-refresh-launch` only. First check `gcloud iam roles describe roles/run.invoker`: if it lists `run.jobs.runWithOverrides`, do not use it; create a custom role with only `run.jobs.run` (+ `run.executions.get` not needed). |
-| 4 | Create SA `fee-refresh-launch@…`: objectViewer on queue; objectCreator + objectViewer on ledger; objectCreator on status. |
-| 5 | Credential for SA 4 (owner choice): (a) `roles/secretmanager.secretAccessor` on existing `fee-clock-github-actions`, making a second identity use that repository-wide Actions-write token; or (b, recommended) the owner enters a new fine-grained token (this repository; Actions read/write; nothing else) as a new secret readable only by SA 4. Job logs need Actions read, which this token has. |
-| 6 | Create job `fee-refresh-launch`: verified image digest, command `node scripts/fee-manager-refresh-entry.mjs job`, maxRetries 0, parallelism 1, task timeout 20 min, SA 4, secret mounted at `/secrets/github/token`, env `FEE_REFRESH_MODE=acceptance` first, `FEE_REFRESH_GIST_ID`, three bucket names. |
-| 7 | Create service `fee-refresh-intake`: command `… entry.mjs serve`, SA 2, public invoker (`--allow-unauthenticated`), max instances 1, no secret, no ledger env. |
-| 8 | Separate security-policy PR adding the exact intake origin to `security/allowed-origins.txt`. |
-| 9 | Activation-stage `index.html` PR: request-file Gist write (a new reviewed `ghApi` PATCH allowance for exactly that file) and the `MANAGER_REFRESH_INTAKE` client. Cannot be finished before 7–8 give a real origin. |
-| 10 | After acceptance, change only `FEE_REFRESH_MODE` to `launch`, with separate approval. |
+No schedule is added: the job runs only when the intake starts it (no
+overrides). Ratio remains disabled (`MR_RATIO_READY=false`, no collector or
+publisher wired).
 
-Residual risks for review: the intake is public (rate limiting and Gist-API
-quota exhaustion can deny service but cannot publish); anonymous Gist reads
-are rate-limited per egress IP (a failed read is a refusal, never success);
-whoever controls the owner's Gist write token can request publication — the
-same authority that already edits the ledger; an Actions-write token is
-repository-wide (GitHub cannot narrow it to one workflow).
+## Isolated acceptance (no fee production)
+
+In acceptance mode the publisher refuses before any dispatch (enforced by
+code; buckets must end in `-acceptance`, enforced by `readConfig`).
+
+1. Temporarily point a non-production copy of the page (not the published
+   site) at the acceptance intake, or call it with a synthetic request whose
+   file the owner writes into the ledger Gist.
+2. Check: wrong origin → 403; stale or edited Gist → `REQUEST_STALE` /
+   `IDENTITY_UNVERIFIED`; duplicate POST → `duplicate`, no extra job start;
+   two quick requests → at most one job start per minute; status GET has no
+   side effect; final status stays final.
+3. Check the full path ends with `PUBLISHER_REFUSED` and that
+   `fee-cloud-producer.yml` shows no new run.
+4. Through the job (server side only), read one recent completed producer
+   run's job log: confirm the redirect host is in `LOG_HOSTS` and that the
+   `Create a signed owner candidate` group matches the workflow script.
+5. Record results; only then consider step 10–11.
+
+## When the outcome is unknown: freeze and reconcile
+
+What is implemented:
+
+- Every unknown (claim write unknown, dispatch reply without a verifiable
+  run id, start error, readback unavailable) leaves the attempt **in flight**.
+  The date is frozen: no new claim, no dispatch, no success, no failure.
+  The page keeps the request pending and shows that the result is not yet
+  confirmable; it never resends a new request.
+- Each later job execution re-observes only from evidence: with the
+  attempt's own run id it records `published` (readback + provenance) or,
+  after a quiescent bracket, `RUN_ENDED_UNPUBLISHED` (retryable).
+- A claim that never wrote its dispatch record is voided after 2 minutes
+  (it can then never POST) and closed `RECONCILED_NOT_STARTED`.
+
+What is NOT implemented (no automatic recovery):
+
+- A dispatch whose run id was lost stays frozen indefinitely. There is no
+  time-window adoption and no "nothing found" verdict. `executorTerminated`
+  is only a hook; it needs the executor identity in the record and Cloud Run
+  execution read access, neither of which exists.
+- Manual reconciliation, by the coordinator with owner approval: read the
+  producer runs and candidates for the date; if a run is proven to be this
+  attempt's (e.g. by its exact dispatch time and the job's own logs), record
+  that through a separately reviewed operation; otherwise leave the date
+  frozen or have the owner decide. Never delete or overwrite ledger objects.
+- The protected change that would make lost run ids recoverable
+  automatically (attempt id in `run-name`) is described above, not made.
 
 ## Security review dependencies
 
-- Exact-head OWNER approval of the support PR (new files under `scripts/`
-  and `docs/`, `scripts-check.yml`, shared UI test pins) and, separately, of
-  the index-only UI PR (merge after support).
-- Review of `verifyOwnerRequest` as the identity proof, and of the
-  provenance chain (run → single candidate → promotion bytes).
-- Activation additionally needs the deployment code (container entry
-  points for `handleIntake` and `runRefreshJob`), image build and digest
-  verification, and items 1–9 above.
-
-## Acceptance without real production
-
-1. Synthetic: `node --test scripts/fee-manager-refresh*.test.mjs`.
-2. Deployed acceptance (after approval): `FEE_REFRESH_MODE=acceptance` with
-   `-acceptance` buckets (enforced by `readConfig`). The publisher refuses
-   before any dispatch, so identity, origin, queue, wake limit, claim,
-   duplicate, concurrent, stale and status paths run with zero producer runs.
-   Also read one recent completed producer run's job log through the job to
-   confirm the log redirect host. Verify with `gcloud run jobs executions
-   list` and that `fee-cloud-producer.yml` has no new run.
-3. Only then a separately approved first real fee date in `launch` mode.
-
-Still not implemented: the activation-stage page client (item 9), container
-image build/digest, and any deployment.
+- Exact-head OWNER approval of the support PR and the UI PR.
+- Review of `verifyOwnerRequest` (identity), the batch gate, the dispatch
+  record/void arbitration, the quiescent failure bracket and the provenance
+  chain (run → job → trusted command group → candidate → promotion).
+- Review of the new `ghApi` allowance `reviewedRefreshRequest` (one file,
+  exact body, verified owner, no draft) and its effect: each request adds a
+  revision to the ledger Gist.
 
 ## Shared test files changed for the UI page pin (test-only)
 
-Registered the page hash `5da8b0566a04bfa72ac3b8215139f067b9ce34233ecd9aea6c3d0ceb73d22769`
+Registered the page hash `86a8f079a7954fb17a54f4d89b4cdd8e0216abd38e8056df911f403d8fc1b041`
 (build 4.9.54, UI branch head) by appending, never replacing, existing entries:
 
 - `scripts/fixtures/fee-ratio-aggregate-returns-ui.json` — `nextSha256` →
   new page; `supportSha256` → previous main page `8a5a9671…685d`;
-  `supportRegionCount` 88 → 92 (all existing regions); 7 appended regions (99 total) named
+  `supportRegionCount` 88 → 92 (all existing regions); 9 appended regions (101 total) named
   `manager-refresh-chooser`.
 - `scripts/fee-ratio-aggregate-ui-fixture.mjs` — the fixture file hash only.
 - `scripts/fee-receipt-ui-contract.test.mjs` — `MANAGER_REFRESH_CHOOSER_UI_SHA256`

@@ -22,16 +22,17 @@ const START = '/* manager-refresh:start */', END = '/* manager-refresh:end */';
 const from = html.indexOf(START), to = html.indexOf(END);
 assert.ok(from >= 0 && to > from && html.indexOf(START, from + 1) === -1, 'one manager-refresh block');
 const block = html.slice(from, to);
-const MR = new Function(`${block}\nreturn {MANAGER_REFRESH_INTAKE,MR_RATIO_READY,mrPlan,mrBuildRequest,mrSubmit,mrQueryStatus,mrOutcomeText,mrHktDate,mrResolved,mrStepText};`)();
+const MR = new Function(`${block}\nreturn {MR_RATIO_READY,mrPlan,mrBuildRequest,mrSubmit,mrQueryStatus,mrOutcomeText,mrHktDate,mrResolved,mrStepText};`)();
 
 const ok = { fee: true, ratio: false, feeDate: '2026-11-10', ratioDate: '2026-11-10', ratioReady: false, intakeActive: true, identityVerified: true, draft: false, pending: false, busy: false, online: true };
 const deps = (intake, store = {}) => ({ intake, uuid: () => '0b0c0d0e-1f2a-4b3c-8d4e-5f6a7b8c9d0e', now: () => new Date('2026-11-11T02:00:00.000Z'),
   savePending: r => { store.pending = r; }, clearPending: () => { store.pending = null; } });
 
-test('shipped page is default-inactive: no server entry, ratio not ready', () => {
-  assert.equal(MR.MANAGER_REFRESH_INTAKE, null);
+test('shipped page is default-inactive: no server origin, no client, ratio not ready', () => {
+  assert.ok(html.includes('const MR_INTAKE_ORIGIN=null;'));
+  assert.ok(html.includes('const MANAGER_REFRESH_CLIENT=MR_INTAKE_ORIGIN?createIntakeClient(MR_INTAKE_ORIGIN):null;'));
   assert.equal(MR.MR_RATIO_READY, false);
-  const plan = MR.mrPlan({ ...ok, intakeActive: !!MR.MANAGER_REFRESH_INTAKE });
+  const plan = MR.mrPlan({ ...ok, intakeActive: false });
   assert.equal(plan.canSubmit, false);
   assert.ok(plan.reasons.some(r => r.includes('尚未激活')));
 });
@@ -151,4 +152,72 @@ test('confirmation copy states the click replaces the completed-sync instruction
 test('Hong Kong date default', () => {
   assert.equal(MR.mrHktDate(new Date('2026-11-10T17:00:00Z'), 1), '2026-11-10');
   assert.equal(MR.mrHktDate(new Date('2026-11-10T15:00:00Z'), 0), '2026-11-10');
+});
+
+// ---- real client (extracted block, injected page globals; no network)
+const CS = '/* manager-refresh-client:start */', CE = '/* manager-refresh-client:end */';
+const clientBlock = html.slice(html.indexOf(CS), html.indexOf(CE));
+function client({ patchReply, fetchReplies = [], authorized = true, draft = null } = {}) {
+  const calls = { patch: [], fetch: [] };
+  const env = {
+    managerDocumentsAuthorized: () => authorized, EDIT: { draft, pending: null }, _draftBlocked: false, _ledgerBusy: false,
+    cfg: k => ({ gid: 'g'.repeat(32), tok: 'synthetic-token-not-real-0000' })[k] || '', K: { gid: 'gid', tok: 'tok' }, _sourceEpoch: 7,
+    _managerCapability: { ownerId: 283054367 },
+    ghApi: async (path, opt) => { calls.patch.push({ path, opt }); return typeof patchReply === 'function' ? patchReply(opt) : patchReply; },
+    freshFetch: async (url, init) => { calls.fetch.push({ url, init }); const v = fetchReplies.shift(); return { json: async () => v }; },
+  };
+  env.cfg = k => (k === 'gid' ? 'g'.repeat(32) : k === 'tok' ? 'synthetic-token-not-real-0000' : '');
+  const names = Object.keys(env);
+  const fn = new Function(...names, `${clientBlock.replace('const MR_INTAKE_ORIGIN=null;', 'const MR_INTAKE_ORIGIN="https://intake.example.invalid";')}\nreturn {createIntakeClient, MANAGER_REFRESH_CLIENT, writeRefreshRequest, get pending(){return _mrRequestWrite;}};`);
+  return { calls, api: fn(...names.map(n => env[n])) };
+}
+const goodPatch = opt => { const raw = JSON.parse(opt.body).files['fee-manager-refresh-request.json'].content; return { id: 'g'.repeat(32), owner: { id: 283054367 }, files: { 'fee-manager-refresh-request.json': { content: raw } }, history: [{ version: 'b'.repeat(40) }] }; };
+const reqObj = () => MR.mrBuildRequest(ok, crypto.randomUUID(), new Date('2026-11-11T02:00:00.000Z'));
+
+test('client: reviewed write of exactly the request file, read back, then POST {requestId, gistVersion} without credentials', async () => {
+  const { calls, api } = client({ patchReply: goodPatch, fetchReplies: [{ requestId: 'x', state: 'queued' }] });
+  const r = reqObj(); let recorded = null;
+  const reply = await api.MANAGER_REFRESH_CLIENT.submit(r, v => { recorded = v; });
+  assert.equal(recorded, 'b'.repeat(40), 'version recorded before the POST');
+  assert.equal(calls.patch.length, 1);
+  assert.equal(calls.patch[0].path, '/gists/' + 'g'.repeat(32));
+  assert.deepEqual(JSON.parse(calls.patch[0].opt.body), { files: { 'fee-manager-refresh-request.json': { content: JSON.stringify(r) } } });
+  assert.ok(calls.patch[0].opt.reviewedRefreshRequest, 'uses the dedicated reviewed allowance');
+  assert.equal(api.pending, null, 'allowance cleared after use');
+  assert.equal(calls.fetch[0].url, 'https://intake.example.invalid/v1/requests');
+  assert.equal(calls.fetch[0].init.method, 'POST');
+  assert.deepEqual(JSON.parse(calls.fetch[0].init.body), { requestId: r.requestId, gistVersion: 'b'.repeat(40) });
+  assert.equal(calls.fetch[0].init.credentials, 'omit');
+  assert.equal(calls.fetch[0].init.redirect, 'error');
+  assert.ok(!JSON.stringify(calls.fetch[0]).includes('synthetic-token'), 'no token leaves the page');
+  assert.deepEqual(reply, { requestId: 'x', state: 'queued' });
+});
+
+test('client: refuses without verified identity or with a draft; mismatched readback never POSTs', async () => {
+  for (const o of [{ authorized: false }, { draft: {} }]) {
+    const { calls, api } = client({ ...o, patchReply: goodPatch });
+    await assert.rejects(api.MANAGER_REFRESH_CLIENT.submit(reqObj(), () => {}));
+    assert.equal(calls.patch.length + calls.fetch.length, 0);
+  }
+  for (const bad of [o => ({ ...goodPatch(o), owner: { id: 1 } }), o => ({ ...goodPatch(o), files: {} }), o => ({ ...goodPatch(o), history: [] })]) {
+    const { calls, api } = client({ patchReply: bad });
+    await assert.rejects(api.MANAGER_REFRESH_CLIENT.submit(reqObj(), () => {}));
+    assert.equal(calls.fetch.length, 0);
+  }
+});
+
+test('page allows the request write only through its own exact reviewed allowance', () => {
+  assert.ok(html.includes('const refreshRequestWrite=method==="PATCH"&&reviewedRefreshRequest&&reviewedRefreshRequest===_mrRequestWrite'));
+  assert.ok(html.includes('request.body===JSON.stringify({files:{[MR_REQUEST_FILE]:{content:reviewedRefreshRequest.raw}}})'));
+  assert.ok(html.includes('!ratioSnapshotWrite&&!refreshRequestWrite)throw'));
+});
+
+test('status "none": re-deliver the same request id and version only, pending kept', async () => {
+  const store = { pending: { requestId: ID, contents: ['fee'], gistVersion: 'b'.repeat(40) } }, resent = [];
+  const q = await MR.mrQueryStatus(store.pending, deps({ status: async () => ({ requestId: ID, state: 'none' }), resend: async p => { resent.push(p); return { requestId: ID, state: 'queued' }; } }, store));
+  assert.deepEqual(resent, [store.pending]);
+  assert.equal(q.state, 'unknown');
+  assert.ok(store.pending);
+  const noVersion = { requestId: ID, contents: ['fee'] };
+  await MR.mrQueryStatus(noVersion, deps({ status: async () => ({ requestId: ID, state: 'none' }), resend: async () => { throw new Error('must not resend without a recorded version'); } }, {}));
 });
