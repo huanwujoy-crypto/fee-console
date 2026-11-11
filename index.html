@@ -4895,7 +4895,7 @@ async function ensureLatestShell(){
 // (scripts/fee-manager-refresh.mjs) is the only record of a publication.
 // The server client (MANAGER_REFRESH_CLIENT) is defined outside this block.
 const MR_RATIO_READY=false;
-const MR_PENDING_KEY="feeConsole.mgrRefresh.pending";
+const MR_PENDING_PREFIX="feeConsole.mgrRefresh.pending.";
 const MR_DAY=/^\d{4}-\d{2}-\d{2}$/;
 function mrHktDate(now,back){return new Date(now.getTime()+8*3600000-back*86400000).toISOString().slice(0,10);}
 function mrPlan(s){
@@ -4928,17 +4928,16 @@ function mrStepText(label,x){
   if(x.state==="failed"||x.state==="blocked")return label+"：未发布（"+String(x.code||x.state).slice(0,48)+"）";
   return label+"：状态未确认，不会自动重试";
 }
-// A pending request may be forgotten only with proof it was not queued and
-// not started, or on the job's own final projection for THIS request:
-//  - a failure before any POST (nothing reached the server);
+// A pending request (one storage key per request id) is forgotten only on
+// server proof, never on browser time or a temporarily missing object:
+//  - a failure before any POST (nothing reached the server; the POST is only
+//    sent after its own pending record is re-confirmed);
 //  - a rejection of the FIRST POST (the intake guarantees it queued nothing);
-//  - "not-received" once the proof window after the last POST has passed
-//    (a late POST is refused as stale, and a queued one never executes);
-//  - a job projection: matching id, every requested kind final with a code,
-//    or a pre-execution rejection recorded by the job.
-// A rejected RE-delivery, queued, duplicate, a missing projection, missing
-// fields and non-final states all keep it pending.
-const MR_SAFE_AFTER_MS=12*60*1000,MR_RESEND_WITHIN_MS=9*60*1000;
+//  - a server "closed" answer: the close takes the same create-only queue
+//    key a POST must take, so it excludes any late POST atomically;
+//  - the job's own final projection for this request id.
+// queued, received, not-received (before a successful close), a rejected
+// later delivery, missing fields and non-final states all keep it pending.
 const mrProjection=r=>!!r&&typeof r==="object"&&r.state!=="rejected"&&"fee" in r&&"ratio" in r;
 function mrResolved(result,pending){
   if(!mrProjection(result)||!pending||result.requestId!==pending.requestId)return false;
@@ -4949,8 +4948,9 @@ function mrResolved(result,pending){
 }
 function mrOutcomeText(result,pending){
   if(!result||typeof result!=="object")return "服务端未返回结果；请求保留，稍后查询";
-  if(result.state==="queued"||result.state==="duplicate")return "服务端已收到，等待处理；结果确认前不能重复提交";
+  if(result.state==="queued"||result.state==="duplicate"||result.state==="received")return "服务端已收到，等待处理；结果确认前不能重复提交";
   if(result.state==="not-received")return "服务端暂无该请求的接收记录；请求保留，稍后查询";
+  if(result.state==="closed")return "服务端确认未接收该请求并已撤销，之后也不会再接收；未发布任何内容";
   if(result.state==="rejected")return "这次送达被拒（"+String(result.code||"").slice(0,32)+"）；原请求状态仍未确认，请求保留";
   if(mrProjection(result)&&MR_REJECTED.includes(result.code))return "服务端核验后未执行该请求（"+result.code+"），未发布任何内容";
   const kinds=pending&&Array.isArray(pending.contents)?pending.contents:["fee","ratio"].filter(k=>result[k]);
@@ -4958,36 +4958,36 @@ function mrOutcomeText(result,pending){
 }
 async function mrSubmit(state,deps){
   const plan=mrPlan(state);if(!plan.canSubmit)return {state:"refused",reasons:plan.reasons};
-  const request=mrBuildRequest(state,deps.uuid(),deps.now());
+  const request=mrBuildRequest(state,deps.uuid(),deps.now()),id=request.requestId;
   // Remember before sending: a reload or lost reply can never cause a blind resend.
   deps.savePending({...request,posts:0});
   let posted=false,result;
-  const beforePost=gistVersion=>{posted=true;deps.savePending({...request,gistVersion,posts:1,lastPostAt:deps.now().toISOString()});};
+  // Called synchronously right before the one POST: refuses if this request's
+  // pending record was meanwhile closed or removed (another tab, a reload).
+  const beforePost=gistVersion=>{if(!deps.hasPending(id))return false;deps.savePending({...request,gistVersion,posts:1});posted=true;return true;};
   try{result=await deps.intake.submit(request,beforePost);}
   catch(e){
-    if(!posted){deps.clearPending();return {state:"not-sent",request,text:"未送达服务端（"+String(e?.message||"写入失败").slice(0,40)+"），未发布任何内容，可重新提交"};}
+    if(!posted){deps.clearPending(id);return {state:"not-sent",request,text:"未送达服务端（"+String(e?.message||"写入失败").slice(0,40)+"），未发布任何内容，可重新提交"};}
     return {state:"unknown",request,text:"结果不明：请求可能已到达服务端。不会自动重试，请稍后查询状态。"};
   }
-  if(result&&result.state==="rejected"&&(result.requestId===undefined||result.requestId===request.requestId)){
-    deps.clearPending();return {state:"rejected",request,result,text:"服务端拒绝接收（"+String(result.code||"").slice(0,32)+"），未入队、未发布任何内容"};
+  if(result&&result.state==="rejected"&&result.requestId===id){
+    deps.clearPending(id);return {state:"rejected",request,result,text:"服务端拒绝接收（"+String(result.code||"").slice(0,32)+"），未入队、未发布任何内容"};
   }
-  const done=mrResolved(result,request);if(done)deps.clearPending();
+  const done=mrResolved(result,request);if(done)deps.clearPending(id);
   return {state:done?"done":"pending",request,result,text:mrOutcomeText(result,request)};
 }
 async function mrQueryStatus(pending,deps){
-  let status;try{status=await deps.intake.status(pending.requestId);}catch(_){return {state:"unknown",text:"仍无法确认上次结果；不会重复提交"};}
-  if(!status||typeof status!=="object"||status.requestId!==pending.requestId)return {state:"unknown",text:"服务端回复无法对应该请求；请求保留"};
-  if(mrResolved(status,pending)){deps.clearPending();return {state:"done",text:mrOutcomeText(status,pending)};}
-  if(status.state==="not-received"){
-    const last=Date.parse(pending.lastPostAt||""),age=deps.now().getTime()-last;
-    if(Number.isFinite(last)&&age>MR_SAFE_AFTER_MS){deps.clearPending();return {state:"done",text:"服务端确认未收到该请求，且已超过有效期，不会再被执行；未发布任何内容"};}
-    // Still inside the proof window: re-deliver the SAME id and version only.
-    // The queue is create-only, so this never creates a second request.
-    if(Number.isFinite(last)&&age<=MR_RESEND_WITHIN_MS&&/^[a-f0-9]{40}$/.test(pending.gistVersion||"")&&deps.intake.resend){
-      deps.savePending({...pending,posts:(pending.posts||1)+1,lastPostAt:deps.now().toISOString()});
-      try{return {state:"unknown",text:mrOutcomeText(await deps.intake.resend(pending),pending)};}
-      catch(_){return {state:"unknown",text:"仍无法送达服务端；请求保留，不会生成新请求"};}
-    }
+  const id=pending.requestId;
+  let status;try{status=await deps.intake.status(id);}catch(_){return {state:"unknown",text:"仍无法确认上次结果；不会重复提交"};}
+  if(!status||typeof status!=="object"||status.requestId!==id)return {state:"unknown",text:"服务端回复无法对应该请求；请求保留"};
+  if(mrResolved(status,pending)){deps.clearPending(id);return {state:"done",text:mrOutcomeText(status,pending)};}
+  if(status.state==="closed"){deps.clearPending(id);return {state:"done",text:mrOutcomeText(status,pending)};}
+  if(status.state==="not-received"&&deps.intake.close){
+    // Never resend. Ask the server to close the request id atomically: if a
+    // late POST got there first, the answer is "queued" and it stays pending.
+    let closed;try{closed=await deps.intake.close(id);}catch(_){return {state:"unknown",text:"撤销未确认；请求保留，稍后再查"};}
+    if(closed?.requestId===id&&closed.state==="closed"){deps.clearPending(id);return {state:"done",text:mrOutcomeText(closed,pending)};}
+    return {state:"unknown",text:mrOutcomeText(closed,pending)};
   }
   return {state:"unknown",text:mrOutcomeText(status,pending)};
 }
@@ -5000,6 +5000,8 @@ const MR_REQUEST_FILE="fee-manager-refresh-request.json";
 let _mrRequestWrite=null;
 // Owner-authored request: one reviewed PATCH of exactly this file in the
 // ledger Gist, read back for content and owner. No other file is touched.
+const mrSourceNow=()=>({epoch:_sourceEpoch,gid:cfg(K.gid),token:cfg(K.tok)});
+const mrSameSource=a=>!!a&&a.epoch===_sourceEpoch&&a.gid===cfg(K.gid)&&a.token===cfg(K.tok)&&managerDocumentsAuthorized()&&!EDIT.draft&&!EDIT.pending&&!_draftBlocked;
 async function writeRefreshRequest(request){
   if(!managerDocumentsAuthorized()||EDIT.draft||EDIT.pending||_draftBlocked||_ledgerBusy)throw new Error("管理人身份未核验或有未保存内容");
   const gid=cfg(K.gid),token=cfg(K.tok),raw=JSON.stringify(request);
@@ -5020,18 +5022,27 @@ function createIntakeClient(origin){
   };
   const post=(requestId,gistVersion)=>call("/v1/requests",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({requestId,gistVersion})});
   return Object.freeze({
-    // beforePost runs only after the request file is written and read back,
-    // immediately before the one POST; any earlier failure means nothing was sent.
-    async submit(request,beforePost){const gistVersion=await writeRefreshRequest(request);beforePost(gistVersion);return post(request.requestId,gistVersion);},
-    async resend(pending){return post(pending.requestId,pending.gistVersion);},
+    // The source and identity are re-checked after the Gist write and the
+    // pending record is re-confirmed synchronously right before the one POST;
+    // any change means nothing is sent.
+    async submit(request,beforePost){
+      const source=mrSourceNow(),gistVersion=await writeRefreshRequest(request);
+      if(!mrSameSource(source))throw new Error("来源或身份已变化，未提交");
+      if(!beforePost(gistVersion))throw new Error("该请求已被撤销或移除，未提交");
+      return post(request.requestId,gistVersion);
+    },
+    async close(requestId){if(!/^[0-9a-f-]{36}$/.test(requestId||""))throw new Error("请求号无效");return call("/v1/requests/"+requestId+"/close",{method:"POST"});},
     async status(requestId){if(!/^[0-9a-f-]{36}$/.test(requestId||""))throw new Error("请求号无效");return call("/v1/requests/"+requestId,{method:"GET"});},
   });
 }
 const MANAGER_REFRESH_CLIENT=MR_INTAKE_ORIGIN?createIntakeClient(MR_INTAKE_ORIGIN):null;
 /* manager-refresh-client:end */
 let _mrBusy=false,_mrMessage="";
-const mrPending=()=>{try{const v=JSON.parse(cfg(MR_PENDING_KEY)||"null");return v&&typeof v.requestId==="string"?v:null;}catch(_){return null;}};
-function mrFormState(){const v=id=>document.getElementById(id);return {fee:v("mrFee").checked,ratio:v("mrRatio").checked,feeDate:v("mrFeeDate").value,ratioDate:v("mrRatioDate").value,ratioReady:MR_RATIO_READY,intakeActive:!!MANAGER_REFRESH_CLIENT,identityVerified:managerDocumentsAuthorized(),draft:!!(EDIT.draft||EDIT.pending||_draftBlocked),pending:!!mrPending(),busy:_mrBusy,online:navigator.onLine};}
+// One storage key per request id: a reply for one request can never clear
+// another tab's newer request.
+const mrPendings=()=>{const out=[];if(!store)return out;for(let i=0;i<store.length;i++){const k=store.key(i);if(!k||!k.startsWith(MR_PENDING_PREFIX))continue;try{const v=JSON.parse(store.getItem(k)||"null");if(v&&v.requestId===k.slice(MR_PENDING_PREFIX.length))out.push(v);}catch(_){}}return out.sort((a,b)=>String(a.createdAt).localeCompare(String(b.createdAt)));};
+const mrPending=()=>mrPendings()[0]||null;
+function mrFormState(){const v=id=>document.getElementById(id);return {fee:v("mrFee").checked,ratio:v("mrRatio").checked,feeDate:v("mrFeeDate").value,ratioDate:v("mrRatioDate").value,ratioReady:MR_RATIO_READY,intakeActive:!!MANAGER_REFRESH_CLIENT,identityVerified:managerDocumentsAuthorized(),draft:!!(EDIT.draft||EDIT.pending||_draftBlocked),pending:mrPendings().length>0,busy:_mrBusy,online:navigator.onLine};}
 function renderManagerRefresh(){
   const v=id=>document.getElementById(id),s=mrFormState(),plan=mrPlan(s),pending=mrPending();
   v("mrRatio").disabled=!MR_RATIO_READY;v("mrAll").disabled=!MR_RATIO_READY;v("mrAll").checked=s.fee&&s.ratio;
@@ -5047,7 +5058,7 @@ function openManagerRefresh(){
   v("mrFeeDate").max=mrHktDate(now,0);v("mrRatioDate").max=mrHktDate(now,0);
   _mrMessage="";renderManagerRefresh();v("mgrRefresh").classList.add("on");
 }
-const mrDeps=()=>({intake:MANAGER_REFRESH_CLIENT,uuid:()=>crypto.randomUUID(),now:()=>new Date(),savePending:r=>setCfg(MR_PENDING_KEY,JSON.stringify(r)),clearPending:()=>setCfg(MR_PENDING_KEY,"")});
+const mrDeps=()=>({intake:MANAGER_REFRESH_CLIENT,uuid:()=>crypto.randomUUID(),now:()=>new Date(),savePending:r=>setCfg(MR_PENDING_PREFIX+r.requestId,JSON.stringify(r)),hasPending:id=>!!cfg(MR_PENDING_PREFIX+id),clearPending:id=>setCfg(MR_PENDING_PREFIX+id,"")});
 function mrConfirmText(s){
   const parts=[];if(s.fee)parts.push("管理费（数据所属日期 "+s.feeDate+"）");if(s.ratio)parts.push("比例（数据所属日期 "+s.ratioDate+"）");
   return "这次点击将代替你以往发出的“同步已完成，请发布”指示：你确认三个账户在该日期的同步已完成，服务端将按此确认发布 "+parts.join("、")+"。每类内容每个数据日期只能成功发布一次，结果以服务端核验为准。未完成同步请取消；“仅重新读取”不会发布任何内容。";
@@ -5063,8 +5074,10 @@ async function submitManagerRefresh(confirmed){
   try{const r=await mrSubmit(s,mrDeps());_mrMessage=r.text||(r.reasons||[]).join("；");}finally{_mrBusy=false;renderManagerRefresh();}
 }
 async function queryManagerRefresh(){
-  const pending=mrPending();if(_mrBusy||!pending||!MANAGER_REFRESH_CLIENT)return;
-  _mrBusy=true;renderManagerRefresh();try{_mrMessage=(await mrQueryStatus(pending,mrDeps())).text;}finally{_mrBusy=false;renderManagerRefresh();}
+  const list=mrPendings();if(_mrBusy||!list.length||!MANAGER_REFRESH_CLIENT)return;
+  _mrBusy=true;renderManagerRefresh();
+  try{const texts=[];for(const p of list)texts.push(p.requestId.slice(0,8)+"…："+(await mrQueryStatus(p,mrDeps())).text);_mrMessage=texts.join("；");}
+  finally{_mrBusy=false;renderManagerRefresh();}
 }
 let _manualRefreshing=false;
 async function manualRefresh(){
@@ -5149,7 +5162,7 @@ window.addEventListener("pagehide",()=>{invalidateReceiptSource();lockLedger();}
 setInterval(()=>{if(["editing","review"].includes(EDIT.mode)&&!LG.isEditable(EDIT,Date.now()))lockLedger("5 分钟未操作，编辑已锁定；草稿保留");},1000);
 window.addEventListener("pageshow",e=>{if(e.persisted)requestAutomaticPull();});
 window.addEventListener("online",()=>requestAutomaticPull());
-window.addEventListener("storage",e=>{if(e.key===FUND_PROFILE_KEY){_fundProfileCache=null;_fundArchiveCache=null;scheduleRender();return;}if(e.key===FUND_DOCS_KEY){_fundDocsCache=null;scheduleRender();return;}if(e.key===FUND_ARCHIVE_KEY){_fundArchiveCache=null;scheduleRender();return;}if([K.gid,K.key,K.tok,K.db].includes(e.key)){_remoteFund={state:"unloaded",gid:"",keyValue:"",revision:"",raw:"",bundle:null,reason:""};_fundDocsCache=null;_fundArchiveCache=null;_fundArchiveCipher="";invalidateReceiptSource();lockLedger("其它页面已改变来源，编辑锁定；请重新读取");if(!EDIT.draft)pullAll(true);}});
+window.addEventListener("storage",e=>{if(e.key&&e.key.startsWith(MR_PENDING_PREFIX)&&document.getElementById("mgrRefresh")?.classList.contains("on"))renderManagerRefresh();if(e.key===FUND_PROFILE_KEY){_fundProfileCache=null;_fundArchiveCache=null;scheduleRender();return;}if(e.key===FUND_DOCS_KEY){_fundDocsCache=null;scheduleRender();return;}if(e.key===FUND_ARCHIVE_KEY){_fundArchiveCache=null;scheduleRender();return;}if([K.gid,K.key,K.tok,K.db].includes(e.key)){_remoteFund={state:"unloaded",gid:"",keyValue:"",revision:"",raw:"",bundle:null,reason:""};_fundDocsCache=null;_fundArchiveCache=null;_fundArchiveCipher="";invalidateReceiptSource();lockLedger("其它页面已改变来源，编辑锁定；请重新读取");if(!EDIT.draft)pullAll(true);}});
 
 /* ============ 分享（只读） ============ */
 function viewLink(){const target=new URL(location.origin+location.pathname);target.searchParams.set("view","1");target.searchParams.set("v",SHELL_BUILD||"current");target.hash=new URLSearchParams({gid:cfg(K.gid),k:cfg(K.key)}).toString();return target.toString();}
