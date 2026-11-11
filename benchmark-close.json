@@ -1,6 +1,6 @@
 {
   "v": 1,
-  "generatedAt": "2026-11-10T01:00:38.959Z",
+  "generatedAt": "2026-11-11T07:41:16.525Z",
   "source": "Sharesight holding daily prices and company-event gross dividends; retained verified earlier history",
   "benchmarks": {
     "spy": {
@@ -377,6 +377,10 @@
         {
           "d": "2026-11-09",
           "p": 754
+        },
+        {
+          "d": "2026-11-10",
+          "p": 751.23
         }
       ]
     },
@@ -754,6 +758,10 @@
         {
           "d": "2026-11-09",
           "p": 679.82
+        },
+        {
+          "d": "2026-11-10",
+          "p": 675.23
         }
       ]
     }
