@@ -22,7 +22,7 @@ const START = '/* manager-refresh:start */', END = '/* manager-refresh:end */';
 const from = html.indexOf(START), to = html.indexOf(END);
 assert.ok(from >= 0 && to > from && html.indexOf(START, from + 1) === -1, 'one manager-refresh block');
 const block = html.slice(from, to);
-const MR = new Function(`${block}\nreturn {MANAGER_REFRESH_INTAKE,MR_RATIO_READY,mrPlan,mrBuildRequest,mrSubmit,mrQueryStatus,mrOutcomeText,mrHktDate};`)();
+const MR = new Function(`${block}\nreturn {MANAGER_REFRESH_INTAKE,MR_RATIO_READY,mrPlan,mrBuildRequest,mrSubmit,mrQueryStatus,mrOutcomeText,mrHktDate,mrResolved,mrStepText};`)();
 
 const ok = { fee: true, ratio: false, feeDate: '2026-11-10', ratioDate: '2026-11-10', ratioReady: false, intakeActive: true, identityVerified: true, draft: false, pending: false, busy: false, online: true };
 const deps = (intake, store = {}) => ({ intake, uuid: () => '0b0c0d0e-1f2a-4b3c-8d4e-5f6a7b8c9d0e', now: () => new Date('2026-11-11T02:00:00.000Z'),
@@ -81,24 +81,71 @@ test('submit records pending before sending; lost reply keeps it and never resen
   assert.equal(sent.length, 1, 'no blind retry');
 });
 
-test('server result drives the text; unknown fee keeps pending; terminal clears it', async () => {
+const ID = '0b0c0d0e-1f2a-4b3c-8d4e-5f6a7b8c9d0e';
+test('pending is kept for queued, duplicate, none, missing fields, other ids and non-final states', async () => {
+  const keep = [
+    { requestId: ID, state: 'queued' }, { requestId: ID, state: 'duplicate' }, { requestId: ID, state: 'unknown' }, { requestId: ID, state: 'none' },
+    {}, null, { fee: { state: 'published', code: 'PUBLISHED' } },
+    { requestId: 'other', contents: ['fee'], fee: { state: 'published', code: 'PUBLISHED' }, ratio: null },
+    { requestId: ID, contents: ['fee'], fee: { state: 'published' }, ratio: null },
+    { requestId: ID, contents: ['fee'], fee: { state: 'unknown', code: 'AWAITING_PUBLICATION' }, ratio: null },
+    { requestId: ID, contents: ['fee'], fee: null, ratio: null },
+  ];
+  for (const reply of keep) {
+    const store = {};
+    await MR.mrSubmit(ok, deps({ submit: async () => reply }, store));
+    assert.ok(store.pending, 'kept for ' + JSON.stringify(reply));
+    const q = await MR.mrQueryStatus(store.pending, deps({ status: async () => reply }, store));
+    assert.notEqual(q.state, 'done');
+    assert.ok(store.pending);
+  }
+  const both = { requestId: ID, contents: ['fee', 'ratio'] };
+  assert.equal(MR.mrResolved({ ...both, fee: { state: 'published', code: 'PUBLISHED' }, ratio: null }, both), false, 'every requested kind needs a final state');
+  assert.equal(MR.mrResolved({ ...both, fee: { state: 'published', code: 'PUBLISHED' }, ratio: { state: 'blocked', code: 'RATIO_COLLECTOR_NOT_CONFIGURED' } }, both), true);
+  assert.equal(MR.mrResolved({ requestId: ID, code: 'REQUEST_STALE', fee: null, ratio: null }, { requestId: ID, contents: ['fee'] }), true, 'explicit pre-execution rejection');
+});
+
+test('status text: published is success; unavailable is not asserted as unpublished', () => {
+  assert.equal(MR.mrStepText('管理费', { state: 'published', code: 'PUBLISHED' }), '管理费：已核验发布成功');
+  assert.equal(MR.mrStepText('管理费', { state: 'published' }), '管理费：已核验发布成功');
+  assert.equal(MR.mrStepText('管理费', { state: 'blocked', code: 'VERIFY_UNAVAILABLE' }), '管理费：尚无法确认是否已发布');
+  assert.equal(MR.mrStepText('管理费', { state: 'weird' }), '管理费：状态未确认，不会自动重试');
+  assert.doesNotMatch(MR.mrStepText('管理费', { state: 'published' }), /未发布/);
+  assert.match(MR.mrOutcomeText({ requestId: ID, state: 'queued' }, { requestId: ID, contents: ['fee'] }), /等待服务端处理/);
+});
+
+test('integration with the real intake reply and job status projection schema', async () => {
+  const srv = await import('./fee-manager-refresh-server.mjs');
+  const core = await import('./fee-manager-refresh.mjs');
+  const GIST = 'a'.repeat(32), VER = 'b'.repeat(40), NOW = new Date('2026-11-11T02:05:00.000Z');
+  const bucket = () => { const b = core.createMemoryLedger(); b.names = async p => (await b.list(p)).map(x => x.key); return b; };
+  const queue = bucket(), status = bucket(), ledger = bucket();
+  let req = null;
+  const gistHttp = async (method, url) => url === 'https://api.github.com/gists/' + GIST
+    ? { status: 200, bytes: new TextEncoder().encode(JSON.stringify({ id: GIST, public: false, owner: { id: core.OWNER_ID }, history: [{ version: VER, committed_at: '2026-11-11T02:01:00Z', user: { id: core.OWNER_ID } }], files: { [srv.REQUEST_FILE]: { content: JSON.stringify(req), truncated: false } } })) }
+    : { status: 503, bytes: new Uint8Array() };
+  const intakeDeps = { http: gistHttp, queue, status, gistId: GIST, now: () => NOW, runJob: async () => {} };
+  const call = (method, path, body) => srv.handleIntake({ method, path, headers: { origin: srv.ALLOWED_ORIGIN }, body }, intakeDeps).then(r => JSON.parse(r.body));
+  const intake = { submit: async r => { req = r; return call('POST', '/v1/requests', JSON.stringify({ requestId: r.requestId, gistVersion: VER })); }, status: id => call('GET', '/v1/requests/' + id) };
   const store = {};
-  let r = await MR.mrSubmit(ok, deps({ submit: async () => ({ fee: { state: 'unknown', code: 'AWAITING_PUBLICATION' }, ratio: null }) }, store));
-  assert.ok(store.pending);
-  assert.match(r.text, /尚未核验到发布完成/);
-  const q = await MR.mrQueryStatus(store.pending, deps({ status: async () => ({ fee: { state: 'published' }, ratio: null }) }, store));
-  assert.equal(q.state, 'done');
-  assert.equal(store.pending, null);
-  r = await MR.mrSubmit(ok, deps({ submit: async () => ({ fee: { state: 'blocked', code: 'DATE_ALREADY_PUBLISHED_ELSEWHERE' }, ratio: null }) }, store));
-  assert.match(r.text, /已成功发布过/);
+  const d = { ...deps(intake, store), uuid: () => crypto.randomUUID(), now: () => new Date('2026-11-11T02:00:00.000Z') };
+  const sent = await MR.mrSubmit(ok, d);
+  assert.equal(sent.state, 'pending');
+  assert.ok(store.pending, 'queued keeps pending');
+  assert.equal((await MR.mrQueryStatus(store.pending, d)).state, 'unknown', 'no projection yet keeps pending');
+  // Acceptance-mode job: real verification and claim path, GitHub reads unavailable.
+  await srv.runRefreshJob({ ledger, queue, status, http: gistHttp, gistId: GIST, now: () => NOW, wait: async () => {}, readToken: () => 'synthetic-token-not-real-0000', validateHealth: () => [], mode: 'acceptance' });
+  const q = await MR.mrQueryStatus(store.pending, d);
+  assert.equal(q.state, 'done', 'explicit final code for the requested kind');
+  assert.match(q.text, /尚无法确认是否已发布/);
   assert.equal(store.pending, null);
 });
 
-test('missing server record does not clear pending', async () => {
-  const store = { pending: { requestId: 'x' } };
-  const q = await MR.mrQueryStatus(store.pending, deps({ status: async () => null }, store));
-  assert.equal(q.state, 'unknown');
-  assert.ok(store.pending);
+test('confirmation copy states the click replaces the completed-sync instruction; read-only stays separate', () => {
+  assert.ok(html.includes('这次点击将代替你以往发出的“同步已完成，请发布”指示'));
+  assert.ok(html.includes('if(T.id==="mrSubmit"){confirmManagerRefresh();return;}'));
+  assert.ok(html.includes('if(T.id==="mrReadOnly"){document.getElementById("mgrRefresh").classList.remove("on");manualRefresh();return;}'));
+  assert.ok(html.includes('if(!mrPlan(s).canSubmit||!confirmed||'), 'submission requires the explicit confirmation of the same selection');
 });
 
 test('Hong Kong date default', () => {

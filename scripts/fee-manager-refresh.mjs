@@ -49,7 +49,7 @@ export const CODES = Object.freeze([
   'RATIO_REQUIRES_SAME_BATCH_FEE', 'RATIO_COLLECTOR_NOT_CONFIGURED', 'RATIO_PUBLISHER_NOT_CONFIGURED',
   'RATIO_DATE_POLICY_BLOCKED', 'RATIO_STEPS_EXHAUSTED', 'RATIO_COLLECTOR_FAILED',
   'RATIO_COLLECTOR_INVALID', 'BLOCKED_UNSUPPORTED_EXPOSURE', 'NEEDS_SOURCE_EXPORT',
-  'COLLECTED_NOT_PUBLISHED', 'FEE_PUBLISHER_NOT_CONFIGURED',
+  'COLLECTED_NOT_PUBLISHED', 'FEE_PUBLISHER_NOT_CONFIGURED', 'REQUEST_STALE', 'PROVENANCE_UNBOUND',
 ]);
 const CODE_SET = new Set(CODES);
 // Collector codes accepted verbatim from the ratio collector contract.
@@ -330,17 +330,17 @@ export function createRefreshCoordinator(deps) {
   }
 
   async function awaitPublication(kind, date, attempt, handle) {
-    const deadline = d.now().getTime() + d.deadlineMs;
+    const deadline = d.now().getTime() + d.deadlineMs, seen = {};
     for (;;) {
-      const outcome = await observe(kind, date, attempt, handle);
+      const outcome = await observe(kind, date, attempt, handle, seen);
       if (outcome) return outcome;
-      if (d.now().getTime() >= deadline) return { state: 'unknown', code: 'AWAITING_PUBLICATION' };
+      if (d.now().getTime() >= deadline) return { state: 'unknown', code: seen.unbound ? 'PROVENANCE_UNBOUND' : 'AWAITING_PUBLICATION' };
       await d.wait(d.pollMs);
     }
   }
 
   // One evidence observation. Returns a terminal outcome or null to keep waiting.
-  async function observe(kind, date, attempt, handle) {
+  async function observe(kind, date, attempt, handle, seen = {}) {
     let v;
     try { v = await d.feeVerifier.verify(date, { claimMainSha: attempt.claimMainSha }); } catch { v = { state: 'unavailable' }; }
     if (v.state === 'verified') {
@@ -352,7 +352,7 @@ export function createRefreshCoordinator(deps) {
       const bound = exact(prov, ['accountingThrough', 'dataSha256', 'healthSha256', 'promotedMainSha']) && prov.accountingThrough === date
         && prov.dataSha256 === v.evidence.dataSha256 && prov.healthSha256 === v.evidence.healthSha256 && isSha40(prov.promotedMainSha)
         && (prov.promotedMainSha === v.evidence.mainSha || (await d.feeVerifier.isAncestor?.(prov.promotedMainSha, v.evidence.mainSha)) === true);
-      if (!bound) return null;
+      if (!bound) { seen.unbound = true; return null; }
       const record = { schema: SCHEMA.published, kind, dataDate: date, attempt: attempt.attempt, batchId: attempt.batchId, evidence: v.evidence, recordedAt: nowIso(), nonce: nonce() };
       const r = await createOnce(d.ledger, keys.published(kind, date), record);
       if (r === 'conflict') { const p = await d.ledger.get(keys.published(kind, date)); if (p?.batchId !== attempt.batchId || !validFeeEvidence(p.evidence, date)) fail('LEDGER_CORRUPT'); return { state: 'published', code: 'PUBLISHED', evidence: p.evidence }; }
@@ -417,8 +417,8 @@ export function createRefreshCoordinator(deps) {
     if (batch.request.contents.includes('fee')) {
       const s = await kindState(d.ledger, 'fee', batch.request.feeDataDate);
       const mine = s.attempts.filter(x => x.attempt.batchId === batchId);
-      out.fee = s.state === 'published' && s.published.batchId === batchId ? { state: 'published', dataDate: batch.request.feeDataDate }
-        : mine.length && !mine.at(-1).result ? { state: 'unknown', dataDate: batch.request.feeDataDate }
+      out.fee = s.state === 'published' && s.published.batchId === batchId ? { state: 'published', code: 'PUBLISHED', dataDate: batch.request.feeDataDate }
+        : mine.length && !mine.at(-1).result ? { state: 'unknown', code: 'ATTEMPT_IN_FLIGHT', dataDate: batch.request.feeDataDate }
         : mine.length ? { state: mine.at(-1).result.outcome, code: mine.at(-1).result.code, dataDate: batch.request.feeDataDate }
         : { state: 'none', dataDate: batch.request.feeDataDate };
     }
