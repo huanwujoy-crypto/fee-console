@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import { createGcsBucket, verifyOwnerRequest, handleIntake, createGitHubFeeAdapters, runRefreshJob, acceptancePublisher, candidateFromLog, stepScript, ALLOWED_ORIGIN, REQUEST_FILE, API } from './fee-manager-refresh-server.mjs';
+import { createGcsBucket, verifyOwnerRequest, handleIntake, createGitHubFeeAdapters, runRefreshJob, acceptancePublisher, candidateFromLog, stepScript, ALLOWED_ORIGIN, REQUEST_FILE, API, ROLE_ACCESS, CLOSED_SCHEMA } from './fee-manager-refresh-server.mjs';
 import { createMemoryLedger, OWNER_ID, SCHEMA, keys } from './fee-manager-refresh.mjs';
 import { readConfig, createHttp, startJob, createIntakeHandler, runJob } from './fee-manager-refresh-entry.mjs';
 
@@ -566,4 +566,86 @@ test('POST rejection contract: echoes the request id, state rejected, and queues
   const r2 = await post(request(), un.deps);
   assert.equal(JSON.parse(r2.body).state, 'rejected');
   assert.equal(un.queue.rows.size, 0);
+});
+
+// ---- close: the only server proof of "never received, never will be"
+const call = (deps, method, path, body) => handleIntake({ method, path, headers: { origin: ALLOWED_ORIGIN }, body }, deps).then(r => ({ status: r.status, body: JSON.parse(r.body || '{}') }));
+
+test('close vs late POST: exactly one wins on the same create-only key, both orders', async () => {
+  // close first, then the late original POST
+  let r = request(), x = intakeDeps(r);
+  assert.deepEqual((await call(x.deps, 'POST', '/v1/requests/' + r.requestId + '/close')).body, { requestId: r.requestId, state: 'closed' });
+  const late = await post(r, x.deps);
+  assert.equal(late.status, 409);
+  assert.deepEqual(JSON.parse(late.body), { requestId: r.requestId, state: 'rejected', code: 'REQUEST_CLOSED' });
+  assert.equal(x.wakes.length, 0, 'a closed request never wakes the job');
+  assert.equal((await call(x.deps, 'GET', '/v1/requests/' + r.requestId)).body.state, 'closed');
+  // POST first, then close
+  r = request(); x = intakeDeps(r);
+  await post(r, x.deps);
+  assert.deepEqual((await call(x.deps, 'POST', '/v1/requests/' + r.requestId + '/close')).body, { requestId: r.requestId, state: 'queued' });
+  // concurrent
+  r = request(); x = intakeDeps(r);
+  const [p1, c1] = await Promise.all([post(r, x.deps), call(x.deps, 'POST', '/v1/requests/' + r.requestId + '/close')]);
+  const queued = JSON.parse(p1.body).state === 'queued', closed = c1.body.state === 'closed';
+  assert.ok(queued !== closed, 'never both, never neither');
+});
+
+test('close is refused once anything was projected for the request (received)', async () => {
+  const r = request(), x = intakeDeps(r);
+  await x.status.create('status/' + r.requestId + '/final', { requestId: r.requestId, contents: ['fee'], fee: { state: 'published', code: 'PUBLISHED' }, ratio: null });
+  assert.equal((await call(x.deps, 'POST', '/v1/requests/' + r.requestId + '/close')).body.state, 'received');
+  assert.equal(x.queue.rows.size, 0);
+});
+
+test('job: a closed request is recorded final REQUEST_CLOSED and never executed', async () => {
+  const r = request(), w = jobWorld();
+  await w.queue.create('queue/' + r.requestId, { schema: CLOSED_SCHEMA, requestId: r.requestId, closedAt: NOW.toISOString() });
+  await runRefreshJob(jobArgs(w, r, NOW));
+  assert.equal(await w.ledger.get(keys.batch(r.requestId)), null);
+  assert.equal((await latest(w, r.requestId)).code, 'REQUEST_CLOSED');
+  assert.ok(await w.ledger.get(keys.done(r.requestId)));
+});
+
+// ---- least privilege, enforced: every call each role makes is within ROLE_ACCESS
+function restricted(bucket, ops, label, log) {
+  const guard = op => { if (!ops.includes(op)) throw new Error('PERMISSION ' + label + ' ' + op); log.push(label + ':' + op); };
+  return {
+    rows: bucket.rows,
+    create: async (k, v) => { guard('create'); return bucket.create(k, v); },
+    get: async k => { guard('get'); return bucket.get(k); },
+    names: async p => { guard('list'); return bucket.names(p); },
+    list: async p => { guard('list'); guard('get'); return bucket.list(p); },
+  };
+}
+
+test('permission matrix: no role deletes; intake never touches the ledger; job may read status', () => {
+  for (const role of Object.values(ROLE_ACCESS)) for (const ops of Object.values(role)) assert.ok(!ops.includes('delete') && !ops.includes('update'));
+  assert.deepEqual(ROLE_ACCESS.intake.ledger, []);
+  assert.ok(ROLE_ACCESS.job.status.includes('get'), 'the job reads status before a non-final projection');
+});
+
+test('end-to-end under enforced permissions: POST, close, GET, job (acceptance) stay within ROLE_ACCESS', async () => {
+  const r = request(), base = { queue: bucket(), status: bucket(), ledger: bucket() }, log = [];
+  const intake = { queue: restricted(base.queue, ROLE_ACCESS.intake.queue, 'intake/queue', log), status: restricted(base.status, ROLE_ACCESS.intake.status, 'intake/status', log) };
+  const job = { queue: restricted(base.queue, ROLE_ACCESS.job.queue, 'job/queue', log), status: restricted(base.status, ROLE_ACCESS.job.status, 'job/status', log), ledger: restricted(base.ledger, ROLE_ACCESS.job.ledger, 'job/ledger', log) };
+  const deps = { http: gistHttp(r).http, ...intake, gistId: GIST, now: () => NOW, runJob: async () => {} };
+  await post(r, deps);
+  await call(deps, 'GET', '/v1/requests/' + r.requestId);
+  const http = async (method, url, opts) => url === 'https://api.github.com/gists/' + GIST ? gistHttp(r).http(method, url, opts) : { status: 503, bytes: enc('') };
+  await runRefreshJob({ ...job, http, gistId: GIST, now: () => NOW, wait: async () => {}, readToken: () => 'synthetic-token-not-real-0000', validateHealth: () => [], mode: 'acceptance' });
+  await runRefreshJob({ ...job, http, gistId: GIST, now: () => NOW, wait: async () => {}, readToken: () => 'synthetic-token-not-real-0000', validateHealth: () => [], mode: 'acceptance' });
+  const r2 = request(); await call({ ...deps, http: gistHttp(r2).http }, 'POST', '/v1/requests/' + r2.requestId + '/close');
+  assert.equal((await call(deps, 'GET', '/v1/requests/' + r.requestId)).body.fee.code, 'VERIFY_UNAVAILABLE');
+  assert.ok(!log.some(x => x.startsWith('intake/ledger')));
+  // A non-final projection (claimed, outcome unknown) makes the job read status first.
+  const r3 = request(), w3 = { queue: bucket(), status: bucket(), ledger: bucket() };
+  await w3.queue.create('queue/' + r3.requestId, { schema: 'fee-console.manager-refresh-queue.v1', requestId: r3.requestId, gistVersion: VER, queuedAt: NOW.toISOString() });
+  await claimRecords(w3, r3);
+  const log3 = [];
+  const job3 = { queue: restricted(w3.queue, ROLE_ACCESS.job.queue, 'job/queue', log3), status: restricted(w3.status, ROLE_ACCESS.job.status, 'job/status', log3), ledger: restricted(w3.ledger, ROLE_ACCESS.job.ledger, 'job/ledger', log3) };
+  const http3 = async (method, url, opts) => { if (method === 'POST') throw new Error('must not dispatch'); return url === 'https://api.github.com/gists/' + GIST ? gistHttp(r3).http(method, url, opts) : { status: 503, bytes: enc('') }; };
+  await runRefreshJob({ ...job3, http: http3, gistId: GIST, now: () => NOW, wait: async () => {}, readToken: () => 'synthetic-token-not-real-0000', validateHealth: () => [], mode: 'launch' });
+  assert.ok(log3.includes('job/status:get'), 'job reads status before a non-final projection');
+  assert.ok(log3.includes('job/status:create'));
 });

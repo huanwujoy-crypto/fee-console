@@ -54,9 +54,14 @@ Buckets (bucket-level IAM only; no IAM conditions, because an objects.list
 
 | bucket | intake SA | job SA |
 |---|---|---|
-| `…-fee-refresh-queue` (`queue/`, `wake/`) | objectCreator | objectViewer |
-| `…-fee-refresh-ledger` (claims, attempts, `published`, `processed`) — **no lifecycle rule** | none | objectCreator + objectViewer |
-| `…-fee-refresh-status` (redacted projections) | objectViewer | objectCreator |
+| `…-fee-refresh-queue` (`queue/<id>`: a queue entry OR a close tombstone; `wake/`) | objectCreator + objectViewer | objectViewer |
+| `…-fee-refresh-ledger` (claims, attempts, gates, `published`, `done`) | none | objectCreator + objectViewer |
+| `…-fee-refresh-status` (redacted projections; `final` once) | objectViewer | objectCreator + objectViewer |
+
+No role holds delete or overwrite, and **no bucket carries a lifecycle
+rule**: a missing object must never read as "never received" or "never
+executed". The same matrix is `ROLE_ACCESS` in the server module and is
+enforced in the end-to-end permission test.
 
 1. Browser writes `fee-manager-refresh-request.json` into the existing ledger
    Gist with the manager's existing Gist write ability (implemented in the
@@ -149,19 +154,24 @@ manager confirms again. In-flight attempts are reconciled only by the job.
 ### Page ↔ intake response contract
 
 - POST `/v1/requests` → `202 {requestId, state: queued|duplicate|unknown}`,
-  or a rejection `{requestId?, state:'rejected', code}` (400/403/503) which
-  guarantees that this call queued nothing.
+  or a rejection `{requestId?, state:'rejected', code}` (400/403/409/503)
+  which guarantees that this call queued nothing. `409 REQUEST_CLOSED` when
+  the request id was closed first.
+- POST `/v1/requests/<id>/close` → `closed` (this call or earlier),
+  `queued` (a POST got there first), `received` (a projection exists), or
+  `unknown`. The close takes the same create-only `queue/<id>` key a POST
+  needs to queue, so a close and a late POST exclude each other atomically;
+  the job records a closed id final `REQUEST_CLOSED` and never executes it.
 - GET `/v1/requests/<id>` → the job's final projection; else its latest
-  non-final projection; else `{state:'queued'}` (received, no projection
-  yet) or `{state:'not-received'}` (no queue entry).
-- The page clears a pending request only with proof it was not queued and
-  not started: a failure before any POST; a rejection of the first POST; or
-  `not-received` more than 12 minutes after the last POST (a late POST is
-  refused as stale, and a queued stale request is never executed by the
-  job). Or on the job's own final projection. A rejected re-delivery,
-  `queued`, a missing projection or a non-final state keeps it pending and
-  never reports the original as not executed. Re-delivery (same id and Gist
-  version only) happens only within 9 minutes of the last POST.
+  non-final projection; else `closed`, `queued` or `not-received`.
+- The page keeps one pending record per request id and forgets one only on
+  server proof: a failure before any POST; a rejection of the first POST; a
+  `closed` answer; or the job's final projection for that id. It never uses
+  browser time and never resends. `not-received` leads to a close, never to
+  a verdict by itself. Source, identity and the request's own pending
+  record are re-checked after the Gist write and synchronously before the
+  one POST, so a closed or removed record (another tab, a reload) or a
+  source switch sends nothing.
 
 ### Provenance (run → candidate → promotion)
 
@@ -267,10 +277,10 @@ only, do not `cat`, and never delete, overwrite or retry based on it.
 |---|------|--------------------|----------|
 | 0 | Read-only checks above (`roles/run.invoker` contents, job-log redirect host, real log group shape) | read only | coordinator |
 | 1 | Merge support PR, then UI PR (exact head) | code only, default off | owner, exact-head OWNER |
-| 2 | Create buckets `family-portfolio-gateway-fee-refresh-{queue,ledger,status}` (+ `-acceptance` copies for step 9), asia-east2, uniform access, public access prevention; ledger: **no lifecycle**, no runtime delete grant | storage | owner (new resources) |
-| 3 | SA `fee-refresh-intake@`: objectCreator + objectViewer on queue (read lets GET tell `queued` from `not-received`), objectViewer on status; nothing on ledger | bucket-level IAM | owner (IAM) |
+| 2 | Create buckets `family-portfolio-gateway-fee-refresh-{queue,ledger,status}` (+ `-acceptance` copies for step 9), asia-east2, uniform access, public access prevention; **no lifecycle on any of them**, no runtime delete grant | storage | owner (new resources) |
+| 3 | SA `fee-refresh-intake@`: objectCreator + objectViewer on queue, objectViewer on status; nothing on ledger | bucket-level IAM | owner (IAM) |
 | 4 | Intake start permission on job `fee-refresh-launch` only: `run.jobs.run` without `run.jobs.runWithOverrides` (custom role if `roles/run.invoker` includes overrides) | job-level IAM | owner (IAM) |
-| 5 | SA `fee-refresh-launch@`: objectViewer on queue; objectCreator+objectViewer on ledger; objectCreator on status | bucket-level IAM | owner (IAM) |
+| 5 | SA `fee-refresh-launch@`: objectViewer on queue; objectCreator+objectViewer on ledger; objectCreator+objectViewer on status | bucket-level IAM | owner (IAM) |
 | 6 | Job credential: owner enters a new fine-grained token (this repository; Actions read/write only) as a secret readable only by SA 5. Alternative: reuse `fee-clock-github-actions` (second identity on a repository-wide Actions-write token) | secret | owner (credential; owner enters it personally) |
 | 7 | Deploy job `fee-refresh-launch` (verified image digest, `node scripts/fee-manager-refresh-entry.mjs job`, maxRetries 0, timeout 20 min, `FEE_REFRESH_MODE=acceptance`, `-acceptance` buckets) | deploy | owner (deploy) |
 | 8 | Deploy service `fee-refresh-intake` (`… serve`, public invoker, max instances 1, no secret, no ledger env, acceptance buckets) | deploy | owner (deploy) |
@@ -342,12 +352,12 @@ What is NOT implemented (no automatic recovery):
 
 ## Shared test files changed for the UI page pin (test-only)
 
-Registered the page hash `04173d4bb38b236d8c09e6ce51d26daf9c0f0c324db7aab23a8b782c1a44b836`
+Registered the page hash `e0f580a30cc04ca481adb97b0f83cd77bd9bfcfcc0a839e02eddf086fd6b2fa8`
 (build 4.9.54, UI branch head) by appending, never replacing, existing entries:
 
 - `scripts/fixtures/fee-ratio-aggregate-returns-ui.json` — `nextSha256` →
   new page; `supportSha256` → previous main page `8a5a9671…685d`;
-  `supportRegionCount` 88 → 92 (all existing regions); 9 appended regions named
+  `supportRegionCount` 88 → 92 (all existing regions); 10 appended regions named
   `manager-refresh-chooser`.
 - `scripts/fee-ratio-aggregate-ui-fixture.mjs` — the fixture file hash only.
 - `scripts/fee-receipt-ui-contract.test.mjs` — `MANAGER_REFRESH_CHOOSER_UI_SHA256`

@@ -25,6 +25,16 @@ export const PRODUCER_WORKFLOW = 'fee-cloud-producer.yml';
 export const DISPATCH_API_VERSION = '2026-03-10';
 export const REQUEST_FILE = 'fee-manager-refresh-request.json';
 export const FRESH_MS = 10 * 60_000;
+export const CLOSED_SCHEMA = 'fee-console.manager-refresh-closed.v1';
+export const QUEUE_SCHEMA = 'fee-console.manager-refresh-queue.v1';
+// Least privilege, per role and bucket. No role may delete or overwrite, and
+// no bucket may carry a lifecycle rule: a missing object must never read as
+// "never received" or "never executed".
+export const ROLE_ACCESS = Object.freeze({
+  intake: Object.freeze({ queue: ['create', 'get', 'list'], status: ['get', 'list'], ledger: [] }),
+  job: Object.freeze({ queue: ['get', 'list'], ledger: ['create', 'get', 'list'], status: ['create', 'get', 'list'] }),
+});
+export const GCS_ROLES = Object.freeze({ create: 'roles/storage.objectCreator', get: 'roles/storage.objectViewer', list: 'roles/storage.objectViewer' });
 export const MAX_TARGET_AGE_DAYS = 4; // the promotion window's own bound
 const sha256 = b => crypto.createHash('sha256').update(b).digest('hex');
 const isSha40 = v => typeof v === 'string' && /^[a-f0-9]{40}$/.test(v);
@@ -130,12 +140,31 @@ export async function handleIntake(req, { http, queue, status, gistId, now, runJ
       if (isUuid(body?.requestId)) postedId = body.requestId;
       const proof = await verifyOwnerRequest(body, { http, gistId, now });
       const id = proof.request.requestId;
-      try { await queue.create('queue/' + id, { schema: 'fee-console.manager-refresh-queue.v1', requestId: id, gistVersion: proof.gistVersion, queuedAt: now().toISOString() }); }
-      catch (e) { return reply(202, { requestId: id, state: e.conflict ? 'duplicate' : 'unknown' }); }
+      try { await queue.create('queue/' + id, { schema: QUEUE_SCHEMA, requestId: id, gistVersion: proof.gistVersion, queuedAt: now().toISOString() }); }
+      catch (e) {
+        if (!e.conflict) return reply(202, { requestId: id, state: 'unknown' });
+        const held = await queue.get('queue/' + id).catch(() => null);
+        if (held?.schema === CLOSED_SCHEMA) return reply(409, { requestId: id, state: 'rejected', code: 'REQUEST_CLOSED' });
+        return reply(202, { requestId: id, state: held ? 'duplicate' : 'unknown' });
+      }
       let woke = false;
       try { await queue.create('wake/' + now().toISOString().slice(0, 16), { requestId: id }); woke = true; } catch { /* another wake this minute */ }
       if (woke) { try { await runJob(); } catch { /* request stays queued; status shows it */ } }
       return reply(202, { requestId: id, state: 'queued' });
+    }
+    // Close: the only way to prove "never received, never will be". It takes
+    // the same create-only key a POST must take to queue, so exactly one of
+    // {queued, closed} can ever exist. Refused if anything was ever projected.
+    const c = /^\/v1\/requests\/([0-9a-f-]{36})\/close$/.exec(req.path || '');
+    if (req.method === 'POST' && c && isUuid(c[1])) {
+      const id = c[1];
+      if (await status.get('status/' + id + '/final') || (await status.names('status/' + id + '/')).length) return reply(200, { requestId: id, state: 'received' });
+      try { await queue.create('queue/' + id, { schema: CLOSED_SCHEMA, requestId: id, closedAt: now().toISOString() }); return reply(200, { requestId: id, state: 'closed' }); }
+      catch (e) {
+        if (!e.conflict) return reply(503, { requestId: id, state: 'unknown' });
+        const held = await queue.get('queue/' + id).catch(() => null);
+        return reply(200, { requestId: id, state: held?.schema === CLOSED_SCHEMA ? 'closed' : held ? 'queued' : 'unknown' });
+      }
     }
     const m = /^\/v1\/requests\/([0-9a-f-]{36})$/.exec(req.path || '');
     if (req.method === 'GET' && m && isUuid(m[1])) {
@@ -150,7 +179,7 @@ export async function handleIntake(req, { http, queue, status, gistId, now, runJ
       const latest = names.length ? await status.get(names.at(-1)) : null;
       if (latest) return reply(200, latest);
       const entry = await queue.get('queue/' + m[1]);
-      return reply(200, { requestId: m[1], state: entry ? 'queued' : 'not-received' });
+      return reply(200, { requestId: m[1], state: entry?.schema === CLOSED_SCHEMA ? 'closed' : entry ? 'queued' : 'not-received' });
     }
     return reply(404, { code: 'REQUEST_INVALID' });
   } catch (e) {
@@ -417,7 +446,8 @@ export async function runRefreshJob({ ledger, queue, status, http, gistId, now, 
     // Re-check: another execution may have finished it meanwhile.
     if (await ledger.get(ledgerKeys.done(id))) continue;
     const entry = await queue.get(key);
-    const wellFormed = exact(entry, ['schema', 'requestId', 'gistVersion', 'queuedAt']) && entry.requestId === id && isSha40(entry.gistVersion) && Number.isFinite(Date.parse(entry.queuedAt));
+    if (entry?.schema === CLOSED_SCHEMA && entry.requestId === id) { await finish(id, { code: 'REQUEST_CLOSED' }); out.push({ requestId: id, code: 'REQUEST_CLOSED' }); continue; }
+    const wellFormed = exact(entry, ['schema', 'requestId', 'gistVersion', 'queuedAt']) && entry.schema === QUEUE_SCHEMA && entry.requestId === id && isSha40(entry.gistVersion) && Number.isFinite(Date.parse(entry.queuedAt));
     const fresh = wellFormed && now().getTime() - Date.parse(entry.queuedAt) <= FRESH_MS;
     const proveFresh = async () => verifyOwnerRequest({ requestId: id, gistVersion: entry.gistVersion }, { http, gistId, now, auth: readToken });
     try {
@@ -450,7 +480,7 @@ export async function runRefreshJob({ ledger, queue, status, http, gistId, now, 
       // Transient reads leave the request queued (it may still be fresh next wake).
       if (code === 'VERIFY_UNAVAILABLE') { out.push({ requestId: id, code }); continue; }
       if (await ledger.get(ledgerKeys.batch(id)).catch(() => null)) { out.push({ requestId: id, code }); continue; }
-      await finish(id, { code: ['REQUEST_STALE', 'REQUEST_INVALID', 'IDENTITY_UNVERIFIED'].includes(code) ? code : 'REQUEST_INVALID' });
+      await finish(id, { code: ['REQUEST_STALE', 'REQUEST_INVALID', 'IDENTITY_UNVERIFIED', 'REQUEST_CLOSED'].includes(code) ? code : 'REQUEST_INVALID' });
       out.push({ requestId: id, code });
     }
   }

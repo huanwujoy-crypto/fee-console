@@ -54,6 +54,7 @@ export const CODES = Object.freeze([
   'RATIO_DATE_POLICY_BLOCKED', 'RATIO_STEPS_EXHAUSTED', 'RATIO_COLLECTOR_FAILED',
   'RATIO_COLLECTOR_INVALID', 'BLOCKED_UNSUPPORTED_EXPOSURE', 'NEEDS_SOURCE_EXPORT',
   'COLLECTED_NOT_PUBLISHED', 'FEE_PUBLISHER_NOT_CONFIGURED', 'REQUEST_STALE', 'PROVENANCE_UNBOUND',
+  'REQUEST_CLOSED',
 ]);
 const CODE_SET = new Set(CODES);
 // Collector codes accepted verbatim from the ratio collector contract.
@@ -569,7 +570,7 @@ export function createRefreshCoordinator(deps) {
 // and code. Final projections are never overwritten (see the job).
 export function isFinalStatus(st) {
   if (!st || typeof st !== 'object') return false;
-  if (['REQUEST_STALE', 'REQUEST_INVALID', 'IDENTITY_UNVERIFIED'].includes(st.code) && !st.fee && !st.ratio) return true;
+  if (['REQUEST_STALE', 'REQUEST_INVALID', 'IDENTITY_UNVERIFIED', 'REQUEST_CLOSED'].includes(st.code) && !st.fee && !st.ratio) return true;
   const kinds = Array.isArray(st.contents) ? st.contents : [];
   return kinds.length > 0 && kinds.every(k => st[k] && ['published', 'failed', 'blocked'].includes(st[k].state) && typeof st[k].code === 'string');
 }

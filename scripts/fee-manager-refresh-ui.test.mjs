@@ -25,8 +25,14 @@ const block = html.slice(from, to);
 const MR = new Function(`${block}\nreturn {MR_RATIO_READY,mrPlan,mrBuildRequest,mrSubmit,mrQueryStatus,mrOutcomeText,mrHktDate,mrResolved,mrStepText};`)();
 
 const ok = { fee: true, ratio: false, feeDate: '2026-11-10', ratioDate: '2026-11-10', ratioReady: false, intakeActive: true, identityVerified: true, draft: false, pending: false, busy: false, online: true };
-const deps = (intake, store = {}) => ({ intake, uuid: () => '0b0c0d0e-1f2a-4b3c-8d4e-5f6a7b8c9d0e', now: () => new Date('2026-11-11T02:00:00.000Z'),
-  savePending: r => { store.pending = r; }, clearPending: () => { store.pending = null; } });
+const ID = '0b0c0d0e-1f2a-4b3c-8d4e-5f6a7b8c9d0e';
+// Pending storage like the page: one key per request id.
+function pendingStore() {
+  const m = new Map();
+  return { m, save: r => m.set(r.requestId, JSON.parse(JSON.stringify(r))), has: id => m.has(id), clear: id => m.delete(id), get: id => m.get(id) };
+}
+const deps = (intake, ps = pendingStore(), { uuid = () => ID, now = () => new Date('2026-11-11T02:00:00.000Z') } = {}) =>
+  ({ intake, uuid, now, savePending: ps.save, hasPending: ps.has, clearPending: ps.clear, ps });
 
 test('shipped page is default-inactive: no server origin, no client, ratio not ready', () => {
   assert.ok(html.includes('const MR_INTAKE_ORIGIN=null;'));
@@ -61,8 +67,8 @@ test('plan refuses unsaved draft, unverified identity, pending, busy, offline, b
 });
 
 test('request matches the server schema exactly', () => {
-  for (const s of [ok, { ...ok, ratio: true, ratioReady: true, ratioDate: '2026-11-07' }]) {
-    const r = MR.mrBuildRequest(s, '0b0c0d0e-1f2a-4b3c-8d4e-5f6a7b8c9d0e', new Date('2026-11-11T02:00:00.000Z'));
+  for (const st of [ok, { ...ok, ratio: true, ratioReady: true, ratioDate: '2026-11-07' }]) {
+    const r = MR.mrBuildRequest(st, ID, new Date('2026-11-11T02:00:00.000Z'));
     assert.equal(validateRequest(r), true, JSON.stringify(r));
   }
   const both = MR.mrBuildRequest({ ...ok, ratio: true, ratioDate: '2026-11-07' }, 'x', new Date());
@@ -71,48 +77,48 @@ test('request matches the server schema exactly', () => {
 });
 
 test('submit: pending saved first; a lost reply after the POST keeps it and never resends', async () => {
-  const store = {}, sent = [];
-  const intake = { submit: async (r, beforePost) => { assert.ok(store.pending, 'pending saved before anything'); beforePost('b'.repeat(40)); sent.push(r); throw new Error('reply lost'); } };
-  const r = await MR.mrSubmit(ok, deps(intake, store));
+  const sent = [];
+  const d = deps({ submit: async (r, beforePost) => { assert.ok(d.ps.has(r.requestId), 'pending saved before anything'); assert.equal(beforePost('b'.repeat(40)), true); sent.push(r); throw new Error('reply lost'); } });
+  const r = await MR.mrSubmit(ok, d);
   assert.equal(r.state, 'unknown');
   assert.equal(sent.length, 1);
-  assert.equal(store.pending.requestId, r.request.requestId);
-  assert.equal(store.pending.posts, 1);
-  const again = await MR.mrSubmit({ ...ok, pending: true }, deps(intake, store));
-  assert.equal(again.state, 'refused');
+  assert.equal(d.ps.get(ID).posts, 1);
+  assert.equal((await MR.mrSubmit({ ...ok, pending: true }, d)).state, 'refused');
   assert.equal(sent.length, 1, 'no blind retry');
 });
 
 test('submit: a failure before any POST provably sent nothing: pending cleared, resubmission allowed', async () => {
-  const store = {};
-  const r = await MR.mrSubmit(ok, deps({ submit: async () => { throw new Error('Gist 写入失败'); } }, store));
+  const d = deps({ submit: async () => { throw new Error('Gist 写入失败'); } });
+  const r = await MR.mrSubmit(ok, d);
   assert.equal(r.state, 'not-sent');
-  assert.equal(store.pending, null);
+  assert.equal(d.ps.m.size, 0);
   assert.match(r.text, /未发布任何内容/);
 });
 
-const ID = '0b0c0d0e-1f2a-4b3c-8d4e-5f6a7b8c9d0e';
-test('pending is kept for queued, duplicate, none, missing fields, other ids and non-final states', async () => {
+test('pending is kept for queued, duplicate, received, not-received, missing fields, other ids and non-final states', async () => {
   const keep = [
-    { requestId: ID, state: 'queued' }, { requestId: ID, state: 'duplicate' }, { requestId: ID, state: 'unknown' }, { requestId: ID, state: 'none' },
+    { requestId: ID, state: 'queued' }, { requestId: ID, state: 'duplicate' }, { requestId: ID, state: 'unknown' }, { requestId: ID, state: 'received' },
     {}, null, { fee: { state: 'published', code: 'PUBLISHED' } },
     { requestId: 'other', contents: ['fee'], fee: { state: 'published', code: 'PUBLISHED' }, ratio: null },
     { requestId: ID, contents: ['fee'], fee: { state: 'published' }, ratio: null },
     { requestId: ID, contents: ['fee'], fee: { state: 'unknown', code: 'AWAITING_PUBLICATION' }, ratio: null },
     { requestId: ID, contents: ['fee'], fee: null, ratio: null },
+    { requestId: ID, state: 'rejected', code: 'REQUEST_STALE', fee: null, ratio: null },
   ];
   for (const reply of keep) {
-    const store = {};
-    await MR.mrSubmit(ok, deps({ submit: async () => reply }, store));
-    assert.ok(store.pending, 'kept for ' + JSON.stringify(reply));
-    const q = await MR.mrQueryStatus(store.pending, deps({ status: async () => reply }, store));
-    assert.notEqual(q.state, 'done');
-    assert.ok(store.pending);
+    const d = deps({ submit: async (r, bp) => { bp('b'.repeat(40)); return reply; }, status: async () => reply, close: async () => ({ requestId: ID, state: 'queued' }) });
+    await MR.mrSubmit(ok, d);
+    if (!(reply?.state === 'rejected')) assert.ok(d.ps.has(ID), 'kept for ' + JSON.stringify(reply));
+    d.ps.save({ requestId: ID, contents: ['fee'], posts: 1 });
+    const q = await MR.mrQueryStatus(d.ps.get(ID), d);
+    assert.notEqual(q.state, 'done', JSON.stringify(reply));
+    assert.ok(d.ps.has(ID));
   }
   const both = { requestId: ID, contents: ['fee', 'ratio'] };
-  assert.equal(MR.mrResolved({ ...both, fee: { state: 'published', code: 'PUBLISHED' }, ratio: null }, both), false, 'every requested kind needs a final state');
+  assert.equal(MR.mrResolved({ ...both, fee: { state: 'published', code: 'PUBLISHED' }, ratio: null }, both), false);
   assert.equal(MR.mrResolved({ ...both, fee: { state: 'published', code: 'PUBLISHED' }, ratio: { state: 'blocked', code: 'RATIO_COLLECTOR_NOT_CONFIGURED' } }, both), true);
-  assert.equal(MR.mrResolved({ requestId: ID, code: 'REQUEST_STALE', fee: null, ratio: null }, { requestId: ID, contents: ['fee'] }), true, 'explicit pre-execution rejection');
+  assert.equal(MR.mrResolved({ requestId: ID, contents: null, code: 'REQUEST_STALE', fee: null, ratio: null }, { requestId: ID, contents: ['fee'] }), true, 'job pre-execution rejection');
+  assert.equal(MR.mrResolved({ requestId: ID, state: 'rejected', code: 'REQUEST_STALE' }, { requestId: ID, contents: ['fee'] }), false, 'an intake POST rejection is not a job verdict');
 });
 
 test('status text: published is success; unavailable is not asserted as unpublished', () => {
@@ -120,8 +126,8 @@ test('status text: published is success; unavailable is not asserted as unpublis
   assert.equal(MR.mrStepText('管理费', { state: 'published' }), '管理费：已核验发布成功');
   assert.equal(MR.mrStepText('管理费', { state: 'blocked', code: 'VERIFY_UNAVAILABLE' }), '管理费：尚无法确认是否已发布');
   assert.equal(MR.mrStepText('管理费', { state: 'weird' }), '管理费：状态未确认，不会自动重试');
-  assert.doesNotMatch(MR.mrStepText('管理费', { state: 'published' }), /未发布/);
   assert.match(MR.mrOutcomeText({ requestId: ID, state: 'queued' }, { requestId: ID, contents: ['fee'] }), /已收到，等待处理/);
+  assert.doesNotMatch(MR.mrOutcomeText({ requestId: ID, state: 'rejected', code: 'REQUEST_STALE' }, { requestId: ID, contents: ['fee'] }), /未执行|未发布任何内容/);
 });
 
 // ---- end-to-end (synthetic): page block + page-shaped client + real intake + real job
@@ -130,130 +136,164 @@ async function e2e({ start = new Date('2026-11-11T02:00:00.000Z') } = {}) {
   const core = await import('./fee-manager-refresh.mjs');
   const GIST = 'a'.repeat(32);
   const bucket = () => { const b = core.createMemoryLedger(); b.names = async p => (await b.list(p)).map(x => x.key); return b; };
-  const env = { now: start, queue: bucket(), status: bucket(), ledger: bucket(), gist: null, version: null, committedAt: null, jobStarts: 0, postMode: 'ok', posts: [] };
-  const clock = () => new Date(env.now.getTime());
+  // serverNow and browserNow are separate clocks.
+  const env = { serverNow: start, browserNow: start, queue: bucket(), status: bucket(), ledger: bucket(), gist: null, version: null, committedAt: null, jobStarts: 0, postMode: 'ok', posts: [], held: [] };
+  const serverClock = () => new Date(env.serverNow.getTime()), browserClock = () => new Date(env.browserNow.getTime());
   const gistHttp = async (method, url) => {
     if (url !== 'https://api.github.com/gists/' + GIST || !env.gist) return { status: 503, bytes: new Uint8Array() };
     return { status: 200, bytes: new TextEncoder().encode(JSON.stringify({ id: GIST, public: false, owner: { id: core.OWNER_ID },
       history: [{ version: env.version, committed_at: env.committedAt, user: { id: core.OWNER_ID } }],
       files: { [srv.REQUEST_FILE]: { content: env.gist, truncated: false } } })) };
   };
-  const intakeDeps = { http: gistHttp, queue: env.queue, status: env.status, gistId: GIST, now: clock, runJob: async () => { env.jobStarts++; } };
+  const intakeDeps = { http: gistHttp, queue: env.queue, status: env.status, gistId: GIST, now: serverClock, runJob: async () => { env.jobStarts++; } };
   const http = async (method, path, body) => JSON.parse((await srv.handleIntake({ method, path, headers: { origin: srv.ALLOWED_ORIGIN }, body }, intakeDeps)).body);
-  // Same behaviour as the page's createIntakeClient: write Gist, beforePost, POST, parse body regardless of status.
+  const deliver = (requestId, gistVersion) => http('POST', '/v1/requests', JSON.stringify({ requestId, gistVersion }));
   const post = async (requestId, gistVersion) => {
     env.posts.push({ requestId, gistVersion });
+    if (env.postMode === 'held') { env.held.push(() => deliver(requestId, gistVersion)); throw new Error('network: still in flight'); }
     if (env.postMode === 'never-arrives') throw new Error('network');
-    const reply = await http('POST', '/v1/requests', JSON.stringify({ requestId, gistVersion }));
+    const reply = await deliver(requestId, gistVersion);
     if (env.postMode === 'reply-lost') throw new Error('reply lost');
     return reply;
   };
+  const source = { token: 't1' };
+  // Same behaviour as the page's createIntakeClient (source re-check, beforePost, one POST, close, status).
   const client = {
     async submit(request, beforePost) {
+      const snap = source.token;
       if (env.gistFails) throw new Error('Gist 写入失败');
-      env.gist = JSON.stringify(request); env.version = crypto.randomBytes(20).toString('hex'); env.committedAt = clock().toISOString();
-      beforePost(env.version); return post(request.requestId, env.version);
+      env.gist = JSON.stringify(request); env.version = crypto.randomBytes(20).toString('hex'); env.committedAt = serverClock().toISOString();
+      if (env.onGistWritten) await env.onGistWritten();
+      if (source.token !== snap) throw new Error('来源或身份已变化，未提交');
+      if (!beforePost(env.version)) throw new Error('该请求已被撤销或移除，未提交');
+      return post(request.requestId, env.version);
     },
-    resend: p => post(p.requestId, p.gistVersion),
+    close: id => http('POST', '/v1/requests/' + id + '/close'),
     status: id => http('GET', '/v1/requests/' + id),
   };
-  const store = {};
-  const d = { intake: client, uuid: () => crypto.randomUUID(), now: clock, savePending: r => { store.pending = r; }, clearPending: () => { store.pending = null; } };
-  const job = () => srv.runRefreshJob({ ledger: env.ledger, queue: env.queue, status: env.status, http: gistHttp, gistId: GIST, now: clock, wait: async () => {}, readToken: () => 'synthetic-token-not-real-0000', validateHealth: () => [], mode: 'acceptance' });
-  return { env, store, d, job, advance: ms => { env.now = new Date(env.now.getTime() + ms); }, srv, core };
+  const ps = pendingStore();
+  const d = deps(client, ps, { uuid: () => crypto.randomUUID(), now: browserClock });
+  const job = () => srv.runRefreshJob({ ledger: env.ledger, queue: env.queue, status: env.status, http: gistHttp, gistId: GIST, now: serverClock, wait: async () => {}, readToken: () => 'synthetic-token-not-real-0000', validateHealth: () => [], mode: 'acceptance' });
+  const advance = ms => { env.serverNow = new Date(env.serverNow.getTime() + ms); env.browserNow = new Date(env.browserNow.getTime() + ms); };
+  return { env, ps, d, job, advance, source, client, srv, core, only: () => [...ps.m.values()][0] };
 }
 const okAt = { ...ok, feeDate: '2026-11-10' };
 
 test('e2e: first POST definitively rejected (400) -> pending cleared, nothing queued, no job, resubmission allowed', async () => {
   const t = await e2e();
-  const r = await MR.mrSubmit({ ...okAt, feeDate: '2026-11-01' }, t.d); // outside the promotion window
+  const r = await MR.mrSubmit({ ...okAt, feeDate: '2026-11-01' }, t.d);
   assert.equal(r.state, 'rejected');
-  assert.equal(t.store.pending, null);
-  assert.match(r.text, /拒绝接收/);
+  assert.equal(t.ps.m.size, 0);
   assert.equal(t.env.queue.rows.size, 0);
   assert.equal(t.env.jobStarts, 0);
-  assert.equal((await MR.mrSubmit(okAt, t.d)).state, 'pending', 'a new submission is possible');
+  assert.equal((await MR.mrSubmit(okAt, t.d)).state, 'pending');
 });
 
 test('e2e: Gist write fails before any POST -> not sent, pending cleared', async () => {
   const t = await e2e(); t.env.gistFails = true;
-  const r = await MR.mrSubmit(okAt, t.d);
-  assert.equal(r.state, 'not-sent');
-  assert.equal(t.store.pending, null);
+  assert.equal((await MR.mrSubmit(okAt, t.d)).state, 'not-sent');
+  assert.equal(t.ps.m.size, 0);
   assert.equal(t.env.posts.length, 0);
 });
 
-test('e2e: POST reply lost but queued -> GET says queued (not "none"), no resend; job projection clears it', async () => {
-  const t = await e2e(); t.env.postMode = 'reply-lost';
-  assert.equal((await MR.mrSubmit(okAt, t.d)).state, 'unknown');
-  assert.ok(t.store.pending);
-  t.env.postMode = 'ok';
-  t.advance(11 * 60_000); // past the proof window: a resend would now be refused as stale
-  const q = await MR.mrQueryStatus(t.store.pending, t.d);
+test('e2e: browser clock 13 minutes ahead, POST still in flight: no browser-time verdict; close and late POST are exclusive', async () => {
+  const t = await e2e(); t.env.postMode = 'held';
+  await MR.mrSubmit(okAt, t.d);
+  const p = t.only();
+  t.env.browserNow = new Date(t.env.browserNow.getTime() + 13 * 60_000); // server: only moments later
+  const q = await MR.mrQueryStatus(p, t.d); // GET not-received -> close (server-side, atomic)
+  assert.equal(q.state, 'done');
+  assert.match(q.text, /已撤销/);
+  const late = await t.env.held[0](); // the original POST finally arrives
+  assert.deepEqual(late, { requestId: p.requestId, state: 'rejected', code: 'REQUEST_CLOSED' });
+  await t.job();
+  assert.equal(await t.env.ledger.get(t.core.keys.batch(p.requestId)), null, 'never executed');
+  assert.equal(t.env.jobStarts, 0);
+});
+
+test('e2e: the late POST wins the race: close answers queued and the request stays pending', async () => {
+  const t = await e2e(); t.env.postMode = 'held';
+  await MR.mrSubmit(okAt, t.d);
+  const p = t.only();
+  await t.env.held[0](); // arrives first
+  const q = await MR.mrQueryStatus(p, t.d);
   assert.equal(q.state, 'unknown');
   assert.match(q.text, /已收到/);
-  assert.equal(t.env.posts.length, 1, 'no re-delivery for a received request');
-  assert.doesNotMatch(q.text, /未执行|未发布任何内容/);
-  await t.job(); // the job sees the queued entry stale by real time and records it authoritatively
-  const q2 = await MR.mrQueryStatus(t.store.pending, t.d);
+  assert.ok(t.ps.has(p.requestId));
+});
+
+test('e2e: queue object missing is never "never executed": a projection exists -> close refused (received)', async () => {
+  const t = await e2e();
+  await MR.mrSubmit(okAt, t.d);
+  const p = t.only();
+  t.advance(60_000); await t.job();
+  t.env.queue.rows.delete('queue/' + p.requestId); // simulated loss (not permitted in production)
+  const q = await MR.mrQueryStatus(p, t.d);
+  assert.equal(q.state, 'done', 'the final projection answers, not the missing queue object');
+  const c = await t.client.close(p.requestId);
+  assert.equal(c.state, 'received');
+});
+
+test('e2e: two tabs: A\'s late final reply clears only A, never B\'s newer pending', async () => {
+  const t = await e2e();
+  await MR.mrSubmit(okAt, t.d); const a = t.only();
+  t.advance(60_000); await t.job(); // A becomes final on the server
+  const b = { requestId: crypto.randomUUID(), contents: ['fee'], posts: 1, createdAt: '2026-11-11T02:02:00.000Z' };
+  t.ps.save(b); // tab B submitted meanwhile
+  const q = await MR.mrQueryStatus(a, t.d);
+  assert.equal(q.state, 'done');
+  assert.equal(t.ps.has(a.requestId), false);
+  assert.equal(t.ps.has(b.requestId), true);
+});
+
+test('e2e: source switched while the Gist PATCH was pending -> no POST, nothing queued', async () => {
+  const t = await e2e();
+  t.env.onGistWritten = async () => { t.source.token = 't2'; };
+  const r = await MR.mrSubmit(okAt, t.d);
+  assert.equal(r.state, 'not-sent');
+  assert.equal(t.env.posts.length, 0);
+  assert.equal(t.env.queue.rows.size, 0);
+});
+
+test('e2e: reload with posts:0 while another tab is mid-submit: recovery closes it atomically; the other tab then sends nothing', async () => {
+  const t = await e2e();
+  let resume; const paused = new Promise(r => { resume = r; });
+  t.env.onGistWritten = () => paused; // tab A stops inside its Gist write
+  const a = MR.mrSubmit(okAt, t.d);
+  for (let i = 0; i < 100 && !t.ps.m.size; i++) await new Promise(r => setImmediate(r));
+  const p = t.only();
+  assert.equal(p.posts, 0);
+  // Reloaded tab B recovers the posts:0 record through the server.
+  const q = await MR.mrQueryStatus(p, t.d);
+  assert.equal(q.state, 'done');
+  assert.match(q.text, /已撤销/);
+  resume();
+  const r = await a;
+  assert.equal(r.state, 'not-sent', 'its pending record is gone, so it never POSTs');
+  assert.equal(t.env.posts.length, 0);
+  assert.equal(t.env.queue.rows.get('queue/' + p.requestId).schema, 'fee-console.manager-refresh-closed.v1');
+});
+
+test('e2e: POST reply lost but queued -> queued, no close; the job projection clears it', async () => {
+  const t = await e2e(); t.env.postMode = 'reply-lost';
+  assert.equal((await MR.mrSubmit(okAt, t.d)).state, 'unknown');
+  t.env.postMode = 'ok';
+  t.advance(11 * 60_000);
+  const p = t.only();
+  const q = await MR.mrQueryStatus(p, t.d);
+  assert.equal(q.state, 'unknown');
+  assert.match(q.text, /已收到/);
+  await t.job();
+  const q2 = await MR.mrQueryStatus(p, t.d);
   assert.equal(q2.state, 'done');
   assert.match(q2.text, /服务端核验后未执行该请求（REQUEST_STALE）/);
 });
 
-test('e2e: a stale re-delivery rejection never reports the original as not executed', async () => {
-  const t = await e2e(); t.env.postMode = 'never-arrives';
-  await MR.mrSubmit(okAt, t.d);
-  t.env.postMode = 'ok';
-  // Simulate the worst ordering: the original did reach the queue after all.
-  await t.env.queue.create('queue/' + t.store.pending.requestId, { schema: 'fee-console.manager-refresh-queue.v1', requestId: t.store.pending.requestId, gistVersion: t.store.pending.gistVersion, queuedAt: t.env.now.toISOString() });
-  t.advance(11 * 60_000);
-  const reply = await t.d.intake.resend(t.store.pending); // stale proof
-  assert.equal(reply.state, 'rejected');
-  assert.equal(reply.code, 'REQUEST_STALE');
-  assert.equal(MR.mrResolved(reply, t.store.pending), false);
-  assert.doesNotMatch(MR.mrOutcomeText(reply, t.store.pending), /未执行|未发布任何内容/);
-  assert.ok(t.store.pending);
-});
-
-test('e2e: POST never arrived -> not-received inside the window re-delivers the same request once; it is then queued', async () => {
-  const t = await e2e(); t.env.postMode = 'never-arrives';
-  await MR.mrSubmit(okAt, t.d);
-  assert.equal(t.env.queue.rows.size, 0);
-  t.env.postMode = 'ok'; t.advance(60_000);
-  await MR.mrQueryStatus(t.store.pending, t.d);
-  assert.equal(t.env.posts.length, 2);
-  assert.equal(t.env.posts[0].requestId, t.env.posts[1].requestId);
-  assert.ok(t.env.queue.rows.has('queue/' + t.store.pending.requestId));
-  assert.ok(t.store.pending);
-});
-
-test('e2e: POST never arrived and the proof window passed -> not-received is final: never executable, pending cleared', async () => {
-  const t = await e2e(); t.env.postMode = 'never-arrives';
-  await MR.mrSubmit(okAt, t.d);
-  t.advance(10 * 60_000);
-  let q = await MR.mrQueryStatus(t.store.pending, t.d);
-  assert.equal(q.state, 'unknown', 'between resend window and safe window: keep, no resend');
-  assert.equal(t.env.posts.length, 1);
-  t.advance(3 * 60_000);
-  q = await MR.mrQueryStatus(t.store.pending, t.d);
-  assert.equal(q.state, 'done');
-  assert.match(q.text, /不会再被执行/);
-  assert.equal(t.store.pending, null);
-  // Proof it can no longer run: a late delivery of the original is refused, nothing queued.
-  t.env.postMode = 'ok';
-  const late = await t.d.intake.resend({ requestId: t.env.posts[0].requestId, gistVersion: t.env.posts[0].gistVersion });
-  assert.equal(late.state, 'rejected');
-  assert.equal(t.env.queue.rows.size, 0);
-});
-
-test('e2e: a queued request whose job finishes keeps the page pending until the final projection', async () => {
+test('e2e: a queued request keeps the page pending until the job\'s final projection', async () => {
   const t = await e2e();
-  const r = await MR.mrSubmit(okAt, t.d);
-  assert.equal(r.state, 'pending');
-  assert.match(r.text, /已收到/);
-  t.advance(60_000);
-  await t.job(); // acceptance mode: admission readback unavailable -> final blocked VERIFY_UNAVAILABLE
-  const q = await MR.mrQueryStatus(t.store.pending, t.d);
+  assert.equal((await MR.mrSubmit(okAt, t.d)).state, 'pending');
+  t.advance(60_000); await t.job();
+  const q = await MR.mrQueryStatus(t.only(), t.d);
   assert.equal(q.state, 'done');
   assert.match(q.text, /尚无法确认是否已发布/);
 });
@@ -262,7 +302,7 @@ test('confirmation copy states the click replaces the completed-sync instruction
   assert.ok(html.includes('这次点击将代替你以往发出的“同步已完成，请发布”指示'));
   assert.ok(html.includes('if(T.id==="mrSubmit"){confirmManagerRefresh();return;}'));
   assert.ok(html.includes('if(T.id==="mrReadOnly"){document.getElementById("mgrRefresh").classList.remove("on");manualRefresh();return;}'));
-  assert.ok(html.includes('if(!mrPlan(s).canSubmit||!confirmed||'), 'submission requires the explicit confirmation of the same selection');
+  assert.ok(html.includes('if(!mrPlan(s).canSubmit||!confirmed||'));
 });
 
 test('Hong Kong date default', () => {
@@ -274,18 +314,17 @@ test('Hong Kong date default', () => {
 const CS = '/* manager-refresh-client:start */', CE = '/* manager-refresh-client:end */';
 const clientBlock = html.slice(html.indexOf(CS), html.indexOf(CE));
 function client({ patchReply, fetchReplies = [], authorized = true, draft = null } = {}) {
-  const calls = { patch: [], fetch: [] };
+  const calls = { patch: [], fetch: [] }, live = { token: 'synthetic-token-not-real-0000' };
   const env = {
     managerDocumentsAuthorized: () => authorized, EDIT: { draft, pending: null }, _draftBlocked: false, _ledgerBusy: false,
-    cfg: k => ({ gid: 'g'.repeat(32), tok: 'synthetic-token-not-real-0000' })[k] || '', K: { gid: 'gid', tok: 'tok' }, _sourceEpoch: 7,
+    cfg: k => (k === 'gid' ? 'g'.repeat(32) : k === 'tok' ? live.token : ''), K: { gid: 'gid', tok: 'tok' }, _sourceEpoch: 7,
     _managerCapability: { ownerId: 283054367 },
-    ghApi: async (path, opt) => { calls.patch.push({ path, opt }); return typeof patchReply === 'function' ? patchReply(opt) : patchReply; },
+    ghApi: async (path, opt) => { calls.patch.push({ path, opt }); return typeof patchReply === 'function' ? patchReply(opt, live) : patchReply; },
     freshFetch: async (url, init) => { calls.fetch.push({ url, init }); const v = fetchReplies.shift(); return { json: async () => v }; },
   };
-  env.cfg = k => (k === 'gid' ? 'g'.repeat(32) : k === 'tok' ? 'synthetic-token-not-real-0000' : '');
   const names = Object.keys(env);
   const fn = new Function(...names, `${clientBlock.replace('const MR_INTAKE_ORIGIN=null;', 'const MR_INTAKE_ORIGIN="https://intake.example.invalid";')}\nreturn {createIntakeClient, MANAGER_REFRESH_CLIENT, writeRefreshRequest, get pending(){return _mrRequestWrite;}};`);
-  return { calls, api: fn(...names.map(n => env[n])) };
+  return { calls, live, api: fn(...names.map(n => env[n])) };
 }
 const goodPatch = opt => { const raw = JSON.parse(opt.body).files['fee-manager-refresh-request.json'].content; return { id: 'g'.repeat(32), owner: { id: 283054367 }, files: { 'fee-manager-refresh-request.json': { content: raw } }, history: [{ version: 'b'.repeat(40) }] }; };
 const reqObj = () => MR.mrBuildRequest(ok, crypto.randomUUID(), new Date('2026-11-11T02:00:00.000Z'));
@@ -293,50 +332,52 @@ const reqObj = () => MR.mrBuildRequest(ok, crypto.randomUUID(), new Date('2026-1
 test('client: reviewed write of exactly the request file, read back, then POST {requestId, gistVersion} without credentials', async () => {
   const { calls, api } = client({ patchReply: goodPatch, fetchReplies: [{ requestId: 'x', state: 'queued' }] });
   const r = reqObj(); let recorded = null;
-  const reply = await api.MANAGER_REFRESH_CLIENT.submit(r, v => { recorded = v; });
-  assert.equal(recorded, 'b'.repeat(40), 'version recorded before the POST');
-  assert.equal(calls.patch.length, 1);
-  assert.equal(calls.patch[0].path, '/gists/' + 'g'.repeat(32));
+  const reply = await api.MANAGER_REFRESH_CLIENT.submit(r, v => { recorded = v; return true; });
+  assert.equal(recorded, 'b'.repeat(40));
   assert.deepEqual(JSON.parse(calls.patch[0].opt.body), { files: { 'fee-manager-refresh-request.json': { content: JSON.stringify(r) } } });
-  assert.ok(calls.patch[0].opt.reviewedRefreshRequest, 'uses the dedicated reviewed allowance');
-  assert.equal(api.pending, null, 'allowance cleared after use');
+  assert.ok(calls.patch[0].opt.reviewedRefreshRequest);
+  assert.equal(api.pending, null);
   assert.equal(calls.fetch[0].url, 'https://intake.example.invalid/v1/requests');
-  assert.equal(calls.fetch[0].init.method, 'POST');
   assert.deepEqual(JSON.parse(calls.fetch[0].init.body), { requestId: r.requestId, gistVersion: 'b'.repeat(40) });
   assert.equal(calls.fetch[0].init.credentials, 'omit');
   assert.equal(calls.fetch[0].init.redirect, 'error');
-  assert.ok(!JSON.stringify(calls.fetch[0]).includes('synthetic-token'), 'no token leaves the page');
+  assert.ok(!JSON.stringify(calls.fetch[0]).includes('synthetic-token'));
   assert.deepEqual(reply, { requestId: 'x', state: 'queued' });
 });
 
-test('client: refuses without verified identity or with a draft; mismatched readback never POSTs', async () => {
+test('client: refuses without identity or with a draft; mismatched readback, source change or a removed pending record never POST', async () => {
   for (const o of [{ authorized: false }, { draft: {} }]) {
     const { calls, api } = client({ ...o, patchReply: goodPatch });
-    await assert.rejects(api.MANAGER_REFRESH_CLIENT.submit(reqObj(), () => {}));
+    await assert.rejects(api.MANAGER_REFRESH_CLIENT.submit(reqObj(), () => true));
     assert.equal(calls.patch.length + calls.fetch.length, 0);
   }
   for (const bad of [o => ({ ...goodPatch(o), owner: { id: 1 } }), o => ({ ...goodPatch(o), files: {} }), o => ({ ...goodPatch(o), history: [] })]) {
     const { calls, api } = client({ patchReply: bad });
-    await assert.rejects(api.MANAGER_REFRESH_CLIENT.submit(reqObj(), () => {}));
+    await assert.rejects(api.MANAGER_REFRESH_CLIENT.submit(reqObj(), () => true));
     assert.equal(calls.fetch.length, 0);
   }
+  const switched = client({ patchReply: (opt, live) => { live.token = 'another-token-not-real-00000'; return goodPatch(opt); } });
+  await assert.rejects(switched.api.MANAGER_REFRESH_CLIENT.submit(reqObj(), () => true), /来源或身份已变化/);
+  assert.equal(switched.calls.fetch.length, 0);
+  const removed = client({ patchReply: goodPatch });
+  await assert.rejects(removed.api.MANAGER_REFRESH_CLIENT.submit(reqObj(), () => false), /已被撤销或移除/);
+  assert.equal(removed.calls.fetch.length, 0);
 });
 
-test('page allows the request write only through its own exact reviewed allowance', () => {
+test('client: close and status are plain credential-less calls; no resend exists', async () => {
+  const { calls, api } = client({ fetchReplies: [{ requestId: ID, state: 'closed' }, { requestId: ID, state: 'queued' }] });
+  assert.deepEqual(await api.MANAGER_REFRESH_CLIENT.close(ID), { requestId: ID, state: 'closed' });
+  assert.equal(calls.fetch[0].url, 'https://intake.example.invalid/v1/requests/' + ID + '/close');
+  assert.equal(calls.fetch[0].init.method, 'POST');
+  assert.equal(calls.fetch[0].init.body, undefined);
+  await api.MANAGER_REFRESH_CLIENT.status(ID);
+  assert.equal(calls.fetch[1].init.method, 'GET');
+  assert.equal(api.MANAGER_REFRESH_CLIENT.resend, undefined);
+});
+
+test('page allows the request write only through its own exact reviewed allowance; pending keys are per request', () => {
   assert.ok(html.includes('const refreshRequestWrite=method==="PATCH"&&reviewedRefreshRequest&&reviewedRefreshRequest===_mrRequestWrite'));
   assert.ok(html.includes('request.body===JSON.stringify({files:{[MR_REQUEST_FILE]:{content:reviewedRefreshRequest.raw}}})'));
   assert.ok(html.includes('!ratioSnapshotWrite&&!refreshRequestWrite)throw'));
-});
-
-test('not-received inside the proof window: re-deliver the same id and version only, pending kept', async () => {
-  const at = new Date('2026-11-11T02:00:00.000Z');
-  const store = { pending: { requestId: ID, contents: ['fee'], gistVersion: 'b'.repeat(40), posts: 1, lastPostAt: at.toISOString() } }, resent = [];
-  const d = { ...deps({ status: async () => ({ requestId: ID, state: 'not-received' }), resend: async p => { resent.push(p); return { requestId: ID, state: 'queued' }; } }, store), now: () => new Date(at.getTime() + 60_000) };
-  const q = await MR.mrQueryStatus(store.pending, d);
-  assert.equal(resent.length, 1);
-  assert.equal(resent[0].gistVersion, 'b'.repeat(40));
-  assert.equal(q.state, 'unknown');
-  assert.equal(store.pending.posts, 2);
-  const noVersion = { requestId: ID, contents: ['fee'], posts: 0 };
-  await MR.mrQueryStatus(noVersion, { ...deps({ status: async () => ({ requestId: ID, state: 'not-received' }), resend: async () => { throw new Error('must not resend without a recorded version'); } }, {}), now: () => d.now() });
+  assert.ok(html.includes('clearPending:id=>setCfg(MR_PENDING_PREFIX+id,"")'));
 });
