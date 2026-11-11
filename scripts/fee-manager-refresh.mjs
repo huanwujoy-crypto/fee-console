@@ -210,8 +210,8 @@ export function createFeePublicationVerifier({ readMain, readRepoFile, readPages
     async verify(date, { claimMainSha }) {
       if (!isDay(date) || !isSha40(claimMainSha)) fail('VERIFY_UNAVAILABLE');
       const c = await current();
-      if (c.health.targetDate !== date || !['updated', 'no-op'].includes(c.health.outcome)) return { state: 'not-published', targetDate: c.health.targetDate };
-      if (c.mainSha === claimMainSha || !(await isAncestor(claimMainSha, c.mainSha))) return { state: 'not-published', targetDate: c.health.targetDate };
+      if (c.health.targetDate !== date || !['updated', 'no-op'].includes(c.health.outcome)) return { state: 'not-published', targetDate: c.health.targetDate, mainSha: c.mainSha };
+      if (c.mainSha === claimMainSha || !(await isAncestor(claimMainSha, c.mainSha))) return { state: 'not-published', targetDate: c.health.targetDate, mainSha: c.mainSha };
       const [pagesData, pagesHealth] = await Promise.all([readPages('data.json'), readPages('fee-data-health.json')]);
       if (sha256(pagesData) !== sha256(c.data) || sha256(pagesHealth) !== sha256(c.healthBytes)) return { state: 'pages-pending' };
       return { state: 'verified', evidence: { mainSha: c.mainSha, accountingThrough: date, dataSha256: sha256(c.data), healthSha256: sha256(c.healthBytes) } };
@@ -472,13 +472,24 @@ export function createRefreshCoordinator(deps) {
     if (handle) { try { run = await d.feePublisher.status(handle); } catch { run = 'unknown'; } }
     if (run !== 'ended' && run !== 'executor-terminated') return null;
     if (v.state !== 'not-published') return null;
-    let idle = false;
-    try { idle = (await d.pipelineIdle(date)) === true; } catch { idle = false; }
-    if (!idle) return null;
-    // Definite: this attempt's own run ended (or its executor provably can no
-    // longer send), main does not carry `date`, nothing for it is pending.
+    // "Definitely not published" is never stitched from an earlier read and
+    // a later idle state. It needs a fresh readback taken while the pipeline
+    // is quiescent, bracketed by two idle checks and a stable main:
+    //   idle -> fresh readback (not published, main A) -> idle -> main still A
+    // Once idle holds with no unincorporated candidate for the date and this
+    // attempt's run ended, nothing remains that could promote the date.
+    if (!(await idleNow(date))) return null;
+    let fresh;
+    try { fresh = await d.feeVerifier.verify(date, { claimMainSha: attempt.claimMainSha }); } catch { return null; }
+    if (fresh.state !== 'not-published' || !isSha40(fresh.mainSha) || fresh.targetDate === date) return null;
+    if (!(await idleNow(date))) return null;
+    let after;
+    try { after = await d.feeVerifier.coverage(); } catch { return null; }
+    if (after?.mainSha !== fresh.mainSha || after.targetDate === date) return null;
     return close(run === 'executor-terminated' ? 'RECONCILED_NOT_STARTED' : 'RUN_ENDED_UNPUBLISHED');
   }
+
+  async function idleNow(date) { try { return (await d.pipelineIdle(date)) === true; } catch { return false; } }
 
   // Close an unresolved attempt only from evidence; otherwise leave it open.
   async function reconcile(kind, date) {

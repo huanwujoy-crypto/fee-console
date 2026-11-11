@@ -391,3 +391,48 @@ test('POST not accepted while an independent same-owner same-date run publishes:
   assert.deepEqual((await c.batchStatus(b.requestId)).fee, { state: 'unknown', code: 'ATTEMPT_IN_FLIGHT', dataDate: D });
   assert.equal((await c.submit(req(), ID)).fee.code, 'ATTEMPT_IN_FLIGHT', 'no retry either');
 });
+
+// ---- "definitely not published" needs a fresh readback inside quiescence
+function promotionRace({ promoteOnVerifyCall = null, promoteOnIdleCall = null, idleDuringPromotion = true } = {}) {
+  const w = world({ publishAfter: Infinity }), ledger = createMemoryLedger();
+  let verifyCalls = 0, idleCalls = 0;
+  const verifier = { ...w.verifier, verify: async (...a) => { verifyCalls++; const r = await w.verifier.verify(...a); if (verifyCalls === promoteOnVerifyCall) w.commit(D); return r; } };
+  const pipelineIdle = async () => { idleCalls++; if (idleCalls === promoteOnIdleCall) { w.commit(D); return idleDuringPromotion; } return true; };
+  w.publisher.status = async () => 'ended';
+  const c = createRefreshCoordinator({ ledger, now: w.clock, wait: w.wait, feePublisher: w.publisher, feeVerifier: verifier, pipelineIdle, deadlineMs: 10 * 60_000 });
+  return { w, c, ledger };
+}
+
+test('promotion completes right after the first (old) readback: never RUN_ENDED_UNPUBLISHED; the publication is recorded', async () => {
+  const { w, c, ledger } = promotionRace({ promoteOnVerifyCall: 1 });
+  const r = await c.submit(req(), ID);
+  assert.notEqual(r.fee.code, 'RUN_ENDED_UNPUBLISHED');
+  assert.equal(r.fee.code, 'PUBLISHED');
+  assert.equal((await kindState(ledger, 'fee', D)).state, 'published');
+  assert.equal(w.starts.length, 1);
+});
+
+test('promotion lands between the fresh readback and the second idle check: no failure verdict', async () => {
+  for (const idleDuringPromotion of [true, false]) {
+    // idle calls: 1 = first bracket check, 2 = second bracket check
+    const { c, ledger } = promotionRace({ promoteOnIdleCall: 2, idleDuringPromotion });
+    const r = await c.submit(req(), ID);
+    assert.notEqual(r.fee.code, 'RUN_ENDED_UNPUBLISHED', 'idle=' + idleDuringPromotion);
+    assert.equal((await kindState(ledger, 'fee', D)).attempts[0].result, null);
+    assert.equal(r.fee.code, 'PUBLISHED');
+  }
+});
+
+test('promotion lands during the first idle check: the fresh readback sees it', async () => {
+  const { c, ledger } = promotionRace({ promoteOnIdleCall: 1 });
+  const r = await c.submit(req(), ID);
+  assert.equal(r.fee.code, 'PUBLISHED');
+  assert.equal((await kindState(ledger, 'fee', D)).state, 'published');
+});
+
+test('genuinely unpublished after a quiescent bracket: definite failure, retryable', async () => {
+  const { c, ledger } = promotionRace({});
+  const r = await c.submit(req(), ID);
+  assert.equal(r.fee.code, 'RUN_ENDED_UNPUBLISHED');
+  assert.equal((await kindState(ledger, 'fee', D)).state, 'retryable');
+});

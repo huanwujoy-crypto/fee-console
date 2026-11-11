@@ -113,6 +113,15 @@ Buckets (bucket-level IAM only; no IAM conditions, because an objects.list
      A claim that never wrote its dispatch record is voided after 2 minutes
      by winning that same key with `mode:'void'`, so a slow claimant can no
      longer POST.
+   - **"Definitely not published" needs a fresh quiescent readback**: a
+     failure verdict (`RUN_ENDED_UNPUBLISHED`, or `RECONCILED_NOT_STARTED`
+     after proven executor termination) is never stitched from an earlier
+     readback and a later idle state. It requires, in order: pipeline idle →
+     a fresh readback showing the date not published on main A → pipeline
+     idle again → main still A and still without the date. Any change returns
+     no verdict for that round. Once idle holds (no unfinished fee run and no
+     unincorporated candidate for the date) and this attempt's run has ended,
+     nothing remains that could promote the date afterwards.
    - **Verifiable attempt id (not implemented, protected change)**: the
      minimal change that would make lost run ids recoverable is a new
      `workflow_dispatch` input on `fee-cloud-producer.yml` (e.g.
