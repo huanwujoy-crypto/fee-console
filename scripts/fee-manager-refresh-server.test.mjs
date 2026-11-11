@@ -114,3 +114,23 @@ test('provenance binds the attempt run, its single candidate and the promotion b
   actor = 999; assert.equal(await publisher.provenance({ handle: '42', dataDate: '2026-11-10' }), null, 'non-owner actor is not this protected run');
   assert.equal(await publisher.provenance({ handle: null, dataDate: '2026-11-10' }), null);
 });
+
+test('pipeline idle: active runs or an unincorporated candidate keep the date pending', async () => {
+  const main = '5'.repeat(40), merged = '6'.repeat(40), stray = '7'.repeat(40);
+  let refs = [{ object: { sha: merged } }], active = 0;
+  const http = async (method, url) => {
+    const ok = v => ({ status: 200, bytes: enc(v) });
+    if (url.includes('/runs?status=')) return ok({ total_count: active, workflow_runs: [] });
+    if (url.includes('/git/matching-refs/')) return ok(refs);
+    if (url.endsWith('/git/ref/heads/main')) return ok({ object: { sha: main } });
+    if (url.includes('/compare/' + merged + '...')) return ok({ status: 'ahead', behind_by: 0 });
+    if (url.includes('/compare/' + stray + '...')) return ok({ status: 'diverged', behind_by: 1 });
+    return { status: 404 };
+  };
+  const { pipelineIdle } = createGitHubFeeAdapters({ http, readToken: () => '', now: () => NOW });
+  assert.equal(await pipelineIdle('2026-11-10'), true);
+  refs = [{ object: { sha: merged } }, { object: { sha: stray } }];
+  assert.equal(await pipelineIdle('2026-11-10'), false);
+  refs = []; active = 1;
+  assert.equal(await pipelineIdle('2026-11-10'), false);
+});

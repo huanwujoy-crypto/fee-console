@@ -204,8 +204,17 @@ export function createGitHubFeeAdapters({ http, readToken, now }) {
         const r = await getJson(API + '/actions/workflows/' + wf + '/runs?status=' + status + '&per_page=1');
         if (!Number.isSafeInteger(r.total_count) || r.total_count !== 0) return false;
       }
+    // Same rule as the producer's strict candidate check: a candidate counts
+    // as pending until ancestry proves it is incorporated into main.
     const refs = await getJson(API + '/git/matching-refs/heads/codex/fee-daily-' + dataDate.replaceAll('-', '') + '-');
-    return Array.isArray(refs) && refs.length === 0;
+    if (!Array.isArray(refs) || refs.length > 32) return false;
+    const main = await readMain();
+    for (const ref of refs) {
+      const oid = ref?.object?.sha;
+      if (!isSha40(oid)) return false;
+      if (oid !== main && !(await isAncestor(oid, main))) return false;
+    }
+    return true;
   }
   return { publisher, pipelineIdle, readers: { readMain, readRepoFile, readPages, isAncestor } };
 }
