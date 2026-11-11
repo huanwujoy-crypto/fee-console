@@ -76,7 +76,9 @@ test('intake: exact origin only; duplicates and concurrent POSTs wake the job at
 test('intake GET is read-only and returns only the latest redacted projection', async () => {
   const r = request(), x = intakeDeps(r);
   const get = id => handleIntake({ method: 'GET', path: '/v1/requests/' + id, headers: { origin: ALLOWED_ORIGIN } }, x.deps);
-  assert.deepEqual(JSON.parse((await get(r.requestId)).body), { requestId: r.requestId, state: 'none' });
+  assert.deepEqual(JSON.parse((await get(r.requestId)).body), { requestId: r.requestId, state: 'not-received' });
+  await x.queue.create('queue/' + r.requestId, { schema: 'fee-console.manager-refresh-queue.v1', requestId: r.requestId, gistVersion: VER, queuedAt: NOW.toISOString() });
+  assert.deepEqual(JSON.parse((await get(r.requestId)).body), { requestId: r.requestId, state: 'queued' }, 'received, no projection yet');
   await x.status.create('status/' + r.requestId + '/2026-11-11T02:06:00.000Z-0', { requestId: r.requestId, contents: ['fee'], fee: { state: 'unknown', code: 'AWAITING_PUBLICATION', dataDate: '2026-11-10' }, ratio: null });
   const before = x.queue.rows.size;
   const body = JSON.parse((await get(r.requestId)).body);
@@ -551,4 +553,17 @@ test('verification outcome classes: unavailable is never stale or unverified', a
   for (const s of [403, 408, 429, 500, 502, 503, 504]) await assert.rejects(verifyOwnerRequest(body, { http: gistHttp(r, {}, s).http, gistId: GIST, now: () => NOW }), { code: 'VERIFY_UNAVAILABLE' }, String(s));
   for (const s of [401, 404, 410]) await assert.rejects(verifyOwnerRequest(body, { http: gistHttp(r, {}, s).http, gistId: GIST, now: () => NOW }), { code: 'IDENTITY_UNVERIFIED' }, String(s));
   await assert.rejects(verifyOwnerRequest(body, { http: gistHttp(r).http, gistId: GIST, now: () => new Date(NOW.getTime() + 3600_000) }), { code: 'REQUEST_STALE' });
+});
+
+test('POST rejection contract: echoes the request id, state rejected, and queues nothing', async () => {
+  const old = request({ feeDataDate: '2026-11-01' }), x = intakeDeps(old);
+  const res = await post(old, x.deps);
+  assert.equal(res.status, 400);
+  assert.deepEqual(JSON.parse(res.body), { requestId: old.requestId, state: 'rejected', code: 'REQUEST_INVALID' });
+  assert.equal(x.queue.rows.size, 0);
+  assert.equal(x.wakes.length, 0);
+  const un = intakeDeps(request()); un.deps.http = gistHttp(request(), {}, 503).http;
+  const r2 = await post(request(), un.deps);
+  assert.equal(JSON.parse(r2.body).state, 'rejected');
+  assert.equal(un.queue.rows.size, 0);
 });

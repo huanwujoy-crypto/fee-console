@@ -119,10 +119,15 @@ export async function handleIntake(req, { http, queue, status, gistId, now, runJ
   if (req.headers?.origin !== ALLOWED_ORIGIN) return { status: 403, headers: { 'Cache-Control': 'no-store' }, body: '' };
   headers['Access-Control-Allow-Origin'] = ALLOWED_ORIGIN;
   if (req.method === 'OPTIONS') return { status: 204, headers: { ...headers, 'Access-Control-Allow-Methods': 'GET, POST', 'Access-Control-Allow-Headers': 'Content-Type', 'Access-Control-Max-Age': '600' }, body: '' };
+  // POST contract: 202 {requestId, state: queued|duplicate|unknown}, or a
+  // rejection {requestId?, state:'rejected', code} which guarantees that THIS
+  // call queued nothing (refused before the create-only queue write).
+  let postedId = null;
   try {
     if (req.method === 'POST' && req.path === '/v1/requests') {
       if (typeof req.body !== 'string' || req.body.length > 256) fail('REQUEST_INVALID');
       let body; try { body = JSON.parse(req.body); } catch { fail('REQUEST_INVALID'); }
+      if (isUuid(body?.requestId)) postedId = body.requestId;
       const proof = await verifyOwnerRequest(body, { http, gistId, now });
       const id = proof.request.requestId;
       try { await queue.create('queue/' + id, { schema: 'fee-console.manager-refresh-queue.v1', requestId: id, gistVersion: proof.gistVersion, queuedAt: now().toISOString() }); }
@@ -136,16 +141,23 @@ export async function handleIntake(req, { http, queue, status, gistId, now, runJ
     if (req.method === 'GET' && m && isUuid(m[1])) {
       // A final answer is stored once under `final` and always wins over any
       // non-final projection, whenever that one was written.
+      // GET contract: the final projection; else the latest non-final one;
+      // else `queued` (received, no projection yet) or `not-received` (no
+      // queue entry exists). Only the latter says the server has no record.
       const final = await status.get('status/' + m[1] + '/final');
       if (final) return reply(200, final);
       const names = (await status.names('status/' + m[1] + '/')).filter(n => !n.endsWith('/final'));
       const latest = names.length ? await status.get(names.at(-1)) : null;
-      return reply(200, latest || { requestId: m[1], state: 'none' });
+      if (latest) return reply(200, latest);
+      const entry = await queue.get('queue/' + m[1]);
+      return reply(200, { requestId: m[1], state: entry ? 'queued' : 'not-received' });
     }
     return reply(404, { code: 'REQUEST_INVALID' });
   } catch (e) {
     const code = e instanceof RefreshError ? e.code : 'VERIFY_UNAVAILABLE';
-    return reply(code === 'IDENTITY_UNVERIFIED' ? 403 : ['REQUEST_INVALID', 'REQUEST_STALE'].includes(code) ? 400 : 503, { code });
+    const http = code === 'IDENTITY_UNVERIFIED' ? 403 : ['REQUEST_INVALID', 'REQUEST_STALE'].includes(code) ? 400 : 503;
+    if (req.method === 'POST') return reply(http, { ...(postedId ? { requestId: postedId } : {}), state: 'rejected', code });
+    return reply(http, { code });
   }
 }
 

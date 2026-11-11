@@ -146,6 +146,23 @@ A queued request whose wake was lost stays `queued`; once it is older than 10
 minutes the next execution records `REQUEST_STALE` and nothing runs, so the
 manager confirms again. In-flight attempts are reconciled only by the job.
 
+### Page ↔ intake response contract
+
+- POST `/v1/requests` → `202 {requestId, state: queued|duplicate|unknown}`,
+  or a rejection `{requestId?, state:'rejected', code}` (400/403/503) which
+  guarantees that this call queued nothing.
+- GET `/v1/requests/<id>` → the job's final projection; else its latest
+  non-final projection; else `{state:'queued'}` (received, no projection
+  yet) or `{state:'not-received'}` (no queue entry).
+- The page clears a pending request only with proof it was not queued and
+  not started: a failure before any POST; a rejection of the first POST; or
+  `not-received` more than 12 minutes after the last POST (a late POST is
+  refused as stale, and a queued stale request is never executed by the
+  job). Or on the job's own final projection. A rejected re-delivery,
+  `queued`, a missing projection or a non-final state keeps it pending and
+  never reports the original as not executed. Re-delivery (same id and Gist
+  version only) happens only within 9 minutes of the last POST.
+
 ### Provenance (run → candidate → promotion)
 
 Implemented without changing the producer, from evidence GitHub records:
@@ -251,7 +268,7 @@ only, do not `cat`, and never delete, overwrite or retry based on it.
 | 0 | Read-only checks above (`roles/run.invoker` contents, job-log redirect host, real log group shape) | read only | coordinator |
 | 1 | Merge support PR, then UI PR (exact head) | code only, default off | owner, exact-head OWNER |
 | 2 | Create buckets `family-portfolio-gateway-fee-refresh-{queue,ledger,status}` (+ `-acceptance` copies for step 9), asia-east2, uniform access, public access prevention; ledger: **no lifecycle**, no runtime delete grant | storage | owner (new resources) |
-| 3 | SA `fee-refresh-intake@`: objectCreator on queue, objectViewer on status; nothing on ledger | bucket-level IAM | owner (IAM) |
+| 3 | SA `fee-refresh-intake@`: objectCreator + objectViewer on queue (read lets GET tell `queued` from `not-received`), objectViewer on status; nothing on ledger | bucket-level IAM | owner (IAM) |
 | 4 | Intake start permission on job `fee-refresh-launch` only: `run.jobs.run` without `run.jobs.runWithOverrides` (custom role if `roles/run.invoker` includes overrides) | job-level IAM | owner (IAM) |
 | 5 | SA `fee-refresh-launch@`: objectViewer on queue; objectCreator+objectViewer on ledger; objectCreator on status | bucket-level IAM | owner (IAM) |
 | 6 | Job credential: owner enters a new fine-grained token (this repository; Actions read/write only) as a secret readable only by SA 5. Alternative: reuse `fee-clock-github-actions` (second identity on a repository-wide Actions-write token) | secret | owner (credential; owner enters it personally) |
@@ -325,12 +342,12 @@ What is NOT implemented (no automatic recovery):
 
 ## Shared test files changed for the UI page pin (test-only)
 
-Registered the page hash `86a8f079a7954fb17a54f4d89b4cdd8e0216abd38e8056df911f403d8fc1b041`
+Registered the page hash `04173d4bb38b236d8c09e6ce51d26daf9c0f0c324db7aab23a8b782c1a44b836`
 (build 4.9.54, UI branch head) by appending, never replacing, existing entries:
 
 - `scripts/fixtures/fee-ratio-aggregate-returns-ui.json` — `nextSha256` →
   new page; `supportSha256` → previous main page `8a5a9671…685d`;
-  `supportRegionCount` 88 → 92 (all existing regions); 9 appended regions (101 total) named
+  `supportRegionCount` 88 → 92 (all existing regions); 9 appended regions named
   `manager-refresh-chooser`.
 - `scripts/fee-ratio-aggregate-ui-fixture.mjs` — the fixture file hash only.
 - `scripts/fee-receipt-ui-contract.test.mjs` — `MANAGER_REFRESH_CHOOSER_UI_SHA256`
