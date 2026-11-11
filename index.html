@@ -4763,7 +4763,7 @@ function setSync(msg,err){const b=document.getElementById("syncBadge");if(!store
   if(!msg){b.style.display=(isMgr()||cfg(K.gid))?"":"none";b.textContent=isMgr()?"☁ 已连接":"👁 只读";b.className="badge";return;}
   b.style.display="";b.textContent="☁ "+msg;b.className="badge "+(err?"hwm":(/中/.test(msg)?"est":"ok"));const s=document.getElementById("ghStatus");if(s)s.textContent=msg;}
 async function ghApi(path,opt={},auth=true){
-  const method=String(opt.method||"GET").toUpperCase(),{reviewedLedger,reviewedFund,reviewedMigration,reviewedRatioRecipient,reviewedRatioSnapshot,...request}=opt;
+  const method=String(opt.method||"GET").toUpperCase(),{reviewedLedger,reviewedFund,reviewedMigration,reviewedRatioRecipient,reviewedRatioSnapshot,reviewedRefreshRequest,...request}=opt;
   const ledgerWrite=method==="PATCH"&&_ledgerBusy&&!_draftBlocked&&EDIT.mode==="saving"&&EDIT.base?.envelopeVersion===4&&EDIT.base.db.v===4&&reviewedLedger===EDIT.pending&&EDIT.pending?.content&&path==="/gists/"+EDIT.base?.gid&&cfg(K.gid)===EDIT.base?.gid;
   const expectedFundBody=reviewedFund?JSON.stringify({files:{[GH_FUND_FILE]:{content:reviewedFund.raw}}}):"";
   const fundWrite=method==="PATCH"&&reviewedFund&&reviewedFund===_fundRemoteWrite&&reviewedFund.gid===cfg(K.gid)&&reviewedFund.token===cfg(K.tok)&&reviewedFund.raw&&path==="/gists/"+reviewedFund.gid&&request.body===expectedFundBody&&Object.keys(request).sort().join(",")==="body,method"&&managerDocumentsAuthorized();
@@ -4771,7 +4771,8 @@ async function ghApi(path,opt={},auth=true){
   const migrationWrite=method==="PATCH"&&reviewedMigration===_legacyMigrationPending&&reviewedMigration?.gid===cfg(K.gid)&&reviewedMigration?.token===cfg(K.tok)&&reviewedMigration?.keyValue===cfg(K.key)&&reviewedMigration?.sourceEpoch===_sourceEpoch&&reviewedMigration?.content&&reviewedMigration?.original&&path==="/gists/"+reviewedMigration.gid&&request.body===expectedMigrationBody&&Object.keys(request).sort().join(",")==="body,method"&&managerDocumentsAuthorized()&&!EDIT.draft&&!_draftBlocked;
   const ratioRecipientWrite=method==="PATCH"&&reviewedRatioRecipient===_ratioRecipientWrite&&reviewedRatioRecipient?.gid===cfg(K.gid)&&reviewedRatioRecipient?.token===cfg(K.tok)&&reviewedRatioRecipient?.epoch===_sourceEpoch&&ratioAuthorized()&&!EDIT.draft&&!EDIT.pending&&!_ledgerBusy&&path==="/gists/"+cfg(K.gid)&&request.body===JSON.stringify({files:{[RATIO_RECIPIENT_FILE]:{content:reviewedRatioRecipient.raw}}})&&Object.keys(request).sort().join(",")==="body,method";
   const ratioSnapshotWrite=method==="PATCH"&&reviewedRatioSnapshot===_ratioSnapshotWrite&&reviewedRatioSnapshot?.gid===cfg(K.gid)&&reviewedRatioSnapshot?.token===cfg(K.tok)&&reviewedRatioSnapshot?.epoch===_sourceEpoch&&ratioAuthorized()&&!EDIT.draft&&!EDIT.pending&&!_ledgerBusy&&path==="/gists/"+cfg(K.gid)&&request.body===JSON.stringify({files:{[RATIO_SNAPSHOT_FILE]:{content:reviewedRatioSnapshot.raw}}})&&Object.keys(request).sort().join(",")==="body,method";
-  if(method!=="GET"&&!ledgerWrite&&!fundWrite&&!migrationWrite&&!ratioRecipientWrite&&!ratioSnapshotWrite)throw new Error("只有已复核的账本或基金档案保存可以写入远端");
+  const refreshRequestWrite=method==="PATCH"&&reviewedRefreshRequest&&reviewedRefreshRequest===_mrRequestWrite&&reviewedRefreshRequest.gid===cfg(K.gid)&&reviewedRefreshRequest.token===cfg(K.tok)&&reviewedRefreshRequest.epoch===_sourceEpoch&&managerDocumentsAuthorized()&&!EDIT.draft&&!EDIT.pending&&!_draftBlocked&&!_ledgerBusy&&path==="/gists/"+cfg(K.gid)&&request.body===JSON.stringify({files:{[MR_REQUEST_FILE]:{content:reviewedRefreshRequest.raw}}})&&Object.keys(request).sort().join(",")==="body,method";
+  if(method!=="GET"&&!ledgerWrite&&!fundWrite&&!migrationWrite&&!ratioRecipientWrite&&!ratioSnapshotWrite&&!refreshRequestWrite)throw new Error("只有已复核的账本或基金档案保存可以写入远端");
   const h={"Accept":"application/vnd.github+json","Content-Type":"application/json"};if(auth&&cfg(K.tok))h["Authorization"]="Bearer "+cfg(K.tok);
   let r;try{r=await fetch("https://api.github.com"+path,{...request,headers:h});}
   catch(cause){const e=new Error("网络暂不可用");e.transient=true;e.cause=cause;throw e;}
@@ -4892,7 +4893,7 @@ async function ensureLatestShell(){
 // is configured, so nothing is ever published from this page and nothing is
 // simulated. The page never asserts identity or success; the server ledger
 // (scripts/fee-manager-refresh.mjs) is the only record of a publication.
-const MANAGER_REFRESH_INTAKE=null;
+// The server client (MANAGER_REFRESH_CLIENT) is defined outside this block.
 const MR_RATIO_READY=false;
 const MR_PENDING_KEY="feeConsole.mgrRefresh.pending";
 const MR_DAY=/^\d{4}-\d{2}-\d{2}$/;
@@ -4952,7 +4953,7 @@ async function mrSubmit(state,deps){
   // Remember before sending: a reload or lost reply can never cause a blind resend.
   deps.savePending(request);
   let result;
-  try{result=await deps.intake.submit(request);}
+  try{result=await deps.intake.submit(request,gistVersion=>deps.savePending({...request,gistVersion}));}
   catch(_){return {state:"unknown",request,text:"结果不明：请求可能已到达服务端。不会自动重试，请稍后查询状态。"};}
   const done=mrResolved(result,request);if(done)deps.clearPending();
   return {state:done?"done":"pending",request,result,text:mrOutcomeText(result,request)};
@@ -4960,19 +4961,61 @@ async function mrSubmit(state,deps){
 async function mrQueryStatus(pending,deps){
   let status;try{status=await deps.intake.status(pending.requestId);}catch(_){return {state:"unknown",text:"仍无法确认上次结果；不会重复提交"};}
   if(!status)return {state:"unknown",text:"服务端没有该请求的记录；为避免重复发布，不会自动重发"};
+  // Not yet received by the server: re-deliver the SAME request id and Gist
+  // version only. The server queue is create-only, so this never creates a
+  // second request, and an expired proof is refused there, not here.
+  if(status.state==="none"&&/^[a-f0-9]{40}$/.test(pending.gistVersion||"")&&deps.intake.resend){
+    try{const again=await deps.intake.resend(pending);return {state:"unknown",text:mrOutcomeText(again,pending)};}
+    catch(_){return {state:"unknown",text:"仍无法送达服务端；请求保留，不会生成新请求"};}
+  }
   if(mrResolved(status,pending)){deps.clearPending();return {state:"done",text:mrOutcomeText(status,pending)};}
   return {state:"unknown",text:mrOutcomeText(status,pending)};
 }
 /* manager-refresh:end */
+/* manager-refresh-client:start */
+// Server entry: null until a separately approved deployment gives a real
+// origin, which must also be added to security/allowed-origins.txt.
+const MR_INTAKE_ORIGIN=null;
+const MR_REQUEST_FILE="fee-manager-refresh-request.json";
+let _mrRequestWrite=null;
+// Owner-authored request: one reviewed PATCH of exactly this file in the
+// ledger Gist, read back for content and owner. No other file is touched.
+async function writeRefreshRequest(request){
+  if(!managerDocumentsAuthorized()||EDIT.draft||EDIT.pending||_draftBlocked||_ledgerBusy)throw new Error("管理人身份未核验或有未保存内容");
+  const gid=cfg(K.gid),token=cfg(K.tok),raw=JSON.stringify(request);
+  if(!gid||raw.length>1024)throw new Error("请求无法写入");
+  _mrRequestWrite={gid,token,raw,epoch:_sourceEpoch};
+  let res;
+  try{res=await ghApi("/gists/"+gid,{method:"PATCH",body:JSON.stringify({files:{[MR_REQUEST_FILE]:{content:raw}}}),reviewedRefreshRequest:_mrRequestWrite});}
+  finally{_mrRequestWrite=null;}
+  const version=res?.history?.[0]?.version;
+  if(res?.id!==gid||res?.owner?.id!==_managerCapability.ownerId||res?.files?.[MR_REQUEST_FILE]?.content!==raw||!/^[a-f0-9]{40}$/.test(version||""))throw new Error("请求写入结果无法核对");
+  return version;
+}
+function createIntakeClient(origin){
+  const call=async(path,init)=>{
+    const ac=new AbortController(),timer=setTimeout(()=>ac.abort(),15000);
+    try{const r=await freshFetch(origin+path,{...init,cache:"no-store",credentials:"omit",redirect:"error",referrerPolicy:"no-referrer",signal:ac.signal});const v=await r.json().catch(()=>null);if(!v||typeof v!=="object")throw new Error("服务端回复无法识别");return v;}
+    finally{clearTimeout(timer);}
+  };
+  const post=(requestId,gistVersion)=>call("/v1/requests",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({requestId,gistVersion})});
+  return Object.freeze({
+    async submit(request,recordVersion){const gistVersion=await writeRefreshRequest(request);recordVersion(gistVersion);return post(request.requestId,gistVersion);},
+    async resend(pending){return post(pending.requestId,pending.gistVersion);},
+    async status(requestId){if(!/^[0-9a-f-]{36}$/.test(requestId||""))throw new Error("请求号无效");return call("/v1/requests/"+requestId,{method:"GET"});},
+  });
+}
+const MANAGER_REFRESH_CLIENT=MR_INTAKE_ORIGIN?createIntakeClient(MR_INTAKE_ORIGIN):null;
+/* manager-refresh-client:end */
 let _mrBusy=false,_mrMessage="";
 const mrPending=()=>{try{const v=JSON.parse(cfg(MR_PENDING_KEY)||"null");return v&&typeof v.requestId==="string"?v:null;}catch(_){return null;}};
-function mrFormState(){const v=id=>document.getElementById(id);return {fee:v("mrFee").checked,ratio:v("mrRatio").checked,feeDate:v("mrFeeDate").value,ratioDate:v("mrRatioDate").value,ratioReady:MR_RATIO_READY,intakeActive:!!MANAGER_REFRESH_INTAKE,identityVerified:managerDocumentsAuthorized(),draft:!!(EDIT.draft||EDIT.pending||_draftBlocked),pending:!!mrPending(),busy:_mrBusy,online:navigator.onLine};}
+function mrFormState(){const v=id=>document.getElementById(id);return {fee:v("mrFee").checked,ratio:v("mrRatio").checked,feeDate:v("mrFeeDate").value,ratioDate:v("mrRatioDate").value,ratioReady:MR_RATIO_READY,intakeActive:!!MANAGER_REFRESH_CLIENT,identityVerified:managerDocumentsAuthorized(),draft:!!(EDIT.draft||EDIT.pending||_draftBlocked),pending:!!mrPending(),busy:_mrBusy,online:navigator.onLine};}
 function renderManagerRefresh(){
   const v=id=>document.getElementById(id),s=mrFormState(),plan=mrPlan(s),pending=mrPending();
   v("mrRatio").disabled=!MR_RATIO_READY;v("mrAll").disabled=!MR_RATIO_READY;v("mrAll").checked=s.fee&&s.ratio;
   v("mrRatioNote").textContent=MR_RATIO_READY?"":"比例管理尚未就绪（采集与受保护发布未接通），本次不能选择。";
   v("mrRatioDateRow").style.display=s.ratio?"":"none";
-  v("mrSubmit").disabled=!plan.canSubmit;v("mrStatus").style.display=pending?"":"none";v("mrStatus").disabled=_mrBusy||!MANAGER_REFRESH_INTAKE;
+  v("mrSubmit").disabled=!plan.canSubmit;v("mrStatus").style.display=pending?"":"none";v("mrStatus").disabled=_mrBusy||!MANAGER_REFRESH_CLIENT;
   v("mrMsg").innerHTML=(_mrMessage?"<b>"+esc(_mrMessage)+"</b><br>":"")+(pending?"未确认的请求："+esc(pending.requestId.slice(0,8))+"…（"+esc((pending.contents||[]).join("+"))+"）<br>":"")+plan.reasons.map(esc).join("<br>");
 }
 function openManagerRefresh(){
@@ -4982,7 +5025,7 @@ function openManagerRefresh(){
   v("mrFeeDate").max=mrHktDate(now,0);v("mrRatioDate").max=mrHktDate(now,0);
   _mrMessage="";renderManagerRefresh();v("mgrRefresh").classList.add("on");
 }
-const mrDeps=()=>({intake:MANAGER_REFRESH_INTAKE,uuid:()=>crypto.randomUUID(),now:()=>new Date(),savePending:r=>setCfg(MR_PENDING_KEY,JSON.stringify(r)),clearPending:()=>setCfg(MR_PENDING_KEY,"")});
+const mrDeps=()=>({intake:MANAGER_REFRESH_CLIENT,uuid:()=>crypto.randomUUID(),now:()=>new Date(),savePending:r=>setCfg(MR_PENDING_KEY,JSON.stringify(r)),clearPending:()=>setCfg(MR_PENDING_KEY,"")});
 function mrConfirmText(s){
   const parts=[];if(s.fee)parts.push("管理费（数据所属日期 "+s.feeDate+"）");if(s.ratio)parts.push("比例（数据所属日期 "+s.ratioDate+"）");
   return "这次点击将代替你以往发出的“同步已完成，请发布”指示：你确认三个账户在该日期的同步已完成，服务端将按此确认发布 "+parts.join("、")+"。每类内容每个数据日期只能成功发布一次，结果以服务端核验为准。未完成同步请取消；“仅重新读取”不会发布任何内容。";
@@ -4998,7 +5041,7 @@ async function submitManagerRefresh(confirmed){
   try{const r=await mrSubmit(s,mrDeps());_mrMessage=r.text||(r.reasons||[]).join("；");}finally{_mrBusy=false;renderManagerRefresh();}
 }
 async function queryManagerRefresh(){
-  const pending=mrPending();if(_mrBusy||!pending||!MANAGER_REFRESH_INTAKE)return;
+  const pending=mrPending();if(_mrBusy||!pending||!MANAGER_REFRESH_CLIENT)return;
   _mrBusy=true;renderManagerRefresh();try{_mrMessage=(await mrQueryStatus(pending,mrDeps())).text;}finally{_mrBusy=false;renderManagerRefresh();}
 }
 let _manualRefreshing=false;
