@@ -4917,9 +4917,35 @@ function mrBuildRequest(s,requestId,now){
   if(s.fee)r.feeDataDate=s.feeDate;if(s.ratio)r.ratioDataAsOf=s.ratioDate;return r;
 }
 const MR_TEXT={PUBLISHED:"已核验发布成功",ALREADY_PUBLISHED_IN_BATCH:"本轮已核验发布成功",DATE_ALREADY_PUBLISHED_ELSEWHERE:"该数据日期已成功发布过，不再重复发布",HISTORY_AHEAD_OF_TARGET:"已发布的数据比所选日期更新，未发布",LOST_RACE:"另一请求已在处理同一日期，未重复发布",ATTEMPT_IN_FLIGHT:"该日期上次结果仍未确认，未重复发布",CLAIM_UNKNOWN:"服务端记录结果不明，未启动发布",START_UNKNOWN:"启动结果不明，不会自动重试",AWAITING_PUBLICATION:"已启动，尚未核验到发布完成",ATTEMPTS_EXHAUSTED:"该日期尝试次数已用完",PUBLISHER_REFUSED:"发布前被受保护流程拒绝，可在核查后重试",RUN_ENDED_UNPUBLISHED:"运行已结束且未发布，可在核查后重试",CANCELLED_BEFORE_START:"启动前已取消，未发布",FEE_NOT_VERIFIED:"管理费未核验成功，比例未发布",RATIO_REQUIRES_SAME_BATCH_FEE:"比例需要同一轮管理费已核验成功",RATIO_COLLECTOR_NOT_CONFIGURED:"比例采集尚未接通，未发布",RATIO_PUBLISHER_NOT_CONFIGURED:"比例已采集但受保护发布未接通，未发布",BLOCKED_UNSUPPORTED_EXPOSURE:"比例来源不支持 Exposure，未发布",NEEDS_SOURCE_EXPORT:"比例需要来源导出文件，未发布",FEE_PUBLISHER_NOT_CONFIGURED:"服务端发布未接通，未发布",VERIFY_UNAVAILABLE:"暂时无法独立核验发布状态，未发布"};
-const mrStepText=(label,x)=>x?label+"："+(MR_TEXT[x.code]||(x.state==="unknown"?"结果不明，不会自动重试":"未发布（"+String(x.code||x.state).slice(0,48)+"）")):"";
-const mrTerminal=x=>!x||["published","failed","blocked"].includes(x.state);
-function mrOutcomeText(result){return [mrStepText("管理费",result?.fee),mrStepText("比例",result?.ratio)].filter(Boolean).join("；")||"服务端未返回结果";}
+const MR_KIND_LABEL={fee:"管理费",ratio:"比例"};
+const MR_REJECTED=["REQUEST_STALE","REQUEST_INVALID","IDENTITY_UNVERIFIED"];
+function mrStepText(label,x){
+  if(!x||typeof x!=="object")return label+"：服务端尚未返回结果";
+  if(x.state==="published")return label+"：已核验发布成功";
+  if(x.code==="VERIFY_UNAVAILABLE")return label+"：尚无法确认是否已发布";
+  if(MR_TEXT[x.code])return label+"："+MR_TEXT[x.code];
+  if(x.state==="failed"||x.state==="blocked")return label+"：未发布（"+String(x.code||x.state).slice(0,48)+"）";
+  return label+"：状态未确认，不会自动重试";
+}
+// A pending request may be forgotten only on an explicit, trustworthy final
+// answer for THIS request: matching id, and for every requested kind a final
+// state with its code; or an explicit pre-execution rejection. queued, none,
+// duplicate, missing fields and unknown states all keep it pending.
+function mrResolved(result,pending){
+  if(!result||typeof result!=="object"||!pending||result.requestId!==pending.requestId)return false;
+  const kinds=Array.isArray(pending.contents)?pending.contents:[];
+  if(!kinds.length)return false;
+  if(MR_REJECTED.includes(result.code)&&kinds.every(k=>result[k]==null))return true;
+  return kinds.every(k=>{const x=result[k];return !!x&&typeof x==="object"&&["published","failed","blocked"].includes(x.state)&&typeof x.code==="string"&&x.code.length>0;});
+}
+function mrOutcomeText(result,pending){
+  if(!result||typeof result!=="object")return "服务端未返回结果；请求保留，稍后查询";
+  if(result.state==="queued"||result.state==="duplicate")return "已提交，等待服务端处理；结果确认前不能重复提交";
+  if(result.state==="none")return "服务端尚无该请求的记录；为避免重复发布，不会自动重发";
+  if(MR_REJECTED.includes(result.code))return "服务端未执行该请求（"+result.code+"），未发布任何内容";
+  const kinds=pending&&Array.isArray(pending.contents)?pending.contents:["fee","ratio"].filter(k=>result[k]);
+  return kinds.map(k=>mrStepText(MR_KIND_LABEL[k]||k,result[k])).join("；");
+}
 async function mrSubmit(state,deps){
   const plan=mrPlan(state);if(!plan.canSubmit)return {state:"refused",reasons:plan.reasons};
   const request=mrBuildRequest(state,deps.uuid(),deps.now());
@@ -4928,14 +4954,14 @@ async function mrSubmit(state,deps){
   let result;
   try{result=await deps.intake.submit(request);}
   catch(_){return {state:"unknown",request,text:"结果不明：请求可能已到达服务端。不会自动重试，请稍后查询状态。"};}
-  if(mrTerminal(result?.fee)&&mrTerminal(result?.ratio))deps.clearPending();
-  return {state:"done",request,result,text:mrOutcomeText(result)};
+  const done=mrResolved(result,request);if(done)deps.clearPending();
+  return {state:done?"done":"pending",request,result,text:mrOutcomeText(result,request)};
 }
 async function mrQueryStatus(pending,deps){
   let status;try{status=await deps.intake.status(pending.requestId);}catch(_){return {state:"unknown",text:"仍无法确认上次结果；不会重复提交"};}
   if(!status)return {state:"unknown",text:"服务端没有该请求的记录；为避免重复发布，不会自动重发"};
-  if(mrTerminal(status.fee)&&mrTerminal(status.ratio)){deps.clearPending();return {state:"done",text:mrOutcomeText(status)};}
-  return {state:"unknown",text:mrOutcomeText(status)};
+  if(mrResolved(status,pending)){deps.clearPending();return {state:"done",text:mrOutcomeText(status,pending)};}
+  return {state:"unknown",text:mrOutcomeText(status,pending)};
 }
 /* manager-refresh:end */
 let _mrBusy=false,_mrMessage="";
@@ -4957,8 +4983,17 @@ function openManagerRefresh(){
   _mrMessage="";renderManagerRefresh();v("mgrRefresh").classList.add("on");
 }
 const mrDeps=()=>({intake:MANAGER_REFRESH_INTAKE,uuid:()=>crypto.randomUUID(),now:()=>new Date(),savePending:r=>setCfg(MR_PENDING_KEY,JSON.stringify(r)),clearPending:()=>setCfg(MR_PENDING_KEY,"")});
-async function submitManagerRefresh(){
+function mrConfirmText(s){
+  const parts=[];if(s.fee)parts.push("管理费（数据所属日期 "+s.feeDate+"）");if(s.ratio)parts.push("比例（数据所属日期 "+s.ratioDate+"）");
+  return "这次点击将代替你以往发出的“同步已完成，请发布”指示：你确认三个账户在该日期的同步已完成，服务端将按此确认发布 "+parts.join("、")+"。每类内容每个数据日期只能成功发布一次，结果以服务端核验为准。未完成同步请取消；“仅重新读取”不会发布任何内容。";
+}
+function confirmManagerRefresh(){
   if(_mrBusy)return;const s=mrFormState();if(!mrPlan(s).canSubmit)return renderManagerRefresh();
+  document.getElementById("mgrRefresh").classList.remove("on");
+  confirmBox("确认同步已完成并发布",mrConfirmText(s),()=>{document.getElementById("mgrRefresh").classList.add("on");submitManagerRefresh(s);});
+}
+async function submitManagerRefresh(confirmed){
+  if(_mrBusy)return;const s=mrFormState();if(!mrPlan(s).canSubmit||!confirmed||["fee","ratio","feeDate","ratioDate"].some(k=>confirmed[k]!==s[k]))return renderManagerRefresh();
   _mrBusy=true;_mrMessage="正在提交…";renderManagerRefresh();
   try{const r=await mrSubmit(s,mrDeps());_mrMessage=r.text||(r.reasons||[]).join("；");}finally{_mrBusy=false;renderManagerRefresh();}
 }
@@ -5071,7 +5106,7 @@ document.body.addEventListener("click",e=>{const T=e.target;
   if(T.id==="btnRefresh"){if(isMgr())openManagerRefresh();else manualRefresh();return;}
   if(T.id==="mrReadOnly"){document.getElementById("mgrRefresh").classList.remove("on");manualRefresh();return;}
   if(T.id==="mrClose"){document.getElementById("mgrRefresh").classList.remove("on");return;}
-  if(T.id==="mrSubmit"){submitManagerRefresh();return;}
+  if(T.id==="mrSubmit"){confirmManagerRefresh();return;}
   if(T.id==="mrStatus"){queryManagerRefresh();return;}
   if(T.id==="mrAll"){const on=T.checked;document.getElementById("mrFee").checked=on;document.getElementById("mrRatio").checked=on&&MR_RATIO_READY;renderManagerRefresh();return;}
   if(T.id==="mrFee"||T.id==="mrRatio"){renderManagerRefresh();return;}
