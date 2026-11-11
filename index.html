@@ -4928,12 +4928,20 @@ function mrStepText(label,x){
   if(x.state==="failed"||x.state==="blocked")return label+"：未发布（"+String(x.code||x.state).slice(0,48)+"）";
   return label+"：状态未确认，不会自动重试";
 }
-// A pending request may be forgotten only on an explicit, trustworthy final
-// answer for THIS request: matching id, and for every requested kind a final
-// state with its code; or an explicit pre-execution rejection. queued, none,
-// duplicate, missing fields and unknown states all keep it pending.
+// A pending request may be forgotten only with proof it was not queued and
+// not started, or on the job's own final projection for THIS request:
+//  - a failure before any POST (nothing reached the server);
+//  - a rejection of the FIRST POST (the intake guarantees it queued nothing);
+//  - "not-received" once the proof window after the last POST has passed
+//    (a late POST is refused as stale, and a queued one never executes);
+//  - a job projection: matching id, every requested kind final with a code,
+//    or a pre-execution rejection recorded by the job.
+// A rejected RE-delivery, queued, duplicate, a missing projection, missing
+// fields and non-final states all keep it pending.
+const MR_SAFE_AFTER_MS=12*60*1000,MR_RESEND_WITHIN_MS=9*60*1000;
+const mrProjection=r=>!!r&&typeof r==="object"&&r.state!=="rejected"&&"fee" in r&&"ratio" in r;
 function mrResolved(result,pending){
-  if(!result||typeof result!=="object"||!pending||result.requestId!==pending.requestId)return false;
+  if(!mrProjection(result)||!pending||result.requestId!==pending.requestId)return false;
   const kinds=Array.isArray(pending.contents)?pending.contents:[];
   if(!kinds.length)return false;
   if(MR_REJECTED.includes(result.code)&&kinds.every(k=>result[k]==null))return true;
@@ -4941,9 +4949,10 @@ function mrResolved(result,pending){
 }
 function mrOutcomeText(result,pending){
   if(!result||typeof result!=="object")return "服务端未返回结果；请求保留，稍后查询";
-  if(result.state==="queued"||result.state==="duplicate")return "已提交，等待服务端处理；结果确认前不能重复提交";
-  if(result.state==="none")return "服务端尚无该请求的记录；为避免重复发布，不会自动重发";
-  if(MR_REJECTED.includes(result.code))return "服务端未执行该请求（"+result.code+"），未发布任何内容";
+  if(result.state==="queued"||result.state==="duplicate")return "服务端已收到，等待处理；结果确认前不能重复提交";
+  if(result.state==="not-received")return "服务端暂无该请求的接收记录；请求保留，稍后查询";
+  if(result.state==="rejected")return "这次送达被拒（"+String(result.code||"").slice(0,32)+"）；原请求状态仍未确认，请求保留";
+  if(mrProjection(result)&&MR_REJECTED.includes(result.code))return "服务端核验后未执行该请求（"+result.code+"），未发布任何内容";
   const kinds=pending&&Array.isArray(pending.contents)?pending.contents:["fee","ratio"].filter(k=>result[k]);
   return kinds.map(k=>mrStepText(MR_KIND_LABEL[k]||k,result[k])).join("；");
 }
@@ -4951,24 +4960,35 @@ async function mrSubmit(state,deps){
   const plan=mrPlan(state);if(!plan.canSubmit)return {state:"refused",reasons:plan.reasons};
   const request=mrBuildRequest(state,deps.uuid(),deps.now());
   // Remember before sending: a reload or lost reply can never cause a blind resend.
-  deps.savePending(request);
-  let result;
-  try{result=await deps.intake.submit(request,gistVersion=>deps.savePending({...request,gistVersion}));}
-  catch(_){return {state:"unknown",request,text:"结果不明：请求可能已到达服务端。不会自动重试，请稍后查询状态。"};}
+  deps.savePending({...request,posts:0});
+  let posted=false,result;
+  const beforePost=gistVersion=>{posted=true;deps.savePending({...request,gistVersion,posts:1,lastPostAt:deps.now().toISOString()});};
+  try{result=await deps.intake.submit(request,beforePost);}
+  catch(e){
+    if(!posted){deps.clearPending();return {state:"not-sent",request,text:"未送达服务端（"+String(e?.message||"写入失败").slice(0,40)+"），未发布任何内容，可重新提交"};}
+    return {state:"unknown",request,text:"结果不明：请求可能已到达服务端。不会自动重试，请稍后查询状态。"};
+  }
+  if(result&&result.state==="rejected"&&(result.requestId===undefined||result.requestId===request.requestId)){
+    deps.clearPending();return {state:"rejected",request,result,text:"服务端拒绝接收（"+String(result.code||"").slice(0,32)+"），未入队、未发布任何内容"};
+  }
   const done=mrResolved(result,request);if(done)deps.clearPending();
   return {state:done?"done":"pending",request,result,text:mrOutcomeText(result,request)};
 }
 async function mrQueryStatus(pending,deps){
   let status;try{status=await deps.intake.status(pending.requestId);}catch(_){return {state:"unknown",text:"仍无法确认上次结果；不会重复提交"};}
-  if(!status)return {state:"unknown",text:"服务端没有该请求的记录；为避免重复发布，不会自动重发"};
-  // Not yet received by the server: re-deliver the SAME request id and Gist
-  // version only. The server queue is create-only, so this never creates a
-  // second request, and an expired proof is refused there, not here.
-  if(status.state==="none"&&/^[a-f0-9]{40}$/.test(pending.gistVersion||"")&&deps.intake.resend){
-    try{const again=await deps.intake.resend(pending);return {state:"unknown",text:mrOutcomeText(again,pending)};}
-    catch(_){return {state:"unknown",text:"仍无法送达服务端；请求保留，不会生成新请求"};}
-  }
+  if(!status||typeof status!=="object"||status.requestId!==pending.requestId)return {state:"unknown",text:"服务端回复无法对应该请求；请求保留"};
   if(mrResolved(status,pending)){deps.clearPending();return {state:"done",text:mrOutcomeText(status,pending)};}
+  if(status.state==="not-received"){
+    const last=Date.parse(pending.lastPostAt||""),age=deps.now().getTime()-last;
+    if(Number.isFinite(last)&&age>MR_SAFE_AFTER_MS){deps.clearPending();return {state:"done",text:"服务端确认未收到该请求，且已超过有效期，不会再被执行；未发布任何内容"};}
+    // Still inside the proof window: re-deliver the SAME id and version only.
+    // The queue is create-only, so this never creates a second request.
+    if(Number.isFinite(last)&&age<=MR_RESEND_WITHIN_MS&&/^[a-f0-9]{40}$/.test(pending.gistVersion||"")&&deps.intake.resend){
+      deps.savePending({...pending,posts:(pending.posts||1)+1,lastPostAt:deps.now().toISOString()});
+      try{return {state:"unknown",text:mrOutcomeText(await deps.intake.resend(pending),pending)};}
+      catch(_){return {state:"unknown",text:"仍无法送达服务端；请求保留，不会生成新请求"};}
+    }
+  }
   return {state:"unknown",text:mrOutcomeText(status,pending)};
 }
 /* manager-refresh:end */
@@ -5000,7 +5020,9 @@ function createIntakeClient(origin){
   };
   const post=(requestId,gistVersion)=>call("/v1/requests",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({requestId,gistVersion})});
   return Object.freeze({
-    async submit(request,recordVersion){const gistVersion=await writeRefreshRequest(request);recordVersion(gistVersion);return post(request.requestId,gistVersion);},
+    // beforePost runs only after the request file is written and read back,
+    // immediately before the one POST; any earlier failure means nothing was sent.
+    async submit(request,beforePost){const gistVersion=await writeRefreshRequest(request);beforePost(gistVersion);return post(request.requestId,gistVersion);},
     async resend(pending){return post(pending.requestId,pending.gistVersion);},
     async status(requestId){if(!/^[0-9a-f-]{36}$/.test(requestId||""))throw new Error("请求号无效");return call("/v1/requests/"+requestId,{method:"GET"});},
   });
