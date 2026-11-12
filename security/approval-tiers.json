@@ -675,6 +675,13 @@
     "scripts/ib-v3-envelope-evidence.mjs",
     "scripts/ib-v3-envelope-evidence.test.mjs",
     "scripts/fee-source-probe.mjs",
-    "scripts/fee-source-probe.test.mjs"
+    "scripts/fee-source-probe.test.mjs",
+    "docs/fee-manager-refresh.md",
+    "scripts/fee-manager-refresh.mjs",
+    "scripts/fee-manager-refresh.test.mjs",
+    "scripts/fee-manager-refresh-server.mjs",
+    "scripts/fee-manager-refresh-server.test.mjs",
+    "scripts/fee-manager-refresh-entry.mjs",
+    "scripts/fee-manager-refresh-ui.test.mjs"
   ]
 }
