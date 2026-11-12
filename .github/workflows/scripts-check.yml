@@ -137,13 +137,13 @@ jobs:
       - name: Test ratio source intake and synthetic XLSX decoder
         if: ${{ github.event.pull_request.draft == false }}
         run: |
-          node --test --test-concurrency=2 scripts/fee-ratio-source-collector.test.mjs scripts/fee-ratio-linux-library-identity.test.mjs scripts/fee-ratio-intake-snapshot.integration.test.mjs
+          node --test --test-concurrency=2 scripts/fee-ratio-source-collector.test.mjs scripts/fee-ratio-linux-library-identity.test.mjs scripts/fee-ratio-intake-snapshot-integration.test.mjs
           /usr/bin/python3 -I -B scripts/fee-ratio-xlsx.test.py
 
       - name: Test the default-disabled offline ratio assembler and its intake connection with fabricated inputs
         if: ${{ github.event.pull_request.draft == false }}
         run: |
-          (cd scripts/fee-ratio-offline && PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 -m unittest discover -s tests)
+          (cd cloud/fee-ratio-offline && PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 -m unittest discover -s tests)
           node --test scripts/fee-ratio-offline-connection.test.mjs
 
       - name: IB daily read-only comparison fixtures

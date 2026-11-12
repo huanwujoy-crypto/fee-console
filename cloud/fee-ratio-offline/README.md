@@ -30,14 +30,14 @@ the repository's `scripts/fee-ratio-*.mjs` consumers;
 - `tests/test_cli.py` — boundary checks.
 - `tests/connection_helper.py` — test support only; runs the real `cli.main`
   under the same substitutions as the assembler's own tests.
-- `../fee-ratio-offline-connector.mjs` — fixed interpreter
+- `scripts/fee-ratio-offline-connector.mjs` — fixed interpreter
   (`/usr/bin/python3 -I -B cli.py --enabled`, empty environment) → the
   existing `prepareCollectedRatioInput`. A refusal never reaches the intake.
 
 ## Tests
 
 ```
-cd scripts/fee-ratio-offline && PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 -m unittest discover -s tests
+cd cloud/fee-ratio-offline && PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 -m unittest discover -s tests
 node --test scripts/fee-ratio-offline-connection.test.mjs
 ```
 

@@ -32,7 +32,7 @@ fixture uses the same explicit synthetic scope substitution as existing tests.
 ## Run
 
 ```sh
-node --test scripts/fee-ratio-intake-snapshot.integration.test.mjs
+node --test scripts/fee-ratio-intake-snapshot-integration.test.mjs
 ```
 
 All filesystem operations made by these consumers are replaced within each

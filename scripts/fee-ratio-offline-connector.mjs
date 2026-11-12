@@ -1,7 +1,7 @@
 // Connects the offline complete-original assembler to the existing intake.
 //
 //   request (ratio-offline-workbook-batch.v1)
-//     -> scripts/fee-ratio-offline/cli.py   (fixed interpreter, isolated, empty env)
+//     -> cloud/fee-ratio-offline/cli.py   (fixed interpreter, isolated, empty env)
 //     -> the assembler's actual original bytes + SHA-256
 //     -> prepareCollectedRatioInput         (existing intake, unchanged)
 //
@@ -17,7 +17,7 @@ import {prepareCollectedRatioInput} from './fee-ratio-source-collector.mjs';
 import {createLegacyPolicy} from './fee-legacy-policy.mjs';
 
 export const OFFLINE_PYTHON='/usr/bin/python3';
-export const OFFLINE_CLI=fileURLToPath(new URL('./fee-ratio-offline/cli.py',import.meta.url));
+export const OFFLINE_CLI=fileURLToPath(new URL('../cloud/fee-ratio-offline/cli.py',import.meta.url));
 export const OFFLINE_ARGS=Object.freeze(['-I','-B',OFFLINE_CLI,'--enabled']);
 const SCHEMA='fee-console.ratio-offline-assembly.v1';
 const MAX_REQUEST=1024*1024,MAX_STDOUT=8*1024*1024,MAX_ORIGINAL=5*1024*1024;

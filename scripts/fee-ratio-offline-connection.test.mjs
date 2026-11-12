@@ -16,10 +16,10 @@ import {fileURLToPath} from 'node:url';
 import {assembleOfflineOriginal,connectOfflineRatioInput,ratioOfflineFailureCode,OFFLINE_PYTHON,OFFLINE_ARGS,OFFLINE_CLI} from './fee-ratio-offline-connector.mjs';
 import {prepareCollectedRatioInput} from './fee-ratio-source-collector.mjs';
 import {createRankedExposureCore} from './xuan-ib-sharesight-exposure.mjs';
-import {makeFixture,hash,OUTPUT} from './fee-ratio-intake-snapshot.fixture.mjs';
+import {makeFixture,hash,OUTPUT} from './fee-ratio-intake-snapshot-fixture.mjs';
 
-const HELPER=fileURLToPath(new URL('./fee-ratio-offline/tests/connection_helper.py',import.meta.url));
-const REFERENCE=fileURLToPath(new URL('./fee-ratio-offline/adapter/projection_reference/',import.meta.url));
+const HELPER=fileURLToPath(new URL('../cloud/fee-ratio-offline/tests/connection_helper.py',import.meta.url));
+const REFERENCE=fileURLToPath(new URL('../cloud/fee-ratio-offline/adapter/projection_reference/',import.meta.url));
 const tempDirs=[];
 test.after(()=>{for(const d of tempDirs)fs.rmSync(d,{recursive:true,force:true});});
 

@@ -1,7 +1,7 @@
 // Shared synthetic harness for intake -> snapshot composition tests. Test
 // support only: a closed in-memory filesystem; no real files, xattrs,
 // private directories, network or credentials. Moved unchanged out of
-// fee-ratio-intake-snapshot.integration.test.mjs so the offline-assembler
+// fee-ratio-intake-snapshot-integration.test.mjs so the offline-assembler
 // connection test can drive the same real consumers.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';

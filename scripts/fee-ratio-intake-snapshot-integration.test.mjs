@@ -14,7 +14,7 @@ import {createFeeRatioCore} from './fee-ratio-management.mjs';
 import {createRatioSnapshotCore} from './fee-ratio-snapshot.mjs';
 import {createRatioSourceCore} from './fee-ratio-source-core.mjs';
 
-import {makeFixture,hash,NOW,WORKSPACE,OUTPUT} from './fee-ratio-intake-snapshot.fixture.mjs';
+import {makeFixture,hash,NOW,WORKSPACE,OUTPUT} from './fee-ratio-intake-snapshot-fixture.mjs';
 
 // Same invented layout/values as syntheticOfficialSource in the existing
 // official-source tests, kept local so importing it cannot run real-IO tests.
