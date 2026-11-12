@@ -262,6 +262,10 @@ export const notConfiguredRatioCollector = Object.freeze({
 //   wait(ms, signal) / pollMs / deadlineMs
 export function createRefreshCoordinator(deps) {
   const d = { ratioCollector: notConfiguredRatioCollector, ratioPublisher: null, pollMs: 30_000, deadlineMs: 40 * 60_000, ...deps };
+  // An explicitly passed undefined/null must not replace the safe defaults.
+  d.ratioCollector ??= notConfiguredRatioCollector;
+  d.ratioPublisher ??= null;
+  if (typeof d.ratioCollector?.collect !== 'function') fail('VERIFY_UNAVAILABLE');
   if (!d.ledger || typeof d.now !== 'function' || typeof d.wait !== 'function') fail('VERIFY_UNAVAILABLE');
   const nowIso = () => d.now().toISOString();
 

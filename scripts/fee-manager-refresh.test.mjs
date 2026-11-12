@@ -436,3 +436,14 @@ test('genuinely unpublished after a quiescent bracket: definite failure, retryab
   assert.equal(r.fee.code, 'RUN_ENDED_UNPUBLISHED');
   assert.equal((await kindState(ledger, 'fee', D)).state, 'retryable');
 });
+
+test('an explicitly undefined or null ratio collector keeps the not-configured default', async () => {
+  for (const ratioCollector of [undefined, null]) {
+    const w = world(), { c } = coordinator(w, undefined, { ratioCollector });
+    const r = await c.submit(req(['fee', 'ratio']), ID);
+    assert.equal(r.fee.code, 'PUBLISHED');
+    assert.deepEqual(r.ratio, { state: 'blocked', code: 'RATIO_COLLECTOR_NOT_CONFIGURED' });
+  }
+  const w = world();
+  assert.throws(() => coordinator(w, undefined, { ratioCollector: {} }), { code: 'VERIFY_UNAVAILABLE' });
+});
