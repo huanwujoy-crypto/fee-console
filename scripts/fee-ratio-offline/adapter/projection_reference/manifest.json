@@ -1,0 +1,11 @@
+{
+  "codeReferenceBase": "6de56ffb708e8995edfc3b67895841ab474a2c02",
+  "files": {
+    "fee-ratio-official-source.mjs": "013301288812b4a043a96edabca5e66ecbcf5bdb59881473cb18fe23c9810842",
+    "fee-ratio-company-exposure.mjs": "d04f8dfad864c6c5f93ccfac38f476432040be191a1989c65dda7aca1c1ced2c",
+    "fee-ratio-aggregate-returns.mjs": "a4dcfc93b9eb14409eb3da553459c6e32c8655b8689cae73ae8599cd5e5d4448",
+    "fee-ratio-source-core.mjs": "0a53193f0a1e67d0a50aa5806bb30860b86c6f080280b68507303b86d2a27461"
+  },
+  "sourceOriginAuthentication": false,
+  "currentCloudCompatibilityValidated": false
+}
