@@ -29,8 +29,11 @@ export function readConfig(env, role) {
   if (role === 'serve' && !/^projects\/[a-z][a-z0-9-]{4,29}\/locations\/[a-z0-9-]+\/jobs\/[a-z][a-z0-9-]{0,48}$/.test(c.job)) throw new Error('FEE_REFRESH_CONFIG');
   const buckets = [c.queueBucket, c.statusBucket, c.ledgerBucket].filter(Boolean);
   if (new Set(buckets).size !== buckets.length) throw new Error('FEE_REFRESH_CONFIG');
-  if (mode === 'acceptance' && !buckets.every(b => b.endsWith('-acceptance'))) throw new Error('FEE_REFRESH_CONFIG');
-  if (mode === 'launch' && buckets.some(b => b.endsWith('-acceptance'))) throw new Error('FEE_REFRESH_CONFIG');
+  // Acceptance and production never share a bucket or a job: every
+  // acceptance name ends in -acceptance and no production name does.
+  const names = [...buckets, ...(c.job ? [c.job.split('/').pop()] : [])];
+  if (mode === 'acceptance' && !names.every(b => b.endsWith('-acceptance'))) throw new Error('FEE_REFRESH_CONFIG');
+  if (mode === 'launch' && names.some(b => b.endsWith('-acceptance'))) throw new Error('FEE_REFRESH_CONFIG');
   return c;
 }
 
@@ -79,7 +82,7 @@ export function readToken(file = TOKEN_FILE) {
 export function createIntakeHandler(config, deps) {
   if (config.mode === 'disabled') return async () => ({ status: 503, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }, body: '{"code":"INTAKE_NOT_ACTIVE"}' });
   const queue = createGcsBucket({ http: deps.http, bucket: config.queueBucket }), status = createGcsBucket({ http: deps.http, bucket: config.statusBucket });
-  return req => handleIntake(req, { http: deps.http, queue, status, gistId: config.gistId, now: deps.now, runJob: startJob(deps.http, config.job) });
+  return req => handleIntake(req, { http: deps.http, queue, status, gistId: config.gistId, now: deps.now, runJob: startJob(deps.http, config.job), mode: config.mode });
 }
 
 export async function runJob(config, deps) {
@@ -90,9 +93,19 @@ export async function runJob(config, deps) {
   return { mode: config.mode, handled: results.length, codes: results.map(r => r.code || r.fee || 'none') };
 }
 
+// Credential isolation: an acceptance job must run with no GitHub credential
+// mounted at all; a launch job must have one. Anything else refuses to start.
+export function credentialFor(config, role, exists = fs.existsSync) {
+  if (config.mode === 'disabled' || role !== 'job') return null;
+  const present = exists(TOKEN_FILE);
+  if (config.mode === 'acceptance') { if (present) throw new Error('FEE_REFRESH_ISOLATION'); return null; }
+  if (!present) throw new Error('FEE_REFRESH_TOKEN');
+  return () => readToken();
+}
+
 async function main(role) {
   const config = readConfig(process.env, role);
-  const deps = { http: createHttp({ metadataToken: createMetadataToken() }), now: () => new Date(), wait: ms => new Promise(r => setTimeout(r, ms)), readToken: () => readToken() };
+  const deps = { http: createHttp({ metadataToken: createMetadataToken() }), now: () => new Date(), wait: ms => new Promise(r => setTimeout(r, ms)), readToken: credentialFor(config, role) };
   if (role === 'job') { process.stdout.write(JSON.stringify(await runJob(config, deps)) + '\n'); return; }
   const handler = createIntakeHandler(config, deps);
   http.createServer((req, res) => {
