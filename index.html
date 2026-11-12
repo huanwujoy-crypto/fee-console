@@ -5017,7 +5017,24 @@ async function writeRefreshRequest(request){
 function createIntakeClient(origin){
   const call=async(path,init)=>{
     const ac=new AbortController(),timer=setTimeout(()=>ac.abort(),15000);
-    try{const r=await freshFetch(origin+path,{...init,cache:"no-store",credentials:"omit",redirect:"error",referrerPolicy:"no-referrer",signal:ac.signal});const v=await r.json().catch(()=>null);if(!v||typeof v!=="object")throw new Error("服务端回复无法识别");return v;}
+    try{
+      const r=await freshFetch(origin+path,{...init,cache:"no-store",credentials:"omit",redirect:"error",referrerPolicy:"no-referrer",signal:ac.signal});
+      const v=await r.json().catch(()=>null);if(!v||typeof v!=="object"||Array.isArray(v))throw new Error("服务端回复无法识别");
+      // Match the intake's status/body contract before a reply can clear a
+      // pending request. Error HTTP replies can never prove publication or close.
+      const ack=!("fee" in v)&&!("ratio" in v)&&!("code" in v);
+      let valid=false;
+      if(path==="/v1/requests"){
+        const rejected={400:["REQUEST_INVALID","REQUEST_STALE"],403:["IDENTITY_UNVERIFIED"],409:["REQUEST_CLOSED"],503:["VERIFY_UNAVAILABLE"]};
+        valid=(r.status===202&&ack&&["queued","duplicate","unknown"].includes(v.state))||
+          (Number.isInteger(r.status)&&v.state==="rejected"&&!("fee" in v)&&!("ratio" in v)&&rejected[r.status]?.includes(v.code));
+      }else if(init.method==="GET"){
+        valid=r.status===200&&((mrProjection(v)&&!("state" in v))||(ack&&["queued","closed","not-received"].includes(v.state)));
+      }else{
+        valid=ack&&((r.status===200&&["closed","received","queued","unknown"].includes(v.state))||(r.status===503&&v.state==="unknown"));
+      }
+      if(!valid)throw new Error("服务端 HTTP 状态与回复不一致");return v;
+    }
     finally{clearTimeout(timer);}
   };
   const post=(requestId,gistVersion)=>call("/v1/requests",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({requestId,gistVersion})});

@@ -22,7 +22,7 @@ const START = '/* manager-refresh:start */', END = '/* manager-refresh:end */';
 const from = html.indexOf(START), to = html.indexOf(END);
 assert.ok(from >= 0 && to > from && html.indexOf(START, from + 1) === -1, 'one manager-refresh block');
 const block = html.slice(from, to);
-const MR = new Function(`${block}\nreturn {MR_RATIO_READY,mrPlan,mrBuildRequest,mrSubmit,mrQueryStatus,mrOutcomeText,mrHktDate,mrResolved,mrStepText};`)();
+const MR = new Function(`${block}\nreturn {MR_RATIO_READY,mrPlan,mrBuildRequest,mrSubmit,mrQueryStatus,mrOutcomeText,mrHktDate,mrResolved,mrStepText,mrProjection};`)();
 
 const ok = { fee: true, ratio: false, feeDate: '2026-11-10', ratioDate: '2026-11-10', ratioReady: false, intakeActive: true, identityVerified: true, draft: false, pending: false, busy: false, online: true };
 const ID = '0b0c0d0e-1f2a-4b3c-8d4e-5f6a7b8c9d0e';
@@ -131,15 +131,27 @@ test('status text: published is success; unavailable is not asserted as unpublis
 });
 
 // ---- end-to-end (synthetic): page block + page-shaped client + real intake + real job
-async function e2e({ start = new Date('2026-11-11T02:00:00.000Z') } = {}) {
+async function e2e({ start = new Date('2026-11-11T02:00:00.000Z'), admissionReady = false } = {}) {
   const srv = await import('./fee-manager-refresh-server.mjs');
   const core = await import('./fee-manager-refresh.mjs');
   const GIST = 'a'.repeat(32);
+  const healthCore = await import('./fee-data-health.mjs');
+  const encode = v => new TextEncoder().encode(typeof v === 'string' ? v : JSON.stringify(v));
+  const previousData = encode({ enc: true, v: 1, data: 'synthetic-previous-publication-only' });
+  const previousHealth = healthCore.buildHealth({ checkedAt: start.toISOString(), targetDate: '2026-11-09',
+    sourceDates: { schwab: '2026-11-09', webull: '2026-11-09', benchmark: '2026-11-09' }, outcome: 'updated', dataSha256: pageHash(previousData) });
   const bucket = () => { const b = core.createMemoryLedger(); b.names = async p => (await b.list(p)).map(x => x.key); return b; };
   // serverNow and browserNow are separate clocks.
-  const env = { serverNow: start, browserNow: start, queue: bucket(), status: bucket(), ledger: bucket(), gist: null, version: null, committedAt: null, jobStarts: 0, postMode: 'ok', posts: [], held: [] };
+  const env = { serverNow: start, browserNow: start, queue: bucket(), status: bucket(), ledger: bucket(), gist: null, version: null, committedAt: null, jobStarts: 0, postMode: 'ok', posts: [], held: [], upstream: [] };
   const serverClock = () => new Date(env.serverNow.getTime()), browserClock = () => new Date(env.browserNow.getTime());
   const gistHttp = async (method, url) => {
+    env.upstream.push({ method, url });
+    if (admissionReady) {
+      assert.equal(method, 'GET', 'acceptance must never dispatch a producer');
+      if (url === srv.API + '/git/ref/heads/main') return { status: 200, bytes: encode({ object: { sha: 'c'.repeat(40) } }) };
+      if (url === srv.API + '/contents/data.json?ref=' + 'c'.repeat(40)) return { status: 200, bytes: previousData };
+      if (url === srv.API + '/contents/fee-data-health.json?ref=' + 'c'.repeat(40)) return { status: 200, bytes: encode(previousHealth) };
+    }
     if (url !== 'https://api.github.com/gists/' + GIST || !env.gist) return { status: 503, bytes: new Uint8Array() };
     return { status: 200, bytes: new TextEncoder().encode(JSON.stringify({ id: GIST, public: false, owner: { id: core.OWNER_ID },
       history: [{ version: env.version, committed_at: env.committedAt, user: { id: core.OWNER_ID } }],
@@ -173,9 +185,9 @@ async function e2e({ start = new Date('2026-11-11T02:00:00.000Z') } = {}) {
   };
   const ps = pendingStore();
   const d = deps(client, ps, { uuid: () => crypto.randomUUID(), now: browserClock });
-  const job = () => srv.runRefreshJob({ ledger: env.ledger, queue: env.queue, status: env.status, http: gistHttp, gistId: GIST, now: serverClock, wait: async () => {}, readToken: () => 'synthetic-token-not-real-0000', validateHealth: () => [], mode: 'acceptance' });
+  const job = () => srv.runRefreshJob({ ledger: env.ledger, queue: env.queue, status: env.status, http: gistHttp, gistId: GIST, now: serverClock, wait: async () => {}, readToken: () => 'synthetic-token-not-real-0000', validateHealth: admissionReady ? healthCore.validateHealth : () => [], mode: 'acceptance' });
   const advance = ms => { env.serverNow = new Date(env.serverNow.getTime() + ms); env.browserNow = new Date(env.browserNow.getTime() + ms); };
-  return { env, ps, d, job, advance, source, client, srv, core, only: () => [...ps.m.values()][0] };
+  return { env, ps, d, job, advance, source, client, srv, core, intakeDeps, only: () => [...ps.m.values()][0] };
 }
 const okAt = { ...ok, feeDate: '2026-11-10' };
 
@@ -313,14 +325,15 @@ test('Hong Kong date default', () => {
 // ---- real client (extracted block, injected page globals; no network)
 const CS = '/* manager-refresh-client:start */', CE = '/* manager-refresh-client:end */';
 const clientBlock = html.slice(html.indexOf(CS), html.indexOf(CE));
-function client({ patchReply, fetchReplies = [], authorized = true, draft = null } = {}) {
+function client({ patchReply, fetchReplies = [], fetchImpl, gistId = 'g'.repeat(32), authorized = true, draft = null } = {}) {
   const calls = { patch: [], fetch: [] }, live = { token: 'synthetic-token-not-real-0000' };
   const env = {
+    mrProjection: MR.mrProjection,
     managerDocumentsAuthorized: () => authorized, EDIT: { draft, pending: null }, _draftBlocked: false, _ledgerBusy: false,
-    cfg: k => (k === 'gid' ? 'g'.repeat(32) : k === 'tok' ? live.token : ''), K: { gid: 'gid', tok: 'tok' }, _sourceEpoch: 7,
+    cfg: k => (k === 'gid' ? gistId : k === 'tok' ? live.token : ''), K: { gid: 'gid', tok: 'tok' }, _sourceEpoch: 7,
     _managerCapability: { ownerId: 283054367 },
     ghApi: async (path, opt) => { calls.patch.push({ path, opt }); return typeof patchReply === 'function' ? patchReply(opt, live) : patchReply; },
-    freshFetch: async (url, init) => { calls.fetch.push({ url, init }); const v = fetchReplies.shift(); return { json: async () => v }; },
+    freshFetch: async (url, init) => { calls.fetch.push({ url, init }); if (fetchImpl) return fetchImpl(url, init); const v = fetchReplies.shift(); return { status: new URL(url).pathname === '/v1/requests' ? 202 : 200, json: async () => v }; },
   };
   const names = Object.keys(env);
   const fn = new Function(...names, `${clientBlock.replace('const MR_INTAKE_ORIGIN=null;', 'const MR_INTAKE_ORIGIN="https://intake.example.invalid";')}\nreturn {createIntakeClient, MANAGER_REFRESH_CLIENT, writeRefreshRequest, get pending(){return _mrRequestWrite;}};`);
@@ -375,9 +388,251 @@ test('client: close and status are plain credential-less calls; no resend exists
   assert.equal(api.MANAGER_REFRESH_CLIENT.resend, undefined);
 });
 
+test('client HTTP: submit accepts only the intake acknowledgements and explicit status/code rejections', async () => {
+  const cases = [
+    ...['queued', 'duplicate', 'unknown'].map(state => [202, { requestId: ID, state }, 'pending']),
+    ...[[400, 'REQUEST_INVALID'], [400, 'REQUEST_STALE'], [403, 'IDENTITY_UNVERIFIED'], [409, 'REQUEST_CLOSED'], [503, 'VERIFY_UNAVAILABLE']]
+      .map(([status, code]) => [status, { requestId: ID, state: 'rejected', code }, 'rejected']),
+  ];
+  for (const [status, body, expected] of cases) {
+    const browser = client({ patchReply: goodPatch, fetchImpl: async () => ({ status, json: async () => body }) });
+    const d = deps(browser.api.MANAGER_REFRESH_CLIENT), result = await MR.mrSubmit(ok, d);
+    assert.equal(result.state, expected, JSON.stringify({ status, body }));
+    assert.equal(d.ps.has(ID), expected === 'pending');
+    assert.equal(browser.calls.fetch.length, 1, 'one POST, no retry');
+  }
+});
+
+test('client HTTP: contradictory submit replies retain the posted request without success or blind resend', async () => {
+  const final = { requestId: ID, contents: ['fee'], fee: { state: 'published', code: 'PUBLISHED' }, ratio: null };
+  const cases = [
+    ...[200, 201, 400, 403, 409, 429, 500, 503].map(status => [status, { requestId: ID, state: 'queued' }]),
+    ...[202, 400, 503].map(status => [status, final]),
+    [202, { requestId: ID, state: 'rejected', code: 'REQUEST_INVALID' }],
+    [403, { requestId: ID, state: 'rejected', code: 'REQUEST_STALE' }],
+    [503, { code: 'INTAKE_NOT_ACTIVE' }],
+    [503, { requestId: ID, state: 'rejected', code: 'VERIFY_UNAVAILABLE', fee: final.fee }],
+  ];
+  for (const [status, body] of cases) {
+    const browser = client({ patchReply: goodPatch, fetchImpl: async () => ({ status, json: async () => body }) });
+    const d = deps(browser.api.MANAGER_REFRESH_CLIENT), result = await MR.mrSubmit(ok, d);
+    assert.equal(result.state, 'unknown', JSON.stringify({ status, body }));
+    assert.equal(d.ps.get(ID).posts, 1);
+    assert.equal((await MR.mrSubmit({ ...ok, pending: true }, d)).state, 'refused');
+    assert.equal(browser.calls.fetch.length, 1, 'uncertain delivery is never retried');
+  }
+});
+
+test('client HTTP: only HTTP 200 query proofs or a valid atomic close resolve a pending request', async () => {
+  const pending = { ...reqObj(), requestId: ID, posts: 1 };
+  const final = { requestId: ID, contents: ['fee'], fee: { state: 'published', code: 'PUBLISHED' }, ratio: null };
+  for (const [status, body, done] of [[200, final, true], [200, { requestId: ID, state: 'closed' }, true],
+    [503, final, false], [503, { requestId: ID, state: 'closed' }, false],
+    [404, { requestId: ID, state: 'not-received' }, false], [202, { requestId: ID, state: 'queued' }, false]]) {
+    const browser = client({ fetchImpl: async () => ({ status, json: async () => body }) });
+    const d = deps(browser.api.MANAGER_REFRESH_CLIENT); d.ps.save(pending);
+    const result = await MR.mrQueryStatus(pending, d);
+    assert.equal(result.state, done ? 'done' : 'unknown'); assert.equal(d.ps.has(ID), !done);
+    assert.deepEqual(browser.calls.fetch.map(c => c.init.method), ['GET'], 'query error cannot close or resubmit');
+    assert.equal(browser.calls.patch.length, 0);
+  }
+  for (const [status, state, done] of [[200, 'closed', true], [200, 'received', false], [200, 'queued', false],
+    [200, 'unknown', false], [503, 'unknown', false], [503, 'closed', false], [202, 'closed', false]]) {
+    const browser = client({ fetchImpl: async (_url, init) => init.method === 'GET'
+      ? { status: 200, json: async () => ({ requestId: ID, state: 'not-received' }) }
+      : { status, json: async () => ({ requestId: ID, state }) } });
+    const d = deps(browser.api.MANAGER_REFRESH_CLIENT); d.ps.save(pending);
+    const result = await MR.mrQueryStatus(pending, d);
+    assert.equal(result.state, done ? 'done' : 'unknown'); assert.equal(d.ps.has(ID), !done);
+    assert.deepEqual(browser.calls.fetch.map(c => [c.init.method, new URL(c.url).pathname]),
+      [['GET', '/v1/requests/' + ID], ['POST', '/v1/requests/' + ID + '/close']], 'only atomic close follows not-received');
+    assert.equal(browser.calls.patch.length, 0);
+  }
+});
+
 test('page allows the request write only through its own exact reviewed allowance; pending keys are per request', () => {
   assert.ok(html.includes('const refreshRequestWrite=method==="PATCH"&&reviewedRefreshRequest&&reviewedRefreshRequest===_mrRequestWrite'));
   assert.ok(html.includes('request.body===JSON.stringify({files:{[MR_REQUEST_FILE]:{content:reviewedRefreshRequest.raw}}})'));
   assert.ok(html.includes('!ratioSnapshotWrite&&!refreshRequestWrite)throw'));
   assert.ok(html.includes('clearPending:id=>setCfg(MR_PENDING_PREFIX+id,"")'));
+});
+
+async function actualClientAcceptance({ replyLost = false } = {}) {
+  const t = await e2e({ admissionReady: true });
+  const gid = 'a'.repeat(32);
+  const browser = client({ gistId: gid, patchReply: opt => {
+    t.env.gist = JSON.parse(opt.body).files[t.srv.REQUEST_FILE].content;
+    t.env.version = 'b'.repeat(40); t.env.committedAt = t.env.serverNow.toISOString();
+    return { id: gid, owner: { id: t.core.OWNER_ID }, history: [{ version: t.env.version }], files: { [t.srv.REQUEST_FILE]: { content: t.env.gist } } };
+  }, fetchImpl: async (url, init) => {
+    assert.equal(init.credentials, 'omit'); assert.equal(init.redirect, 'error');
+    assert.ok(!JSON.stringify({ url, init }).includes('synthetic-token'), 'no manager credential reaches intake');
+    const path = new URL(url).pathname;
+    const response = await t.srv.handleIntake({ method: init.method, path, body: init.body, headers: { origin: t.srv.ALLOWED_ORIGIN } }, t.intakeDeps);
+    if (init.method === 'POST' && path === '/v1/requests' && replyLost) throw Error('synthetic reply lost after queue');
+    return new Response(response.body, { status: response.status, headers: response.headers });
+  } });
+  return { ...t, browser, d: { ...t.d, intake: browser.api.MANAGER_REFRESH_CLIENT } };
+}
+
+test('actual page client -> intake -> acceptance job -> final status refuses publication and clears only its pending request', async () => {
+  for (const contents of [['fee'], ['fee', 'ratio']]) {
+    const t = await actualClientAcceptance();
+    // The second case models an older client requesting an unavailable ratio;
+    // the shipped page itself still disables that choice.
+    const state = { ...okAt, ratio: contents.includes('ratio'), ratioReady: true };
+    assert.equal((await MR.mrSubmit(state, t.d)).state, 'pending'); const pending = t.only();
+    assert.equal(t.env.jobStarts, 1); t.advance(60_000);
+    assert.equal((await t.job())[0].fee, 'PUBLISHER_REFUSED');
+    const final = await t.client.status(pending.requestId);
+    assert.equal(final.fee.state, 'failed'); assert.equal(final.fee.code, 'PUBLISHER_REFUSED');
+    if (contents.includes('ratio')) { assert.equal(final.ratio.state, 'blocked'); assert.equal(final.ratio.code, 'FEE_NOT_VERIFIED'); }
+    const result = await MR.mrQueryStatus(pending, t.d);
+    assert.equal(result.state, 'done'); assert.doesNotMatch(result.text, /已核验发布成功/); assert.equal(t.ps.m.size, 0);
+    assert.equal(await t.env.ledger.get(t.core.keys.published('fee', '2026-11-10')), null);
+    assert.deepEqual(await t.job(), [], 'finished request is never executed twice');
+    assert.equal(t.browser.calls.patch.length, 1);
+    assert.equal(t.browser.calls.fetch.filter(c => c.init.method === 'POST').length, 1);
+    assert.ok(t.env.upstream.every(c => c.method === 'GET'), 'zero producer dispatches');
+  }
+});
+
+test('actual page client keeps a lost queued reply across reload and resolves by GET without resending', async () => {
+  const t = await actualClientAcceptance({ replyLost: true });
+  assert.equal((await MR.mrSubmit(okAt, t.d)).state, 'unknown'); const persisted = JSON.parse(JSON.stringify(t.only()));
+  assert.equal(t.env.jobStarts, 1); t.advance(60_000); await t.job();
+  const reloaded = { ...t.d, intake: t.browser.api.createIntakeClient('https://intake.example.invalid') };
+  assert.equal((await MR.mrQueryStatus(persisted, reloaded)).state, 'done'); assert.equal(t.ps.m.size, 0);
+  assert.equal(t.browser.calls.patch.length, 1); assert.equal(t.browser.calls.fetch.filter(c => c.init.method === 'POST').length, 1);
+});
+
+test('actual page ratio readiness blocks submission before any Gist or intake request', async () => {
+  const t = await actualClientAcceptance();
+  const result = await MR.mrSubmit({ ...okAt, ratio: true, ratioReady: MR.MR_RATIO_READY }, t.d);
+  assert.equal(result.state, 'refused'); assert.equal(t.browser.calls.patch.length, 0); assert.equal(t.browser.calls.fetch.length, 0);
+  assert.equal(t.env.queue.rows.size, 0); assert.equal(t.env.ledger.rows.size, 0);
+});
+
+// Execute the shipped form functions and click clauses against deliberately
+// simulated controls/storage. This is not a DOM renderer or browser acceptance.
+function formFixture({ active = false, storage = new Map(), replyLost = false } = {}) {
+  const formStart = html.indexOf('let _mrBusy=false,_mrMessage="";');
+  const formEnd = html.indexOf('let _manualRefreshing=false;', formStart);
+  const clickStart = html.indexOf('if(T.id==="btnRefresh"){', html.indexOf('document.body.addEventListener("click",e=>{const T=e.target;'));
+  const clickEnd = html.indexOf('if(T.id==="btnRepairViewer"){', clickStart);
+  const confirmationStart = html.indexOf('document.getElementById("cfmCancel").onclick=');
+  const confirmationEnd = html.indexOf('document.body.addEventListener("click",e=>{const T=e.target;', confirmationStart);
+  assert.ok(formStart > 0 && formEnd > formStart && clickEnd > clickStart && confirmationEnd > confirmationStart);
+  const markup = html.slice(html.indexOf('<div class="ovl" id="cfm">'), html.indexOf('<div class="ovl" id="share">'));
+  const handlers = [], elements = new Map(), calls = { patch: [], post: [], status: [], close: [], readOnly: 0 };
+  const live = { role: 'manager', authorized: true, token: 'synthetic-form-token-only', final: false, replyLost };
+  function element(id, attributes = '') {
+    const classes = new Set(), node = { id, checked: /\bchecked\b/.test(attributes), disabled: false, value: '',
+      type: /type="([^"]+)"/.exec(attributes)?.[1] || '', style: {}, textContent: '', innerHTML: '', onclick: null,
+      classList: { add: v => classes.add(v), remove: v => classes.delete(v), contains: v => classes.has(v) },
+      click() { if (node.disabled) return; if (node.type === 'checkbox') node.checked = !node.checked;
+        node.onclick?.(); for (const fn of handlers) fn({ target: node }); } };
+    elements.set(id, node); return node;
+  }
+  for (const tag of markup.matchAll(/<(?:div|h3|p|label|button|input)\b[^>]*\bid="([^"]+)"[^>]*>/g)) element(tag[1], tag[0]);
+  element('btnRefresh');
+  const document = { getElementById: id => { assert.ok(elements.has(id), id); return elements.get(id); },
+    body: { addEventListener: (kind, fn) => { assert.equal(kind, 'click'); handlers.push(fn); } } };
+  const store = { get length() { return storage.size; }, key: i => [...storage.keys()][i] ?? null,
+    getItem: key => storage.get(key) ?? null };
+  const EDIT = { draft: null, pending: null };
+  const cfg = key => key === 'gid' ? 'a'.repeat(32) : key === 'tok' ? live.token : storage.get(key) || '';
+  const setCfg = (key, value) => { if (value === '') storage.delete(key); else storage.set(key, value); };
+  const env = { document, store, cfg, setCfg, EDIT, navigator: { onLine: true }, crypto,
+    K: { gid: 'gid', tok: 'tok' }, _sourceEpoch: 7, _draftBlocked: false, _ledgerBusy: false,
+    _managerCapability: { ownerId: 283054367 }, isMgr: () => live.role === 'manager',
+    managerDocumentsAuthorized: () => live.authorized && live.role === 'manager',
+    manualRefresh: () => { calls.readOnly++; },
+    ghApi: async (path, options) => {
+      assert.equal(path, '/gists/' + 'a'.repeat(32)); assert.equal(options.method, 'PATCH');
+      const body = JSON.parse(options.body); assert.deepEqual(Object.keys(body.files), ['fee-manager-refresh-request.json']);
+      calls.patch.push(body);
+      return { id: 'a'.repeat(32), owner: { id: 283054367 }, history: [{ version: 'b'.repeat(40) }], files: body.files };
+    },
+    freshFetch: async (url, init) => {
+      assert.ok(url.startsWith('https://intake.example.invalid/v1/requests'));
+      assert.equal(init.credentials, 'omit'); assert.equal(init.redirect, 'error');
+      assert.ok(!JSON.stringify({ url, init }).includes(live.token));
+      const path = new URL(url).pathname;
+      if (init.method === 'POST' && path === '/v1/requests') {
+        const body = JSON.parse(init.body); calls.post.push(body);
+        if (live.replyLost) throw Error('synthetic reply lost');
+        return { status: 202, json: async () => ({ requestId: body.requestId, state: 'queued' }) };
+      }
+      const id = path.split('/')[3];
+      if (init.method === 'GET') {
+        calls.status.push(id);
+        return { status: 200, json: async () => live.final ? { requestId: id, contents: ['fee'], fee: { state: 'failed', code: 'PUBLISHER_REFUSED' }, ratio: null }
+          : { requestId: id, state: 'queued' } };
+      }
+      assert.equal(path, '/v1/requests/' + id + '/close'); calls.close.push(id);
+      return { status: 200, json: async () => ({ requestId: id, state: 'closed' }) };
+    } };
+  const confirmation = html.match(/^let _cfmCb=null;$/m)?.[0] + '\n' + html.match(/^function confirmBox\(title,msg,cb\)\{[^\n]+$/m)?.[0];
+  const escape = html.match(/^const esc=s=>[^\n]+$/m)?.[0]; assert.ok(escape && !confirmation.includes('undefined'));
+  const clientCode = active ? clientBlock.replace('const MR_INTAKE_ORIGIN=null;', 'const MR_INTAKE_ORIGIN="https://intake.example.invalid";') : clientBlock;
+  const names = Object.keys(env), run = new Function(...names, [block, clientCode, escape, confirmation,
+    html.slice(formStart, formEnd), html.slice(confirmationStart, confirmationEnd),
+    'document.body.addEventListener("click",e=>{const T=e.target;' + html.slice(clickStart, clickEnd) + '});',
+    'return {mrPendings,mrFormState,renderManagerRefresh,get busy(){return _mrBusy;},get message(){return _mrMessage;}};'].join('\n'));
+  return { api: run(...names.map(name => env[name])), live, calls, EDIT, storage, el: id => document.getElementById(id),
+    sourceSha256: pageHash(html) };
+}
+async function settleForm(t) {
+  for (let i = 0; i < 100 && t.api.busy; i++) await new Promise(resolve => setImmediate(resolve));
+  assert.equal(t.api.busy, false, 'form operation settled');
+}
+
+test('shipped form click routing preserves inactive publishing, disabled ratio and ordinary read-only refresh', () => {
+  const t = formFixture(); assert.equal(t.sourceSha256, aggregateUiFixture.nextSha256);
+  t.el('btnRefresh').click(); assert.equal(t.el('mgrRefresh').classList.contains('on'), true);
+  for (const id of ['mrRatio', 'mrAll', 'mrSubmit']) assert.equal(t.el(id).disabled, true, id);
+  assert.match(t.el('mrMsg').innerHTML, /尚未激活/); assert.match(t.el('mrRatioNote').textContent, /尚未就绪/);
+  t.el('mrAll').click(); assert.equal(t.el('mrAll').checked, false);
+  t.el('mrReadOnly').click(); assert.equal(t.calls.readOnly, 1); assert.equal(t.el('mgrRefresh').classList.contains('on'), false);
+  t.live.role = 'viewer'; t.el('btnRefresh').click(); assert.equal(t.calls.readOnly, 2);
+  assert.equal(t.el('mgrRefresh').classList.contains('on'), false); assert.equal(t.calls.patch.length + t.calls.post.length, 0);
+});
+
+test('form confirmation cancellation and changed date, identity or draft never submit the confirmed old state', async () => {
+  const t = formFixture({ active: true });
+  t.el('btnRefresh').click(); t.el('mrSubmit').click(); assert.equal(t.el('cfm').classList.contains('on'), true);
+  assert.match(t.el('cfmMsg').textContent, /同步已完成/);
+  t.el('cfmCancel').click(); assert.equal(t.el('cfm').classList.contains('on'), false);
+  assert.equal(t.calls.patch.length + t.calls.post.length, 0);
+  for (const change of [() => { t.el('mrFeeDate').value = t.el('mrFeeDate').value === '2026-11-09' ? '2026-11-08' : '2026-11-09'; },
+    () => { t.live.authorized = false; }, () => { t.EDIT.draft = {}; }]) {
+    t.live.authorized = true; t.EDIT.draft = null;
+    t.el('btnRefresh').click(); t.el('mrSubmit').click(); change(); t.el('cfmOk').click(); await settleForm(t);
+    assert.equal(t.calls.patch.length + t.calls.post.length, 0); assert.equal(t.api.mrPendings().length, 0);
+  }
+});
+
+test('form double confirmation submits once, locks while pending and displays refusal after status-only readback', async () => {
+  const t = formFixture({ active: true });
+  t.el('btnRefresh').click(); assert.equal(t.el('mrSubmit').disabled, false);
+  t.el('mrSubmit').click(); t.el('cfmOk').click(); t.el('cfmOk').click(); await settleForm(t);
+  assert.equal(t.calls.patch.length, 1); assert.equal(t.calls.post.length, 1); assert.equal(t.api.mrPendings().length, 1);
+  assert.equal(t.el('mrSubmit').disabled, true); assert.equal(t.el('mrStatus').disabled, false);
+  t.el('mrSubmit').click(); t.el('mrStatus').click(); await settleForm(t);
+  assert.equal(t.api.mrPendings().length, 1); assert.equal(t.calls.post.length, 1);
+  t.live.final = true; t.el('mrStatus').click(); await settleForm(t);
+  assert.equal(t.api.mrPendings().length, 0); assert.match(t.api.message, /发布前被受保护流程拒绝/);
+  assert.doesNotMatch(t.api.message, /已核验发布成功/); assert.equal(t.calls.patch.length, 1); assert.equal(t.calls.post.length, 1);
+});
+
+test('form reinitialization preserves a lost reply and resolves stored pending by GET without another write', async () => {
+  const t = formFixture({ active: true, replyLost: true });
+  t.el('btnRefresh').click(); t.el('mrSubmit').click(); t.el('cfmOk').click(); await settleForm(t);
+  assert.match(t.api.message, /结果不明/); assert.equal(t.api.mrPendings().length, 1);
+  const reloaded = formFixture({ active: true, storage: t.storage }); reloaded.live.final = true;
+  reloaded.el('btnRefresh').click(); assert.equal(reloaded.el('mrSubmit').disabled, true);
+  reloaded.el('mrStatus').click(); await settleForm(reloaded);
+  assert.equal(reloaded.api.mrPendings().length, 0); assert.equal(reloaded.calls.status.length, 1);
+  assert.equal(reloaded.calls.patch.length + reloaded.calls.post.length, 0);
 });

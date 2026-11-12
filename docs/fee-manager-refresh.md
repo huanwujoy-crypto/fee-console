@@ -282,9 +282,15 @@ only, do not `cat`, and never delete, overwrite or retry based on it.
   production: the only one with the credential, mounted into the job only),
   IAM derived from `ROLE_ACCESS`, no lifecycle, no runtime delete.
 - `cloud/fee-refresh/verify-readonly.sh` — describe/get-iam-policy only.
-- `scripts/fee-manager-refresh-acceptance.mjs` — the acceptance runner; it
+- `scripts/fee-manager-refresh-acceptance.mjs` — the acceptance runner
+  (`docs/fee-manager-refresh-acceptance.md`): read-only preflight by default,
+  `--execute` for writing probes, mode rechecked before every write; it
   refuses any host other than the acceptance service and any service whose
-  `GET /v1/mode` is not `acceptance`.
+  `GET /v1/mode` is not `acceptance`, and a complete owner-request run passes
+  only on the same fee-only request ending `failed: PUBLISHER_REFUSED`.
+- `cloud/fee-refresh/isolation.mjs` — offline `--synthetic` acceptance and
+  `--diagnose-browser` (analysis of a saved probe record only);
+  `cloud/fee-refresh/Dockerfile.dockerignore` — build context allowlist.
 - `scripts/fee-manager-refresh-deploy.test.mjs`,
   `scripts/fee-manager-refresh-acceptance.test.mjs` — drift and isolation
   checks; `docs/fee-manager-refresh-activation.md` — activation drafts.
@@ -308,7 +314,7 @@ acceptance adapters send no Authorization header.
 | 6 | Production job credential only: owner enters a new fine-grained token (this repository; Actions read/write only) as secret `fee-refresh-github-actions`, readable only by the production job SA. Acceptance has no credential. Alternative: reuse `fee-clock-github-actions` (second identity on a repository-wide Actions-write token) | secret | owner (credential; owner enters it personally) |
 | 7 | Build the image from the reviewed commit and record its digest; deploy job `fee-refresh-launch-acceptance` (args `job`, maxRetries 0, timeout 20 min, `-acceptance` buckets, acceptance job SA, no secret) | deploy | owner (deploy) |
 | 8 | Deploy service `fee-refresh-intake-acceptance` (args `serve`, public invoker, max instances 1, no secret, no ledger env, acceptance intake SA) | deploy | owner (deploy) |
-| 9 | Isolated acceptance: `node scripts/fee-manager-refresh-acceptance.mjs --intake=<acceptance URL> [--request-id --gist-version]` (below) | — | coordinator; owner observes |
+| 9 | Isolated acceptance: `node scripts/fee-manager-refresh-acceptance.mjs --intake=<acceptance URL> [--execute [--request-id --gist-version]]` (`docs/fee-manager-refresh-acceptance.md`) | — | coordinator; owner observes |
 | 10 | Security-policy PR adding the exact intake origin to `security/allowed-origins.txt`, and an index-only PR setting `MR_INTAKE_ORIGIN` to that literal | page now calls the service | owner, exact-head OWNER |
 | 11 | Deploy the separate production job/service (`fee-refresh-launch`, `fee-refresh-intake`, production SAs and buckets, credential on the job only) in `launch` mode | enables real dispatch | owner, separately, for a named first date |
 
@@ -389,3 +395,26 @@ Registered the page hash `e0f580a30cc04ca481adb97b0f83cd77bd9bfcfcc0a839e02eddf0
 - `scripts/ui-flows.test.mjs` (2 lists), `scripts/fee-gift-registry-status.test.mjs`
   (1 list) — new hash appended.
 - `scripts/ib-manager-return.test.mjs` — build list extended to 4.9.54.
+
+## Unified refresh implementation (2026-11-12)
+
+Two parallel lines existed after the support and page drafts: the deployment
+preparation (pinned image, two-environment plan, read-only inventory) and a
+separate hardening line (transport bounds, stricter acceptance runner,
+isolation packaging, page HTTP contract). They are now one implementation;
+where they differed the stricter check was kept:
+
+| Topic | Result |
+|---|---|
+| Transport | One deadline over token, headers and every body read; streamed size limit; userinfo, port and fragment refused; redirect and response-URL identity; metadata token validated and cached only when timely |
+| Job-name isolation | Start-up check covers buckets and the job name |
+| Credential boundary | Acceptance job: no GitHub credential, start refused if one is mounted. Launch job: required. Intake: never |
+| `GET /v1/mode` | `{schema, mode}` for acceptance/launch; 503 `INTAKE_NOT_ACTIVE` otherwise. Self-reported configuration only |
+| Acceptance runner | Default read-only preflight, `--execute` for writes, only `failed: PUBLISHER_REFUSED` passes the owner-request stage |
+| Image | Verified official digest recorded in the recipe, no build argument or build-time command, numeric non-root user, context allowlist, exact runtime closure |
+| Plan | Two environments in `deployment-plan.json`, checked by `fee-manager-refresh-deploy.test.mjs` (single task, no retries, one instance, no other variables) |
+| Page | The intake client accepts a reply only when HTTP status and body agree; page hash `1be0070274c03a8c12ca82be320ad0ef61791ac70afd8d6047645fce8441a236`, still `MR_INTAKE_ORIGIN=null`, `MR_RATIO_READY=false` |
+
+Not carried over: the hardening line's plan inspector, whose plan mounted a
+token in the acceptance job. Nothing here was deployed, and no cloud check,
+real request or production workflow ran.

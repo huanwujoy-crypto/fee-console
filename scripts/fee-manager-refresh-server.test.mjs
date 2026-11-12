@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { createGcsBucket, verifyOwnerRequest, handleIntake, createGitHubFeeAdapters, runRefreshJob, acceptancePublisher, candidateFromLog, stepScript, ALLOWED_ORIGIN, REQUEST_FILE, API, ROLE_ACCESS, CLOSED_SCHEMA } from './fee-manager-refresh-server.mjs';
 import { createMemoryLedger, OWNER_ID, SCHEMA, keys } from './fee-manager-refresh.mjs';
-import { readConfig, createHttp, startJob, createIntakeHandler, runJob, credentialFor } from './fee-manager-refresh-entry.mjs';
+import { readConfig, createHttp, createMetadataToken, startJob, createIntakeHandler, runJob, credentialFor } from './fee-manager-refresh-entry.mjs';
 
 const enc = v => new TextEncoder().encode(typeof v === 'string' ? v : JSON.stringify(v));
 const sha = s => crypto.createHash('sha256').update(s).digest('hex');
@@ -340,7 +340,7 @@ test('entry config: disabled by default, intake never configured with the ledger
 
 test('entry http: fixed hosts, no redirects, Google token only to Google hosts; job start has no overrides', async () => {
   const seen = [];
-  const http = createHttp({ metadataToken: async () => 'meta', fetchImpl: async (url, init) => { seen.push({ url, init }); return { status: 200, arrayBuffer: async () => new ArrayBuffer(2) }; } });
+  const http = createHttp({ metadataToken: async () => 'meta', fetchImpl: async (url, init) => { seen.push({ url, init }); return new Response(new Uint8Array(2)); } });
   await http('GET', 'https://api.github.com/gists/' + GIST);
   await http('GET', 'https://storage.googleapis.com/storage/v1/b/x/o');
   await assert.rejects(http('GET', 'https://evil.example/'), /HOST/);
@@ -358,6 +358,89 @@ test('entry http: fixed hosts, no redirects, Google token only to Google hosts; 
 const queued = async (w, r, at = NOW) => w.queue.create('queue/' + r.requestId, { schema: 'fee-console.manager-refresh-queue.v1', requestId: r.requestId, gistVersion: VER, queuedAt: at.toISOString() });
 // What the page sees: the intake's own GET.
 const latest = async (w, id) => JSON.parse((await handleIntake({ method: 'GET', path: '/v1/requests/' + id, headers: { origin: ALLOWED_ORIGIN } }, { queue: w.queue, status: w.status })).body);
+
+test('entry HTTP refuses hostile URL components and external credentials before any IO', async () => {
+  let fetches = 0, tokens = 0;
+  const http = createHttp({ fetchImpl: async () => { fetches++; }, metadataToken: async () => { tokens++; return 'synthetic'; } });
+  for (const url of ['https://user:password@storage.googleapis.com/x', 'https://storage.googleapis.com:444/x', 'https://api.github.com/x#fragment'])
+    await assert.rejects(http('GET', url), /FEE_REFRESH_HOST/);
+  for (const options of [{ headers: { Authorization: 'synthetic' } }, { body: 'payload' }])
+    await assert.rejects(http('GET', 'https://productionresultssa0.blob.core.windows.net/log', { external: true, ...options }), /FEE_REFRESH_HOST/);
+  assert.equal(fetches, 0); assert.equal(tokens, 0);
+});
+
+test('entry HTTP bounds declared and actual streamed bytes without arrayBuffer', async () => {
+  let reads = 0, cancelled = 0;
+  const oversized = { status: 200, headers: new Headers({ 'content-length': String(2 * 1024 * 1024 + 1) }),
+    body: { cancel() { cancelled++; }, getReader() { reads++; throw Error('must not read'); } }, arrayBuffer() { throw Error('must not buffer'); } };
+  await assert.rejects(createHttp({ fetchImpl: async () => oversized })('GET', 'https://api.github.com/x'), /FEE_REFRESH_SIZE/);
+  assert.equal(reads, 0); assert.equal(cancelled, 1);
+  const chunks = [new Uint8Array(1024 * 1024), new Uint8Array(1024 * 1024), new Uint8Array(1), new Uint8Array(1)];
+  const response = new Response(new ReadableStream({ pull(c) { reads++; c.enqueue(chunks.shift()); }, cancel() { cancelled++; } }, { highWaterMark: 0 }));
+  await assert.rejects(createHttp({ fetchImpl: async () => response })('GET', 'https://api.github.com/x'), /FEE_REFRESH_SIZE/);
+  assert.equal(reads, 3); assert.equal(chunks.length, 1); assert.equal(cancelled, 2);
+  // A decoded compressed body need not equal its wire Content-Length.
+  const ok = await createHttp({ fetchImpl: async () => new Response('decoded', { headers: { 'content-length': '3', 'content-encoding': 'gzip' } }) })('GET', 'https://api.github.com/x');
+  assert.equal(new TextDecoder().decode(ok.bytes), 'decoded');
+});
+
+test('entry HTTP deadline includes a stalled token and never starts a late fetch', { timeout: 2000 }, async () => {
+  let release, calls = 0;
+  const http = createHttp({ timeoutMs: 20, metadataToken: () => new Promise(r => { release = r; }), fetchImpl: async () => { calls++; return new Response('late'); } });
+  await assert.rejects(http('GET', 'https://storage.googleapis.com/x'), /FEE_REFRESH_TIMEOUT/);
+  release('synthetic'); await tick(); assert.equal(calls, 0);
+});
+
+test('entry HTTP bounds uncooperative fetch/body reads and never retries or leaks raw errors', { timeout: 2000 }, async () => {
+  let signal, calls = 0, cancel = 0;
+  const hanging = createHttp({ timeoutMs: 20, fetchImpl: async (_url, init) => { calls++; signal = init.signal; return new Promise(() => {}); } });
+  await assert.rejects(hanging('GET', 'https://api.github.com/x'), /FEE_REFRESH_TIMEOUT/);
+  assert.equal(signal.aborted, true); assert.equal(calls, 1);
+  const body = createHttp({ timeoutMs: 20, fetchImpl: async () => ({ status: 200, body: { getReader: () => ({
+    read: () => new Promise(() => {}), cancel() { cancel++; return new Promise(() => {}); }, releaseLock() {},
+  }) } }) });
+  await assert.rejects(body('GET', 'https://api.github.com/x'), /FEE_REFRESH_TIMEOUT/); assert.equal(cancel, 1);
+  const failing = createHttp({ fetchImpl: async () => { throw Error('private transport detail'); } });
+  await assert.rejects(failing('GET', 'https://api.github.com/x'), { message: 'FEE_REFRESH_HTTP' });
+});
+
+test('entry HTTP validates response identity and allows only explicit manual redirects', async () => {
+  const http = response => createHttp({ fetchImpl: async () => response });
+  let cancelled = 0;
+  for (const response of [{ status: 200, redirected: true }, { status: 200, url: 'https://evil.invalid/' }]) {
+    response.body = { cancel() { cancelled++; } };
+    await assert.rejects(http(response)('GET', 'https://api.github.com/x'), /FEE_REFRESH_HOST/);
+  }
+  assert.equal(cancelled, 2);
+  await assert.rejects(http(new Response(null, { status: 302 }))('GET', 'https://api.github.com/x'), /FEE_REFRESH_HTTP/);
+  const manual = await http(new Response(null, { status: 302, headers: { location: 'https://example.invalid/log' } }))('GET', 'https://api.github.com/x', { redirect: 'manual' });
+  assert.equal(manual.status, 302); assert.equal(manual.location, 'https://example.invalid/log');
+});
+
+test('metadata transport is fixed, bounded, validates tokens and caches only a timely success', async () => {
+  const seen = [];
+  const token = createMetadataToken(async (url, init) => { seen.push({ url, init }); return new Response(JSON.stringify({ access_token: 'synthetic-metadata-only', expires_in: 3600 })); });
+  assert.equal(await token(), 'synthetic-metadata-only'); assert.equal(await token(), 'synthetic-metadata-only');
+  assert.equal(seen.length, 1); assert.equal(seen[0].url, 'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token');
+  assert.equal(seen[0].init.headers['Metadata-Flavor'], 'Google'); assert.equal(seen[0].init.redirect, 'error');
+  for (const data of ['bad JSON', { access_token: 'bad\nvalue', expires_in: 3600 }, { access_token: 'synthetic', expires_in: 0 }, { access_token: 'synthetic', expires_in: Infinity }])
+    await assert.rejects(createMetadataToken(async () => new Response(typeof data === 'string' ? data : JSON.stringify(data)))(), /FEE_REFRESH_METADATA/);
+  await assert.rejects(createMetadataToken(async () => new Response('x'.repeat(65537)))(), /FEE_REFRESH_SIZE/);
+  let cancelled = 0;
+  await assert.rejects(createMetadataToken(async () => ({ status: 403, body: { cancel() { cancelled++; } } }))(), /FEE_REFRESH_METADATA/);
+  assert.equal(cancelled, 1);
+});
+
+test('metadata expiry aborts stalled reads, discards a late reply and never caches it', { timeout: 2000 }, async () => {
+  let release, signal, calls = 0, cancelled = 0;
+  const token = createMetadataToken(async (_url, init) => { signal = init.signal; calls++;
+    if (calls === 1) return new Promise(r => { release = r; });
+    return new Response(JSON.stringify({ access_token: 'synthetic-fresh', expires_in: 3600 }));
+  }, { timeoutMs: 20 });
+  await assert.rejects(token(), /FEE_REFRESH_TIMEOUT/); assert.equal(signal.aborted, true);
+  release({ status: 200, body: { cancel() { cancelled++; } } }); await tick(); assert.equal(cancelled, 1);
+  assert.equal(await token(), 'synthetic-fresh'); assert.equal(calls, 2);
+});
 
 test('crash after the batch record but before any claim: resumed once on a fresh proof, never lost', async () => {
   const core = await import('./fee-manager-refresh.mjs');
@@ -670,10 +753,16 @@ test('acceptance adapters send no Authorization header at all', async () => {
   assert.ok(seen.every(h => !('Authorization' in h)));
 });
 
-test('GET /v1/mode reports only the mode', async () => {
+test('GET /v1/mode reports only the validated mode; an inactive service answers 503', async () => {
   const r = request(), x = intakeDeps(r);
-  for (const mode of ['acceptance', 'launch', undefined]) {
+  for (const mode of ['acceptance', 'launch']) {
     const res = await handleIntake({ method: 'GET', path: '/v1/mode', headers: { origin: ALLOWED_ORIGIN } }, { ...x.deps, mode });
-    assert.deepEqual(JSON.parse(res.body), { mode: mode || 'unknown' });
+    assert.equal(res.status, 200);
+    assert.deepEqual(JSON.parse(res.body), { schema: 'fee-console.manager-refresh-mode.v1', mode });
+  }
+  for (const mode of [undefined, null, 'disabled', 'unknown']) {
+    const res = await handleIntake({ method: 'GET', path: '/v1/mode', headers: { origin: ALLOWED_ORIGIN } }, { ...x.deps, mode });
+    assert.equal(res.status, 503);
+    assert.deepEqual(JSON.parse(res.body), { code: 'INTAKE_NOT_ACTIVE' });
   }
 });

@@ -123,12 +123,19 @@ export async function verifyOwnerRequest(body, { http, gistId, now, auth = null 
 // CORS is not authentication; it only limits which page may read replies.
 // POST: verify, queue create-only; only a NEW request may wake the job, and
 // at most once per minute (atomic `wake/<minute>` slot). GET: read-only.
-export async function handleIntake(req, { http, queue, status, gistId, now, runJob, mode = null }) {
+export async function handleIntake(req, { http, queue, status, gistId, now, runJob, mode = 'disabled' }) {
   const headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', Vary: 'Origin' };
   const reply = (code, value) => ({ status: code, headers, body: JSON.stringify(value) });
   if (req.headers?.origin !== ALLOWED_ORIGIN) return { status: 403, headers: { 'Cache-Control': 'no-store' }, body: '' };
   headers['Access-Control-Allow-Origin'] = ALLOWED_ORIGIN;
   if (req.method === 'OPTIONS') return { status: 204, headers: { ...headers, 'Access-Control-Allow-Methods': 'GET, POST', 'Access-Control-Allow-Headers': 'Content-Type', 'Access-Control-Max-Age': '600' }, body: '' };
+  // Read-only mode report, so an acceptance runner can refuse to touch a
+  // service that is not in acceptance mode. Configuration disclosure only:
+  // no resource reads and no Job/IAM attestation.
+  if (req.method === 'GET' && req.path === '/v1/mode') {
+    if (!['acceptance', 'launch'].includes(mode)) return reply(503, { code: 'INTAKE_NOT_ACTIVE' });
+    return reply(200, { schema: 'fee-console.manager-refresh-mode.v1', mode });
+  }
   // POST contract: 202 {requestId, state: queued|duplicate|unknown}, or a
   // rejection {requestId?, state:'rejected', code} which guarantees that THIS
   // call queued nothing (refused before the create-only queue write).
@@ -152,9 +159,6 @@ export async function handleIntake(req, { http, queue, status, gistId, now, runJ
       if (woke) { try { await runJob(); } catch { /* request stays queued; status shows it */ } }
       return reply(202, { requestId: id, state: 'queued' });
     }
-    // Read-only mode report, so an acceptance runner can refuse to touch a
-    // service that is not in acceptance mode. No other information.
-    if (req.method === 'GET' && req.path === '/v1/mode') return reply(200, { mode: ['acceptance', 'launch'].includes(mode) ? mode : 'unknown' });
     // Close: the only way to prove "never received, never will be". It takes
     // the same create-only key a POST must take to queue, so exactly one of
     // {queued, closed} can ever exist. Refused if anything was ever projected.

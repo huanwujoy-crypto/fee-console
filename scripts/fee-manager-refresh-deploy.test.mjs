@@ -39,7 +39,8 @@ test('image: pinned official base, exactly the entry import closure, non-root, d
   assert.deepEqual(copy, importClosure('scripts/fee-manager-refresh-entry.mjs'));
   assert.equal((dockerfile.match(/^COPY\s/gm) || []).length, 1, 'one COPY, nothing else enters the image');
   assert.doesNotMatch(dockerfile, /^\s*(ADD|RUN)\s/m, 'no network or build-time commands');
-  assert.match(dockerfile, /^USER node$/m);
+  assert.match(dockerfile, /^USER 10001:10001$/m);
+  assert.doesNotMatch(dockerfile, /^\s*ARG\s/m, 'no build argument can substitute the base');
   assert.match(dockerfile, /FEE_REFRESH_MODE=disabled/);
   assert.equal(plan.releaseImage.digest, null, 'release digest is recorded only after a reviewed build');
 });
@@ -64,6 +65,13 @@ test('plan: acceptance and production share no resource and no credential', () =
   assert.deepEqual(prod.job.secretMounts, ['githubCredential']);
   assert.deepEqual(prod.service.secretMounts, [], 'the public intake never holds the credential');
   assert.equal(prod.githubCredential.accessor, 'job');
+  for (const e of [acc, prod]) {
+    assert.deepEqual(e.job.args, ['job']); assert.deepEqual(e.service.args, ['serve']);
+    assert.equal(e.job.taskCount, 1); assert.equal(e.job.parallelism, 1); assert.equal(e.job.maxRetries, 0);
+    assert.equal(e.job.timeout, '1200s'); assert.equal(e.service.maxInstances, 1);
+    for (const env of [e.job.env, e.service.env]) assert.ok(Object.keys(env).every(k => /^FEE_REFRESH_(MODE|GIST_ID|QUEUE_BUCKET|STATUS_BUCKET|LEDGER_BUCKET|JOB)$/.test(k)), 'no other variable (e.g. NODE_OPTIONS)');
+  }
+  assert.ok(plan.notInThisPlan.includes('schedules'));
   assert.equal(acc.mode, 'acceptance');
   assert.equal(prod.mode, 'launch');
   assert.equal(acc.service.env.FEE_REFRESH_JOB.split('/').pop(), acc.job.name);
