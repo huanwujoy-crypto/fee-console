@@ -1,0 +1,74 @@
+name: Fee ratio source probe
+
+# One owner-dispatched, read-only check that the existing Sharesight client can
+# read the All Together classification report through the API. It is separate
+# from fee-cloud-producer.yml on purpose: no fee, ratio-publication, promotion
+# or schedule job is changed, and nothing here can write a candidate, a
+# snapshot, storage, an issue or an artifact. The only output is one line of
+# value-free JSON (fixed stage, fixed code, shape facts) in this job's log.
+#
+# It is not a production attempt, a source acceptance or permission to publish.
+on:
+  workflow_dispatch:
+    inputs:
+      ratio_probe_main:
+        description: Exact approved main commit (40 hex) for this one read-only ratio source probe
+        type: string
+        required: true
+      ratio_probe_target:
+        description: Owner-chosen data date YYYY-MM-DD (at most four Hong Kong days old)
+        type: string
+        required: true
+
+run-name: Fee ratio source probe
+
+permissions: {}
+
+concurrency:
+  group: fee-ratio-source-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: Fee ratio source probe
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor_id == '283054367' && github.run_attempt == 1 && inputs.ratio_probe_main == github.sha && inputs.ratio_probe_target != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: fee-cloud-producer
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      # Check out the exact approved commit, never whatever main is by then.
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify the exact probe main, owner run and target before credentials
+        env:
+          PROBE_MAIN: ${{ inputs.ratio_probe_main }}
+          PROBE_TARGET: ${{ inputs.ratio_probe_target }}
+        run: test "$(git rev-parse HEAD)" = "$PROBE_MAIN" && node scripts/fee-ratio-source-probe.mjs --check-plan --expected-main="$PROBE_MAIN" --target="$PROBE_TARGET"
+      - name: Reuse the existing read identity
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          project_id: family-portfolio-gateway
+          workload_identity_provider: projects/860729177589/locations/global/workloadIdentityPools/fee-console-github/providers/fee-console-main
+          service_account: fee-cloud-producer@family-portfolio-gateway.iam.gserviceaccount.com
+      - name: Read only the existing Sharesight pair
+        id: probe_credentials
+        uses: google-github-actions/get-secretmanager-secrets@bc9c54b29fdffb8a47776820a7d26e77b379d262
+        with:
+          secrets: |-
+            client_id:family-portfolio-gateway/sharesight-broker-sync-client-id/1
+            client_secret:family-portfolio-gateway/sharesight-broker-sync-client-secret/1
+      - name: Probe the fixed ratio classification routes without a ledger, writer or publication token
+        env:
+          PROBE_MAIN: ${{ inputs.ratio_probe_main }}
+          PROBE_TARGET: ${{ inputs.ratio_probe_target }}
+          FEE_CLOUD_SHARESIGHT_CLIENT_ID: ${{ steps.probe_credentials.outputs.client_id }}
+          FEE_CLOUD_SHARESIGHT_CLIENT_SECRET: ${{ steps.probe_credentials.outputs.client_secret }}
+          GOOGLE_APPLICATION_CREDENTIALS: ''
+          CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE: ''
+          GOOGLE_GHA_CREDS_PATH: ''
+        run: test "$(git rev-parse HEAD)" = "$PROBE_MAIN" && node scripts/fee-ratio-source-probe.mjs --expected-main="$PROBE_MAIN" --target="$PROBE_TARGET"
