@@ -1,0 +1,15 @@
+**
+!cloud/
+!cloud/fee-refresh/
+!cloud/fee-refresh/Dockerfile
+!cloud/fee-refresh/Dockerfile.dockerignore
+!scripts/
+!scripts/fee-data-health.mjs
+!scripts/fee-engine.mjs
+!scripts/fee-income-date-policy.mjs
+!scripts/fee-legacy-policy.mjs
+!scripts/fee-management-exemption.mjs
+!scripts/fee-manager-refresh-entry.mjs
+!scripts/fee-manager-refresh-server.mjs
+!scripts/fee-manager-refresh.mjs
+!scripts/fee-receipt-core.mjs
