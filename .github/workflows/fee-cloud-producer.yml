@@ -773,3 +773,22 @@ jobs:
           CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE: ''
           GOOGLE_GHA_CREDS_PATH: ''
         run: test "$(git rev-parse HEAD)" = "$PROBE_MAIN" && node scripts/fee-source-probe.mjs --expected-main="$PROBE_MAIN" --target="$PROBE_TARGET"
+      # Second, independent read-only check in the same approved probe run: can
+      # this same client read the All Together classification report through
+      # the API? It lives in this job only because the existing Workload
+      # Identity provider admits no other workflow file, and adding a job or an
+      # input would change how production runs are classified. It gets the same
+      # two Sharesight values and nothing else (no Actions token), runs whether
+      # or not the fee probe step passed, and prints one line of value-free
+      # JSON. No writer, candidate, snapshot, storage or publication.
+      - name: Probe the fixed ratio classification routes with the same pair and nothing else
+        if: ${{ !cancelled() && steps.probe_credentials.outcome == 'success' }}
+        env:
+          PROBE_MAIN: ${{ inputs.source_probe_main }}
+          PROBE_TARGET: ${{ inputs.source_probe_target }}
+          FEE_CLOUD_SHARESIGHT_CLIENT_ID: ${{ steps.probe_credentials.outputs.client_id }}
+          FEE_CLOUD_SHARESIGHT_CLIENT_SECRET: ${{ steps.probe_credentials.outputs.client_secret }}
+          GOOGLE_APPLICATION_CREDENTIALS: ''
+          CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE: ''
+          GOOGLE_GHA_CREDS_PATH: ''
+        run: test "$(git rev-parse HEAD)" = "$PROBE_MAIN" && node scripts/fee-ratio-source-probe.mjs --expected-main="$PROBE_MAIN" --target="$PROBE_TARGET"

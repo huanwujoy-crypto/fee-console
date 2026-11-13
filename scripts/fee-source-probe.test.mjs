@@ -368,10 +368,12 @@ test('workflow: the probe job reuses the existing identity and receives only two
   assert.equal((job.match(/secretmanager/g)||[]).length,1);
   const run=[...job.matchAll(/\n        run: (.+)/g)].map(m=>m[1]);
   const pin='test "$(git rev-parse HEAD)" = "$PROBE_MAIN" && ';
-  assert.deepEqual(run,[pin+'node scripts/fee-source-probe.mjs --check-plan --expected-main="$PROBE_MAIN" --target="$PROBE_TARGET"',pin+'node scripts/fee-source-probe.mjs --expected-main="$PROBE_MAIN" --target="$PROBE_TARGET"']);
+  assert.deepEqual(run,[pin+'node scripts/fee-source-probe.mjs --check-plan --expected-main="$PROBE_MAIN" --target="$PROBE_TARGET"',pin+'node scripts/fee-source-probe.mjs --expected-main="$PROBE_MAIN" --target="$PROBE_TARGET"',
+    // The read-only ratio classification check shares this approved run; see fee-ratio-source-probe.test.mjs.
+    pin+'node scripts/fee-ratio-source-probe.mjs --expected-main="$PROBE_MAIN" --target="$PROBE_TARGET"']);
   for(const forbidden of ['FEE_DATA_KEY','FEE_ECON','secrets.','benchmark','data.json','upload-artifact','cache','GH_TOKEN','GITHUB_TOKEN:','contents: write','issues','pull-requests','git push','daily.mjs','fee-report-producer','FEE_CLOUD_GITHUB_TOKEN','RATIO_','IB_MANAGER','concurrency'])
     assert.ok(!job.includes(forbidden),forbidden);
-  const probeStep=job.split('- name: Probe the fixed ordinary source routes')[1];
+  const probeStep=job.split('- name: Probe the fixed ordinary source routes')[1].split('- name:')[0];
   assert.deepEqual([...probeStep.matchAll(/\n          ([A-Z_]+):/g)].map(m=>m[1]),['PROBE_MAIN','PROBE_TARGET','FEE_REPORT_ACTIONS_TOKEN','FEE_CLOUD_SHARESIGHT_CLIENT_ID','FEE_CLOUD_SHARESIGHT_CLIENT_SECRET','GOOGLE_APPLICATION_CREDENTIALS','CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE','GOOGLE_GHA_CREDS_PATH']);
   const checkStep=job.split('- name: Verify the exact probe main')[1].split('- name:')[0];
   assert.ok(!checkStep.includes('SHARESIGHT'));assert.ok(job.indexOf('--check-plan')<job.indexOf('google-github-actions/auth'),'check-plan before any credential');
@@ -413,8 +415,8 @@ test('workflow: the probe job checks out the exact dispatched commit and re-veri
   const checkout=/- uses: actions\/checkout@[0-9a-f]{40}\n        with:\n          ref: (.+)\n          persist-credentials: false\n/.exec(job);
   assert.equal(checkout?.[1],'${{ github.sha }}','never ref: main');assert.ok(!/ref: main/.test(job));
   assert.match(job,/inputs\.source_probe_main == github\.sha/,'the dispatched commit is the approved input');
-  const steps=[...job.matchAll(/\n        run: (.+)/g)].map(m=>m[1]);assert.equal(steps.length,2);
-  for(const step of steps)assert.ok(step.startsWith('test "$(git rev-parse HEAD)" = "$PROBE_MAIN" && node scripts/fee-source-probe.mjs '));
+  const steps=[...job.matchAll(/\n        run: (.+)/g)].map(m=>m[1]);assert.equal(steps.length,3);
+  for(const step of steps)assert.match(step,/^test "\$\(git rev-parse HEAD\)" = "\$PROBE_MAIN" && node scripts\/fee-(?:ratio-)?source-probe\.mjs /);
   // Every other job keeps its original checkout unchanged.
   assert.equal((WORKFLOW.match(/\n          ref: main\n/g)||[]).length,5);
 });

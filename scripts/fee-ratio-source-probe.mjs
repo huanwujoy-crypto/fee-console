@@ -27,7 +27,13 @@ import {createApiRatioSourceCore} from './fee-ratio-api-source.mjs';
 import {ALL_TOGETHER_SCOPE_SHA256} from './xuan-ib-sharesight-exposure.mjs';
 
 export const RATIO_PROBE_SCHEMA='fee-console.ratio-source-probe.v1';
-export const RATIO_PROBE_INPUTS=Object.freeze(['ratio_probe_main','ratio_probe_target']);
+export const RATIO_PROBE_INPUTS=Object.freeze(['source_probe_once','source_probe_main','source_probe_target']);
+// The probe is one step of the existing read-only source-probe job of the
+// producer workflow, so the event carries every producer input. Each of the
+// others must be off or blank.
+const OFF=['ib_diagnostic_once','ib_envelope_once','source_plan_check_only','source_acceptance_once','run_reviewed_once'];
+const BLANK=['ib_diagnostic_main','ib_envelope_main','ratio_main','ratio_plan','source_from','source_target','source_main','manual_sync_completed_for','confirmed_main','recovery_main','report_kind','report_target','report_markets'];
+const off=v=>v===undefined||v===false||v==='false',blank=v=>v===undefined||v==='';
 export const RATIO_PROBE_STAGES=Object.freeze(['ADMISSION','TOKEN','VIEWS','PORTFOLIOS','GROUPS','REPORT','PROJECTION','COMPLETE']);
 export const RATIO_PROBE_BUDGET=Object.freeze({requests:5,overallMs:120000,requestMs:30000,reportBytes:8*1024*1024});
 export const RATIO_PROBE_VIEW='All Together',RATIO_PROBE_GROUP='资产类别';
@@ -72,7 +78,9 @@ export function validateRatioProbeAdmission({args,env,event,now}){
     ||(args.checkOnly?PRIVATE.some(k=>env[k]!==undefined):PRIVATE.some(k=>typeof env[k]!=='string'||!env[k]||env[k].length>8192||/[\r\n\0]/.test(env[k]))))fail('ENVIRONMENT');
   const i=event?.inputs;
   if(!object(event)||event.sender?.id!==OWNER||event.repository?.full_name!==REPO||!object(i)
-    ||Object.keys(i).sort().join('|')!==[...RATIO_PROBE_INPUTS].sort().join('|')||i.ratio_probe_main!==args.expectedMain||i.ratio_probe_target!==args.target)fail('EVENT');
+    ||Object.keys(i).some(k=>![...RATIO_PROBE_INPUTS,...OFF,...BLANK].includes(k))
+    ||![true,'true'].includes(i.source_probe_once)||i.source_probe_main!==args.expectedMain||i.source_probe_target!==args.target
+    ||OFF.some(k=>!off(i[k]))||BLANK.some(k=>!blank(i[k])))fail('EVENT');
   const clock=now.getTime();if(!Number.isFinite(clock))fail('TARGET_DATE');
   const age=(Date.parse(hkDate(clock)+'T00:00:00Z')-Date.parse(args.target+'T00:00:00Z'))/86400000;
   if(!Number.isInteger(age)||age<0||age>4)fail('TARGET_DATE');
