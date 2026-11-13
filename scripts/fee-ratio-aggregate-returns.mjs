@@ -159,12 +159,15 @@ export function createAggregateReturnsCore(){
   const out=[];
   const clean=m=>({account:m.account.replaceAll('&amp;','&'),market:m.market,securityCode:m.securityCode});
   const unique=xs=>[...new Map(xs.map(m=>[memberKey(m),m])).values()].sort((a,b)=>memberKey(a).localeCompare(memberKey(b)));
-  for(const g of exposure.summary.classes.slice(0,3))for(const r of g.top5){
+  // A secondary class declared 'direct' ranks actually held securities, so its
+  // targets are those same rows. Company look-through targets are legacy only.
+  const directSecondary=exposure.summary.classes[3]?.basis==='direct';
+  for(const g of exposure.summary.classes.slice(0,directSecondary?4:3))for(const r of g.top5){
    const members=r.sourceHoldings?.map(clean)||r.accounts?.map(account=>clean({...r,account}));
    if(!members?.length)fail();
-   out.push({category:g.name,name:r.name,members:unique(members),basis:'fund-holding'});
+   out.push({category:g.name,name:r.name,members:unique(members),basis:g.name==='二级市场'?'direct-holdings-only':'fund-holding'});
   }
-  if(companyTop)for(const r of companyTop){
+  if(companyTop&&!directSecondary)for(const r of companyTop){
    const members=r.constituents.filter(c=>c.product===null||c.basis==='product-asset-replacement').map(clean);
    out.push({category:'二级市场',name:r.name,members:unique(members),basis:'direct-holdings-only'});
   }
