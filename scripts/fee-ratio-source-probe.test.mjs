@@ -10,7 +10,7 @@ globalThis.fetch=async()=>{throw Error('OFFLINE_TEST_NETWORK_FORBIDDEN');};
 const MAIN='a'.repeat(40),TARGET='2026-11-10',NOW=new Date('2026-11-11T02:00:00.000Z'),API='https://api.sharesight.com';
 const SECRET='synthetic-client-secret-not-real',CLIENT='synthetic-client-id-not-real',TOKEN='synthetic-access-token-not-real-0123456789';
 const env=(extra={})=>({GITHUB_ACTIONS:'true',GITHUB_REPOSITORY:'huanwujoy-crypto/fee-console',GITHUB_REF:'refs/heads/main',GITHUB_SHA:MAIN,GITHUB_EVENT_NAME:'workflow_dispatch',GITHUB_ACTOR_ID:'283054367',GITHUB_RUN_ATTEMPT:'1',FEE_CLOUD_SHARESIGHT_CLIENT_ID:CLIENT,FEE_CLOUD_SHARESIGHT_CLIENT_SECRET:SECRET,...extra});
-const event=(inputs={})=>({sender:{id:283054367},repository:{full_name:'huanwujoy-crypto/fee-console'},inputs:{ratio_probe_main:MAIN,ratio_probe_target:TARGET,...inputs}});
+const event=(inputs={})=>({sender:{id:283054367},repository:{full_name:'huanwujoy-crypto/fee-console'},inputs:{source_probe_once:'true',source_probe_main:MAIN,source_probe_target:TARGET,run_reviewed_once:'false',ratio_plan:'',report_kind:'',...inputs}});
 const argv=['--expected-main='+MAIN,'--target='+TARGET];
 const accounts=Array.from({length:10},(_,i)=>({id:500+i,name:'Invented member '+i}));
 function report(){
@@ -98,12 +98,12 @@ test('transport failures, unknown routes and remote error text become one fixed 
   assert.equal(c.result.code,'RATIO_PROBE_SHAPE');leakFree(c.result);assert.equal(JSON.stringify(c.result).includes('remote message'),false);
 });
 
-test('admission accepts only the exact owner dispatch, main, first attempt, two inputs and a recent date',async()=>{
+test('admission accepts only the exact owner dispatch, main, first attempt, the probe inputs alone and a recent date',async()=>{
   const args=ratioProbeArgs(argv);validateRatioProbeAdmission({args,env:env(),event:event(),now:NOW});
   for(const bad of [[],['--target='+TARGET],[...argv,'--force'],['--expected-main=main','--target='+TARGET],[...argv,'--target='+TARGET],['--expected-main='+MAIN,'--target=2026-02-30']])assert.throws(()=>ratioProbeArgs(bad),{message:'RATIO_PROBE_ARGUMENT'});
   for(const e of [{GITHUB_REF:'refs/heads/other'},{GITHUB_SHA:'b'.repeat(40)},{GITHUB_ACTOR_ID:'1'},{GITHUB_RUN_ATTEMPT:'2'},{GITHUB_EVENT_NAME:'schedule'},{GITHUB_REPOSITORY:'someone/fork'},{FEE_DATA_KEY:'x'},{FEE_RATIO_MANAGER_TOKEN:'x'},{RATIO_PLAN:'{}'},{GITHUB_TOKEN:'x'},{GOOGLE_APPLICATION_CREDENTIALS:'/tmp/x'},{FEE_CLOUD_SHARESIGHT_CLIENT_SECRET:''}])
     assert.throws(()=>validateRatioProbeAdmission({args,env:env(e),event:event(),now:NOW}),{message:'RATIO_PROBE_ENVIRONMENT'},JSON.stringify(Object.keys(e)));
-  for(const i of [{ratio_probe_main:'b'.repeat(40)},{ratio_probe_target:'2026-11-09'},{ratio_plan:''},{source_probe_once:'true'}])assert.throws(()=>validateRatioProbeAdmission({args,env:env(),event:event(i),now:NOW}),{message:'RATIO_PROBE_EVENT'});
+  for(const i of [{source_probe_main:'b'.repeat(40)},{source_probe_target:'2026-11-09'},{source_probe_once:'false'},{ratio_plan:'{}'},{ratio_main:MAIN},{report_kind:'daily'},{run_reviewed_once:true},{ib_envelope_once:'true'},{unknown_input:''}])assert.throws(()=>validateRatioProbeAdmission({args,env:env(),event:event(i),now:NOW}),{message:'RATIO_PROBE_EVENT'});
   assert.throws(()=>validateRatioProbeAdmission({args,env:env(),event:{...event(),sender:{id:1}},now:NOW}),{message:'RATIO_PROBE_EVENT'});
   for(const now of ['2026-11-09T15:59:59.000Z','2026-11-14T16:00:00.000Z'])assert.throws(()=>validateRatioProbeAdmission({args,env:env(),event:event(),now:new Date(now)}),{message:'RATIO_PROBE_TARGET_DATE'});
   validateRatioProbeAdmission({args,env:env(),event:event(),now:new Date('2026-11-14T15:59:59.000Z')});
@@ -125,10 +125,24 @@ test('budget, shape facts and the dispatch workflow stay fixed and read-only',()
   const source=fs.readFileSync(new URL('./fee-ratio-source-probe.mjs',import.meta.url),'utf8');
   assert.doesNotMatch(source,/writeFile|appendFile|createWriteStream|child_process|method:'(?:PUT|PATCH|DELETE)'|gist\.github|storage\.googleapis/);
   assert.equal((source.match(/method:'POST'/g)||[]).length,1,'the token exchange is the only POST');
-  const workflow=fs.readFileSync(new URL('../.github/workflows/fee-ratio-source-probe.yml',import.meta.url),'utf8');
-  assert.match(workflow,/^on:\n  workflow_dispatch:\n/m);assert.doesNotMatch(workflow,/schedule:|pull_request|push:|workflow_run|contents: write|FEE_DATA_KEY|FEE_RATIO_MANAGER_TOKEN|FEE_ECON|upload-artifact|devstorage/);
-  for(const input of RATIO_PROBE_INPUTS)assert.ok(workflow.includes('      '+input+':'),input);
-  assert.match(workflow,/github\.actor_id == '283054367'/);assert.match(workflow,/github\.ref == 'refs\/heads\/main'/);assert.match(workflow,/github\.run_attempt == 1/);
-  assert.equal((workflow.match(/uses: /g)||[]).every?.call(workflow.match(/uses: [^\n]+/g),u=>/@[a-f0-9]{40}$/.test(u)),true,'every action is pinned to a full commit');
+  // The probe is one step of the existing read-only source-probe job: the
+  // Workload Identity provider admits no other workflow file, and no input,
+  // job or run title is added, so production run classification is unchanged.
+  assert.equal(fs.existsSync(new URL('../.github/workflows/fee-ratio-source-probe.yml',import.meta.url)),false);
+  const workflow=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8');
+  assert.deepEqual(RATIO_PROBE_INPUTS,['source_probe_once','source_probe_main','source_probe_target']);
+  assert.doesNotMatch(workflow,/ratio_probe|ratio-source-probe:/);
+  const jobs=[...workflow.matchAll(/^  ([a-z][a-z-]*):\n([\s\S]*?)(?=^  [a-z][a-z-]*:\n|(?![\s\S]))/gm)].filter(([,n])=>!['schedule','workflow_dispatch'].includes(n));
+  assert.equal(jobs.length,11);
+  assert.deepEqual(jobs.filter(([,,b])=>b.includes('fee-ratio-source-probe.mjs')).map(([,n])=>n),['source-probe']);
+  const job=jobs.find(([,n])=>n==='source-probe')[2],steps=job.split(/\n      - /).slice(1);
+  const step=steps.filter(s=>s.includes('fee-ratio-source-probe.mjs'));
+  assert.equal(step.length,1);assert.equal(steps.indexOf(step[0]),steps.length-1,'after the credentials and the fee probe');
+  assert.match(step[0],/^name: Probe the fixed ratio classification routes with the same pair and nothing else\n/);
+  assert.match(step[0],/\n        if: \$\{\{ !cancelled\(\) && steps\.probe_credentials\.outcome == 'success' \}\}\n/);
+  assert.deepEqual([...step[0].matchAll(/^          ([A-Z_]+):/gm)].map(m=>m[1]),['PROBE_MAIN','PROBE_TARGET','FEE_CLOUD_SHARESIGHT_CLIENT_ID','FEE_CLOUD_SHARESIGHT_CLIENT_SECRET','GOOGLE_APPLICATION_CREDENTIALS','CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE','GOOGLE_GHA_CREDS_PATH']);
+  assert.doesNotMatch(step[0],/github\.token|secrets\.|FEE_REPORT_ACTIONS_TOKEN|FEE_DATA_KEY|uses:|continue-on-error/);
+  assert.ok(step[0].endsWith('run: test "$(git rev-parse HEAD)" = "$PROBE_MAIN" && node scripts/fee-ratio-source-probe.mjs --expected-main="$PROBE_MAIN" --target="$PROBE_TARGET"\n'));
+  assert.match(job,/github\.actor_id == '283054367'/);assert.match(job,/github\.ref == 'refs\/heads\/main'/);assert.match(job,/github\.run_attempt == 1/);
   assert.equal(crypto.createHash('sha256').update('x').digest('hex').length,64);
 });

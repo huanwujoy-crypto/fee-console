@@ -624,7 +624,6 @@
     "scripts/fee-ratio-api-source.test.mjs",
     "scripts/fee-ratio-source-probe.mjs",
     "scripts/fee-ratio-source-probe.test.mjs",
-    ".github/workflows/fee-ratio-source-probe.yml",
     "scripts/fee-ratio-session-view.test.mjs",
     "scripts/fixtures/fee-ratio-session-view-ui.json",
     "scripts/fixtures/fee-ratio-six-allocation-ui.json",
