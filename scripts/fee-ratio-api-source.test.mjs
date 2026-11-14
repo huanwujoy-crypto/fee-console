@@ -4,6 +4,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import {createApiRatioSourceCore} from './fee-ratio-api-source.mjs';
+import {createRatioSourceCore} from './fee-ratio-source-core.mjs';
+import {createFeeRatioCore} from './fee-ratio-management.mjs';
+import {createRatioSnapshotCore} from './fee-ratio-snapshot.mjs';
+import {buildRatioModel} from './fee-ratio-packet.mjs';
 import {createOfficialRatioSourceCore} from './fee-ratio-official-source.mjs';
 import {createRankedExposureCore} from './xuan-ib-sharesight-exposure.mjs';
 globalThis.fetch=async()=>{throw Error('OFFLINE_TEST_NETWORK_FORBIDDEN');};
@@ -11,7 +15,7 @@ globalThis.fetch=async()=>{throw Error('OFFLINE_TEST_NETWORK_FORBIDDEN');};
 const core=createApiRatioSourceCore();
 // Field names follow the public Sharesight API V3 performance example, plus the
 // consolidated custom-group fields (custom_group, limited) the response adds.
-function syntheticCapture(){
+export function syntheticCapture(){
   const accounts=[{id:101,name:'IB-HK'},{id:102,name:'NOAH-HK'},...Array.from({length:8},(_,i)=>({id:201+i,name:'Synthetic '+i}))];
   const portfolio=a=>({id:a.id,consolidated:false,name:a.name});
   let hid=5000,cid=7000;
@@ -71,26 +75,81 @@ test('every refusal names the stage that stopped it',()=>{
   assert.deepEqual([...core.CODES].sort(),[...new Set(core.CODES)].sort());
 });
 
-test('projected rows drive the existing projection to a direct-holdings top five for all four classes',()=>{
-  // Test-only envelope: it shows the projected rows are consumable unchanged by
-  // the existing strict projection. It is NOT the production wiring and does
-  // not claim that an API capture is an official workbook.
-  const p=core.project(syntheticCapture()),sha=n=>String(n).repeat(64);
-  const capture=(rows)=>({asOf:p.asOf,capturedAt:p.capturedAt,captureTimeBasis:'original-download-file-mtime',downloadCompletedAt:null,serverSuggestedOriginalFilename:null,dateEvidence:'Synthetic test envelope as at 10 Nov 2026',canonicalDataRows:rows,allWorksheetXmlRows:rows+5});
-  const raw={schemaVersion:'sharesight-private-full-v2',source:{provider:'Sharesight',view:'All Together',transport:'official-workbook-exports'},accounts:p.accounts,
-    sources:['classification.xlsx','exposure.xlsx','capture-metadata.json'].map((file,i)=>({file,sha256:sha(i+1),libraryFileId:'libfile_'+String(i+1).repeat(32),libraryVersion:0})),
-    classification:{...capture(p.positions.length+p.cashAccounts.length),positions:p.positions,cashAccounts:p.cashAccounts},exposure:{...capture(p.rows.length),rows:p.rows},
-    coverage:{classificationCombinedComplete:true,exposureCombinedComplete:true,groupingSheetsAreDuplicates:true,closedPositionsIncluded:false,transactionHistoryIncluded:false,completeETFUniverseClaimed:false},limitations:['Synthetic test envelope only.']};
-  const bytes=Buffer.from(JSON.stringify(raw)),built=createOfficialRatioSourceCore().build(raw,{sourceSha256:crypto.createHash('sha256').update(bytes).digest('hex'),sourceBytes:bytes.length});
-  const classes=built.input.exposure.summary.classes;
-  assert.deepEqual(classes.map(g=>g.basis),['direct','direct','direct','direct']);
-  // A leveraged product ranks as itself at its own value; the same security in
-  // two accounts merges and keeps both; different securities stay separate.
-  assert.deepEqual(classes[3].top5.map(r=>[r.securityCode,r.valueUSD,r.accounts]),[['TQQQ',130,['IB-HK']],['GOOG',47.25,['IB-HK','Synthetic 2']],['USSC',44.5,['IB-HK']],['OTHER',43,['IB-HK']],['GOOGL',42,['IB-HK']]]);
-  assert.equal(built.input.exposure.summary.residualETFs.valueUSD,0);
-  assert.equal(built.input.classification.totalValueUSD,p.totals.rowsCents/100);
-  assert.equal(built.sourceDates.classification,built.sourceDates.exposure);
-  const scope=crypto.createHash('sha256').update(JSON.stringify([...p.accounts].sort())).digest('hex');
-  const view={...createRankedExposureCore(),ALL_TOGETHER_SCOPE_SHA256:scope}.buildRankedExposureView(built.input.exposure);
-  assert.equal(view.groups[3].directOnly,true);assert.equal(view.residualUsd,0);
+// ---- the API source as its own signed kind, end to end on synthetic data ----
+const sha=b=>crypto.createHash('sha256').update(b).digest('hex');
+const NOW=new Date('2026-11-10T10:00:00.000Z');
+function apiOriginal(edit=()=>{}){
+  const capture=syntheticCapture();capture.view.name='All Together';edit(capture);
+  const p=core.project(capture),raw=core.toRaw(p,{reportSha256:'7'.repeat(64)}),bytes=Buffer.from(JSON.stringify(raw));
+  const built=createOfficialRatioSourceCore().build(raw,{sourceSha256:sha(bytes),sourceBytes:bytes.length});
+  const scope=sha(JSON.stringify([...raw.accounts].sort())),exposure={...createRankedExposureCore(),ALL_TOGETHER_SCOPE_SHA256:scope};
+  return {p,raw,bytes,built,scope,exposure,ratio:createFeeRatioCore(exposure,crypto.webcrypto),source:createRatioSourceCore(()=>scope)};
+}
+async function apiSnapshot(){
+  const f=apiOriginal(),facts=f.source.verifyBrowserSourceAssociations(f.raw,f.built.input,{scopeHash:f.scope,now:NOW});
+  const manager=await f.ratio.deriveSnapshotManager('0'.repeat(32),Buffer.alloc(32,7).toString('base64url'),'synthetic-manager-token-not-real-123');
+  const model=await buildRatioModel(f.built.input,{kind:'snapshot',targetDate:f.built.input.exposure.summary.asOf,feeAccountingThrough:null,now:NOW,viewCore:f.ratio,previewOnly:true});
+  model.book.browserEvidence={...model.book.browserEvidence,integrity:'verified-original-api-association',associationId:'c'.repeat(64),managerScopeId:manager.recipient.scopeId,migrationPending:false,classificationDeltaCents:0,exposureDeltaCents:0};
+  model.sourceDates=facts.sourceDates;model.classificationSummary=facts.classificationSummary;
+  const inputBytes=Buffer.from(JSON.stringify(f.built.input)),snapshot=createRatioSnapshotCore(f.ratio,f.exposure,createRatioSourceCore,b=>JSON.parse(Buffer.from(b)),crypto.webcrypto);
+  const args={originalBytes:new Uint8Array(f.bytes),inputBytes:new Uint8Array(inputBytes),model,recipient:manager.recipient,sourceSha256:sha(f.bytes),inputSha256:sha(inputBytes),now:NOW};
+  const original=await snapshot.verifyOriginal(args),packet=await snapshot.candidate({model,recipient:manager.recipient,proof:original,now:NOW}),signed=await snapshot.authenticate(packet,original,manager,{profileSha256:'a'.repeat(64),now:NOW});
+  return {...f,facts,manager,model,snapshot,args,signed};
+}
+
+test('an API original projects to a direct top five for all four classes and names itself as an API source everywhere',()=>{
+  const f=apiOriginal(),input=f.built.input,s=input.exposure.summary;
+  assert.equal(f.raw.schemaVersion,'sharesight-api-full-v1');assert.equal(f.raw.source.transport,'official-api');assert.equal(Object.hasOwn(f.raw,'exposure'),false);
+  assert.deepEqual(s.classes.map(g=>g.basis),['direct','direct','direct','direct']);
+  // A leveraged product ranks as itself; the same security in two accounts merges; different securities stay separate.
+  assert.deepEqual(s.classes[3].top5.map(r=>[r.securityCode,r.valueUSD,r.accounts]),[['TQQQ',130,['IB-HK']],['GOOG',47.25,['IB-HK','Synthetic 2']],['USSC',44.5,['IB-HK']],['OTHER',43,['IB-HK']],['GOOGL',42,['IB-HK']]]);
+  assert.equal(s.residualETFs.valueUSD,0);assert.equal(s.sourceReportSHA256,'7'.repeat(64));assert.equal(Object.hasOwn(s,'sourceXlsxSHA256'),false);
+  assert.deepEqual([s.source.report,s.source.groupBy,s.source.show],['API V3 Performance','Custom group','All holdings']);assert.equal(input.exposure.retrievedAtBasis,'Sharesight API 响应接收时间');
+  const p=input.book.provenance;
+  assert.deepEqual([p.transport,p.observedAtBasis,p.reportTotalDeltaCents],['official-api','api-response-received',f.p.totals.reportDeltaCents]);
+  for(const k of ['exposureCapturedAt','downloadCompletedAt'])assert.equal(Object.hasOwn(p,k),false,k);
+  assert.equal(input.book.ib.holdings.every(h=>h.valueBasis==='api-report-value'),true);
+  assert.equal(input.classification.totalValueUSD,f.p.totals.rowsCents/100);
+  const view=f.exposure.buildRankedExposureView(input.exposure);
+  assert.equal(view.groups[3].directOnly,true);assert.equal(view.sourceReportSha256,'7'.repeat(64));assert.equal(Object.hasOwn(view,'sourceXlsxSha256'),false);
+  assert.doesNotMatch(JSON.stringify(input),/workbook|xlsx|mtime|libfile|Tools Exposure|preserved-browser-source/i);
+});
+
+test('the API original is rebuilt exactly; edits, the wrong basis, a large total difference, staleness and workbook labels are refused',()=>{
+  const f=apiOriginal(),ok=()=>f.source.verifyBrowserSourceAssociations(f.raw,f.built.input,{scopeHash:f.scope,now:NOW});
+  const facts=ok();assert.equal(Object.hasOwn(facts,'companyExposure'),false);assert.deepEqual(facts.sourceDates,{classification:'2026-11-10',exposure:'2026-11-10'});
+  for(const mutate of [i=>i.classification.totalValueUSD++,i=>i.exposure.summary.classes[3].top5[0].valueUSD--,i=>i.book.provenance.transport='official-workbooks',i=>i.exposure.summary.source.report='Tools Exposure',i=>i.book.provenance.reportTotalDeltaCents++,i=>i.book.ib.holdings[0].valueBasis='preserved-browser-source']){
+    const input=structuredClone(f.built.input);mutate(input);assert.throws(()=>f.source.verifyBrowserSourceAssociations(f.raw,input,{scopeHash:f.scope,now:NOW}));
+  }
+  assert.throws(()=>f.source.verifyBrowserSourceAssociations(f.raw,f.built.input,{scopeHash:'0'.repeat(64),now:NOW}));
+  for(const at of ['2026-11-10T08:59:59.000Z','2026-11-11T21:00:01.000Z','2026-11-15T16:00:00.000Z'])assert.throws(()=>f.source.verifyBrowserSourceAssociations(f.raw,f.built.input,{scopeHash:f.scope,now:new Date(at)}),undefined,at);
+  const official=createOfficialRatioSourceCore(),build=(raw,options={})=>{const b=Buffer.from(JSON.stringify(raw));return official.build(raw,{sourceSha256:sha(b),sourceBytes:b.length,...options});};
+  assert.throws(()=>build(f.raw,{directSecondary:false}),/RATIO_OFFICIAL_SOURCE_REFUSED/);
+  for(const edit of [r=>r.source.transport='official-workbook-exports',r=>r.classification.captureTimeBasis='original-download-file-mtime',r=>r.classification.reportTotalDeltaCents=101,r=>r.classification.reportTotalDeltaCents=.5,r=>r.sources.push({...r.sources[0]}),r=>r.sources[0].route='other',r=>r.coverage.etfLookThroughIncluded=true,r=>r.exposure={rows:[]},r=>r.classification.asOf='2026-11-11',r=>r.classification.positions[0].valueUSD=-1,r=>r.accounts.pop()]){
+    const raw=structuredClone(f.raw);edit(raw);assert.throws(()=>build(raw),/RATIO_OFFICIAL_SOURCE_REFUSED/);
+  }
+  // An API summary cannot be passed off as, or mixed with, a workbook summary.
+  for(const edit of [e=>{e.summary.sourceXlsxSHA256=e.summary.sourceReportSHA256;},e=>{e.summary.source.report='Tools Exposure';},e=>{e.retrievedAtBasis='原始官方导出文件mtime（非独立下载完成时间）';},e=>{e.summary.residualETFs={valueUSD:1,weightTotalPct:1/e.summary.totalValueUSD*100,weightSecondaryClassPct:1/e.summary.classes[3].totalValueUSD*100};},e=>{e.summary.classes[3].basis='Exposure individual security direct plus ETF look-through, includes cash in class denominator';}]){
+    const e=structuredClone(f.built.input.exposure);edit(e);assert.throws(()=>f.exposure.buildRankedExposureView(e));
+  }
+  assert.throws(()=>core.toRaw({...f.p,view:{id:'1',name:'Other view'}},{reportSha256:'7'.repeat(64)}),{message:'RATIO_API_SOURCE_SCOPE'});
+  assert.throws(()=>core.toRaw(f.p,{reportSha256:'short'}),{message:'RATIO_API_SOURCE_SCOPE'});
+});
+
+test('an API source signs as its own kind without a Library version, renders API wording only, and cannot be relabelled either way',async()=>{
+  const f=await apiSnapshot(),result=await f.snapshot.verify(f.signed,f.manager,{now:NOW});
+  assert.equal(result.source.kind,'complete-official-api-association');assert.equal(Object.hasOwn(result.source,'libraryVersion'),false);
+  assert.deepEqual(result.source.sourceDates,{classification:'2026-11-10',exposure:'2026-11-10'});assert.equal(Object.hasOwn(result.model,'companyExposure'),false);
+  const html=f.ratio.render(result.model);
+  for(const text of ['来源：Sharesight 官方 API（合并视图 All Together 分类报表）','API 响应逐行投影、账户范围与响应字节哈希已核验。','API 响应接收 2026-11-10T09:00:00.000Z','报表总额与逐行合计相差 0.00 USD','时间依据 Sharesight API 响应接收时间','持仓来源截至 2026-11-10','资产分类与持仓均截至 2026-11-10，取自同一份 API 报表','二级市场 · 直接持仓前五','不做ETF穿透，ETF按其自身市值列示'])assert.ok(html.includes(text),text);
+  assert.doesNotMatch(html,/工作簿|mtime|Library|浏览器快照|Exposure 估值|ETF Residual|Top500|公司经济敞口|undefined/);
+  // Signing refuses a Library version on an API original, and any relabelling of the kind or the sealed model.
+  await assert.rejects(f.snapshot.verifyOriginal({...f.args,libraryVersion:0}),/RATIO_SNAPSHOT_REFUSED/);
+  const library=structuredClone(f.model);library.book.browserEvidence.integrity='verified-original-library-association';library.book.browserEvidence.sourceVersion=0;
+  await assert.rejects(f.ratio.validateModel(library));
+  const company=structuredClone(f.model);company.companyExposure={};await assert.rejects(f.ratio.validateModel(company));
+  for(const edit of [b=>{b.source.kind='complete-official-workbook-association';},b=>{b.source.kind='complete-official-workbook-association';b.source.libraryVersion=0;},b=>{b.source.libraryVersion=0;},b=>{delete b.source.datePolicy;}]){
+    const packet=structuredClone(f.signed);edit(packet.body);await assert.rejects(f.snapshot.verify(packet,f.manager,{now:NOW}),/RATIO_SNAPSHOT_REFUSED/);
+  }
+  const stale=await f.snapshot.verify(f.signed,f.manager,{now:new Date('2026-11-12T00:00:00.000Z')});assert.equal(stale.stale,true);
 });

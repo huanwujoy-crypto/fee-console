@@ -115,5 +115,18 @@ export function createApiRatioSourceCore(){
       accountsWithoutRows:accounts.filter(a=>!observed.has(a))
     };
   }
-  return {CAPTURE,CODES,GROUPINGS,project};
+  // The private original a projection is published from. It says what it is:
+  // one Sharesight API classification report of the All Together view, with
+  // the exact response's hash. It is never shaped as a workbook export.
+  const RAW='sharesight-api-full-v1',LIMITATION='Sharesight API 分类报表仅含当前直接持仓与现金；不含ETF穿透、闭仓和交易历史。';
+  function toRaw(projection,{reportSha256}={}){
+    const p=projection;
+    if(!p||typeof p!=='object'||p.view?.name!=='All Together'||!Array.isArray(p.accounts)||!Number.isSafeInteger(p.totals?.reportDeltaCents)||!/^[a-f0-9]{64}$/.test(reportSha256||'')||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(p.capturedAt||''))fail('SCOPE');
+    return {schemaVersion:RAW,source:{provider:'Sharesight',view:'All Together',transport:'official-api'},accounts:[...p.accounts],
+      sources:[{report:'classification',route:'api-v3-performance-custom-group',sha256:reportSha256}],
+      classification:{asOf:p.asOf,capturedAt:p.capturedAt,captureTimeBasis:'api-response-received',reportTotalDeltaCents:p.totals.reportDeltaCents,positions:structuredClone(p.positions),cashAccounts:structuredClone(p.cashAccounts)},
+      coverage:{classificationComplete:true,limitedHoldingsIncluded:false,closedPositionsIncluded:false,transactionHistoryIncluded:false,etfLookThroughIncluded:false},
+      limitations:[LIMITATION]};
+  }
+  return {CAPTURE,RAW,CODES,GROUPINGS,project,toRaw};
 }

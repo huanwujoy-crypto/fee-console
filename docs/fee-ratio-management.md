@@ -18,6 +18,38 @@ independent cloud publisher is imported. The unified manager tab retains current
 plan, cash-priority reference, stock four-category allocation, four Exposure
 top-five groups and complete-holdings sections. Missing inputs remain unknown.
 
+## Sharesight API as a separately labelled source (2026-11-14)
+
+The same projection, association check, signed snapshot and viewer accept a
+second official source: one Sharesight API V3 classification report of the All
+Together view. It is never shaped or labelled as a workbook export.
+
+| | Workbook source | API source |
+| --- | --- | --- |
+| private original | `sharesight-private-full-v2` | `sharesight-api-full-v1` |
+| transport | `official-workbook-exports` / `official-workbooks` | `official-api` |
+| time basis | original download file mtime | API response received |
+| identity | three Library files and their versions | SHA-256 of the exact report response |
+| Exposure export | separate workbook, own date | none; direct and cash rows are the report's own rows |
+| secondary ranking | direct or the earlier look-through | direct only |
+| signed kind | `complete-official-workbook-association` | `complete-official-api-association`, no `libraryVersion` |
+| verified label | `verified-original-library-association` | `verified-original-api-association`, no `sourceVersion` |
+| publish plan | `library: {fileId, version}` | `library: null` |
+
+The report's own total may differ from the sum of its rows by rounding. The
+difference is carried as `reportTotalDeltaCents` (at most one US dollar, a
+larger one is refused), shown in the source note, and never absorbed: amounts
+are the row sum. An API source has no ETF look-through, so it produces no
+`companyExposure` and no residual, and the viewer says so instead of showing
+Exposure wording. The plan and the pinned original must agree on the kind, and
+neither kind can be relabelled as the other at any layer.
+
+Not yet supported: the performance wrapper (`sharesight-private-performance-v1`)
+still requires a workbook allocation, and nothing in the cloud workflow reads
+the API to produce these originals yet. Until both exist, production keeps
+publishing from workbooks; a signed snapshot that already carries performance
+cannot be followed by one that does not.
+
 ## Direct-holdings top five for every class (2026-11-13)
 
 All four classes now rank actually held positions at their own asset value,

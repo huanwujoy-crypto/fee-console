@@ -21,7 +21,7 @@ const esc=s=>String(s).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
 
 function verifyBrowserSourceAssociations(raw,input,{scopeHash,now=new Date()}={}){
   if(raw?.schemaVersion==='sharesight-private-performance-v1'){
-    if(!exact(raw,['schemaVersion','accounts','allocation','performance','performanceCapturedAt'])||input?.schema!=='fee-console.ratio-sources.v3'||!exact(input,['schema','classification','exposure','book','performance'])||JSON.stringify(raw.accounts)!==JSON.stringify(raw.allocation?.accounts))fail();
+    if(!exact(raw,['schemaVersion','accounts','allocation','performance','performanceCapturedAt'])||input?.schema!=='fee-console.ratio-sources.v3'||!exact(input,['schema','classification','exposure','book','performance'])||JSON.stringify(raw.accounts)!==JSON.stringify(raw.allocation?.accounts)||raw.allocation?.schemaVersion!=='sharesight-private-full-v2')fail();
     const base={...input,schema:'fee-console.ratio-sources.v2'};delete base.performance;
     const facts=verifyBrowserSourceAssociations(raw.allocation,base,{scopeHash,now});
     const core=createAggregateReturnsCore(),performance=raw.performance;
@@ -34,6 +34,16 @@ function verifyBrowserSourceAssociations(raw,input,{scopeHash,now=new Date()}={}
     return {...facts,observedAt:new Date(Math.min(Date.parse(facts.observedAt),captured)).toISOString(),sourceDates:{...facts.sourceDates,performance:performance.asOf},performance:structuredClone(performance)};
   }
 
+  if(raw?.schemaVersion==='sharesight-api-full-v1'){
+    // Same exact rebuild as the workbook source, from the API report rows. It
+    // has no ETF look-through, so no company-exposure facts are produced.
+    const core=createOfficialRatioSourceCore();
+    const built=core.build(raw,{sourceSha256:input?.book?.sourceSha256,sourceBytes:input?.book?.provenance?.fullSourceBytes,includeFundDistributions:Object.hasOwn(input?.classification||{},'fundDistributions'),includeAssetAllocation:Object.hasOwn(input?.classification||{},'assetAllocation'),excludeBenchmarkOnly:input?.classification?.basis===core.BENCHMARK_EXCLUDED_BASIS,includeFundHoldings:input?.classification?.fundDistributions?.some(f=>f.groups?.some(g=>Object.hasOwn(g,'holdings')))===true,directSecondary:true});
+    if(core.canonical(input)!==core.canonical(built.input)||hashScope(raw.accounts)!==scopeHash)fail();
+    const clock=now.getTime(),captured=time(built.capturedAt),age=hkAge(clock,raw.classification.asOf);
+    if(!Number.isFinite(clock)||clock<captured||clock-captured>36*3600000||age<0||age>4)fail();
+    return {observedAt:built.capturedAt,asOf:built.targetDate,sourceDates:built.sourceDates,classificationSummary:built.classificationSummary,migrationPending:false,classificationDeltaCents:0,exposureDeltaCents:0};
+  }
   if(raw?.schemaVersion==='sharesight-private-full-v2'){
     const core=createOfficialRatioSourceCore();
     const built=core.build(raw,{sourceSha256:input?.book?.sourceSha256,sourceBytes:input?.book?.provenance?.fullSourceBytes,includeFundDistributions:Object.hasOwn(input?.classification||{},'fundDistributions'),includeAssetAllocation:Object.hasOwn(input?.classification||{},'assetAllocation'),excludeBenchmarkOnly:input?.classification?.basis===core.BENCHMARK_EXCLUDED_BASIS,includeFundHoldings:input?.classification?.fundDistributions?.some(f=>f.groups?.some(g=>Object.hasOwn(g,'holdings')))===true,directSecondary:input?.exposure?.summary?.classes?.[3]?.basis!==core.LOOK_THROUGH_SECONDARY_BASIS});
@@ -94,7 +104,11 @@ function buildBrowserRatioBook(input,targetDate){
   const text=s=>typeof s==='string'&&s.length>0&&s.length<=500&&!/[\u0000-\u001f\u007f]/.test(s);
   const money=v=>{if(typeof v!=='number'||!Number.isFinite(v)||v<0||v>1e12||Math.abs(v*100-Math.round(v*100))>0.00001)fail();return Math.round(v*100);};
   const p=input.provenance;
-  if(official){
+  if(official&&p?.transport==='official-api'){
+    // An API report is its own distinct source: no workbook, no file mtime, no
+    // Library version. Its rounding difference to the report total is carried.
+    if(!exact(p,['transport','observedAtBasis','classificationCapturedAt','reportTotalDeltaCents','fullSourceBytes','fullSourceSha256','transferStatus','limitations'])||p.observedAtBasis!=='api-response-received'||![input.retrievedAt,p.classificationCapturedAt].every(instant)||input.retrievedAt!==p.classificationCapturedAt||!Number.isSafeInteger(p.reportTotalDeltaCents)||Math.abs(p.reportTotalDeltaCents)>100)fail();
+  }else if(official){
     if(!exact(p,['transport','observedAtBasis','classificationCapturedAt','exposureCapturedAt','downloadCompletedAt','fullSourceBytes','fullSourceSha256','transferStatus','limitations'])||p.transport!=='official-workbooks'||p.observedAtBasis!=='original-download-file-mtime'||p.downloadCompletedAt!==null||![input.retrievedAt,p.classificationCapturedAt,p.exposureCapturedAt].every(instant)||input.retrievedAt!==p.classificationCapturedAt)fail();
   }else if(!exact(p,['transport','observedAtBasis','exportCreatedAt','exportLastWrittenAt','classificationSavedAt','fullSourceBytes','fullSourceSha256','transferStatus','limitations'])||p.transport!=='browser-export-and-ui'||p.observedAtBasis!=='original-export-download-time'||![input.retrievedAt,p.exportCreatedAt,p.exportLastWrittenAt,p.classificationSavedAt].every(instant)||Date.parse(p.exportCreatedAt)>Date.parse(p.exportLastWrittenAt)||Date.parse(input.retrievedAt)!==Math.floor(Date.parse(p.exportLastWrittenAt)/1000)*1000)fail();
   if(p.fullSourceSha256!==input.sourceSha256||!Number.isSafeInteger(p.fullSourceBytes)||p.fullSourceBytes<1||p.fullSourceBytes>5*1024*1024||!text(p.transferStatus)||!Array.isArray(p.limitations)||p.limitations.length>50||!p.limitations.every(text))fail();
@@ -104,7 +118,7 @@ function buildBrowserRatioBook(input,targetDate){
     if(!exact(ib,['name','holdings','holdingsValueUSD','cashRows','cashValueUSD','totalValueUSD'])||ib.name!=='IB-HK'||!Array.isArray(ib.holdings)||!ib.holdings.length||ib.holdings.length>5000||!Array.isArray(ib.cashRows)||ib.cashRows.length>100)fail();
     const seen=new Set(),groups=new Map([...STOCK_CLASS_TARGETS.keys()].map(k=>[k,0])),cashLike=new Map(),symbolGroups=new Map();let usscCents=0,holdingsTotal=0;
     holdings=ib.holdings.map(h=>{
-      if(!exact(h,['code','market','group','valueUSD','quantity','name','valueBasis'])||![h.code,h.market,h.group].every(text)||!(h.name===null||text(h.name))||!(h.quantity===null||typeof h.quantity==='number'&&Number.isFinite(h.quantity)&&h.quantity>=0)||!['preserved-browser-source','same-export-underlying-plus-residual'].includes(h.valueBasis))fail();
+      if(!exact(h,['code','market','group','valueUSD','quantity','name','valueBasis'])||![h.code,h.market,h.group].every(text)||!(h.name===null||text(h.name))||!(h.quantity===null||typeof h.quantity==='number'&&Number.isFinite(h.quantity)&&h.quantity>=0)||!(p.transport==='official-api'?['api-report-value']:['preserved-browser-source','same-export-underlying-plus-residual']).includes(h.valueBasis))fail();
       const key=h.code+'|'+h.market,symbol=h.code.toUpperCase().split('.')[0],valueCents=money(h.valueUSD);
       if(seen.has(key)||symbolGroups.has(symbol)&&symbolGroups.get(symbol)!==h.group)fail();seen.add(key);symbolGroups.set(symbol,h.group);holdingsTotal+=valueCents;
       if(groups.has(h.group))groups.set(h.group,groups.get(h.group)+valueCents);else if(!['主题投资','防御资产'].includes(h.group))fail();

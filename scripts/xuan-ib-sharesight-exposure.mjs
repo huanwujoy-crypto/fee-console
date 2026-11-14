@@ -29,18 +29,24 @@ const RANKED_EXPOSURE_SCHEMA = 'xuan.sharesight-exposure-ranked.v1';
 const EXPOSURE_OBSERVED_TIME_BASIS = '原始Exposure导出文件下载落地时间（按秒）';
 const ALL_TOGETHER_SCOPE_SHA256 = '25d1c346d1be590d75d906435e2fec752f851dbfc231c07dd279b5e12adc11c6';
 const secondaryBasis = 'Exposure individual security direct plus ETF look-through, includes cash in class denominator';
+const API_OBSERVED_TIME_BASIS = 'Sharesight API 响应接收时间';
 function buildRankedExposureView(input) {
   const official=input?.schema==='xuan.sharesight-exposure-ranked.v2';
   check(object(input) && Object.keys(input).sort().join('|') === 'retrievedAt|retrievedAtBasis|schema|summary'
     && (input.schema === RANKED_EXPOSURE_SCHEMA||official), 'RANKED_SCHEMA');
   const s = input.summary;
-  check(object(s) && Object.keys(s).sort().join('|') === 'accounts|asOf|classes|currency|limitations|residualETFs|source|sourceXlsxSHA256|totalValueUSD|transferStatus', 'RANKED_KEYS');
+  // A summary projected from the Sharesight API names its own report hash and
+  // never the workbook's. It exists only for the official v2 schema.
+  const api=official&&object(s)&&Object.hasOwn(s,'sourceReportSHA256');
+  check(object(s) && Object.keys(s).sort().join('|') === 'accounts|asOf|classes|currency|limitations|residualETFs|source|'+(api?'sourceReportSHA256':'sourceXlsxSHA256')+'|totalValueUSD|transferStatus', 'RANKED_KEYS');
   check(object(s) && s.currency === 'USD' && date(s.asOf) && amount(s.totalValueUSD) && s.totalValueUSD > 0, 'RANKED_TOTAL_DATE');
-  check(input.retrievedAt === null ? input.retrievedAtBasis === null : input.retrievedAtBasis === (official?'原始官方导出文件mtime（非独立下载完成时间）':EXPOSURE_OBSERVED_TIME_BASIS), 'OBSERVED_TIME_BASIS');
+  check(input.retrievedAt === null ? input.retrievedAtBasis === null : input.retrievedAtBasis === (api?API_OBSERVED_TIME_BASIS:official?'原始官方导出文件mtime（非独立下载完成时间）':EXPOSURE_OBSERVED_TIME_BASIS), 'OBSERVED_TIME_BASIS');
   check(input.retrievedAt === null || instant(input.retrievedAt) && s.asOf <= new Date(Date.parse(input.retrievedAt) + 28800000).toISOString().slice(0, 10), 'DATE');
   check(s.source?.provider === 'Sharesight' && s.source.view === 'All Together'
-    && s.source.report === 'Tools Exposure' && s.source.groupBy === 'No grouping'
-    && s.source.show === 'Top 500' && s.source.classification === 'Investments→资产类别', 'RANKED_SOURCE');
+    && (api ? s.source.report === 'API V3 Performance' && s.source.groupBy === 'Custom group' && s.source.show === 'All holdings'
+      : s.source.report === 'Tools Exposure' && s.source.groupBy === 'No grouping' && s.source.show === 'Top 500')
+    && s.source.classification === 'Investments→资产类别', 'RANKED_SOURCE');
+  check(!api||input.retrievedAt!==null&&s.source.url===null, 'RANKED_SOURCE');
   check(official&&s.source.url===null||/^https:\/\/portfolio\.sharesight\.com\/portfolios\/\d+\/tools\/exposure\/\d+\?consolidated=true$/.test(s.source.url ?? ''), 'RANKED_SOURCE');
   check(Array.isArray(s.accounts) && s.accounts.length === 10 && s.accounts.every(text)
     && unique(s.accounts.map(n => n.replaceAll('&amp;', '&'))), 'SCOPE');
@@ -73,14 +79,17 @@ function buildRankedExposureView(input) {
     && ['weightTotalPct', 'weightSecondaryClassPct'].every(k => Number.isFinite(residual[k]))
     && Math.abs(residual.weightTotalPct - pct(residual.valueUSD, s.totalValueUSD)) <= .0051
     && Math.abs(residual.weightSecondaryClassPct - pct(residual.valueUSD, groups[3].totalUsd)) <= .0051, 'RESIDUAL');
+  // The API report carries directly held positions only: every class ranks
+  // direct holdings and there is no ETF look-through residual to disclose.
+  check(!api||groups[3].directOnly===true&&residual.valueUSD===0, 'RANKED_API_DIRECT');
   check(Array.isArray(s.limitations) && s.limitations.length <= 50 && s.limitations.every(text)
-    && text(s.transferStatus) && /^[a-f0-9]{64}$/.test(s.sourceXlsxSHA256 ?? ''), 'RANKED_COVERAGE');
+    && text(s.transferStatus) && /^[a-f0-9]{64}$/.test((api?s.sourceReportSHA256:s.sourceXlsxSHA256) ?? ''), 'RANKED_COVERAGE');
   return {schema: input.schema, valuationDate: s.asOf, retrievedAt: input.retrievedAt, retrievedAtBasis: input.retrievedAtBasis,
     portfolioTotalUsd: s.totalValueUSD, groups, residualUsd: residual.valueUSD,
     residualPortfolioWeightPct: pct(residual.valueUSD, s.totalValueUSD), residualCategoryWeightPct: pct(residual.valueUSD, groups[3].totalUsd),
     limitations: [...s.limitations], transferStatus: s.transferStatus,
     coverage: 'source-ranked-summary; constituent rows and component splits not supplied',
-    sourceXlsxSha256: s.sourceXlsxSHA256};
+    ...(api?{sourceReportSha256: s.sourceReportSHA256}:{sourceXlsxSha256: s.sourceXlsxSHA256})};
 }
 function renderRankedExposure(input) {
   const m = buildRankedExposureView(input);
