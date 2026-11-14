@@ -20,7 +20,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {boundedJson,boundedJsonTransportDiagnostic,BoundedJsonError} from './fee-http-json.mjs';
-import {ratioAdmission,RATIO_BUCKET,RATIO_CAPTURE_FILE,RATIO_CAPTURE_SCHEMA,validateRatioCapture} from './fee-ratio-cloud-runtime.mjs';
+import {ratioRunAdmission,RATIO_BUCKET,RATIO_CAPTURE_FILE,RATIO_CAPTURE_SCHEMA,validateRatioCapture} from './fee-ratio-cloud-runtime.mjs';
 import {createApiRatioSourceCore} from './fee-ratio-api-source.mjs';
 import {createApiPerformanceCore} from './fee-ratio-api-performance.mjs';
 import {createOfficialRatioSourceCore} from './fee-ratio-official-source.mjs';
@@ -79,9 +79,9 @@ async function captureWork({env,event,now=new Date(),fetchImpl=globalThis.fetch,
     // ---- admission: the same owner dispatch, exact main and plan the publication step requires ----
     if(!object(env)||FORBIDDEN.some(k=>env[k]!==undefined)||CLOUD_CREDENTIAL_PATHS.some(k=>env[k]!==undefined&&env[k]!=='')
       ||PRIVATE.some(k=>typeof env[k]!=='string'||!env[k]||env[k].length>16384||/[\r\n\0]/.test(env[k]))||!/^\d{1,20}$/.test(env.GITHUB_RUN_ID||''))fail('ENVIRONMENT');
-    const plan=ratioAdmission(env,event);
-    if(plan.mode!=='publish-api')fail('PLAN');
-    result.planSha256=sha(Buffer.from(env.RATIO_PLAN));result.mainSha=env.GITHUB_SHA;result.runId=env.GITHUB_RUN_ID;
+    const admitted=ratioRunAdmission(env,event,now),plan=admitted.plan;
+    if(!admitted.due||plan.mode!=='publish-api')fail('PLAN');
+    result.planSha256=sha(Buffer.from(admitted.planText));result.mainSha=env.GITHUB_SHA;result.runId=env.GITHUB_RUN_ID;
     const d=plan.asOf,clockNow=now.getTime(),age=(Date.parse(hkDate(clockNow)+'T00:00:00Z')-Date.parse(d+'T00:00:00Z'))/86400000;
     if(!date(d)||!Number.isFinite(clockNow)||!Number.isInteger(age)||age<0||age>4)fail('TARGET_DATE');
 
