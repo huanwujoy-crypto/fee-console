@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="管理费">
 <meta name="theme-color" content="#fcfcfb">
-<meta name="fee-console-build" content="4.9.56">
+<meta name="fee-console-build" content="4.9.57">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -1147,7 +1147,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.9.56";
+const UI_VERSION_LABEL=" · v4.9.57";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -2172,6 +2172,7 @@ function createOfficialRatioSourceCore(){
   const key=(a,c,m)=>JSON.stringify([a,c,m]);
   const four=s=>s==='VC/PE'?'PE/VC':s==='对冲基金'||s==='常青基金'?s:'二级市场';
   const names=['PE/VC','对冲基金','常青基金','二级市场'];
+  const ETF_TYPES=new Set(['exchange_traded_fund','exchange_traded_funds','etf']);
   const BENCHMARK_EXCLUDED_BASIS='complete-official-classification-excluding-benchmark-only.v1';
   const LOOK_THROUGH_SECONDARY_BASIS='Exposure individual security direct plus ETF look-through, includes cash in class denominator';
   const benchmarkOnly=r=>r.account.replaceAll('&amp;','&')==='Citi-HK & 地产四期'&&['QQQ.NASDAQ','SPY.NYSE'].includes(r.securityCode+'.'+r.market);
@@ -2286,8 +2287,12 @@ function createOfficialRatioSourceCore(){
     }
     const accounts=new Set(raw.accounts),positions=[],cash=[],byKey=new Map(),cashByKey=new Map(),sourceRows=new Set();
     const common=r=>{if(!accounts.has(r.account)||!text(r.name)||!Number.isSafeInteger(r.sourceRow)||r.sourceRow<1||sourceRows.has(r.sourceRow)||!text(r.sharesightCategory)||cents(r.valueUSD)<0)fail();sourceRows.add(r.sourceRow);};
+    // An API original carries the provider's own asset type per position.
+    // Either every position declares it or none does (an earlier original).
+    const typed=api&&c.positions.length>0&&c.positions.some(r=>Object.hasOwn(r||{},'assetType'));
     for(const r of c.positions){
-      if(!exact(r,['sourceRow','account','name','valueUSD','sharesightCategory','securityCode','market','quantity']))fail();common(r);
+      if(!exact(r,['sourceRow','account','name','valueUSD','sharesightCategory','securityCode','market','quantity',...(typed?['assetType']:[])]))fail();common(r);
+      if(typed&&!(r.assetType===null||text(r.assetType)&&r.assetType.length<=128))fail();
       if(!text(r.securityCode)||!text(r.market)||!(r.quantity===null||typeof r.quantity==='number'&&Number.isFinite(r.quantity)&&r.quantity>=0))fail();
       const k=key(r.account,r.securityCode,r.market);if(byKey.has(k))fail();const p={...r,fourClass:four(r.sharesightCategory)};byKey.set(k,p);positions.push(p);
     }
@@ -2333,7 +2338,12 @@ function createOfficialRatioSourceCore(){
       // look-through rows) is still reproduced exactly when it declares it.
       if(i<3||directSecondary){
         const grouped=new Map();
-        for(const r of positions30.filter(p=>p.fourClass===name)){
+        // Owner rule (2026-11-14): the secondary-market ranking never lists an
+        // ETF. Only the provider's own asset type decides; a position whose type
+        // is unknown or anything else still ranks. ETFs stay in the class total.
+        const ranked=positions30.filter(p=>p.fourClass===name);
+        if(i===3&&typed&&!ranked.some(p=>p.assetType!==null))fail();
+        for(const r of ranked.filter(p=>!(i===3&&typed&&ETF_TYPES.has(String(p.assetType).toLowerCase())))){
           const suffix=i===2?evergreenName(r):null,k=suffix?JSON.stringify(['dated-fund-name',suffix]):key('',r.securityCode,r.market);
           const old=grouped.get(k)||{name:suffix||r.name,securityCode:r.securityCode,market:r.market,accounts:[],valueUSD:0,...(i===2?{sourceHoldings:[]}: {})};
           if(!old.accounts.includes(r.account))old.accounts.push(r.account);old.accounts.sort();
@@ -2910,7 +2920,7 @@ function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
     // snapshots only; it never replaces a direct ranking.
     const directSecondary=view.groups[3].directOnly===true;
     const groups=view.groups.map((g,i)=>'<section><h3>'+esc(g.category)+(i===3&&!directSecondary?(company?.top?' · 公司经济敞口前五':' · 原证券口径前五'):' · 直接持仓前五')+'</h3><p>Exposure截至 '+esc(view.valuationDate)+' · 本类资产 '+money(Math.round(g.totalUsd*100))+'</p>'+(i===3&&!directSecondary&&company?.top?companyCore.render(m.companyExposure,m.exposure,b?.sourceSha256,r=>topReturns('二级市场',r.name)):table(g.top,g.category))+'</section>').join('');
-    const companyStatus=directSecondary?'<p class="ratio-key-status">四类均按实际持有的证券或基金市值排名；二级市场不做ETF穿透、不乘杠杆倍数、不合并不同证券。</p>':company?.top?'<p class="ratio-key-status">公司经济敞口含显式杠杆，比例可能超过100%；不改变总资产、类别资产及管理费。</p>':company?companyCore.render(m.companyExposure,m.exposure,b?.sourceSha256):'<p class="ratio-key-status">旧快照仅有证券前五，未由同份完整原件重算公司排名；不猜测合并后的前五。</p>';
+    const companyStatus=directSecondary?'<p class="ratio-key-status">四类均按实际持有的证券或基金市值排名；二级市场前五不含ETF（ETF仍计入本类资产），不做ETF穿透、不乘杠杆倍数、不合并不同证券。</p>':company?.top?'<p class="ratio-key-status">公司经济敞口含显式杠杆，比例可能超过100%；不改变总资产、类别资产及管理费。</p>':company?companyCore.render(m.companyExposure,m.exposure,b?.sourceSha256):'<p class="ratio-key-status">旧快照仅有证券前五，未由同份完整原件重算公司排名；不猜测合并后的前五。</p>';
     const exposure='<section class="card sharesight-exposure"><h2>All Together · 四类前五</h2>'+companyStatus+groups+'</section>';
     const stockGaps=a?targetGaps(a.totalCents,a.categories):null;
     const rows=a?a.categories.map((c,i)=>'<tr><td>'+esc(c.label)+'</td><td>'+preciseUsd(c.valueCents)+targetGap(stockGaps?.[i],'仅 IB-HK 四类股票市值合计')+'</td><td>'+(a.totalCents>0?(c.valueCents/a.totalCents*100).toFixed(2)+'%':'—')+'／'+c.targetPct+'%</td></tr>').join(''):'';
