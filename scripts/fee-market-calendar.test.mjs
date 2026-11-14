@@ -14,7 +14,44 @@ test('Sunday and Monday after a wholly closed weekend do not become Tue-Sat infe
 test('half days count as sessions, not closures',()=>{assert.equal(marketSession('2026-11-27','NYSE').halfDay,true);assert.equal(marketSession('2026-12-24','LSE').state,'open');assert.equal(marketSession('2026-12-24','SIX').state,'closed');});
 test('generic EURONEXT is never guessed to be Amsterdam',()=>{assert.equal(marketSession('2026-12-24','EURONEXT').state,'unknown');assert.equal(sessionUnion('2026-12-25',['NYSE','EURONEXT']).state,'unknown');});
 test('an open known venue cannot promote an unresolved configured venue to full production readiness',()=>{const p=sessionUnion('2026-10-27',['NYSE','EURONEXT']);assert.equal(p.state,'open');assert.equal(p.rows[1].state,'unknown');assert.equal(plan('2026-10-28T13:00:00+08:00','2026-10-26',['NYSE','EURONEXT']).reason,'CALENDAR_SCOPE_UNVERIFIED');});
-test('expired or unverified calendar years cannot activate',()=>{assert.equal(plan('2027-01-05T13:00:00+08:00','2026-12-31').state,'waiting');});
+test('expired or unverified calendar years cannot activate',()=>{
+ assert.equal(plan('2028-01-04T13:00:00+08:00','2027-12-31').state,'waiting');assert.equal(plan('2028-01-04T13:00:00+08:00','2027-12-31').reason,'CALENDAR_SCOPE_UNVERIFIED');
+ assert.equal(marketSession('2028-01-03','NYSE').state,'unknown');assert.equal(marketSession('2026-08-28','NYSE').state,'unknown');
+ // A venue without a verified table for a year is unknown for that year only, and blocks a scope that names it.
+ for(const venue of ['EURONEXT_MILAN','EURONEXT_OSLO']){assert.equal(marketSession('2026-12-23',venue).state,'open');assert.equal(marketSession('2027-01-05',venue).state,'unknown');}
+ assert.equal(plan('2027-01-06T13:00:00+08:00','2027-01-04',['NYSE','EURONEXT_MILAN']).reason,'CALENDAR_SCOPE_UNVERIFIED');
+});
+test('2027 uses its own official tables and never the 2026 dates',()=>{
+ const state=(d,v)=>marketSession(d,v).state,half=(d,v)=>marketSession(d,v).halfDay;
+ // The year boundary: 31 December 2026 and the first sessions of 2027.
+ const yearEnd=plan('2027-01-01T13:30:00+08:00','2026-12-30');assert.equal(yearEnd.target,'2026-12-31');assert.equal(yearEnd.state,'calendar-ready');assert.equal(yearEnd.kind,'daily-monthly');assert.deepEqual(yearEnd.monthlyCutoffs,['2026-12-31']);
+ assert.equal(plan('2027-01-01T12:30:00+08:00','2026-12-30').reason,'ACCOUNTING_DAY_NOT_COMPLETE');assert.equal(sessionUnion('2026-12-31',venues).state,'open');
+ assert.equal(sessionUnion('2027-01-01',venues).state,'closed');assert.equal(plan('2027-01-02T13:00:00+08:00','2026-12-31').state,'market-closed');
+ const first=plan('2027-01-05T13:00:00+08:00','2026-12-31');assert.equal(first.target,'2027-01-04');assert.equal(first.kind,'daily');assert.equal(first.priceThrough,'2027-01-04');
+ // U.S.: every 2027 closure, the one half day, and 2026-only dates that are ordinary sessions in 2027.
+ for(const d of ['01-01','01-18','02-15','03-26','05-31','06-18','07-05','09-06','11-25','12-24'])for(const v of ['NYSE','NASDAQ'])assert.equal(state('2027-'+d,v),'closed',v+d);
+ for(const d of ['01-19','02-16','05-25','07-02','09-07','11-26','12-23','12-27','12-31'])assert.equal(state('2027-'+d,'NYSE'),'open',d);
+ assert.equal(half('2027-11-26','NYSE'),true);assert.equal(half('2027-11-27','NYSE'),false);assert.equal(half('2027-12-24','NYSE'),false);
+ assert.equal(state('2026-11-26','NYSE'),'closed');assert.equal(state('2026-12-24','NYSE'),'open');
+ // London, Zurich and the Euronext venues in scope.
+ for(const d of ['01-01','03-26','03-29','05-03','05-31','08-30','12-27','12-28'])assert.equal(state('2027-'+d,'LSE'),'closed','LSE'+d);
+ for(const d of ['12-24','12-31'])assert.equal(half('2027-'+d,'LSE'),true);assert.equal(state('2027-08-31','LSE'),'open');
+ for(const d of ['01-01','03-26','03-29','05-06','05-17','12-24','12-31'])assert.equal(state('2027-'+d,'SIX'),'closed','SIX'+d);
+ for(const d of ['01-04','05-03','05-14','05-25'])assert.equal(state('2027-'+d,'SIX'),'open','SIX'+d);
+ for(const v of ['EURONEXT_AMSTERDAM','EURONEXT_BRUSSELS','EURONEXT_PARIS','EURONEXT_LISBON']){
+  for(const d of ['01-01','03-26','03-29'])assert.equal(state('2027-'+d,v),'closed',v+d);
+  for(const d of ['05-03','05-17','12-27'])assert.equal(state('2027-'+d,v),'open',v+d);
+  for(const d of ['12-24','12-31'])assert.equal(half('2027-'+d,v),true);
+ }
+ for(const d of ['05-03','12-27'])assert.equal(state('2027-'+d,'EURONEXT_DUBLIN'),'closed');
+ // The OR rule across the configured scope: a U.S. holiday with Europe open is a report day; Good Friday is not.
+ const scope=['NYSE','NASDAQ','LSE','SIX','EURONEXT_AMSTERDAM','EURONEXT_PARIS'];
+ for(const d of ['2027-01-18','2027-11-25','2027-07-05'])assert.equal(sessionUnion(d,scope).state,'open',d);
+ for(const d of ['2027-01-01','2027-03-26','2027-12-25','2027-12-26'])assert.equal(sessionUnion(d,scope).state,'closed',d);
+ assert.equal(sessionUnion('2027-12-24',scope).state,'open');assert.equal(sessionUnion('2027-12-24',['NYSE','SIX']).state,'closed');
+ // Every weekday of 2027 is decided for the configured scope; nothing is left unknown.
+ for(let t=Date.parse('2027-01-01T00:00Z');t<=Date.parse('2027-12-31T00:00Z');t+=86400000)assert.notEqual(sessionUnion(new Date(t).toISOString().slice(0,10),scope).state,'unknown');
+});
 test('invalid dates and duplicate scopes fail closed',()=>{assert.throws(()=>marketSession('2026-02-30','NYSE'));assert.throws(()=>sessionUnion('2026-10-27',['NYSE','NYSE']));});
 test('month-end archives piggyback the next qualifying daily run, without a second monthly source entry',()=>{const p=plan('2026-11-03T13:00:00+08:00','2026-10-30');assert.equal(p.state,'calendar-ready');assert.equal(p.kind,'daily-monthly');assert.deepEqual(p.monthlyCutoffs,['2026-10-31']);assert.equal(p.accountingThrough,'2026-11-02');});
 test('same-day natural month-end has one combined plan and coverage key',()=>{const p=plan('2026-10-01T13:00:00+08:00','2026-09-29');assert.equal(p.kind,'daily-monthly');assert.deepEqual(p.monthlyCutoffs,['2026-09-30']);assert.equal(p.coverageKey,'2026-09-30|2026-09-30');});

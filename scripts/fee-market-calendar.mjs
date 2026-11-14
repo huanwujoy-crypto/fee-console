@@ -1,28 +1,39 @@
 // Pure reviewed-calendar planning. No credentials, source IO or publication.
 // Finite official coverage; unknown scope/years never grant source readiness.
 const DAY=86400000;
-export const calendarCoverage={from:'2026-08-31',through:'2026-12-31'};
+export const calendarCoverage={from:'2026-08-31',through:'2027-12-31'};
 export const calendarSources={
  US:'https://www.nyse.com/markets/hours-calendars',
  NASDAQ:'https://www.nasdaqtrader.com/trader.aspx?id=calendar',
  LSE:'https://www.londonstockexchange.com/en/resources/markets-products/business-days',
- SIX:'https://www.six-group.com/dam/download/the-swiss-stock-exchange/trading/trading-provisions/regulation/trading-guides/trading-calendar-2026.pdf',
+ SIX:'https://www.six-group.com/dam/download/the-swiss-stock-exchange/trading/trading-provisions/regulation/trading-guides/trading-calendar-2027.pdf',
  EURONEXT:'https://www.euronext.com/en/trading/trading-hours-holidays'
 };
-const us=['01-01','01-19','02-16','04-03','05-25','06-19','07-03','09-07','11-26','12-25'];
-const en=['01-01','04-03','04-06','05-01','12-25'];
+// Weekday closures and half days, per venue and per calendar year, as MM-DD.
+// A venue with no table for a year is unknown for that year: it is never
+// assumed to follow another year's or another venue's holidays.
+const us26={closed:['01-01','01-19','02-16','04-03','05-25','06-19','07-03','09-07','11-26','12-25'],half:['11-27','12-24']};
+// 2027, read from the NYSE holiday table on 2026-11-14. Nasdaq had not yet
+// published its own 2027 schedule; it is given the same U.S. equities table.
+const us27={closed:['01-01','01-18','02-15','03-26','05-31','06-18','07-05','09-06','11-25','12-24'],half:['11-26']};
+const en26=['01-01','04-03','04-06','05-01','12-25'],enHalf=['12-24','12-31'];
+// 2027: 1 May and 25 December fall on a Saturday.
+const en27=['01-01','03-26','03-29'];
 const markets={
- NYSE:{zone:'America/New_York',closed:us,half:['11-27','12-24']},
- NASDAQ:{zone:'America/New_York',closed:us,half:['11-27','12-24']},
- LSE:{zone:'Europe/London',closed:['08-31','12-25','12-28'],half:['12-24','12-31']},
- SIX:{zone:'Europe/Zurich',closed:['01-01','01-02','04-03','04-06','05-01','05-14','05-25','12-24','12-25','12-31'],half:[]},
- EURONEXT_AMSTERDAM:{zone:'Europe/Amsterdam',closed:en,half:['12-24','12-31']},
- EURONEXT_BRUSSELS:{zone:'Europe/Brussels',closed:en,half:['12-24','12-31']},
- EURONEXT_PARIS:{zone:'Europe/Paris',closed:en,half:['12-24','12-31']},
- EURONEXT_LISBON:{zone:'Europe/Lisbon',closed:en,half:['12-24','12-31']},
- EURONEXT_DUBLIN:{zone:'Europe/Dublin',closed:[...en,'05-04','12-28'],half:['12-24','12-31']},
- EURONEXT_MILAN:{zone:'Europe/Rome',closed:[...en,'12-24','12-31'],half:[]},
- EURONEXT_OSLO:{zone:'Europe/Oslo',closed:[...en,'04-02','05-14','05-25','12-24','12-31'],half:['04-01']}
+ NYSE:{zone:'America/New_York',years:{2026:us26,2027:us27}},
+ NASDAQ:{zone:'America/New_York',years:{2026:us26,2027:us27}},
+ LSE:{zone:'Europe/London',years:{2026:{closed:['08-31','12-25','12-28'],half:['12-24','12-31']},
+  2027:{closed:['01-01','03-26','03-29','05-03','05-31','08-30','12-27','12-28'],half:['12-24','12-31']}}},
+ SIX:{zone:'Europe/Zurich',years:{2026:{closed:['01-01','01-02','04-03','04-06','05-01','05-14','05-25','12-24','12-25','12-31'],half:[]},
+  2027:{closed:['01-01','03-26','03-29','05-06','05-17','12-24','12-31'],half:[]}}},
+ EURONEXT_AMSTERDAM:{zone:'Europe/Amsterdam',years:{2026:{closed:en26,half:enHalf},2027:{closed:en27,half:enHalf}}},
+ EURONEXT_BRUSSELS:{zone:'Europe/Brussels',years:{2026:{closed:en26,half:enHalf},2027:{closed:en27,half:enHalf}}},
+ EURONEXT_PARIS:{zone:'Europe/Paris',years:{2026:{closed:en26,half:enHalf},2027:{closed:en27,half:enHalf}}},
+ EURONEXT_LISBON:{zone:'Europe/Lisbon',years:{2026:{closed:en26,half:enHalf},2027:{closed:en27,half:enHalf}}},
+ EURONEXT_DUBLIN:{zone:'Europe/Dublin',years:{2026:{closed:[...en26,'05-04','12-28'],half:enHalf},2027:{closed:[...en27,'05-03','12-27'],half:enHalf}}},
+ // Milan and Oslo: 2027 not yet verified here, so unknown from 2027-01-01.
+ EURONEXT_MILAN:{zone:'Europe/Rome',years:{2026:{closed:[...en26,'12-24','12-31'],half:[]}}},
+ EURONEXT_OSLO:{zone:'Europe/Oslo',years:{2026:{closed:[...en26,'04-02','05-14','05-25','12-24','12-31'],half:['04-01']}}}
 };
 const fail=()=>{throw Error('LOCAL_DAILY_PLAN_INVALID');};
 function date(d){if(typeof d!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(d)||new Date(d+'T00:00Z').toISOString().slice(0,10)!==d)fail();return d;}
@@ -38,8 +49,10 @@ export function marketSession(d,venue){
  date(d);const m=markets[venue];
  if(!m)return {state:'unknown',reason:'VENUE_UNRESOLVED'};
  if(!within(d))return {state:'unknown',reason:'OFFICIAL_CALENDAR_UNAVAILABLE'};
+ const year=m.years[d.slice(0,4)];
+ if(!year)return {state:'unknown',reason:'OFFICIAL_CALENDAR_UNAVAILABLE'};
  const weekend=[0,6].includes(new Date(d+'T00:00Z').getUTCDay());
- return {state:weekend||m.closed.includes(d.slice(5))?'closed':'open',halfDay:!weekend&&m.half.includes(d.slice(5)),zone:m.zone};
+ return {state:weekend||year.closed.includes(d.slice(5))?'closed':'open',halfDay:!weekend&&year.half.includes(d.slice(5)),zone:m.zone};
 }
 export function sessionUnion(d,venues){
  date(d);if(!Array.isArray(venues)||!venues.length||venues.length>16||new Set(venues).size!==venues.length||venues.some(v=>typeof v!=='string'))fail();
