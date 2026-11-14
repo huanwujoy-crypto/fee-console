@@ -83,6 +83,16 @@ test('compact facts deduplicate equal account and cash scope while retaining eac
  assert.match(facts,/全部：<\/strong>2021-03-04 至 2026-11-04/);assert.match(facts,/近一年：<\/strong>2025-11-04 至 2026-11-04/);
  assert.deepEqual(item,before);assert.doesNotMatch(facts,/%|只显示组合或分类原生收益|不按当前市值/);
 });
+test('a fund-strategy row shows only its two periods; its accounts and notes are left to the holdings detail',()=>{
+ const periods={all:{status:'period-return',nativePct:5,endDate:'2026-10-27',investmentStartDate:'2024-01-02',accounts:['Account A','Account B'],cashPerformance:'included',benchmarkMemberCount:1},
+  oneYear:{status:'period-return',nativePct:2,startDate:'2025-10-27',endDate:'2026-10-27',accounts:['Account A'],cashPerformance:'unknown'}};
+ const strategy=c.renderInline({scope:scope('Synthetic strategy','对冲基金'),periods}),facts=strategy.slice(strategy.indexOf('<details'));
+ assert.equal(facts,'<details class="ratio-returns ratio-return-facts"><summary>详情</summary><p class="ratio-return-date-fact"><strong>全部：</strong>2024-01-02 至 2026-10-27</p><p class="ratio-return-date-fact"><strong>近一年：</strong>2025-10-27 至 2026-10-27</p></details></div>');
+ for(const gone of ['账户','Account','现金','模拟基准'])assert.equal(facts.includes(gone),false,gone);
+ // Every other scope keeps its account and coverage notes.
+ const other=c.renderInline({scope:scope(),periods}),otherFacts=other.slice(other.indexOf('<details'));
+ assert.match(otherFacts,/全部：账户：Account A · Account B/);assert.match(otherFacts,/近一年：账户：Account A/);assert.match(otherFacts,/现金/);
+});
 test('compact facts preserve differing historical accounts, cash coverage and benchmark counts by period',()=>{
  const s=fixture(),benchmark=member('Account B','SYNTHETIC-BENCHMARK');s.reports[0].rows[0].members.push(benchmark);s.reports[0].cashPerformance='included';s.reports[1].cashPerformance='unknown';
  const item=c.select(c.build(s,{...opts,benchmarkMembers:[benchmark]}),scope()),h=c.renderInline(item),facts=h.slice(h.indexOf('<details'));
@@ -286,11 +296,16 @@ test('compact overview never turns a missing value into zero or suppresses its r
  }
 });
 test('compact overview preserves each proven return basis without inventing investment duration',()=>{
- for(const [status,label]of [['annualised','年化'],['period-return','期间收益'],['under-one-year','未满一年']]){
+ for(const [status,label]of [['annualised','年化'],['under-one-year','未满一年']]){
   const h=c.renderCompact({scope:scope(),periods:{all:{status,nativePct:7.125}}});
   assert.match(h,/>7\.13%<\/strong>/);assert.ok(h.includes('<small>'+label+'</small>'));
   assert.equal((h.match(/<small>/g)||[]).length,1);
  }
+ // A plain period return shows the value alone: no visible tag after it, in either period. The basis stays in the
+ // value's title and accessible label, so it is still stated, just not printed beside every number.
+ const plain=c.renderCompact({scope:scope(),periods:{all:{status:'period-return',nativePct:7.125},oneYear:{status:'period-return',nativePct:-1.5}}});
+ assert.match(plain,/>7\.13%<\/strong>/);assert.match(plain,/>-1\.50%<\/strong>/);assert.equal(plain.includes('<small>'),false);
+ assert.equal(plain.replace(/<[^>]*>/g,'').includes('期间收益'),false);assert.equal((plain.match(/title="期间收益"/g)||[]).length,2);assert.equal((plain.match(/aria-label="[^"]*期间收益"/g)||[]).length,2);
  const absent=c.renderCompact({scope:scope(),periods:{}});assert.equal((absent.match(/>—<\/strong>/g)||[]).length,2);
 });
 

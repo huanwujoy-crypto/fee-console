@@ -246,13 +246,15 @@ export function createAggregateReturnsCore(){
   scopeKey(item.scope);
   const amounts=showAmount&&item.scope.type==='portfolio';
   const lines=[['all','全部'],['oneYear','近一年']].map(([key,label])=>{
+   // A plain period return carries no visible tag (owner request 2026-11-14); it is the default reading of an
+   // unmarked value. Only the two cases that change how to read the number are tagged. The reason stays in the title.
    const p=item.periods[key],has=Number.isFinite(p?.nativePct),badge={annualised:'年化','under-one-year':'未满一年','period-return':'期间收益'}[p?.status]||'';
    const reason=has?(badge||'原报表未注明是否年化'):p?.status==='benchmark-members-included'?'含虚拟持仓，尚无匹配小计':p?.status==='cash-scope-unverified'?'现金收益范围待核实':p?.status==='source-unavailable'?'Sharesight 未提供此范围的收益率':'尚无此范围的官方合并收益率';
    const value=has?p.nativePct.toFixed(2)+'%':'—';
    const amountValue=Number.isFinite(p?.nativeAmountUSD)?'USD '+(p.nativeAmountUSD===0?0:p.nativeAmountUSD).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):'—';
    const amountReason=Number.isFinite(p?.nativeAmountUSD)?'原报表同一总计行的期间收益金额（非年化），含已平仓。':'原报表未提供或此历史快照未保存同一总计行的收益金额，不代表零。';
    const visibleAmount=amountCurrency?amountValue:amountValue.replace(/^USD /,'');
-   return '<span class="ratio-return-compact-line" aria-label="'+esc(label+'：'+value+'；'+reason+(amounts?'；收益 '+amountValue+'；'+amountReason:''))+'"><span>'+label+'：</span><strong title="'+esc(reason)+'">'+esc(value)+'</strong>'+(badge?'<small>'+badge+'</small>':'')+(amounts?'<span class="ratio-return-amount" title="'+esc(amountReason)+'">收益 '+esc(visibleAmount)+'</span>':'')+'</span>';
+   return '<span class="ratio-return-compact-line" aria-label="'+esc(label+'：'+value+'；'+reason+(amounts?'；收益 '+amountValue+'；'+amountReason:''))+'"><span>'+label+'：</span><strong title="'+esc(reason)+'">'+esc(value)+'</strong>'+(badge&&p.status!=='period-return'?'<small>'+badge+'</small>':'')+(amounts?'<span class="ratio-return-amount" title="'+esc(amountReason)+'">收益 '+esc(visibleAmount)+'</span>':'')+'</span>';
   }).join('');
   return '<div class="ratio-return-compact">'+lines+'</div>';
  }
@@ -287,6 +289,9 @@ export function createAggregateReturnsCore(){
    if(p?.benchmarkMemberCount>0)add(label,'含 '+p.benchmarkMemberCount+' 项模拟基准，收益未剔除其影响；配置比例仍排除。');
    return '<p class="ratio-return-date-fact"><strong>'+label+'：</strong>'+esc(periodDates(p,key))+'</p>';
   }).join('');
+  // A fund-strategy row of the hedge and evergreen distributions shows the two periods only (owner request
+  // 2026-11-14): its accounts are already listed in the holdings detail beside it.
+  if(item.scope.type==='fund-strategy')return '<details class="ratio-returns ratio-return-facts"><summary>详情</summary>'+dates+'</details>';
   const notes=[...facts].map(([value,labels])=>'<p class="ratio-return-scope-fact">'+(labels.length===2?'':esc(labels.join('／'))+'：')+esc(value)+'</p>').join('');
   const scopeNote=item.target?.category==='二级市场'?'仅对应直接持有的实际产品；不包括 ETF 穿透公司敞口，杠杆产品收益不乘敞口倍数。':stockScope(item.scope)?'仅四个股票分类的历史成员，不含现金账户、防御资产或主题投资。':'';
   return '<details class="ratio-returns ratio-return-facts"><summary>详情</summary>'+dates+notes+(scopeNote?'<p class="ratio-return-scope-fact">'+scopeNote+'</p>':'')+'</details>';
@@ -299,7 +304,7 @@ export function createAggregateReturnsCore(){
    const value=has?p.nativePct.toFixed(2)+'%'+(p.status==='annualised'?' p.a.':''):'暂未提供';
    const reason=!p?'尚无这个分类范围的 Sharesight 官方合并收益率。':reasons[p.status]||(p.status==='source-unit-unspecified'?'原报表未注明此数值是否年化；按原值显示，不推算投资期限。':p.status==='under-one-year'?'Sharesight 资金加权平均投资时间未满一年，显示实际收益率，未换算成年化。':p.status==='period-return'?'显示 Sharesight 原生期间收益率，未换算成年化。':'');
    const benchmarkNote=p?.benchmarkMemberCount>0?'含 '+p.benchmarkMemberCount+' 项用于程序取值的模拟基准，收益率沿用官方合计，未剔除其影响；资产配置仍按原规则排除。':'';
-   return '<div class="ratio-return-period"><strong>'+label+'</strong><span>'+esc(value)+(badge?' <small class="ratio-return-badge">'+badge+'</small>':'')+'</span>'+(p?'<small>'+esc(periodDates(p,key))+' · 含已平仓</small>':'')+(reason?'<small>'+reason+'</small>':'')+(benchmarkNote?'<small class="ratio-return-benchmark-note">'+benchmarkNote+'</small>':'')+'</div>';
+   return '<div class="ratio-return-period"><strong>'+label+'</strong><span>'+esc(value)+(badge&&p.status!=='period-return'?' <small class="ratio-return-badge">'+badge+'</small>':'')+'</span>'+(p?'<small>'+esc(periodDates(p,key))+' · 含已平仓</small>':'')+(reason?'<small>'+reason+'</small>':'')+(benchmarkNote?'<small class="ratio-return-benchmark-note">'+benchmarkNote+'</small>':'')+'</div>';
   }).join('');
   const accounts=[...new Set(Object.values(item.periods).flatMap(p=>p.accounts||[]))].sort(),cash=[...new Set(Object.values(item.periods).map(p=>p.cashPerformance).filter(Boolean))];
   const note=stockScope(item.scope)?'股票市场小计只包含四个股票分类的历史成员，不含现金账户、防御资产或主题投资。':cash.includes('unknown')?'现金账户收益覆盖未获来源确认。':cash.includes('mixed')||cash.length>1?'现金收益覆盖分别保留各期原报表设置。':cash[0]==='included'?'含现金账户收益。':cash[0]==='excluded'?'未含现金账户收益。':'';

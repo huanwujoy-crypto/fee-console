@@ -42,8 +42,8 @@ export const RATIO_PROBE_INPUTS=Object.freeze(['source_probe_once','source_probe
 const OFF=['ib_diagnostic_once','ib_envelope_once','source_plan_check_only','source_acceptance_once','run_reviewed_once'];
 const BLANK=['ib_diagnostic_main','ib_envelope_main','ratio_main','ratio_plan','source_from','source_target','source_main','manual_sync_completed_for','confirmed_main','recovery_main','report_kind','report_target','report_markets'];
 const off=v=>v===undefined||v===false||v==='false',blank=v=>v===undefined||v==='';
-export const RATIO_PROBE_STAGES=Object.freeze(['ADMISSION','TOKEN','VIEWS','PORTFOLIOS','GROUPS','REPORT','PROJECTION','PERFORMANCE','INCEPTION','CASH','COMPLETE']);
-export const RATIO_PROBE_BUDGET=Object.freeze({requests:60,overallMs:300000,requestMs:30000,reportBytes:8*1024*1024});
+export const RATIO_PROBE_STAGES=Object.freeze(['ADMISSION','TOKEN','VIEWS','PORTFOLIOS','GROUPS','REPORT','PROJECTION','PERFORMANCE','COMBINED','INCEPTION','CASH','COMPLETE']);
+export const RATIO_PROBE_BUDGET=Object.freeze({requests:64,overallMs:300000,requestMs:30000,reportBytes:8*1024*1024});
 export const RATIO_PROBE_VIEW='All Together',RATIO_PROBE_GROUP='资产类别';
 // The four existing custom groups the performance section is read through,
 // found by exact name in the account's own group list (never by a stored id),
@@ -297,6 +297,37 @@ async function probeWork({argv,env,event,now=new Date(),fetchImpl=globalThis.fet
       }
     }
     performance.complete=good===8;
+
+    // One security held in several member accounts has no single return row in
+    // the reports above. Does the same performance route, asked to combine
+    // holdings (`report_combined=true`), return one row per security with its
+    // own return? Only counts, booleans and the API's field names are kept.
+    result.stage='COMBINED';
+    const combined=facts.combined={read:false,code:null};
+    const assetGroups=allGroups.filter(g=>object(g)&&g.name===RATIO_PROBE_GROUP),assetGroupId=assetGroups.length===1?id(assetGroups[0].id):null;
+    if(!assetGroupId)combined.code='RATIO_PROBE_GROUP_IDENTITY';
+    else if(result.requests>=RATIO_PROBE_BUDGET.requests||state.deadlineExceeded||deadlineSignal.aborted)combined.code='RATIO_PROBE_BUDGET';
+    else try{
+      const body=complete(await get(`/api/v3/portfolios/${viewId}/performance?consolidated=true&custom_group_id=${assetGroupId}&end_date=${d}&grouping=custom_group&include_limited=true&include_sales=false&report_combined=true&start_date=${ALL_WINDOW_START}`,RATIO_PROBE_BUDGET.reportBytes));
+      const r=body.report;if(!object(r))fail('SHAPE');
+      const security=h=>object(h?.instrument)&&typeof h.instrument.code==='string'&&h.instrument.code&&typeof h.instrument.market_code==='string'&&h.instrument.market_code?h.instrument.market_code+'|'+h.instrument.code:null;
+      const tally=list=>{const m=new Map();for(const h of list){const k=security(h);if(k)m.set(k,(m.get(k)||[]).concat([h]));}return m;};
+      const numeric=v=>typeof v==='number'&&Number.isFinite(v);
+      // Securities the ordinary (uncombined) classification report lists in more than one member account.
+      const several=[...tally(Array.isArray(report.holdings)?report.holdings:[])].filter(([,rows])=>rows.length>1).map(([k])=>k);
+      const describe=list=>{
+        const rows=tally(list);
+        return {rows:list.length===0?'NONE':'SOME',relationToUncombined:list.length<(Array.isArray(report.holdings)?report.holdings.length:0)?'FEWER':list.length===(Array.isArray(report.holdings)?report.holdings.length:0)?'SAME':'MORE',
+          severalAccountSecurities:several.length,asOneRow:several.filter(k=>rows.get(k)?.length===1).length,asOneRowWithReturn:several.filter(k=>rows.get(k)?.length===1&&numeric(rows.get(k)[0].total_gain_percent)).length,
+          missing:several.filter(k=>!rows.has(k)).length,rowsWithPortfolio:list.filter(h=>object(h?.portfolio)).length===0?'NONE':list.every(h=>object(h?.portfolio))?'ALL':'SOME',...fieldKinds(list)};
+      };
+      Object.assign(combined,{read:true,code:null,echoesCombined:r.report_combined===true?'TRUE':r.report_combined===false?'FALSE':r.report_combined===undefined?'ABSENT':'OTHER',
+        holdings:describe(Array.isArray(r.holdings)?r.holdings:[]),combinedHoldings:Array.isArray(r.combined_holdings)?describe(r.combined_holdings):r.combined_holdings===undefined?'ABSENT':'NOT_A_LIST'});
+    }catch(error){
+      if(state.deadlineExceeded||deadlineSignal.aborted)throw error;
+      const bounded=error instanceof BoundedJsonError;
+      Object.assign(combined,{read:false,code:bounded?'RATIO_PROBE_TRANSPORT':safeCode(error),...(bounded?{httpCode:['HTTP','TYPE','SIZE','BODY','JSON','TIMEOUT','ABORTED','CONFIG'].includes(error.code)?error.code:'OTHER'}:{})});
+    }
 
     // Where can a position's first-buy date come from? The same holdings and
     // trades routes the fee reader already uses, here for the ten members.

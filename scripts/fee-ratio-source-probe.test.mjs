@@ -46,6 +46,14 @@ const memberHoldings=a=>{const i=accounts.indexOf(a);return {holdings:i<6?[liste
 const cashListUrl=a=>`${API}/api/v2/portfolios/${a.id}/cash_accounts.json`,cashTxUrl=cid=>`${API}/api/v2/cash_accounts/${cid}/cash_account_transactions.json?to=${TARGET}`;
 const memberCash=a=>{const i=accounts.indexOf(a);return {cash_accounts:i===6||i===7?[{id:9000+i,name:'Invented cash',currency:'USD',portfolio_id:a.id,balance:77.25}]:i===0?[{id:9500,name:'Invented other cash',currency:'USD',portfolio_id:a.id,balance:1.5}]:[]};};
 const cashTx=cid=>({cash_account_transactions:[{id:cid*10,cash_account_id:cid,date_time:'2018-04-0'+(cid%9+1)+'T00:00:00.000Z',type_name:'Deposit',amount:812.75,balance:812.75}]});
+// The same route asked to combine holdings. Invented shape: one row per security, no member portfolio on a merged row.
+const COMBINED_URL=`${API}/api/v3/portfolios/39/performance?consolidated=true&custom_group_id=88&end_date=${TARGET}&grouping=custom_group&include_limited=true&include_sales=false&report_combined=true&start_date=2000-01-01`;
+function combinedReport(source=report()){
+  const seen=new Map();
+  for(const h of source.holdings){const k=h.instrument.market_code+'|'+h.instrument.code,old=seen.get(k);
+    if(old){old.value+=h.value;delete old.portfolio;}else seen.set(k,{...h,instrument:{...h.instrument},total_gain:13.5,total_gain_percent:1.35});}
+  return {...source,start_date:'2000-01-01',report_combined:true,holdings:[...seen.values()]};
+}
 function routes(edit=()=>{}){
   const r=new Map([
     [API+'/oauth2/token',{access_token:TOKEN,token_type:'Bearer'}],
@@ -53,6 +61,7 @@ function routes(edit=()=>{}){
     [API+'/api/v2/portfolios.json',{portfolios:[...accounts,{id:777,name:'Invented outsider'}]}],
     [API+'/api/v2/groups.json',{groups:[{id:88,name:RATIO_PROBE_GROUP},{id:89,name:'Invented other group'},...PERF_GROUPS.filter(g=>g.key!=='asset').map(g=>({id:g.id,name:g.name}))]}],
     ...PERF_GROUPS.flatMap(g=>['all','oneYear'].map(w=>[perfUrl(g,w),{report:perfReport(g,w)}])),
+    [COMBINED_URL,{report:combinedReport()}],
     [viewHoldingsUrl,{holdings:accounts.slice(0,6).map((a,i)=>listedHolding(a,9000+i,null))}],
     ...accounts.map(a=>[memberHoldingsUrl(a),memberHoldings(a)]),
     ...accounts.map(a=>[tradesUrl(a),memberTrades(a)]),
@@ -75,10 +84,10 @@ const run=(map,options={})=>{const s=stub(map,options.stub);return runRatioSourc
 // The reviewed ten-account scope hash is for the real names; synthetic names never match it.
 const leakFree=(result)=>{const text=JSON.stringify(result);for(const secret of [SECRET,CLIENT,TOKEN,'Invented','SYN0','1234.5','77.25','39','88'].filter(s=>s.length>3))assert.equal(text.includes(secret),false,secret);};
 
-test('complete synthetic read makes exactly forty-six fixed requests, GET-only after the token, and reports value-free facts',async()=>{
+test('complete synthetic read makes exactly forty-seven fixed requests, GET-only after the token, and reports value-free facts',async()=>{
   const {result,calls}=await run(routes());
-  assert.equal(result.outcome,'REPORT_PROJECTED');assert.equal(result.stage,'COMPLETE');assert.equal(result.code,null);assert.equal(result.requests,46);
-  assert.deepEqual(calls.map(c=>[c.method,c.url]),[['POST',API+'/oauth2/token'],['GET',API+'/api/v3/portfolios?consolidated=true'],['GET',API+'/api/v2/portfolios.json'],['GET',API+'/api/v2/groups.json'],['GET',REPORT_URL],...PERF_GROUPS.flatMap(g=>['all','oneYear'].map(w=>['GET',perfUrl(g,w)])),['GET',viewHoldingsUrl],...accounts.map(a=>['GET',memberHoldingsUrl(a)]),...accounts.map(a=>['GET',tradesUrl(a)]),...accounts.map(a=>['GET',cashListUrl(a)]),['GET',cashTxUrl(9006)],['GET',cashTxUrl(9007)]]);
+  assert.equal(result.outcome,'REPORT_PROJECTED');assert.equal(result.stage,'COMPLETE');assert.equal(result.code,null);assert.equal(result.requests,47);
+  assert.deepEqual(calls.map(c=>[c.method,c.url]),[['POST',API+'/oauth2/token'],['GET',API+'/api/v3/portfolios?consolidated=true'],['GET',API+'/api/v2/portfolios.json'],['GET',API+'/api/v2/groups.json'],['GET',REPORT_URL],...PERF_GROUPS.flatMap(g=>['all','oneYear'].map(w=>['GET',perfUrl(g,w)])),['GET',COMBINED_URL],['GET',viewHoldingsUrl],...accounts.map(a=>['GET',memberHoldingsUrl(a)]),...accounts.map(a=>['GET',tradesUrl(a)]),...accounts.map(a=>['GET',cashListUrl(a)]),['GET',cashTxUrl(9006)],['GET',cashTxUrl(9007)]]);
   assert.equal(calls[0].auth,null);assert.equal(calls.slice(1).every(c=>c.auth==='Bearer '+TOKEN&&c.body===null),true);assert.equal(calls.every(c=>c.redirect==='error'),true);
   const f=result.facts;
   assert.deepEqual([f.consolidatedViewMatches,f.groupMatches,f.viewCurrencyIsUsd,f.viewDeclaresMembers,f.membersSource,f.memberCountIsTen,f.everyMemberListed,f.observedWithinMembers,f.rootHasOnlyKnownKeys],[1,1,true,true,'view',true,true,true,true]);
@@ -223,9 +232,32 @@ test('admission accepts only the exact owner dispatch, main, first attempt, the 
   const refused=await runRatioSourceProbe({argv,env:env({GITHUB_ACTOR_ID:'1'}),event:event(),now:NOW,fetchImpl:s.fetchImpl});assert.deepEqual([refused.stage,refused.code,s.calls.length],['ADMISSION','RATIO_PROBE_ENVIRONMENT',0]);
 });
 
+test('the combined-holdings stage says whether one security in several accounts comes back as one row with a return',async()=>{
+  // No security is held twice in the base fixture: nothing to merge, and the request is still made exactly once.
+  const base=(await run(routes())).result.facts.combined;
+  assert.deepEqual([base.read,base.code,base.echoesCombined,base.combinedHoldings],[true,null,'TRUE','ABSENT']);
+  assert.deepEqual([base.holdings.rows,base.holdings.relationToUncombined,base.holdings.severalAccountSecurities,base.holdings.asOneRow,base.holdings.asOneRowWithReturn,base.holdings.missing,base.holdings.rowsWithPortfolio],['SOME','SAME',0,0,0,0,'ALL']);
+  // Two member accounts hold the same security: the combined report merges them into one row that carries a return.
+  const twice=()=>{const r=report();r.holdings[1].instrument={...r.holdings[0].instrument};return r;};
+  const merged=(await run(routes(m=>{m.set(REPORT_URL,{report:twice()});m.set(COMBINED_URL,{report:combinedReport(twice())});}))).result;
+  assert.equal(merged.stage,'COMPLETE');
+  assert.deepEqual([merged.facts.combined.holdings.relationToUncombined,merged.facts.combined.holdings.severalAccountSecurities,merged.facts.combined.holdings.asOneRow,merged.facts.combined.holdings.asOneRowWithReturn,merged.facts.combined.holdings.missing,merged.facts.combined.holdings.rowsWithPortfolio],['FEWER',1,1,1,0,'SOME']);
+  assert.equal(merged.facts.combined.holdings.fields.total_gain_percent,'number');
+  // The API ignores the flag (rows stay separate), merges without a return, or reports them under another key: each is told apart.
+  const ignored=(await run(routes(m=>{m.set(REPORT_URL,{report:twice()});m.set(COMBINED_URL,{report:{...twice(),start_date:'2000-01-01'}});}))).result.facts.combined;
+  assert.deepEqual([ignored.echoesCombined,ignored.holdings.relationToUncombined,ignored.holdings.asOneRow,ignored.holdings.asOneRowWithReturn],['ABSENT','SAME',0,0]);
+  const noReturn=(await run(routes(m=>{m.set(REPORT_URL,{report:twice()});const c=combinedReport(twice());for(const h of c.holdings)h.total_gain_percent=null;m.set(COMBINED_URL,{report:c});}))).result.facts.combined;
+  assert.deepEqual([noReturn.holdings.asOneRow,noReturn.holdings.asOneRowWithReturn],[1,0]);
+  const elsewhere=(await run(routes(m=>{m.set(REPORT_URL,{report:twice()});const c=combinedReport(twice());m.set(COMBINED_URL,{report:{...twice(),start_date:'2000-01-01',report_combined:true,combined_holdings:c.holdings}});}))).result.facts.combined;
+  assert.deepEqual([elsewhere.holdings.asOneRow,elsewhere.combinedHoldings.asOneRow,elsewhere.combinedHoldings.asOneRowWithReturn],[0,1,1]);
+  // A refused request is recorded and the probe goes on to the later stages; nothing of the report reaches the result.
+  const denied=(await run(routes(),{stub:{status:url=>url===COMBINED_URL?403:200}})).result;
+  assert.equal(denied.stage,'COMPLETE');assert.deepEqual([denied.facts.combined.read,denied.facts.combined.code,denied.facts.combined.httpCode],[false,'RATIO_PROBE_TRANSPORT','HTTP']);
+  for(const r of [merged,denied]){const text=JSON.stringify(r);for(const secret of ['Invented','1234.5','1.35','13.5','SYN0'])assert.equal(text.includes(secret),false,secret);}
+});
 test('budget, shape facts and the dispatch workflow stay fixed and read-only',()=>{
-  assert.deepEqual(RATIO_PROBE_BUDGET,{requests:60,overallMs:300000,requestMs:30000,reportBytes:8388608});
-  assert.deepEqual(RATIO_PROBE_STAGES,['ADMISSION','TOKEN','VIEWS','PORTFOLIOS','GROUPS','REPORT','PROJECTION','PERFORMANCE','INCEPTION','CASH','COMPLETE']);
+  assert.deepEqual(RATIO_PROBE_BUDGET,{requests:64,overallMs:300000,requestMs:30000,reportBytes:8388608});
+  assert.deepEqual(RATIO_PROBE_STAGES,['ADMISSION','TOKEN','VIEWS','PORTFOLIOS','GROUPS','REPORT','PROJECTION','PERFORMANCE','COMBINED','INCEPTION','CASH','COMPLETE']);
   assert.equal(new Set(RATIO_PROBE_CODES).size,RATIO_PROBE_CODES.length);
   const facts=ratioReportShapeFacts({holdings:[null,{value:'9',limited:true}],cash_accounts:'none',value:1.001});
   assert.deepEqual([facts.anomalies.holdingsNotUnlimited,facts.anomalies.holdingValuesNotNumeric,facts.anomalies.reportValueBeyondCents,facts.hasCash,facts.grouping],[2,2,1,false,'OTHER']);
