@@ -61,9 +61,41 @@ declared `holding-opening-balance`; the recorded date is used (owner decision,
 start-date line. Returns are still the provider's own figures: nothing is
 averaged, annualised or converted here.
 
-Not yet built: the builder that turns the API reports into this performance
-source, and the cloud job that reads the API to produce these originals. Until
-both exist, production keeps publishing from workbooks.
+### Building the performance source from API reports
+
+`scripts/fee-ratio-api-performance.mjs` is the pure builder. It takes the eight
+consolidated performance reports (four custom groups, two windows), the member
+holdings listings and trades, and the cash-account transactions, and returns
+the performance source above. It computes no return.
+
+- **A row's scope follows which positions a sub-total covers, never what a
+  custom group is called.** The asset-class report gives one classification row
+  per sub-total; its own total gives the All Together row, whose members are
+  its holdings and its cash rows. In the income grouping, a sub-total whose
+  positions all belong to one fund class is a strategy of that class, named by
+  the one dated strategy name among its positions (`未分类` when none carries
+  one); the sub-total that is exactly every non-fund position is the secondary
+  market. In the stock grouping, only the sub-total that is exactly the four
+  stock classes together is used. Each fund class must be exactly partitioned
+  by its strategy rows. Renaming a group in Sharesight therefore cannot move a
+  figure, and anything that does not fit exactly is refused with a fixed code.
+- **Top five.** A target held in one account uses that holding's own row. A
+  target held in several uses the top grouping's sub-total that covers exactly
+  those instruments, sold lots included; otherwise the target is unavailable.
+- **Unit.** The one-year window is a period return when the provider says its
+  percentages are not annualised. The all-time window is labelled annualised
+  only when the provider says so and every position of the row has been held
+  for at least a year; otherwise the unit stays unknown.
+- **Start dates.** A holding's date is the member listing's first-buy date,
+  which must equal its earliest confirmed trade; an opening-balance record is
+  declared as such. A cash account's date is its first transaction.
+- **Cash.** The probe showed a report's own total equals its sub-totals plus
+  its cash rows, and that only some cash rows carry a gain, so the total is
+  labelled `included` (its existing wording already says not every cash account
+  has a gain). There is no native cash sub-total; `现金类` stays unavailable.
+
+Not yet built: the cloud job that reads the API and produces these originals.
+Until it exists, production keeps publishing from workbooks.
 
 ## Direct-holdings top five for every class (2026-11-13)
 
