@@ -48,9 +48,12 @@ export function createApiPerformanceCore(){
     const starts={all:capture.allStartDate,oneYear:oneYearBefore(asOf)};
 
     // ---- eight reports, each with the hash of its exact response ----
-    if(!exact(capture.reports,GROUPS.flatMap(g=>PERIODS.map(p=>g+'.'+p))))fail('REPORT');
+    // Optional pair: the `top` grouping read again with `report_combined=true`. Its extra `combined_holdings`
+    // list carries the provider's own return for one security held in several accounts. Both or neither.
+    const COMBINED='topCombined',withCombined=PERIODS.some(p=>Object.hasOwn(capture.reports||{},COMBINED+'.'+p));
+    if(!exact(capture.reports,[...GROUPS,...(withCombined?[COMBINED]:[])].flatMap(g=>PERIODS.map(p=>g+'.'+p))))fail('REPORT');
     const parsed={};
-    for(const g of GROUPS)for(const p of PERIODS){
+    for(const g of [...GROUPS,...(withCombined?[COMBINED]:[])])for(const p of PERIODS){
       const slot=g+'.'+p,entry=capture.reports[slot];
       if(!exact(entry,['report','sha256'])||!hex(entry.sha256)||!object(entry.report))fail('REPORT');
       const r=entry.report;
@@ -72,6 +75,25 @@ export function createApiPerformanceCore(){
       // Every holding belongs to exactly one sub-total of its own report.
       if(new Set(subs.map(s=>s.name)).size!==subs.length||subs.length!==groupsOf.size)fail('REPORT');
       parsed[slot]={r,members,subs,source:{apiReportId:reportId(asOf,slot),sha256:entry.sha256,locator:'api-v3-performance-custom-group '+slot}};
+    }
+    // The combined reading is used only when it repeats the plain `top` report exactly (same positions, same
+    // sub-totals with the same figures). Otherwise it is ignored and the result is what it was without it.
+    const combinedOf={};
+    for(const p of PERIODS){
+      const plain=parsed['top.'+p],again=parsed[COMBINED+'.'+p];
+      if(!again||!Array.isArray(again.r.combined_holdings)||again.r.combined_holdings.length>20000)continue;
+      const figure=m=>[...m.members].map(([k,e])=>[k,e.listingKey,e.returnPct]).sort((a,b)=>a[0].localeCompare(b[0]));
+      const totals=m=>m.subs.map(x=>[x.name,x.returnPct,[...x.keys].sort()]).sort((a,b)=>a[0].localeCompare(b[0]));
+      if(JSON.stringify([figure(plain),totals(plain)])!==JSON.stringify([figure(again),totals(again)]))continue;
+      const pidOf=new Map([...accountName].map(([pid,name])=>[name,pid])),rows=new Map();
+      again.r.combined_holdings.forEach((h,i)=>{
+        if(!object(h)||!text(h.instrument?.code)||!text(h.instrument?.market_code)||!Array.isArray(h.portfolios)||!h.portfolios.length)return;
+        const pids=h.portfolios.map(x=>object(x)?id(x.id):id(x));
+        if(pids.some(x=>!x||!accountName.has(x))||new Set(pids).size!==pids.length)return;
+        const security=h.instrument.market_code+'|'+h.instrument.code,list=rows.get(security)||[];
+        list.push({row:i+1,returnPct:h.total_gain_percent,pids:new Set(pids)});rows.set(security,list);
+      });
+      combinedOf[p]={source:again,rows,pidOf};
     }
 
     // ---- first-buy dates and their record kind, for every position any report covers ----
@@ -172,7 +194,8 @@ export function createApiPerformanceCore(){
     // ---- top five: a single holding's own row, or the top grouping's sub-total for the same instruments ----
     const targets=structuredClone(topTargets);
     const topReports=PERIODS.map((period,index)=>{
-      const asset=parsed['asset.'+period],top=parsed['top.'+period],parent=reports[index],rows=[],unavailable=[];
+      // One `top` source per period: the combined reading when in use (it repeats the plain one exactly), else the plain one.
+      const asset=parsed['asset.'+period],top=combinedOf[period]?combinedOf[period].source:parsed['top.'+period],parent=reports[index],rows=[],unavailable=[];
       for(const target of targets){
         if(!exact(target,['category','name','members','basis'])||!Array.isArray(target.members))fail('TOP');
         const want=target.members.map(key),ref={category:target.category,name:target.name};
@@ -184,10 +207,25 @@ export function createApiPerformanceCore(){
           dateHolding(e);
           rows.push({target:ref,memberEvidence:evidence(asset,want),sourceSheet:'report.holdings',sourceRow:e.row,returnPct:e.returnPct,unit:unitOf(asset.r,period,[e.member]),termEvidence:{type:'unknown'}});continue;
         }
-        // Several accounts: the provider's own sub-total covering exactly these instruments, sold lots included.
         const instruments=new Set(target.members.map(m=>m.market+'|'+m.securityCode));
+        // Several accounts: the provider's own sub-total covering exactly these instruments, sold lots included.
         const match=top.subs.filter(s=>want.every(k=>s.keys.has(k))&&[...s.keys].every(k=>{const m=top.members.get(k).member;return instruments.has(m.market+'|'+m.securityCode);}));
-        if(match.length!==1||!finite(match[0].returnPct)){unavailable.push({target:ref,reason:'native-aggregate-not-provided'});continue;}
+        if(match.length!==1||!finite(match[0].returnPct)){
+          // No such sub-total. One security: the provider's own combined row for it, when the combined
+          // reading is in use. It must be the only such row, name every account that holds it now, and cover exactly
+          // the positions (sold ones included) the same report lists for that security in those accounts.
+          const joined=combinedOf[period];
+          if(joined&&instruments.size===1){
+            const security=[...instruments][0],found=joined.rows.get(security)||[],now=target.members.map(m=>joined.pidOf.get(m.account));
+            const keys=[...joined.source.members].filter(([,e])=>e.member.market+'|'+e.member.securityCode===security).map(([k])=>k);
+            const holders=new Set(keys.map(k=>joined.source.members.get(k).listingKey.split('|')[0]));
+            if(found.length===1&&finite(found[0].returnPct)&&now.every(x=>found[0].pids.has(x))&&sameSet(holders,found[0].pids)&&want.every(k=>keys.includes(k))){
+              const ev=evidence(joined.source,keys);
+              rows.push({target:ref,memberEvidence:ev,sourceSheet:'report.combined_holdings',sourceRow:found[0].row,returnPct:found[0].returnPct,unit:unitOf(joined.source.r,period,ev.map(e=>({account:e.account,market:e.market,securityCode:e.securityCode}))),termEvidence:{type:'unknown'},sourceFileId:joined.source.source.apiReportId});continue;
+            }
+          }
+          unavailable.push({target:ref,reason:'native-aggregate-not-provided'});continue;
+        }
         const ev=evidence(top,match[0].keys);
         rows.push({target:ref,memberEvidence:ev,sourceSheet:'report.sub_totals',sourceRow:match[0].row,returnPct:match[0].returnPct,unit:unitOf(top.r,period,ev.map(e=>({account:e.account,market:e.market,securityCode:e.securityCode}))),termEvidence:{type:'unknown'},sourceFileId:top.source.apiReportId});
       }
