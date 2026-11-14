@@ -21,6 +21,21 @@ const token=s=>typeof s==='string'&&s.length>=20&&s.length<=8192&&!/[\s\x00-\x1f
 const hex=s=>typeof s==='string'&&/^[a-f0-9]{64}$/.test(s);
 const generation=s=>typeof s==='string'&&/^[1-9][0-9]{0,29}$/.test(s);
 
+// The one thing the publication step may take from the capture step of a
+// `publish-api` run: hashes and object generations, bound to this run's plan,
+// main and run id. No figure, name or credential.
+export const RATIO_CAPTURE_FILE='fee-ratio-capture.safe.json',RATIO_CAPTURE_SCHEMA='fee-console.ratio-api-capture-safe.v1';
+export function validateRatioCapture(v,binding){
+  const keys=['schema','status','stage','code','requests','planSha256','mainSha','runId','bundleId','original','input'];
+  const pinnedObject=(s,name)=>s&&typeof s==='object'&&Object.keys(s).sort().join(',')==='generation,name,sha256'&&s.name===name&&generation(s.generation)&&hex(s.sha256);
+  if(!v||typeof v!=='object'||Array.isArray(v)||Object.keys(v).sort().join(',')!==[...keys].sort().join(',')||v.schema!==RATIO_CAPTURE_SCHEMA||!['CAPTURED','REFUSED'].includes(v.status)
+    ||typeof v.stage!=='string'||!/^[A-Z_]{1,40}$/.test(v.stage)||!(v.code===null||typeof v.code==='string'&&/^[A-Z_]{1,80}$/.test(v.code))||!Number.isSafeInteger(v.requests)||v.requests<0||v.requests>1000
+    ||!hex(v.planSha256)||!/^[a-f0-9]{40}$/.test(v.mainSha||'')||!/^\d{1,20}$/.test(v.runId||''))fail();
+  if(v.status==='CAPTURED'?!(v.stage==='COMPLETE'&&v.code===null&&hex(v.bundleId)&&pinnedObject(v.original,'inputs/'+v.bundleId+'/original.json')&&pinnedObject(v.input,'inputs/'+v.bundleId+'/input.json'))
+    :!(v.bundleId===null&&v.original===null&&v.input===null&&v.code!==null))fail();
+  if(binding!==undefined&&(v.planSha256!==binding.planSha256||v.mainSha!==binding.mainSha||v.runId!==binding.runId))fail();
+  return structuredClone(v);
+}
 export function ratioAdmission(env,event){
   if(env.GITHUB_ACTIONS!=='true'||env.GITHUB_EVENT_NAME!=='workflow_dispatch'||env.GITHUB_RUN_ATTEMPT!=='1'||env.GITHUB_REF!=='refs/heads/main'||env.GITHUB_REPOSITORY!==REPO||env.GITHUB_ACTOR_ID!==String(RATIO_OWNER)||!/^[a-f0-9]{40}$/.test(env.GITHUB_SHA||'')||event?.sender?.id!==RATIO_OWNER||event?.repository?.full_name!==REPO)fail();
   const i=event.inputs;
@@ -108,10 +123,10 @@ export function saveRatioReceipt(file,value){
   const safe=safeRatioReceipt(value),tmp=file+'.pending';fs.mkdirSync(path.dirname(file),{recursive:true,mode:0o700});
   const fd=fs.openSync(tmp,'wx',0o600);try{fs.writeFileSync(fd,JSON.stringify(safe)+'\n');fs.fsyncSync(fd);}finally{fs.closeSync(fd);}fs.renameSync(tmp,file);
 }
-export async function executeRatioCloud({env,event,fetchImpl=fetch,saveReceipt,publisher=createRatioCloudPublisher(),preflight=false,clock}){
+export async function executeRatioCloud({env,event,fetchImpl=fetch,saveReceipt,publisher=createRatioCloudPublisher(),preflight=false,clock,readCapture}){
   let result={schema:'fee-console.ratio-cloud-safe-result.v1',status:'REFUSED',stage:'ADMISSION',claim:'NOT_ATTEMPTED',patchAttempts:0,bodySha256:null,contentSha256:null,cleanup:'NO_INPUTS_READ'},io;
   try{
-    const plan=ratioAdmission(env,event);result.stage='MAIN_TOKEN';
+    let plan=ratioAdmission(env,event);result.stage='MAIN_TOKEN';
     // Only the existing ephemeral contents:read token may authenticate this
     // fixed repository request. Financial credentials remain untouched here.
     const repositoryToken=env.GITHUB_TOKEN;
@@ -130,6 +145,17 @@ export async function executeRatioCloud({env,event,fetchImpl=fetch,saveReceipt,p
       result.stage='MAIN_HEAD';if(liveMain!==env.GITHUB_SHA)fail();
     }finally{clearTimeout(timer);}
     if(preflight)return {preflight:true,mode:plan.mode};
+    if(plan.mode==='publish-api'){
+      // Complete the plan only from this same run's capture step: same plan
+      // bytes, same main, same run. Its hashes and generations are then pinned
+      // exactly as a hand-prepared publish plan would pin them.
+      result.stage='PLAN';
+      if(typeof readCapture!=='function'||!/^\d{1,20}$/.test(env.GITHUB_RUN_ID||''))fail();
+      const capture=validateRatioCapture(await readCapture(),{planSha256:sha(Buffer.from(env.RATIO_PLAN)),mainSha:env.GITHUB_SHA,runId:env.GITHUB_RUN_ID});
+      if(capture.status!=='CAPTURED')fail();
+      plan={mode:'publish',previousBodySha256:plan.previousBodySha256,bundleId:capture.bundleId,original:capture.original,input:capture.input,library:null,fee:plan.fee};
+      validateRatioCloudPlan(plan);
+    }
     result.stage='CREDENTIALS';
     const ratio=createFeeRatioCore(createRankedExposureCore(),crypto.webcrypto),manager=await ratio.deriveSnapshotManager(env.FEE_ECON_GIST_ID,env.FEE_DATA_KEY,env.FEE_RATIO_MANAGER_TOKEN);
     if(plan.mode==='publish'&&!token(env.RATIO_STORAGE_ACCESS_TOKEN))fail();
@@ -153,9 +179,10 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
     if(process.argv.length!==3||!['--preflight','--run'].includes(process.argv[2]))fail();
     const eventBytes=fs.readFileSync(process.env.GITHUB_EVENT_PATH);if(eventBytes.length>1024*1024)fail();
     const event=parse(eventBytes),preflight=process.argv[2]==='--preflight';
+    const captureFile=path.join(process.env.RUNNER_TEMP||'',RATIO_CAPTURE_FILE);
     if(!process.env.RUNNER_TEMP||!path.isAbsolute(process.env.RUNNER_TEMP))fail();
     const file=path.join(process.env.RUNNER_TEMP,'fee-ratio-result.safe.json');
-    const result=await executeRatioCloud({env:process.env,event,preflight,saveReceipt:v=>saveRatioReceipt(file,v)});
+    const result=await executeRatioCloud({env:process.env,event,preflight,saveReceipt:v=>saveRatioReceipt(file,v),readCapture:()=>{const b=fs.readFileSync(captureFile);if(b.length>65536)fail();return parse(b);}});
     console.log(JSON.stringify(result));if(preflight&&result.preflight!==true)process.exitCode=1;if(!preflight&&!['VERIFIED_CURRENT_NO_WRITE','UNCHANGED_SOURCE_NO_WRITE','PUBLISHED_CONFIRMED'].includes(result.status))process.exitCode=1;
   }catch{console.error('RATIO_CLOUD_ENTRY_REFUSED');process.exitCode=1;}
 }

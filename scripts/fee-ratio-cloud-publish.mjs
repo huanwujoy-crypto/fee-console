@@ -38,6 +38,13 @@ function pinnedObject(spec,prefix,file){
 // the round's approved fee target before dispatch. A capture mtime is also not
 // proof of a new official export.
 export function validateRatioCloudPlan(plan){
+  // `publish-api`: the capture step of the same run reads the Sharesight API and
+  // pins the two objects itself, so the plan names only the data date and the
+  // fee handoff. The runtime completes it from that step's own result.
+  if(plan?.mode==='publish-api'){
+    if(!exact(plan,['mode','previousBodySha256','asOf','fee'])||!hex(plan.previousBodySha256)||typeof plan.asOf!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(plan.asOf)||new Date(plan.asOf+'T00:00:00Z').toISOString().slice(0,10)!==plan.asOf||!validateFeeHandoff(plan.fee))refuse();
+    return;
+  }
   if(!exact(plan,['mode','previousBodySha256','bundleId','original','input','library','fee'])||!['verify-current','publish'].includes(plan.mode)||!hex(plan.previousBodySha256))refuse();
   if(plan.mode==='verify-current'){
     if([plan.bundleId,plan.original,plan.input,plan.library,plan.fee].some(v=>v!==null))refuse();

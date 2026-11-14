@@ -94,8 +94,47 @@ the performance source above. It computes no return.
   labelled `included` (its existing wording already says not every cash account
   has a gain). There is no native cash sub-total; `现金类` stays unavailable.
 
-Not yet built: the cloud job that reads the API and produces these originals.
-Until it exists, production keeps publishing from workbooks.
+### Capturing and publishing in one run (`publish-api`)
+
+The manual `ratio` job accepts a third plan mode beside `verify-current` and
+`publish`:
+
+```json
+{"mode":"publish-api","previousBodySha256":"…","asOf":"YYYY-MM-DD","fee":{…}}
+```
+
+`asOf` is the data date (at most four Hong Kong days old); `fee` is the same
+handoff a `publish` plan carries. The job then runs two steps:
+
+1. **Capture** (`scripts/fee-ratio-api-capture.mjs`). It reads the Sharesight
+   API once: discovery of the All Together view and the four custom groups by
+   exact name, the classification report, each member's holdings and trades,
+   each cash account's transactions, and the eight performance reports. It
+   builds the API original and its input with the existing pure builders,
+   repeats the association check, and creates both objects in the private ratio
+   bucket (create-only). It leaves one file of hashes and object generations in
+   the runner's temporary directory and prints only a stage and a fixed code.
+2. **Publish** (the existing step). It completes the plan from that file, which
+   must be bound to the same plan bytes, main and run, and then follows the
+   ordinary `publish` path with `library: null`: current snapshot, pinned
+   inputs, association, fee gate, claim, one PATCH, readback, cleanup.
+
+Credentials are separated by step, by owner decision on 2026-11-14. The capture
+step receives the two Sharesight values and the storage token and refuses to
+start if any publication secret is present; the publication step receives the
+publication secrets and never a Sharesight value. Before this, the whole job
+carried no Sharesight value: separation was by job. One dispatch now captures
+and publishes, and the two kinds of secret still never share a process.
+
+The capture never retries, redirects or pages. A member count other than ten,
+an account scope other than the reviewed one, an unknown group, a paginated or
+limited answer, or anything the builders refuse stops it at a named stage
+before any object is created. If the first object is created and the second is
+not, the first remains as an unused private object and nothing is published.
+
+The first real `publish-api` run is the first time real API responses go
+through these builders. Until one has succeeded and been read back, production
+keeps publishing from workbooks, and the workbook modes remain unchanged.
 
 ## Direct-holdings top five for every class (2026-11-13)
 
