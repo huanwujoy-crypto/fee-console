@@ -13,29 +13,37 @@ export function createAggregateReturnsCore(){
   if(s.type==='portfolio'&&(s.name!=='All Together'||s.parent!==null)||s.type==='classification'&&s.parent!==null||s.type==='fund-strategy'&&!['常青基金','对冲基金'].includes(s.parent))fail();
   return canon(s);
  }
- function ref(r){if(!exact(r,['libraryFileId','version','sha256','locator'])||!/^libfile_[a-f0-9]{32}$/.test(r.libraryFileId||'')||!Number.isSafeInteger(r.version)||r.version<0||!/^[a-f0-9]{64}$/.test(r.sha256||'')||!text(r.locator))fail();}
+ // A source is either a Library workbook (file id and version) or, for a
+ // Sharesight API source, one API report identified by its own id and the hash
+ // of its exact response. One performance source never mixes the two.
+ const fid=r=>r?.libraryFileId??r?.apiReportId;
+ function ref(r,api=false){
+  if(api?!exact(r,['apiReportId','sha256','locator'])||!/^apireport_[a-f0-9]{32}$/.test(r.apiReportId||''):!exact(r,['libraryFileId','version','sha256','locator'])||!/^libfile_[a-f0-9]{32}$/.test(r.libraryFileId||'')||!Number.isSafeInteger(r.version)||r.version<0)fail();
+  if(!/^[a-f0-9]{64}$/.test(r.sha256||'')||!text(r.locator))fail();
+ }
  function oneYearBefore(end){if(!date(end))fail();const y=Number(end.slice(0,4))-1,m=Number(end.slice(5,7)),d=Number(end.slice(8,10));return String(y).padStart(4,'0')+'-'+String(m).padStart(2,'0')+'-'+String(Math.min(d,new Date(Date.UTC(y,m,0)).getUTCDate())).padStart(2,'0');}
  const stockScope=s=>s?.type==='classification'&&s.name==='股票市场'&&s.parent===null;
- const stockSourceIds=s=>new Set(s.reports.filter(r=>Array.isArray(r?.additionalSources)&&r.additionalSources.length===2).map(r=>r.additionalSources[1]?.libraryFileId));
+ const stockSourceIds=s=>new Set(s.reports.filter(r=>Array.isArray(r?.additionalSources)&&r.additionalSources.length===2).map(r=>fid(r.additionalSources[1])));
  const INCEPTION_V2='fee-console.ratio-inception-source.v2';
  const positiveQuantity=n=>typeof n==='number'&&Number.isFinite(n)&&n>0;
- function inceptionDirectory(e,accounts,asOf){
-  const out=new Map(),v2=e?.schema===INCEPTION_V2;
+ function inceptionDirectory(e,accounts,asOf,api=false){
+  const out=new Map(),v2=e?.schema===INCEPTION_V2;out.openingBalance=new Set();
+  if(api&&!v2)fail();
   if(!exact(e,['schema','capturedAt','includeClosed','sources','members',...(v2?['sourceCaptures']:[])])||!['fee-console.ratio-inception-source.v1',INCEPTION_V2].includes(e.schema)||!instant(e.capturedAt)||e.includeClosed!==true||!Array.isArray(e.sources)||!e.sources.length||!Array.isArray(e.members)||!e.members.length)fail();
-  const sources=new Set(),captures=new Map(),used=new Set();for(const source of e.sources){ref(source);if(sources.has(source.libraryFileId))fail();sources.add(source.libraryFileId);}
+  const sources=new Set(),captures=new Map(),used=new Set();for(const source of e.sources){ref(source,api);if(sources.has(fid(source)))fail();sources.add(fid(source));}
   if(v2){
    if(!Array.isArray(e.sourceCaptures)||e.sourceCaptures.length!==sources.size)fail();
    for(const source of e.sourceCaptures){
-    if(!exact(source,['libraryFileId','capturedAt','sourceKind'])||!sources.has(source.libraryFileId)||captures.has(source.libraryFileId)||!instant(source.capturedAt)||!['verified-historical-archive','browser-first-recorded-buy'].includes(source.sourceKind))fail();
-    captures.set(source.libraryFileId,source);
+    if(!exact(source,[api?'apiReportId':'libraryFileId','capturedAt','sourceKind'])||!sources.has(fid(source))||captures.has(fid(source))||!instant(source.capturedAt)||!(api?['sharesight-api-holdings']:['verified-historical-archive','browser-first-recorded-buy']).includes(source.sourceKind))fail();
+    captures.set(fid(source),source);
    }
    if(e.capturedAt!==[...captures.values()].map(s=>s.capturedAt).sort().at(-1))fail();
   }
   for(const m of e.members){
-   const browser=v2&&m?.dateKind==='browser-first-recorded-buy';
+   const browser=v2&&!api&&m?.dateKind==='browser-first-recorded-buy';
    if(!exact(m,['account','market','securityCode','startDate','dateKind','sourceFileId','sourceLocator',...(browser?['browserEvidence']:[])])||![m.account,m.market,m.securityCode,m.sourceLocator].every(text)||!accounts.includes(m.account)||!sources.has(m.sourceFileId)||out.has(memberKey(m)))fail();
    const cash=m.market.trim().toUpperCase()==='CASH';
-   if(v2&&captures.get(m.sourceFileId).sourceKind!==(browser?'browser-first-recorded-buy':'verified-historical-archive'))fail();
+   if(v2&&captures.get(m.sourceFileId).sourceKind!==(api?'sharesight-api-holdings':browser?'browser-first-recorded-buy':'verified-historical-archive'))fail();
    if(browser){
     const proof=m.browserEvidence,captureDay=new Date(Date.parse(captures.get(m.sourceFileId).capturedAt)+8*3600000).toISOString().slice(0,10);
     // A Library-bound collection assertion, not a claim that this pure code
@@ -44,7 +52,10 @@ export function createAggregateReturnsCore(){
     const record=proof.records[0];
     if(!exact(record,['type','status','date','quantity'])||record.type!=='Buy'||record.status!=='Confirmed'||record.date!==m.startDate||!positiveQuantity(record.quantity)||record.quantity!==proof.currentQuantity)fail();
    }else if(m.dateKind==='unknown'){if(v2||m.startDate!==null)fail();}
-   else if(!date(m.startDate)||m.startDate>asOf||!(cash?['cash-opening-balance','cash-first-transaction']:['holding-inception']).includes(m.dateKind))fail();
+   // An API holding whose earliest confirmed record is an opening balance
+   // keeps that recorded date and says so; it is not claimed as a purchase.
+   else if(!date(m.startDate)||m.startDate>asOf||!(cash?['cash-opening-balance','cash-first-transaction']:api?['holding-inception','holding-opening-balance']:['holding-inception']).includes(m.dateKind))fail();
+   if(m.dateKind==='holding-opening-balance')out.openingBalance.add(memberKey(m));
    used.add(m.sourceFileId);out.set(memberKey(m),m.startDate);
   }
   if(v2&&used.size!==sources.size)fail();
@@ -55,7 +66,7 @@ export function createAggregateReturnsCore(){
  function validateInceptionBindings(performance,classificationPositions,{now}={}){
   const e=performance?.inceptionEvidence;
   if(e?.schema!==INCEPTION_V2)return;
-  inceptionDirectory(e,performance.accounts,performance.asOf);
+  inceptionDirectory(e,performance.accounts,performance.asOf,performance.transport==='official-api');
   const clock=now instanceof Date?now.getTime():NaN;
   if(!Number.isFinite(clock)||!Array.isArray(classificationPositions)||e.sourceCaptures.some(s=>Date.parse(s.capturedAt)>clock))fail();
   for(const member of e.members.filter(m=>m.dateKind==='browser-first-recorded-buy')){
@@ -70,7 +81,9 @@ export function createAggregateReturnsCore(){
   const dates=members.map(m=>directory.get(memberKey(m)));
   if(dates.some(d=>date(d)&&d<report.startDate))fail();
   const start=dates.every(date)?[...dates].sort()[0]:null;
-  return {investmentStartDate:start};
+  // Say so when the earliest date is an opening-balance record, not a buy.
+  const opening=start!==null&&members.some(m=>directory.openingBalance?.has(memberKey(m))&&directory.get(memberKey(m))===start);
+  return {investmentStartDate:start,...(opening?{investmentStartBasis:'opening-balance-record'}:{})};
  }
  function unavailableStart(scope,report,directory){
   if(report.period!=='all')return {};
@@ -84,21 +97,22 @@ export function createAggregateReturnsCore(){
   return investmentStart(members,directory,report);
  }
  function build(s,{expectedAccounts,expectedAsOf,topTargets:expectedTopTargets=null,excludedMembers=[],benchmarkMembers=[{account:'Citi-HK & 地产四期',market:'NASDAQ',securityCode:'QQQ'},{account:'Citi-HK & 地产四期',market:'NYSE',securityCode:'SPY'}]}={}){
-  if(!exact(s,['schema','provider','currency','asOf','accounts','reports',...['topHoldings','inceptionEvidence'].filter(k=>Object.hasOwn(s||{},k))])||s.schema!==SCHEMA||s.provider!=='Sharesight'||s.currency!=='USD'||!date(s.asOf)||s.asOf!==expectedAsOf)fail();
+  const api=Object.hasOwn(s||{},'transport');
+  if(!exact(s,['schema','provider','currency','asOf','accounts','reports',...['topHoldings','inceptionEvidence','transport'].filter(k=>Object.hasOwn(s||{},k))])||api&&s.transport!=='official-api'||s.schema!==SCHEMA||s.provider!=='Sharesight'||s.currency!=='USD'||!date(s.asOf)||s.asOf!==expectedAsOf)fail();
   const accounts=s.accounts;
   if(!Array.isArray(accounts)||!accounts.length||!accounts.every(text)||new Set(accounts).size!==accounts.length||!Array.isArray(expectedAccounts)||!same([...accounts].sort(),[...expectedAccounts].sort())||!Array.isArray(s.reports)||s.reports.length!==2||!Array.isArray(excludedMembers))fail();
-  const inceptions=Object.hasOwn(s,'inceptionEvidence')?inceptionDirectory(s.inceptionEvidence,accounts,s.asOf):new Map();
+  const inceptions=Object.hasOwn(s,'inceptionEvidence')?inceptionDirectory(s.inceptionEvidence,accounts,s.asOf,api):new Map();
   const member=m=>{if(!exact(m,['account','market','securityCode'])||![m.account,m.market,m.securityCode].every(text))fail();return memberKey(m);};
   if(!Array.isArray(benchmarkMembers))fail();
   const excluded=new Set(excludedMembers.map(member)),benchmarks=new Set(benchmarkMembers.map(member)),periods=new Set(),files=new Set(),items=new Map(),stockFiles=stockSourceIds(s);
   for(const r of s.reports){
    const reportKeys=['period','startDate','endDate','includeClosed','calculationMethod','currency','cashPerformance','source','rows','unavailable'];
    if(!(exact(r,reportKeys)||exact(r,[...reportKeys,'additionalSources']))||!['all','oneYear'].includes(r.period)||periods.has(r.period)||!date(r.startDate)||r.startDate>r.endDate||r.endDate!==s.asOf||r.includeClosed!==true||r.calculationMethod!=='sharesight-native'||r.currency!=='USD'||!['included','excluded','mixed','unknown'].includes(r.cashPerformance)||!Array.isArray(r.rows)||!Array.isArray(r.unavailable))fail();
-   if(r.period==='oneYear'&&r.startDate!==oneYearBefore(s.asOf))fail();ref(r.source);if(files.has(r.source.libraryFileId))fail();files.add(r.source.libraryFileId);periods.add(r.period);
-   const sources=new Map([[r.source.libraryFileId,r.source]]);
+   if(r.period==='oneYear'&&r.startDate!==oneYearBefore(s.asOf))fail();ref(r.source,api);if(files.has(fid(r.source)))fail();files.add(fid(r.source));periods.add(r.period);
+   const sources=new Map([[fid(r.source),r.source]]);
    if('additionalSources' in r){
     if(!Array.isArray(r.additionalSources)||![1,2].includes(r.additionalSources.length))fail();
-    for(const source of r.additionalSources){ref(source);if(files.has(source.libraryFileId))fail();files.add(source.libraryFileId);sources.set(source.libraryFileId,source);}
+    for(const source of r.additionalSources){ref(source,api);if(files.has(fid(source)))fail();files.add(fid(source));sources.set(fid(source),source);}
    }
    const stockSource=r.additionalSources?.length===2?r.additionalSources[1]:null;
    let stockRow=null;
@@ -107,11 +121,11 @@ export function createAggregateReturnsCore(){
    for(const row of r.rows){
     const rowKeys=['scope','members','sourceSheet','sourceRow','returnPct','unit','termEvidence'];
     if(!exact(row,[...rowKeys,...['sourceFileId','returnAmountUSD'].filter(key=>Object.hasOwn(row||{},key))])||!text(row.sourceSheet)||!Number.isSafeInteger(row.sourceRow)||row.sourceRow<1||!['p.a.','period','unknown','unavailable'].includes(row.unit)||!Array.isArray(row.members)||!row.members.length)fail();
-    const rowSource=sources.get('sourceFileId' in row?row.sourceFileId:r.source.libraryFileId);if(!rowSource)fail();
+    const rowSource=sources.get('sourceFileId' in row?row.sourceFileId:fid(r.source));if(!rowSource)fail();
     // The third workbook may supply only the exact stock subtotal. Its
     // unrelated totals and holdings cannot silently replace earlier evidence.
-    if(stockSource&&rowSource.libraryFileId===stockSource.libraryFileId){if(!stockScope(row.scope)||stockRow)fail();stockRow=row;}
-    const k=scopeKey(row.scope),loc=canon([rowSource.libraryFileId,row.sourceSheet,row.sourceRow]);if(locations.has(loc))fail();locations.add(loc);
+    if(stockSource&&fid(rowSource)===fid(stockSource)){if(!stockScope(row.scope)||stockRow)fail();stockRow=row;}
+    const k=scopeKey(row.scope),loc=canon([fid(rowSource),row.sourceSheet,row.sourceRow]);if(locations.has(loc))fail();locations.add(loc);
     // Amount and rate belong to the same official total row (N and O).
     // Inherit its exact workbook, dates, USD, members and closed-position scope;
     // never derive an amount from a rate or accept a separate amount source.
@@ -123,19 +137,19 @@ export function createAggregateReturnsCore(){
     if(exact(e,['type'])&&e.type==='unknown'){}
     else{
      if(!exact(e,['type','years','scope','period','endDate','source'])||e.type!=='sharesight-average-years-invested'||!Number.isFinite(e.years)||e.years<0||e.years>1000||scopeKey(e.scope)!==k||e.period!==r.period||e.endDate!==s.asOf)fail();
-     ref(e.source);if(stockFiles.has(e.source.libraryFileId)&&(!stockSource||e.source.libraryFileId!==stockSource.libraryFileId||!stockScope(row.scope)))fail();short=e.years<1;if(short&&row.unit==='p.a.'||!short&&row.unit==='period')fail();
+     ref(e.source,api);if(stockFiles.has(fid(e.source))&&(!stockSource||fid(e.source)!==fid(stockSource)||!stockScope(row.scope)))fail();short=e.years<1;if(short&&row.unit==='p.a.'||!short&&row.unit==='period')fail();
     }
     const status=row.unit==='unavailable'?'source-unavailable':short?'under-one-year':row.unit==='p.a.'?'annualised':row.unit==='period'?'period-return':'source-unit-unspecified';
     // Closed holdings can differ between windows. Stable category scope does
     // not require dropping holdings sold before the trailing-year start.
-    put(row.scope,{status,nativePct:row.returnPct,...(hasAmount?{nativeAmountUSD:amount,amountSource:{...structuredClone(rowSource),locator:row.sourceSheet+'!N'+row.sourceRow}}:{}),startDate:r.startDate,endDate:r.endDate,...investmentStart(members,inceptions,r),includeClosed:true,cashPerformance:stockSource&&rowSource.libraryFileId===stockSource.libraryFileId?'unknown':r.cashPerformance,accounts:[...new Set(members.map(m=>m.account))].sort(),memberCount:members.length,benchmarkMemberCount:members.filter(m=>benchmarks.has(memberKey(m))).length,source:{...structuredClone(rowSource),locator:row.sourceSheet+'!O'+row.sourceRow},termEvidence:structuredClone(e)});
+    put(row.scope,{status,nativePct:row.returnPct,...(hasAmount?{nativeAmountUSD:amount,amountSource:{...structuredClone(rowSource),locator:api?row.sourceSheet+'['+row.sourceRow+'].total_gain':row.sourceSheet+'!N'+row.sourceRow}}:{}),startDate:r.startDate,endDate:r.endDate,...investmentStart(members,inceptions,r),includeClosed:true,cashPerformance:stockSource&&fid(rowSource)===fid(stockSource)?'unknown':r.cashPerformance,accounts:[...new Set(members.map(m=>m.account))].sort(),memberCount:members.length,benchmarkMemberCount:members.filter(m=>benchmarks.has(memberKey(m))).length,source:{...structuredClone(rowSource),locator:api?row.sourceSheet+'['+row.sourceRow+'].total_gain_percent':row.sourceSheet+'!O'+row.sourceRow},termEvidence:structuredClone(e)});
    }
    if(stockSource){
     if(!stockRow)fail();
     const expected=[],stockCategories=['美国底仓','美国科技','非美发达','新兴市场'];
     for(const name of stockCategories){
      const original=r.rows.filter(row=>row.scope.type==='classification'&&row.scope.name===name&&row.scope.parent===null);
-     if(original.length!==1||original[0].sourceFileId&&original[0].sourceFileId!==r.source.libraryFileId)fail();
+     if(original.length!==1||original[0].sourceFileId&&original[0].sourceFileId!==fid(r.source))fail();
      expected.push(...original[0].members.map(memberKey));
     }
     if(new Set(expected).size!==expected.length||!same([...expected].sort(),stockRow.members.map(memberKey).sort()))fail();
@@ -196,7 +210,7 @@ export function createAggregateReturnsCore(){
   const normalized=structuredClone(parent);delete normalized.topHoldings;
   normalized.reports=source.reports.map(r=>{
    if(!exact(r,['period','startDate','endDate','includeClosed','calculationMethod','currency','cashPerformance','source','additionalSources','rows','unavailable'])||!Array.isArray(r.rows)||!Array.isArray(r.unavailable)||!Array.isArray(r.additionalSources)||r.additionalSources.length>1)fail();
-   if(stockFiles.has(r.source?.libraryFileId)||r.additionalSources.some(s=>stockFiles.has(s?.libraryFileId))||r.rows.some(row=>stockFiles.has(row.sourceFileId)||stockFiles.has(row.termEvidence?.source?.libraryFileId)))fail();
+   if(stockFiles.has(fid(r.source))||r.additionalSources.some(s=>stockFiles.has(fid(s)))||r.rows.some(row=>stockFiles.has(row.sourceFileId)||stockFiles.has(fid(row.termEvidence?.source))))fail();
    const original=parent.reports.find(p=>p.period===r.period);
    if(!original||!same(r.source,original.source)||r.startDate!==original.startDate||r.endDate!==original.endDate||r.cashPerformance!==original.cashPerformance)fail();
    const seen=new Set(),scope=t=>({type:'classification',name:topId(t),parent:null});
@@ -251,7 +265,7 @@ export function createAggregateReturnsCore(){
 
  function select(v,s){const k=scopeKey(s);return v.items.find(x=>scopeKey(x.scope)===k)||{scope:structuredClone(s),periods:{}};}
  const esc=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
- const periodDates=(p,key)=>!p?.endDate?'来源日期未提供':key==='all'?(p.investmentStartDate?p.investmentStartDate+' 至 '+p.endDate:'首投日期未提供；截至 '+p.endDate):p.startDate?p.startDate+' 至 '+p.endDate:'来源日期未提供';
+ const periodDates=(p,key)=>!p?.endDate?'来源日期未提供':key==='all'?(p.investmentStartDate?p.investmentStartDate+' 至 '+p.endDate+(p.investmentStartBasis==='opening-balance-record'?'（起点为 Sharesight 期初余额记录日，可能晚于实际买入）':''):'首投日期未提供；截至 '+p.endDate):p.startDate?p.startDate+' 至 '+p.endDate:'来源日期未提供';
  function renderInline(item,label='收益率'){
   // Show each native value once. Shared calculation rules belong to the
   // page's common disclosure; this folded panel retains only scope facts.

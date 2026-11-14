@@ -21,13 +21,15 @@ const esc=s=>String(s).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
 
 function verifyBrowserSourceAssociations(raw,input,{scopeHash,now=new Date()}={}){
   if(raw?.schemaVersion==='sharesight-private-performance-v1'){
-    if(!exact(raw,['schemaVersion','accounts','allocation','performance','performanceCapturedAt'])||input?.schema!=='fee-console.ratio-sources.v3'||!exact(input,['schema','classification','exposure','book','performance'])||JSON.stringify(raw.accounts)!==JSON.stringify(raw.allocation?.accounts)||raw.allocation?.schemaVersion!=='sharesight-private-full-v2')fail();
+    if(!exact(raw,['schemaVersion','accounts','allocation','performance','performanceCapturedAt'])||input?.schema!=='fee-console.ratio-sources.v3'||!exact(input,['schema','classification','exposure','book','performance'])||JSON.stringify(raw.accounts)!==JSON.stringify(raw.allocation?.accounts)||!['sharesight-private-full-v2','sharesight-api-full-v1'].includes(raw.allocation?.schemaVersion)
+      // One source kind per original: an API allocation carries API performance and nothing else does.
+      ||(raw.allocation.schemaVersion==='sharesight-api-full-v1')!==(raw.performance?.transport==='official-api'))fail();
     const base={...input,schema:'fee-console.ratio-sources.v2'};delete base.performance;
     const facts=verifyBrowserSourceAssociations(raw.allocation,base,{scopeHash,now});
     const core=createAggregateReturnsCore(),performance=raw.performance;
     // Native returns retain the owner's accepted small benchmark positions.
     // Membership-derived disclosure does not change allocation exclusions.
-    core.build(performance,{expectedAccounts:raw.accounts,expectedAsOf:performance?.asOf,topTargets:core.topTargets(input.exposure,createFeeCompanyExposureCore().validate(facts.companyExposure,input.exposure,input.book.sourceSha256).top)});
+    core.build(performance,{expectedAccounts:raw.accounts,expectedAsOf:performance?.asOf,topTargets:core.topTargets(input.exposure,facts.companyExposure?createFeeCompanyExposureCore().validate(facts.companyExposure,input.exposure,input.book.sourceSha256).top:undefined)});
     core.validateInceptionBindings(performance,raw.allocation.classification.positions,{now});
     const captured=time(raw.performanceCapturedAt),clock=now.getTime(),age=hkAge(clock,performance.asOf);
     if(performance.asOf>facts.asOf||age<0||age>4||clock<captured||clock-captured>36*3600000||createOfficialRatioSourceCore().canonical(input.performance)!==createOfficialRatioSourceCore().canonical(performance))fail();

@@ -91,8 +91,9 @@ export function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
       }
     }else if(m.exposure.schema==='xuan.sharesight-exposure-ranked.v2'||['official-workbooks','official-api'].includes(m.book?.browserEvidence?.transport))fail();
     if(Object.hasOwn(m,'performance')){
-      if(!official||m.performance.asOf!==m.sourceDates.performance||m.performance.asOf>m.report.targetDate)fail();
-      returnsCore.build(m.performance,{expectedAccounts:m.exposure.summary.accounts.map(x=>x.replaceAll('&amp;','&')),expectedAsOf:m.sourceDates.performance,...(m.companyExposure?{topTargets:returnsCore.topTargets(m.exposure,companyCore.validate(m.companyExposure,m.exposure,m.book?.sourceSha256).top)}:{})});
+      const apiBook=m.book?.browserEvidence?.transport==='official-api';
+      if(!official||m.performance.asOf!==m.sourceDates.performance||m.performance.asOf>m.report.targetDate||apiBook!==(m.performance.transport==='official-api'))fail();
+      returnsCore.build(m.performance,{expectedAccounts:m.exposure.summary.accounts.map(x=>x.replaceAll('&amp;','&')),expectedAsOf:m.sourceDates.performance,...(m.companyExposure?{topTargets:returnsCore.topTargets(m.exposure,companyCore.validate(m.companyExposure,m.exposure,m.book?.sourceSha256).top)}:apiBook?{topTargets:returnsCore.topTargets(m.exposure)}:{})});
     }
     const scope=await digest(m.exposure.summary.accounts.map(x=>x.replaceAll('&amp;','&')).sort());
     if(scope!==exposureCore.ALL_TOGETHER_SCOPE_SHA256)fail();

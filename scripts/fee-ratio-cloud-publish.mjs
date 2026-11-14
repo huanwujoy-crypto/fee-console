@@ -70,7 +70,7 @@ export function createRatioCloudPublisher({exposureCore=createRankedExposureCore
   async function prepare({plan,originalBytes,inputBytes,manager,previous,now}){
     const raw=parse(originalBytes),input=parse(inputBytes);
     if(sha(originalBytes)!==plan.original.sha256||sha(inputBytes)!==plan.input.sha256||!((raw.schemaVersion==='sharesight-private-full-v2'&&input.schema==='fee-console.ratio-sources.v2')||(raw.schemaVersion==='sharesight-private-performance-v1'&&input.schema==='fee-console.ratio-sources.v3')||(raw.schemaVersion==='sharesight-api-full-v1'&&input.schema==='fee-console.ratio-sources.v2')))refuse();
-    const apiSource=raw.schemaVersion==='sharesight-api-full-v1';if(apiSource!==(plan.library===null))refuse();
+    const apiSource=(raw.allocation??raw).schemaVersion==='sharesight-api-full-v1';if(apiSource!==(plan.library===null))refuse();
     // Exact approved Library identity and version are bound to the uploaded
     // object's hash/generation by the future transport. A hash is not consent.
     const source=createRatioSourceCore(accounts=>sha(JSON.stringify(accounts.map(s=>s.replaceAll('&amp;','&')).sort())));

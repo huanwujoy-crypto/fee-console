@@ -8,6 +8,7 @@ import {createRatioSourceCore} from './fee-ratio-source-core.mjs';
 import {createFeeRatioCore} from './fee-ratio-management.mjs';
 import {createRatioSnapshotCore} from './fee-ratio-snapshot.mjs';
 import {buildRatioModel} from './fee-ratio-packet.mjs';
+import {createAggregateReturnsCore} from './fee-ratio-aggregate-returns.mjs';
 import {createOfficialRatioSourceCore} from './fee-ratio-official-source.mjs';
 import {createRankedExposureCore} from './xuan-ib-sharesight-exposure.mjs';
 globalThis.fetch=async()=>{throw Error('OFFLINE_TEST_NETWORK_FORBIDDEN');};
@@ -152,4 +153,70 @@ test('an API source signs as its own kind without a Library version, renders API
     const packet=structuredClone(f.signed);edit(packet.body);await assert.rejects(f.snapshot.verify(packet,f.manager,{now:NOW}),/RATIO_SNAPSHOT_REFUSED/);
   }
   const stale=await f.snapshot.verify(f.signed,f.manager,{now:new Date('2026-11-12T00:00:00.000Z')});assert.equal(stale.stale,true);
+});
+
+// ---- API performance beside an API allocation, in one original ----
+const REPORT_ID=n=>'apireport_'+String(n).repeat(32);
+function apiPerformance(accounts,edit=()=>{}){
+  const member=(securityCode,market)=>({account:'IB-HK',market,securityCode});
+  const stock=[member('VST','NYSE'),member('USSC','TEST')],tech=[member('GOOG','NASDAQ')];
+  const row=(name,members,n,returnPct,unit)=>({scope:{type:'classification',name,parent:null},members,sourceSheet:'sub_totals',sourceRow:n,returnPct,unit,termEvidence:{type:'unknown'}});
+  const report=(period,startDate,n,unit)=>({period,startDate,endDate:'2026-11-10',includeClosed:true,calculationMethod:'sharesight-native',currency:'USD',cashPerformance:'unknown',
+    source:{apiReportId:REPORT_ID(n),sha256:String(n).repeat(64),locator:'report.sub_totals'},rows:[row('美国底仓',stock,1,7.25,unit),row('美国科技',tech,2,-3.5,unit)],unavailable:[{scope:{type:'portfolio',name:'All Together',parent:null},reason:'native-aggregate-not-provided'}]});
+  const dated=(m,startDate,dateKind,n)=>({...m,startDate,dateKind,sourceFileId:REPORT_ID(3),sourceLocator:'holdings['+n+'].inception_date'});
+  const performance={schema:'fee-console.ratio-performance-source.v2',provider:'Sharesight',transport:'official-api',currency:'USD',asOf:'2026-11-10',accounts:[...accounts],
+    reports:[report('all','2018-01-01',1,'p.a.'),report('oneYear','2025-11-10',2,'period')],
+    inceptionEvidence:{schema:'fee-console.ratio-inception-source.v2',capturedAt:'2026-11-10T09:01:00.000Z',includeClosed:true,sources:[{apiReportId:REPORT_ID(3),sha256:'3'.repeat(64),locator:'member holdings listings'}],
+      sourceCaptures:[{apiReportId:REPORT_ID(3),capturedAt:'2026-11-10T09:01:00.000Z',sourceKind:'sharesight-api-holdings'}],
+      members:[dated(stock[0],'2019-03-04','holding-opening-balance',1),dated(stock[1],'2020-06-01','holding-inception',2),dated(tech[0],'2021-02-03','holding-inception',3)]}};
+  edit(performance);return performance;
+}
+function apiWrapped(edit){
+  const a=apiOriginal(),performance=apiPerformance(a.raw.accounts,edit);
+  const raw={schemaVersion:'sharesight-private-performance-v1',accounts:[...a.raw.accounts],allocation:a.raw,performance,performanceCapturedAt:'2026-11-10T09:02:00.000Z'},bytes=Buffer.from(JSON.stringify(raw));
+  const allocation=createOfficialRatioSourceCore().build(a.raw,{sourceSha256:sha(bytes),sourceBytes:bytes.length}).input;
+  return {...a,raw,bytes,performance,input:{...allocation,schema:'fee-console.ratio-sources.v3',performance:structuredClone(performance)}};
+}
+test('API performance is carried only beside an API allocation; refs, locators and first-buy kinds are API ones and an opening-balance start is flagged',()=>{
+  const f=apiWrapped(),facts=f.source.verifyBrowserSourceAssociations(f.raw,f.input,{scopeHash:f.scope,now:NOW});
+  assert.deepEqual(facts.sourceDates,{classification:'2026-11-10',exposure:'2026-11-10',performance:'2026-11-10'});assert.equal(Object.hasOwn(facts,'companyExposure'),false);
+  const view=createAggregateReturnsCore().build(f.performance,{expectedAccounts:f.raw.accounts,expectedAsOf:'2026-11-10'}),item=name=>view.items.find(i=>i.scope.name===name).periods;
+  // The earliest member of this class began as an opening balance: that recorded date is used and marked.
+  assert.deepEqual([item('美国底仓').all.investmentStartDate,item('美国底仓').all.investmentStartBasis,item('美国底仓').all.status,item('美国底仓').oneYear.status],['2019-03-04','opening-balance-record','annualised','period-return']);
+  assert.deepEqual([item('美国科技').all.investmentStartDate,Object.hasOwn(item('美国科技').all,'investmentStartBasis')],['2021-02-03',false]);
+  assert.deepEqual(item('美国底仓').all.source,{apiReportId:REPORT_ID(1),sha256:'1'.repeat(64),locator:'sub_totals[1].total_gain_percent'});
+  assert.doesNotMatch(JSON.stringify(view),/libfile_|!O|!N|browser-first-recorded-buy|workbook/i);
+  // The start-date line says when its start is an opening-balance record, and only then.
+  const returns=createAggregateReturnsCore(),line=name=>returns.renderInline(returns.select(view,{type:'classification',name,parent:null}));
+  assert.match(line('美国底仓'),/2019-03-04 至 2026-11-10（起点为 Sharesight 期初余额记录日，可能晚于实际买入）/);assert.match(line('美国科技'),/2021-02-03 至 2026-11-10(?!（起点)/);
+  // Neither kind passes as the other, in whole or in part.
+  const build=p=>createAggregateReturnsCore().build(p,{expectedAccounts:f.raw.accounts,expectedAsOf:'2026-11-10'});
+  for(const edit of [p=>{delete p.transport;},p=>{p.transport='official-workbooks';},p=>{p.reports[0].source={libraryFileId:'libfile_'+'1'.repeat(32),version:0,sha256:'1'.repeat(64),locator:'x'};},p=>{p.inceptionEvidence.sourceCaptures[0].sourceKind='browser-first-recorded-buy';},p=>{p.inceptionEvidence.sourceCaptures[0].sourceKind='verified-historical-archive';},p=>{p.inceptionEvidence.schema='fee-console.ratio-inception-source.v1';delete p.inceptionEvidence.sourceCaptures;},p=>{p.inceptionEvidence.members[0].dateKind='browser-first-recorded-buy';},p=>{p.inceptionEvidence.members[0].startDate='2017-12-31';},p=>{p.inceptionEvidence.members.pop();}])
+    {const p=apiPerformance(f.raw.accounts,edit);assert.throws(()=>build(p),/RATIO_PERFORMANCE_REFUSED/);}
+  // A workbook performance source may not use the API-only opening-balance kind.
+  const workbook=apiPerformance(f.raw.accounts,p=>{delete p.transport;for(const r of p.reports)r.source={libraryFileId:'libfile_'+r.source.apiReportId.slice(-32),version:0,sha256:r.source.sha256,locator:'Native Total cells'};delete p.inceptionEvidence;});
+  assert.equal(build(workbook).items.length,3);
+  // Mixed originals are refused by the association check in both directions.
+  const mixed=apiWrapped();mixed.raw.performance=workbook;mixed.input.performance=structuredClone(workbook);
+  assert.throws(()=>mixed.source.verifyBrowserSourceAssociations(mixed.raw,mixed.input,{scopeHash:mixed.scope,now:NOW}),/RATIO_BROWSER_EVIDENCE_REFUSED/);
+  const edited=structuredClone(f.input);edited.performance.reports[0].rows[0].returnPct=8;
+  assert.throws(()=>f.source.verifyBrowserSourceAssociations(f.raw,edited,{scopeHash:f.scope,now:NOW}));
+});
+
+test('an API original with performance signs as the API kind and its signed dates include performance',async()=>{
+  const f=apiWrapped(),facts=f.source.verifyBrowserSourceAssociations(f.raw,f.input,{scopeHash:f.scope,now:NOW});
+  const manager=await f.ratio.deriveSnapshotManager('0'.repeat(32),Buffer.alloc(32,7).toString('base64url'),'synthetic-manager-token-not-real-123');
+  const model=await buildRatioModel(f.input,{kind:'snapshot',targetDate:f.input.exposure.summary.asOf,feeAccountingThrough:null,now:NOW,viewCore:f.ratio,previewOnly:true});
+  model.book.browserEvidence={...model.book.browserEvidence,integrity:'verified-original-api-association',associationId:'c'.repeat(64),managerScopeId:manager.recipient.scopeId,migrationPending:false,classificationDeltaCents:0,exposureDeltaCents:0};
+  model.sourceDates=facts.sourceDates;model.classificationSummary=facts.classificationSummary;model.performance=facts.performance;
+  const inputBytes=Buffer.from(JSON.stringify(f.input)),snapshot=createRatioSnapshotCore(f.ratio,f.exposure,createRatioSourceCore,b=>JSON.parse(Buffer.from(b)),crypto.webcrypto);
+  const args={originalBytes:new Uint8Array(f.bytes),inputBytes:new Uint8Array(inputBytes),model,recipient:manager.recipient,sourceSha256:sha(f.bytes),inputSha256:sha(inputBytes),now:NOW};
+  const original=await snapshot.verifyOriginal(args),signed=await snapshot.authenticate(await snapshot.candidate({model,recipient:manager.recipient,proof:original,now:NOW}),original,manager,{profileSha256:'a'.repeat(64),now:NOW});
+  const result=await snapshot.verify(signed,manager,{now:NOW});
+  assert.equal(result.source.kind,'complete-official-api-association');assert.deepEqual(result.source.sourceDates,{classification:'2026-11-10',exposure:'2026-11-10',performance:'2026-11-10'});
+  assert.equal(result.model.performance.transport,'official-api');
+  const html=f.ratio.render(result.model);assert.match(html,/来源：Sharesight 官方 API/);assert.doesNotMatch(html,/工作簿|mtime|Library|undefined/);
+  await assert.rejects(snapshot.verifyOriginal({...args,libraryVersion:0}),/RATIO_SNAPSHOT_REFUSED/);
+  // The sealed model cannot pair an API book with workbook-labelled performance.
+  const relabelled=structuredClone(model);delete relabelled.performance.transport;await assert.rejects(f.ratio.validateModel(relabelled));
 });
