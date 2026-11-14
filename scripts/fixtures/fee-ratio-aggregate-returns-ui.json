@@ -1,7 +1,7 @@
 {
   "schema": "fee-console.ratio-aggregate-ui-stage.v1",
   "priorSha256": "e98b04d9f95353596410cf1f6c7a1f06a3072dca9d6211a5f390afcb6fa2b194",
-  "nextSha256": "bea95319d2ba4c2dab5364cfc2710ceb8b7b49e4ecd9f07ff20e177044f8da3a",
+  "nextSha256": "dfdf5086a4b0c3628db58133ab0b917f39c36d001af9656878f0eca3075cd136",
   "regions": [
     {
       "prior": ".ratio-fund-distribution{margin-bottom:10px}.ratio-fund-distribution h2{margin-bottom:4px}.ratio-fund-distribution>p{font-size:11px;color:var(--ink-2);margin:0 0 8px}.ratio-distribution-row{margin:8px 0}.ratio-distribution-label{display:flex;justify-content:space-between;gap:12px;font-size:12px;line-height:1.5}.ratio-distribution-label span{min-width:0;overflow-wrap:anywhere}.ratio-distribution-label strong{flex-shrink:0;font-variant-numeric:tabular-nums}.ratio-distribution-track{height:6px;background:var(--line);border-radius:4px;overflow:hidden;margin-top:4px}.ratio-distribution-track i{display:block;height:100%;background:var(--accent,#4d8ec9);border-radius:4px}.ratio-fund-distribution details{font-size:11px;color:var(--ink-2);margin-top:10px}\n</style>\n",
@@ -761,8 +761,24 @@
     {
       "prior": "   return '<div class=\"ratio-return-period\"><strong>'+label+'</strong><span>'+esc(value)+(badge?' <small class=\"ratio-return-badge\">'+badge+'</small>':'')+'</span>'+(p?'<small>'+esc(periodDates(p,key))+' \u00b7 \u542b\u5df2\u5e73\u4ed3</small>':'')+(reason?'<small>'+reason+'</small>':'')+(benchmarkNote?'<small class=\"ratio-return-benchmark-note\">'+benchmarkNote+'</small>':'')+'</div>';\n",
       "next": "   return '<div class=\"ratio-return-period\"><strong>'+label+'</strong><span>'+esc(value)+(badge&&p.status!=='period-return'?' <small class=\"ratio-return-badge\">'+badge+'</small>':'')+'</span>'+(p?'<small>'+esc(periodDates(p,key))+' \u00b7 \u542b\u5df2\u5e73\u4ed3</small>':'')+(reason?'<small>'+reason+'</small>':'')+(benchmarkNote?'<small class=\"ratio-return-benchmark-note\">'+benchmarkNote+'</small>':'')+'</div>';\n"
+    },
+    {
+      "prior": "<meta name=\"fee-console-build\" content=\"4.9.58\">\n",
+      "next": "<meta name=\"fee-console-build\" content=\"4.9.59\">\n"
+    },
+    {
+      "prior": "const UI_VERSION_LABEL=\" \u00b7 v4.9.58\";\n",
+      "next": "const UI_VERSION_LABEL=\" \u00b7 v4.9.59\";\n"
+    },
+    {
+      "prior": "    const note=document.createElement('details'),summary=document.createElement('summary');\n",
+      "next": "    // One fold only (owner request 2026-11-14): the numbered notes sit directly inside the\n    // section's own disclosure, in a plain box, not behind a second \"\u8bf4\u660e\" fold.\n    const note=document.createElement('div');\n"
+    },
+    {
+      "prior": "    note.className='ratio-explanation ratio-fund-notes';\n    summary.textContent='\u8bf4\u660e '+number;note.append(summary);\n    for(const [i,p] of paragraphs.entries()){\n",
+      "next": "    note.className='ratio-explanation ratio-fund-notes';\n    for(const [i,p] of paragraphs.entries()){\n"
     }
   ],
-  "supportSha256": "bac9404b47a5d006afabdb64eb8a7f4a1010c16c1634143b1ba8719e425f94e6",
-  "supportRegionCount": 178
+  "supportSha256": "bea95319d2ba4c2dab5364cfc2710ceb8b7b49e4ecd9f07ff20e177044f8da3a",
+  "supportRegionCount": 184
 }
