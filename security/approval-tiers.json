@@ -590,6 +590,8 @@
     "scripts/ib-manager-source.test.mjs",
     "scripts/ib-manager-report.mjs",
     "scripts/ib-manager-diagnostic.mjs",
+    "scripts/ib-past-point-diagnostic.mjs",
+    "scripts/ib-past-point-diagnostic.test.mjs",
     "scripts/ib-manager-noncash.mjs",
     "scripts/ib-manager-noncash.test.mjs",
     "scripts/fee-report-period.mjs",

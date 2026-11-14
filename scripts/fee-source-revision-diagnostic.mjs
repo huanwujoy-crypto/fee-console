@@ -14,6 +14,7 @@ import {fetchEconomicSnapshot,economicSourceDiagnosticCode} from './fee-economic
 import {createFeeSourceRevisionRuntime,sourceRevisionRuntimeFailureCode,sourceRevisionRuntimeCashSite,sourceRevisionRuntimeCashDateRole,sourceRevisionRuntimeSourceEvidence} from './fee-source-revision-runtime.mjs';
 import {isRecordsEvidence} from './fee-source-lexical.mjs';
 import {IB_CASH_RECONCILIATION_SITES,IB_CASH_DATE_ROLES} from './ib-manager-source.mjs';
+import {ibPastPointDiagnosticActive,runIbPastPointDiagnostic} from './ib-past-point-diagnostic.mjs';
 
 const ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const REPO='huanwujoy-crypto/fee-console',OWNER=283054367,OID=/^[a-f0-9]{40}$/,SHA=/^[a-f0-9]{64}$/;
@@ -186,6 +187,15 @@ async function main(){
   const options=revisionDiagnosticArgs(process.argv.slice(2)),env=process.env;
   const event=JSON.parse(readRegular(env.GITHUB_EVENT_PATH,65536));
   validateRevisionDiagnosticEvent({env:{...env},event,...options,execArgv:process.execArgv});
+  // Dated, separately approved reuse of this same exact-main, owner-only,
+  // read-only entry: inside its fixed window the IB past-point diagnosis runs
+  // instead, with no economic source and no revision runtime. Outside the
+  // window this branch is inert and the original diagnosis is unchanged.
+  if(ibPastPointDiagnosticActive(Date.now())){
+    const done=await runIbPastPointDiagnostic({checkOnly:options.checkOnly,env,checkCheckout:()=>checkout(options.expectedMain),readRegular});
+    for(const name of [...PRIVATE,'FEE_REPORT_ACTIONS_TOKEN'])delete env[name];
+    process.exitCode=done.exitCode;return;
+  }
   const transport=revisionDiagnosticTransport(),plan=dailyReportPlan(REVISION_DIAGNOSTIC_SCOPE.targetDate,['NASDAQ','NYSE'],{reviewedSyncDate:REVISION_DIAGNOSTIC_SCOPE.targetDate});
   let economic,storage,sourceBytes,healthBytes,payload,initial;
   const checkCheckout=()=>{checkout(options.expectedMain);const current=[readRegular(path.join(ROOT,'data.json'),2*1024*1024-1),readRegular(path.join(ROOT,'fee-data-health.json'),65536)].map(hash);

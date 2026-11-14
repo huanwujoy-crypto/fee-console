@@ -77,6 +77,42 @@ export class IbManagerSourceError extends Error{constructor(code,cashSite,cashDa
 export const ibSourceCashSite=error=>cashSiteByError.get(error)||'UNCLASSIFIED';
 export const ibSourceCashDateRole=error=>cashRoleByError.get(error)||'NONE';
 const fail=(code,cashSite,cashDateRole='PROOF')=>{throw new IbManagerSourceError(code,cashSite,cashDateRole);};
+// Value-free location of a past-point refusal, for the read-only diagnostic
+// only. The thrown code, message and serialization are unchanged; the label and
+// the changed field categories are fixed literals read by error identity, and
+// never an amount, quantity, identifier, date or name.
+export const IB_PAST_POINT_SITES=Object.freeze(['UNCLASSIFIED','TRADE_PROOF_CHECKPOINT','TRADE_NORMALIZATION_INPUT','TRADE_NORMALIZATION_RESULT',
+  'INCOME_PROOF_ANCHOR','INCOME_NORMALIZATION_PAYOUT','INCOME_NORMALIZATION_CASH_LEG','INCOME_NORMALIZATION_PROOF','ANCHOR_TOTAL','ANCHOR_SNAPSHOT','OWNER_BASELINE_TOTAL']);
+export const IB_PAST_POINT_FIELDS=Object.freeze(['d','totalCents','cash','cashCurrency','positions','marks','nativeCash','foreignCurrencies',
+  'holdingSet','cashSet','markPresence','markQuantity','markValue','markValueAll','markIdentity','cashValueAll']);
+const pastPointSites=new Set(IB_PAST_POINT_SITES),pastPointByError=new WeakMap();
+function pastPointFields(old,current){
+  try{
+    if(!old||!current||typeof old!=='object'||typeof current!=='object')return [];
+    const found=new Set(),keys=v=>Object.keys(v||{}).sort().join(',');
+    for(const k of ['d','totalCents','cash','cashCurrency','positions','marks','nativeCash','foreignCurrencies'])if(ibCanonical(old[k]??null)!==ibCanonical(current[k]??null))found.add(k);
+    if(keys(old.positions)!==keys(current.positions))found.add('holdingSet');
+    if(keys(old.cash)!==keys(current.cash))found.add('cashSet');
+    let marks=0,values=0;
+    for(const k of Object.keys(old.marks||{})){
+      if(!Object.hasOwn(current.marks||{},k))continue;const a=old.marks[k],b=current.marks[k];
+      if(!a||!b){if(a!==b)found.add('markPresence');continue;}
+      marks++;if(a.quantityAtoms!==b.quantityAtoms)found.add('markQuantity');
+      if(a.valueCents!==b.valueCents){found.add('markValue');values++;}
+      if(a.instrumentIdentityHash!==b.instrumentIdentityHash)found.add('markIdentity');
+    }
+    if(marks>1&&values===marks)found.add('markValueAll');
+    const shared=Object.keys(old.cash||{}).filter(k=>Object.hasOwn(current.cash||{},k));
+    if(shared.length>1&&shared.every(k=>old.cash[k]!==current.cash[k]))found.add('cashValueAll');
+    return IB_PAST_POINT_FIELDS.filter(k=>found.has(k));
+  }catch{return [];}
+}
+const failPast=(site,old,current)=>{
+  const error=new IbManagerSourceError('PAST_POINT_CHANGED');
+  pastPointByError.set(error,Object.freeze({site:pastPointSites.has(site)?site:'UNCLASSIFIED',fields:Object.freeze(pastPointFields(old,current))}));
+  throw error;
+};
+export const ibSourcePastPoint=error=>pastPointByError.get(error)||null;
 export const ibSourceFailureCode=e=>e instanceof IbManagerSourceError?'IB_SOURCE_'+e.code:'IB_SOURCE_NETWORK';
 export const ibCanonical=v=>Array.isArray(v)?'['+v.map(ibCanonical).join(',')+']':v&&typeof v==='object'?'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+ibCanonical(v[k])).join(',')+'}':JSON.stringify(v);
 const hash=v=>crypto.createHash('sha256').update(ibCanonical(v)).digest('hex');
@@ -213,7 +249,7 @@ function validateCashDateNormalization(p,source){
   for(const k of new Set([...Object.keys(b.positions),...Object.keys(c.positions)]))if(BigInt(c.positions[k]||'0')-BigInt(b.positions[k]||'0')!==(k===String(t.holdingId)?(t.kind==='BUY'?1n:-1n)*BigInt(t.quantityAtoms):0n))fail('CASH_RECONCILIATION','TRADE_PROOF_POSITION_DELTA');
   const corrected=structuredClone(b);corrected.cash[l.cashId]=opening;corrected.totalCents+=opening-b.cash[l.cashId];
   cashDateSnapshot(corrected);
-  if(p.anchorKind==='checkpoint'&&ibCanonical(corrected)!==ibCanonical(a))fail('PAST_POINT_CHANGED');
+  if(p.anchorKind==='checkpoint'&&ibCanonical(corrected)!==ibCanonical(a))failPast('TRADE_PROOF_CHECKPOINT',a,corrected);
   const {proofId,...body}=p;if(hash(body)!==proofId)fail('CASH_RECONCILIATION','TRADE_PROOF_HASH');
   if(source){
     if(source.schema!=='fee-console.ib-manager-source.v3'||p.portfolioIdentityHash!==source.portfolioIdentityHash||b.d<=source.baselineAsOf||p.windowThrough>source.sourceAsOf||source.noncashProofs.some(x=>x.tradeId===t.id))fail('CASH_RECONCILIATION','TRADE_PROOF_SOURCE');
@@ -240,8 +276,8 @@ function normalizeEarlyTradeCash({reports,trades,ledger,rawCashRows,prior,baseli
   const proof={...body,proofId:hash(body)},corrected=validateCashDateNormalization(proof);
   const existing=proofs.find(p=>p.trade.id===t.id);
   if(existing){
-    for(const k of ['rawBefore','rawAfter','trade','cashLeg'])if(ibCanonical(existing[k])!==ibCanonical(proof[k]))fail('PAST_POINT_CHANGED');
-    if(ibCanonical(validateCashDateNormalization(existing))!==ibCanonical(corrected))fail('PAST_POINT_CHANGED');
+    for(const k of ['rawBefore','rawAfter','trade','cashLeg'])if(ibCanonical(existing[k])!==ibCanonical(proof[k]))failPast('TRADE_NORMALIZATION_INPUT');
+    const recorded=validateCashDateNormalization(existing);if(ibCanonical(recorded)!==ibCanonical(corrected))failPast('TRADE_NORMALIZATION_RESULT',recorded,corrected);
   }else proofs.push(proof);
   reports[n-1]=corrected;
   return proofs;
@@ -269,7 +305,7 @@ function validateIncomeDateNormalization(p,source){
     ||[a,b,c].some(s=>s.cashCurrency[t.cashId]!=='USD'||s.foreignCurrencies?.[t.holdingId]||!s.positions[t.holdingId]||BigInt(s.positions[t.holdingId])<=0n))fail('CASH_RECONCILIATION','INCOME_PROOF_PAYOUT');
   const corrected=structuredClone(b);
   corrected.cash[t.cashId]-=t.netCents;corrected.totalCents-=t.netCents;cashDateSnapshot(corrected);
-  if(ibCanonical(corrected)!==ibCanonical(a))fail('PAST_POINT_CHANGED');
+  if(ibCanonical(corrected)!==ibCanonical(a))failPast('INCOME_PROOF_ANCHOR',a,corrected);
   // v2: the recorded owner rows of the date, per USD cash account. Other accounts
   // may move between anchor and closing only by exactly their recorded signed
   // cents; every account outside the record stays passive as before.
@@ -331,8 +367,8 @@ function normalizeEarlyIncomeCash({reports,trades,ledger,rawCashRows,payoutProof
   const proofs=structuredClone(prior?.incomeDateNormalizations||[]),a=prior?.closingSnapshots?.find(s=>s.d===reports[0].d),b=reports[0],c=reports[1];
   const cashLeg=l=>({id:l.id,cashId:l.cashId,tradeId:l.tradeId,holdingId:l.holdingId,payoutId:l.payoutId,dateTime:rawCashRows.get(l.id)?.date_time,type:l.type,amountCents:l.movement,balanceCents:l.balance});
   for(const p of proofs){
-    for(const t of payoutProofs)if(t.id===p.payout.id&&ibCanonical(t)!==ibCanonical(p.payout))fail('PAST_POINT_CHANGED');
-    for(const l of ledger){const old=p.cashLegs.find(x=>x.id===l.id);if(old&&ibCanonical(cashLeg(l))!==ibCanonical(old))fail('PAST_POINT_CHANGED');}
+    for(const t of payoutProofs)if(t.id===p.payout.id&&ibCanonical(t)!==ibCanonical(p.payout))failPast('INCOME_NORMALIZATION_PAYOUT');
+    for(const l of ledger){const old=p.cashLegs.find(x=>x.id===l.id);if(old&&ibCanonical(cashLeg(l))!==ibCanonical(old))failPast('INCOME_NORMALIZATION_CASH_LEG');}
   }
   // No frozen full checkpoint, no normalization. Ordinary source, baseline
   // and trade-date checks below continue to reject unexplained differences.
@@ -360,7 +396,7 @@ function normalizeEarlyIncomeCash({reports,trades,ledger,rawCashRows,payoutProof
   const body={schema:v2?INCOME_PROOF_V2:INCOME_PROOF_V1,portfolioIdentityHash:hash({name:NAME,id:portfolioId,currency:'USD'}),anchor:structuredClone(a),rawAnchor:structuredClone(b),rawClosing:structuredClone(c),payout:structuredClone(candidates[0]),
     cashLegs:legs.map(cashLeg).sort((x,y)=>x.id-y.id),...(v2?{ownerFlows}:{})};
   const proof={...body,proofId:hash(body)},corrected=validateIncomeDateNormalization(proof),existing=proofs.find(p=>p.payout.id===proof.payout.id);
-  if(existing){if(ibCanonical(existing)!==ibCanonical(proof))fail('PAST_POINT_CHANGED');}else proofs.push(proof);
+  if(existing){if(ibCanonical(existing)!==ibCanonical(proof))failPast('INCOME_NORMALIZATION_PROOF');}else proofs.push(proof);
   reports[0]=corrected;return proofs;
 }
 export function validateIbManagerReportInput(source,expectedHash){
@@ -647,9 +683,9 @@ export class SharesightIbManagerReader{
       if(path.length!==group.length+1)fail('CASH_RECONCILIATION','DAILY_CHAIN_LENGTH',current.d===targetDate?'TARGET':'WINDOW');
       if(path[0]!== (current.cash[cashId]||0))fail('CASH_RECONCILIATION','DAILY_CHAIN_END',current.d===targetDate?'TARGET':'WINDOW');
     }
-    if(prior){const previous=prior.periodReturnsInput.points.find(p=>p.d===anchor);if(!previous||ibMoneyCents(previous.tot)!==reports[0].totalCents)fail('PAST_POINT_CHANGED');}
-    if(prior?.closingSnapshots){const old=prior.closingSnapshots.find(p=>p.d===anchor);if(!old||ibCanonical(old)!==ibCanonical(reports[0]))fail('PAST_POINT_CHANGED');}
-    if(ownerBaseline&&ibMoneyCents(ownerBaseline.input.periodReturnsInput.points.find(p=>p.d===anchor)?.tot)!==reports[0].totalCents)fail('PAST_POINT_CHANGED');
+    if(prior){const previous=prior.periodReturnsInput.points.find(p=>p.d===anchor);if(!previous||ibMoneyCents(previous.tot)!==reports[0].totalCents)failPast('ANCHOR_TOTAL',prior.closingSnapshots?.find(p=>p.d===anchor),reports[0]);}
+    if(prior?.closingSnapshots){const old=prior.closingSnapshots.find(p=>p.d===anchor);if(!old||ibCanonical(old)!==ibCanonical(reports[0]))failPast('ANCHOR_SNAPSHOT',old,reports[0]);}
+    if(ownerBaseline&&ibMoneyCents(ownerBaseline.input.periodReturnsInput.points.find(p=>p.d===anchor)?.tot)!==reports[0].totalCents)failPast('OWNER_BASELINE_TOTAL');
     const identityHash=hash({name:NAME,id:this.#portfolio,currency:'USD'});
     const noncashProofs=prior?prior.noncashProofs.filter(p=>p.effectiveDate<from).map(p=>structuredClone(p)):[];
     for(const t of trades)if(t.transaction_date<=baseline.asOf&&t.description_code==='SELL'&&t.value===0||t.transaction_date>baseline.asOf&&(t.description_code==='TRANSFER_OUT'||auditedEvent(t))){
