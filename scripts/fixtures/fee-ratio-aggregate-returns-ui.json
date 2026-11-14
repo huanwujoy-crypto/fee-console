@@ -1,7 +1,7 @@
 {
   "schema": "fee-console.ratio-aggregate-ui-stage.v1",
   "priorSha256": "e98b04d9f95353596410cf1f6c7a1f06a3072dca9d6211a5f390afcb6fa2b194",
-  "nextSha256": "bac9404b47a5d006afabdb64eb8a7f4a1010c16c1634143b1ba8719e425f94e6",
+  "nextSha256": "bea95319d2ba4c2dab5364cfc2710ceb8b7b49e4ecd9f07ff20e177044f8da3a",
   "regions": [
     {
       "prior": ".ratio-fund-distribution{margin-bottom:10px}.ratio-fund-distribution h2{margin-bottom:4px}.ratio-fund-distribution>p{font-size:11px;color:var(--ink-2);margin:0 0 8px}.ratio-distribution-row{margin:8px 0}.ratio-distribution-label{display:flex;justify-content:space-between;gap:12px;font-size:12px;line-height:1.5}.ratio-distribution-label span{min-width:0;overflow-wrap:anywhere}.ratio-distribution-label strong{flex-shrink:0;font-variant-numeric:tabular-nums}.ratio-distribution-track{height:6px;background:var(--line);border-radius:4px;overflow:hidden;margin-top:4px}.ratio-distribution-track i{display:block;height:100%;background:var(--accent,#4d8ec9);border-radius:4px}.ratio-fund-distribution details{font-size:11px;color:var(--ink-2);margin-top:10px}\n</style>\n",
@@ -737,8 +737,32 @@
     {
       "prior": "    const companyStatus=directSecondary?'<p class=\"ratio-key-status\">\u56db\u7c7b\u5747\u6309\u5b9e\u9645\u6301\u6709\u7684\u8bc1\u5238\u6216\u57fa\u91d1\u5e02\u503c\u6392\u540d\uff1b\u4e8c\u7ea7\u5e02\u573a\u4e0d\u505aETF\u7a7f\u900f\u3001\u4e0d\u4e58\u6760\u6746\u500d\u6570\u3001\u4e0d\u5408\u5e76\u4e0d\u540c\u8bc1\u5238\u3002</p>':company?.top?'<p class=\"ratio-key-status\">\u516c\u53f8\u7ecf\u6d4e\u655e\u53e3\u542b\u663e\u5f0f\u6760\u6746\uff0c\u6bd4\u4f8b\u53ef\u80fd\u8d85\u8fc7100%\uff1b\u4e0d\u6539\u53d8\u603b\u8d44\u4ea7\u3001\u7c7b\u522b\u8d44\u4ea7\u53ca\u7ba1\u7406\u8d39\u3002</p>':company?companyCore.render(m.companyExposure,m.exposure,b?.sourceSha256):'<p class=\"ratio-key-status\">\u65e7\u5feb\u7167\u4ec5\u6709\u8bc1\u5238\u524d\u4e94\uff0c\u672a\u7531\u540c\u4efd\u5b8c\u6574\u539f\u4ef6\u91cd\u7b97\u516c\u53f8\u6392\u540d\uff1b\u4e0d\u731c\u6d4b\u5408\u5e76\u540e\u7684\u524d\u4e94\u3002</p>';\n",
       "next": "    const companyStatus=directSecondary?'<p class=\"ratio-key-status\">\u56db\u7c7b\u5747\u6309\u5b9e\u9645\u6301\u6709\u7684\u8bc1\u5238\u6216\u57fa\u91d1\u5e02\u503c\u6392\u540d\uff1b\u4e8c\u7ea7\u5e02\u573a\u524d\u4e94\u4e0d\u542bETF\uff08ETF\u4ecd\u8ba1\u5165\u672c\u7c7b\u8d44\u4ea7\uff09\uff0c\u4e0d\u505aETF\u7a7f\u900f\u3001\u4e0d\u4e58\u6760\u6746\u500d\u6570\u3001\u4e0d\u5408\u5e76\u4e0d\u540c\u8bc1\u5238\u3002</p>':company?.top?'<p class=\"ratio-key-status\">\u516c\u53f8\u7ecf\u6d4e\u655e\u53e3\u542b\u663e\u5f0f\u6760\u6746\uff0c\u6bd4\u4f8b\u53ef\u80fd\u8d85\u8fc7100%\uff1b\u4e0d\u6539\u53d8\u603b\u8d44\u4ea7\u3001\u7c7b\u522b\u8d44\u4ea7\u53ca\u7ba1\u7406\u8d39\u3002</p>':company?companyCore.render(m.companyExposure,m.exposure,b?.sourceSha256):'<p class=\"ratio-key-status\">\u65e7\u5feb\u7167\u4ec5\u6709\u8bc1\u5238\u524d\u4e94\uff0c\u672a\u7531\u540c\u4efd\u5b8c\u6574\u539f\u4ef6\u91cd\u7b97\u516c\u53f8\u6392\u540d\uff1b\u4e0d\u731c\u6d4b\u5408\u5e76\u540e\u7684\u524d\u4e94\u3002</p>';\n"
+    },
+    {
+      "prior": "<meta name=\"fee-console-build\" content=\"4.9.57\">\n",
+      "next": "<meta name=\"fee-console-build\" content=\"4.9.58\">\n"
+    },
+    {
+      "prior": "const UI_VERSION_LABEL=\" \u00b7 v4.9.57\";\n",
+      "next": "const UI_VERSION_LABEL=\" \u00b7 v4.9.58\";\n"
+    },
+    {
+      "prior": "  const lines=[['all','\u5168\u90e8'],['oneYear','\u8fd1\u4e00\u5e74']].map(([key,label])=>{\n   const p=item.periods[key],has=Number.isFinite(p?.nativePct),badge={annualised:'\u5e74\u5316','under-one-year':'\u672a\u6ee1\u4e00\u5e74','period-return':'\u671f\u95f4\u6536\u76ca'}[p?.status]||'';\n",
+      "next": "  const lines=[['all','\u5168\u90e8'],['oneYear','\u8fd1\u4e00\u5e74']].map(([key,label])=>{\n   // A plain period return carries no visible tag (owner request 2026-11-14); it is the default reading of an\n   // unmarked value. Only the two cases that change how to read the number are tagged. The reason stays in the title.\n   const p=item.periods[key],has=Number.isFinite(p?.nativePct),badge={annualised:'\u5e74\u5316','under-one-year':'\u672a\u6ee1\u4e00\u5e74','period-return':'\u671f\u95f4\u6536\u76ca'}[p?.status]||'';\n"
+    },
+    {
+      "prior": "   return '<span class=\"ratio-return-compact-line\" aria-label=\"'+esc(label+'\uff1a'+value+'\uff1b'+reason+(amounts?'\uff1b\u6536\u76ca '+amountValue+'\uff1b'+amountReason:''))+'\"><span>'+label+'\uff1a</span><strong title=\"'+esc(reason)+'\">'+esc(value)+'</strong>'+(badge?'<small>'+badge+'</small>':'')+(amounts?'<span class=\"ratio-return-amount\" title=\"'+esc(amountReason)+'\">\u6536\u76ca '+esc(visibleAmount)+'</span>':'')+'</span>';\n",
+      "next": "   return '<span class=\"ratio-return-compact-line\" aria-label=\"'+esc(label+'\uff1a'+value+'\uff1b'+reason+(amounts?'\uff1b\u6536\u76ca '+amountValue+'\uff1b'+amountReason:''))+'\"><span>'+label+'\uff1a</span><strong title=\"'+esc(reason)+'\">'+esc(value)+'</strong>'+(badge&&p.status!=='period-return'?'<small>'+badge+'</small>':'')+(amounts?'<span class=\"ratio-return-amount\" title=\"'+esc(amountReason)+'\">\u6536\u76ca '+esc(visibleAmount)+'</span>':'')+'</span>';\n"
+    },
+    {
+      "prior": "  }).join('');\n  const notes=[...facts].map(([value,labels])=>'<p class=\"ratio-return-scope-fact\">'+(labels.length===2?'':esc(labels.join('\uff0f'))+'\uff1a')+esc(value)+'</p>').join('');\n",
+      "next": "  }).join('');\n  // A fund-strategy row of the hedge and evergreen distributions shows the two periods only (owner request\n  // 2026-11-14): its accounts are already listed in the holdings detail beside it.\n  if(item.scope.type==='fund-strategy')return '<details class=\"ratio-returns ratio-return-facts\"><summary>\u8be6\u60c5</summary>'+dates+'</details>';\n  const notes=[...facts].map(([value,labels])=>'<p class=\"ratio-return-scope-fact\">'+(labels.length===2?'':esc(labels.join('\uff0f'))+'\uff1a')+esc(value)+'</p>').join('');\n"
+    },
+    {
+      "prior": "   return '<div class=\"ratio-return-period\"><strong>'+label+'</strong><span>'+esc(value)+(badge?' <small class=\"ratio-return-badge\">'+badge+'</small>':'')+'</span>'+(p?'<small>'+esc(periodDates(p,key))+' \u00b7 \u542b\u5df2\u5e73\u4ed3</small>':'')+(reason?'<small>'+reason+'</small>':'')+(benchmarkNote?'<small class=\"ratio-return-benchmark-note\">'+benchmarkNote+'</small>':'')+'</div>';\n",
+      "next": "   return '<div class=\"ratio-return-period\"><strong>'+label+'</strong><span>'+esc(value)+(badge&&p.status!=='period-return'?' <small class=\"ratio-return-badge\">'+badge+'</small>':'')+'</span>'+(p?'<small>'+esc(periodDates(p,key))+' \u00b7 \u542b\u5df2\u5e73\u4ed3</small>':'')+(reason?'<small>'+reason+'</small>':'')+(benchmarkNote?'<small class=\"ratio-return-benchmark-note\">'+benchmarkNote+'</small>':'')+'</div>';\n"
     }
   ],
-  "supportSha256": "6981d6f321a6cdfd850111556b1a4cb5304436ebb459ce7082476bc21dc2f28a",
-  "supportRegionCount": 171
+  "supportSha256": "bac9404b47a5d006afabdb64eb8a7f4a1010c16c1634143b1ba8719e425f94e6",
+  "supportRegionCount": 178
 }
