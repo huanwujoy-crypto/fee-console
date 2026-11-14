@@ -6,12 +6,13 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import {nyDate} from './daily-core.mjs';
-import {SharesightIbManagerReader,IbManagerSourceError,IB_CASH_RECONCILIATION_SITES,IB_CASH_DATE_ROLES,ibSourceCashSite,ibSourceCashDateRole,ibBaselineBusinessHash,ibSourceFailureCode,validateIbBootstrapCoverage,validateIbManagerReportInput,IB_CAPTURE_RECHECK_DIAGNOSTIC_CODES,ibSourceCaptureRecheckDiagnostic,IB_CAPTURE_UNSTABLE_DIAGNOSTIC_CODES,ibSourceCaptureUnstableDiagnostic} from './ib-manager-source.mjs';
+import {SharesightIbManagerReader,IbManagerSourceError,IB_CASH_RECONCILIATION_SITES,IB_CASH_DATE_ROLES,ibSourceCashSite,ibSourceCashDateRole,IB_PAST_POINT_SITES,IB_PAST_POINT_FIELDS,ibSourcePastPoint,ibBaselineBusinessHash,ibSourceFailureCode,validateIbBootstrapCoverage,validateIbManagerReportInput,IB_CAPTURE_RECHECK_DIAGNOSTIC_CODES,ibSourceCaptureRecheckDiagnostic,IB_CAPTURE_UNSTABLE_DIAGNOSTIC_CODES,ibSourceCaptureUnstableDiagnostic} from './ib-manager-source.mjs';
 import {BoundedJsonError} from './fee-http-json.mjs';
 import {buildIbManagerReportBundle,validateIbManagerReportState,buildIbOwnerBaseline,validateIbOwnerBaselineState,buildIbManagerReturnReceipt,buildIbManagerDrawdownReceipt,createIbManagerReturnConsumer,createIbManagerDrawdownConsumer} from './ib-manager-return.mjs';
 import {prepareIbManagerReport,loadIbManagerReport,sameIbManagerData,validateIbManagerCoverage,assertIbManagerConfiguration,assertIbManagerPublication,IB_PUBLICATION_DIAGNOSTIC_PREFIX,validateIbPublicationDiagnostic} from './ib-manager-report.mjs';
 import {safeProducerFailureSummary} from './fee-cloud-producer.mjs';
 import {IB_DIAGNOSTIC_PLAN,ibDiagnosticTransport,inspectIbDiagnostic,validateIbDiagnosticEvent,verifyIbDiagnosticRun,validateIbDiagnosticBase} from './ib-manager-diagnostic.mjs';
+import {inspectIbPastPoint,ibPastPointSummary} from './ib-past-point-diagnostic.mjs';
 import {buildFeeCalculationReceipt,validateFeeCalculationReceipt} from './fee-receipt-core.mjs';
 
 // Synthetic portfolio/holding/cash IDs. No real source, credentials or NAV.
@@ -60,6 +61,65 @@ test('every cash rejection has a literal allowlisted site, including separate ba
   const calls=[...text.matchAll(/fail\('CASH_RECONCILIATION','([A-Z_]+)'/g)].map(m=>m[1]);
   assert.equal(text.match(/fail\('CASH_RECONCILIATION'/g).length,calls.length);
   assert.deepEqual([...new Set(calls)].sort(),IB_CASH_RECONCILIATION_SITES.filter(x=>x!=='UNCLASSIFIED').sort());
+});
+test('every past-point rejection has a literal allowlisted site and the thrown error is otherwise unchanged',async()=>{
+  const text=fs.readFileSync(new URL('./ib-manager-source.mjs',import.meta.url),'utf8');
+  assert.equal(text.includes("fail('PAST_POINT_CHANGED'"),false);
+  const calls=[...text.matchAll(/failPast\('([A-Z_]+)'/g)].map(m=>m[1]);
+  assert.equal(text.match(/failPast\(/g).length,calls.length);
+  assert.deepEqual([...new Set(calls)].sort(),IB_PAST_POINT_SITES.filter(x=>x!=='UNCLASSIFIED').sort());
+  assert.ok(Object.isFrozen(IB_PAST_POINT_SITES));assert.ok(Object.isFrozen(IB_PAST_POINT_FIELDS));
+  for(const k of [...IB_PAST_POINT_SITES,...IB_PAST_POINT_FIELDS])assert.match(k,/^[A-Za-z_]{1,40}$/);
+  const initial=await source(),at=d=>b=>b.report?.end_date===d;
+  const caught=async w=>{try{await read(w,{targetDate:'2026-09-03',checkpoint:initial});}catch(e){return e;}assert.fail('expected a refusal');};
+  // The anchor day's holding value and total both moved by one cent, quantity unchanged.
+  const valued=await caught(wire({mutate:b=>{if(at('2026-09-02')(b)){b.report.holdings[0].value+=0.01;b.report.value+=0.01;}}}));
+  assert.equal(valued.message,'IB_SOURCE_PAST_POINT_CHANGED');assert.equal(valued.code,'PAST_POINT_CHANGED');
+  assert.equal(JSON.stringify(valued),'{"code":"PAST_POINT_CHANGED"}');assert.deepEqual(Object.keys(valued),['code']);
+  assert.equal(ibSourceFailureCode(valued),'IB_SOURCE_PAST_POINT_CHANGED');
+  const detail=ibSourcePastPoint(valued);assert.ok(Object.isFrozen(detail));assert.ok(Object.isFrozen(detail.fields));
+  // This first-generation checkpoint stores no closing snapshot, so only the site is known.
+  assert.equal(detail.site,'ANCHOR_TOTAL');assert.deepEqual(detail.fields,[]);
+  // A current checkpoint stores the anchor day's closing snapshot: the changed categories are named, never their values.
+  const events=[{d:'2026-11-02',kind:'BUY'}],marked=b=>{if(b.report)b.report.holdings[0].instrument={id:9,code:'SYN',market_code:'NYSE',currency_code:'USD'};};
+  const first=await(await cashDateFixture({mutate:marked})).run();assert.ok(first.closingSnapshots[1].marks[2]);
+  const refused=mutate=>cashDateFixture({events,target:'2026-11-03',checkpoint:first,mutate:(b,c)=>{marked(b);if(at('2026-11-02')(b))mutate(b);}}).then(f=>f.run()).then(()=>assert.fail('expected a refusal'),e=>e);
+  assert.ok(await(await cashDateFixture({events,target:'2026-11-03',checkpoint:first,mutate:marked})).run());
+  const repriced=await refused(b=>{b.report.holdings[0].value+=7.31;b.report.value+=7.31;});
+  assert.equal(repriced.message,'IB_SOURCE_PAST_POINT_CHANGED');
+  assert.deepEqual(ibSourcePastPoint(repriced),{site:'ANCHOR_TOTAL',fields:['totalCents','marks','markValue']});
+  // The total still matches but the instrument behind the mark does not: the whole-snapshot comparison refuses.
+  const renamed=await refused(b=>{b.report.holdings[0].instrument.code='SYN2';});
+  assert.deepEqual(ibSourcePastPoint(renamed),{site:'ANCHOR_SNAPSHOT',fields:['marks','markIdentity']});
+  assert.equal(JSON.stringify(ibSourcePastPoint(repriced)).includes('731'),false);
+  assert.equal(/\d/.test(JSON.stringify(ibSourcePastPoint(repriced))),false);
+  for(const other of [null,undefined,'IB_SOURCE_PAST_POINT_CHANGED',new Error('IB_SOURCE_PAST_POINT_CHANGED'),new IbManagerSourceError('PAST_POINT_CHANGED'),new IbManagerSourceError('UNSTABLE'),
+    Object.assign(Object.create(IbManagerSourceError.prototype),{code:'PAST_POINT_CHANGED'})])assert.equal(ibSourcePastPoint(other),null);
+});
+test('past-point diagnosis reports only the fixed site and field categories of a refused read',async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ib-past-point-test-'));fs.chmodSync(dir,0o700);t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  const b=await buildIbManagerReportBundle(await source(),lock());
+  const payload={...feeData(),ibManagerReturnReceipt:b.returnReceipt,ibManagerDrawdownReceipt:b.drawdownReceipt,ibManagerSourceState:b.sourceState,ibManagerSourceStatus:{state:'verified',targetDate:baseline.asOf}};
+  const original=structuredClone(payload),environ={IB_MANAGER_READ_ENABLED:'true',IB_MANAGER_BASELINE_SHA256:lock()},target=add(baseline.asOf);
+  const run=async mutate=>{
+    const w=wire({mutate}),transport=ibDiagnosticTransport({fetchImpl:w.fetchImpl,anchor:baseline.asOf,target,now:()=>Date.parse(IB_DIAGNOSTIC_PLAN.from)+60000});
+    const reader=new SharesightIbManagerReader({clientId:'synthetic-client',clientSecret:'synthetic-secret',fetchImpl:transport.fetch});
+    try{return {result:await inspectIbPastPoint({payload,outputDir:dir,environ,reader,anchorDate:baseline.asOf,targetDate:target}),transport,w};}finally{transport.stop();}
+  };
+  const clean=await run();
+  assert.deepEqual(clean.result,{status:'source-and-receipts-verified',phase:'RECEIPTS',reasonCode:'NONE',pastPointSite:'NONE',pastPointFields:[]});
+  const changed=await run(body=>{if(body.report?.end_date===baseline.asOf){body.report.holdings[0].value+=7.31;body.report.value+=7.31;}});
+  assert.deepEqual(changed.result,{status:'incomplete',phase:'SOURCE_PREPARE',reasonCode:'IB_SOURCE_PAST_POINT_CHANGED',pastPointSite:'ANCHOR_TOTAL',pastPointFields:[]});
+  // Refused on the first of the two stability reads: one grant, no retry, no write.
+  assert.equal(changed.transport.counts().oauthGrants,1);assert.equal(changed.transport.refusal(),'NONE');
+  assert.deepEqual(payload,original);assert.deepEqual(fs.readdirSync(dir),[]);
+  const line=JSON.stringify(ibPastPointSummary({...changed.result,transportReason:changed.transport.refusal(),...changed.transport.counts()}));
+  assert.equal(line.includes('7.31'),false);assert.equal(line.includes('731'),false);assert.equal(/synthetic|IB-HK|Bearer/.test(line),false);
+  // Another refusal carries no past-point location, and a forged detail is not trusted.
+  const other=await inspectIbPastPoint({payload,outputDir:dir,environ,anchorDate:baseline.asOf,targetDate:target,reader:{async readStable(){throw new IbManagerSourceError('CASH_RECONCILIATION','DAILY_CHAIN_END','TARGET');}}});
+  assert.deepEqual(other,{status:'incomplete',phase:'SOURCE_PREPARE',reasonCode:'IB_SOURCE_CASH_RECONCILIATION',pastPointSite:'NONE',pastPointFields:[]});
+  const forged=await inspectIbPastPoint({payload,outputDir:dir,environ,anchorDate:baseline.asOf,targetDate:target,reader:{async readStable(){throw Object.assign(new Error('IB_SOURCE_PAST_POINT_CHANGED'),{site:'PRIVATE_CANARY',fields:['PRIVATE_CANARY']});}}});
+  assert.equal(forged.reasonCode,'IB_SOURCE_NETWORK');assert.equal(forged.pastPointSite,'NONE');assert.equal(JSON.stringify(forged).includes('PRIVATE_CANARY'),false);
 });
 test('target cash mismatch remains rejected at one cent with only a target role',async()=>{
   const w=wire({mutate:b=>{if(b.cash_accounts)b.cash_accounts[0].balance_in_portfolio_currency+=0.01;}});
