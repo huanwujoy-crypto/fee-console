@@ -37,12 +37,19 @@ function pinnedObject(spec,prefix,file){
 // be handed over explicitly, so the coordinator must check that the handoff is
 // the round's approved fee target before dispatch. A capture mtime is also not
 // proof of a new official export.
+//
+// Owner decision (2026-11-14): the handoff is optional. A plan with `fee: null`
+// publishes the ratio on its own: nothing of the snapshot, its signature or the
+// page depends on the fee report, and each keeps its own real source date. The
+// three fee stages below then do not run. A plan that carries a handoff is
+// verified exactly as before; a malformed handoff is never treated as absent.
+const feeOf=plan=>plan.fee===null||validateFeeHandoff(plan.fee);
 export function validateRatioCloudPlan(plan){
   // `publish-api`: the capture step of the same run reads the Sharesight API and
   // pins the two objects itself, so the plan names only the data date and the
   // fee handoff. The runtime completes it from that step's own result.
   if(plan?.mode==='publish-api'){
-    if(!exact(plan,['mode','previousBodySha256','asOf','fee'])||!hex(plan.previousBodySha256)||typeof plan.asOf!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(plan.asOf)||new Date(plan.asOf+'T00:00:00Z').toISOString().slice(0,10)!==plan.asOf||!validateFeeHandoff(plan.fee))refuse();
+    if(!exact(plan,['mode','previousBodySha256','asOf','fee'])||!hex(plan.previousBodySha256)||typeof plan.asOf!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(plan.asOf)||new Date(plan.asOf+'T00:00:00Z').toISOString().slice(0,10)!==plan.asOf||!feeOf(plan))refuse();
     return;
   }
   if(!exact(plan,['mode','previousBodySha256','bundleId','original','input','library','fee'])||!['verify-current','publish'].includes(plan.mode)||!hex(plan.previousBodySha256))refuse();
@@ -50,7 +57,7 @@ export function validateRatioCloudPlan(plan){
     if([plan.bundleId,plan.original,plan.input,plan.library,plan.fee].some(v=>v!==null))refuse();
     return;
   }
-  if(!validateFeeHandoff(plan.fee))refuse();
+  if(!feeOf(plan))refuse();
   // `library: null` in a publish plan declares a Sharesight API source: there
   // is no Library file. The pinned original must then be an API original, and
   // a Library-bound plan can never carry one (checked against the bytes below).
@@ -137,13 +144,18 @@ export function createRatioCloudPublisher({exposureCore=createRankedExposureCore
       // pinned and live main and on Pages, validates the real fee/Jenny
       // receipts in memory, and returns a process-local proof. The ratio keeps
       // its own source dates; the fee cutoff comes only from the handoff.
-      receipt.stage='FEE_READBACK';
-      if(typeof io.verifyFeePublication!=='function')refuse();
-      const firstFee=feeProof(await readFee({handoff:structuredClone(plan.fee)}));
-      // Same-round capture, decided before any claim can be consumed.
-      receipt.stage='SOURCE_ROUND';
-      const roundStart=Date.parse(firstFee.healthCheckedAt);
-      if(!Number.isFinite(roundStart)||prepared.capturedAt<roundStart)refuse();
+      // Without a handoff the ratio is published independently and none of the
+      // fee stages runs; no fee report is read at all.
+      let firstFee=null;
+      if(plan.fee!==null){
+        receipt.stage='FEE_READBACK';
+        if(typeof io.verifyFeePublication!=='function')refuse();
+        firstFee=feeProof(await readFee({handoff:structuredClone(plan.fee)}));
+        // Same-round capture, decided before any claim can be consumed.
+        receipt.stage='SOURCE_ROUND';
+        const roundStart=Date.parse(firstFee.healthCheckedAt);
+        if(!Number.isFinite(roundStart)||prepared.capturedAt<roundStart)refuse();
+      }
       const raw=Buffer.from(JSON.stringify(prepared.signed));
       receipt.bodySha256=await ratio.digest(prepared.signed.body);receipt.contentSha256=sha(raw);
       // The claim key binds the input pair and previous accepted body, not a
@@ -158,12 +170,14 @@ export function createRatioCloudPublisher({exposureCore=createRankedExposureCore
       if(check.revision!==before.revision||!check.snapshotBytes.equals(before.snapshotBytes)||!check.recipientBytes.equals(before.recipientBytes))refuse();
       await current(check,manager,plan.previousBodySha256,time());
       if(time().getTime()>Date.parse(prepared.signed.body.source.expiresAt))refuse();
-      receipt.stage='FEE_RECHECK';
-      // Re-read the same final publication; a changed main/report, a stale
-      // receipt, or an unavailable Pages readback cannot release this claim.
-      // Never wait here for another producer job while holding its concurrency
-      // group, and never generate a fee report to satisfy this prerequisite.
-      feeProof(await readFee({handoff:structuredClone(plan.fee),previousProof:firstFee}));
+      if(firstFee!==null){
+        receipt.stage='FEE_RECHECK';
+        // Re-read the same final publication; a changed main/report, a stale
+        // receipt, or an unavailable Pages readback cannot release this claim.
+        // Never wait here for another producer job while holding its concurrency
+        // group, and never generate a fee report to satisfy this prerequisite.
+        feeProof(await readFee({handoff:structuredClone(plan.fee),previousProof:firstFee}));
+      }
       if(time().getTime()>Date.parse(prepared.signed.body.source.expiresAt))refuse();
       receipt.stage='WRITE_INTENT';
       // An atomic durable safe receipt must exist before the only PATCH.
