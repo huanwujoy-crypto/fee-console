@@ -84,26 +84,39 @@ const fail=(code,cashSite,cashDateRole='PROOF')=>{throw new IbManagerSourceError
 export const IB_PAST_POINT_SITES=Object.freeze(['UNCLASSIFIED','TRADE_PROOF_CHECKPOINT','TRADE_NORMALIZATION_INPUT','TRADE_NORMALIZATION_RESULT',
   'INCOME_PROOF_ANCHOR','INCOME_NORMALIZATION_PAYOUT','INCOME_NORMALIZATION_CASH_LEG','INCOME_NORMALIZATION_PROOF','ANCHOR_TOTAL','ANCHOR_SNAPSHOT','OWNER_BASELINE_TOTAL']);
 export const IB_PAST_POINT_FIELDS=Object.freeze(['d','totalCents','cash','cashCurrency','positions','marks','nativeCash','foreignCurrencies',
-  'holdingSet','cashSet','markPresence','markQuantity','markValue','markValueAll','markIdentity','cashValueAll']);
+  'holdingSet','cashSet','markPresence','markQuantity','markValue','markValueMost','markValueAll','markIdentity','cashValueAll',
+  'cashUsdAccount','cashForeignAccount','unmarkedHoldingValue']);
 const pastPointSites=new Set(IB_PAST_POINT_SITES),pastPointByError=new WeakMap();
-function pastPointFields(old,current){
+// Pure and value-free: two snapshots of one day in, fixed category names out.
+export function pastPointFields(old,current){
   try{
     if(!old||!current||typeof old!=='object'||typeof current!=='object')return [];
     const found=new Set(),keys=v=>Object.keys(v||{}).sort().join(',');
     for(const k of ['d','totalCents','cash','cashCurrency','positions','marks','nativeCash','foreignCurrencies'])if(ibCanonical(old[k]??null)!==ibCanonical(current[k]??null))found.add(k);
     if(keys(old.positions)!==keys(current.positions))found.add('holdingSet');
     if(keys(old.cash)!==keys(current.cash))found.add('cashSet');
-    let marks=0,values=0;
+    let marks=0,values=0,explained=0;
     for(const k of Object.keys(old.marks||{})){
       if(!Object.hasOwn(current.marks||{},k))continue;const a=old.marks[k],b=current.marks[k];
       if(!a||!b){if(a!==b)found.add('markPresence');continue;}
       marks++;if(a.quantityAtoms!==b.quantityAtoms)found.add('markQuantity');
-      if(a.valueCents!==b.valueCents){found.add('markValue');values++;}
+      if(a.valueCents!==b.valueCents){found.add('markValue');values++;explained+=b.valueCents-a.valueCents;}
       if(a.instrumentIdentityHash!==b.instrumentIdentityHash)found.add('markIdentity');
     }
     if(marks>1&&values===marks)found.add('markValueAll');
+    if(marks>1&&values*2>marks)found.add('markValueMost');
     const shared=Object.keys(old.cash||{}).filter(k=>Object.hasOwn(current.cash||{},k));
     if(shared.length>1&&shared.every(k=>old.cash[k]!==current.cash[k]))found.add('cashValueAll');
+    // Which kind of cash account moved: a USD account's value is its balance,
+    // a non-USD account's value is its unchanged native balance repriced in USD.
+    for(const k of shared)if(old.cash[k]!==current.cash[k]){
+      found.add(old.cashCurrency?.[k]==='USD'&&current.cashCurrency?.[k]==='USD'?'cashUsdAccount':'cashForeignAccount');explained+=current.cash[k]-old.cash[k];
+    }
+    // Holdings without a USD mark (non-USD instruments) are visible only in the
+    // total: named when the marked holdings and cash do not explain its change.
+    const entries=Object.keys(current.positions||{}).length+Object.keys(current.cash||{}).length;
+    if(found.has('totalCents')&&!found.has('holdingSet')&&!found.has('cashSet')&&!found.has('markPresence')
+      &&Number.isSafeInteger(old.totalCents)&&Number.isSafeInteger(current.totalCents)&&Math.abs(current.totalCents-old.totalCents-explained)>entries)found.add('unmarkedHoldingValue');
     return IB_PAST_POINT_FIELDS.filter(k=>found.has(k));
   }catch{return [];}
 }
