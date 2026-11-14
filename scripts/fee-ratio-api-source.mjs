@@ -80,7 +80,11 @@ export function createApiRatioSourceCore(){
       const key=JSON.stringify([account,i.code,i.market_code]);
       if(positionKeys.has(key))fail('HOLDING_DUPLICATE');
       positionKeys.add(key);observed.add(account);positionCents+=value;
-      positions.push({sourceRow:++row,account,name:i.name,valueUSD:value/100,sharesightCategory:h.group_name,securityCode:i.code,market:i.market_code,quantity:h.quantity});
+      // The provider's own asset type of this instrument, kept as given. A missing
+      // or oversized value is null (unknown), never inferred from a code or name.
+      const type=i.friendly_instrument_description_code;
+      positions.push({sourceRow:++row,account,name:i.name,valueUSD:value/100,sharesightCategory:h.group_name,securityCode:i.code,market:i.market_code,quantity:h.quantity,
+        assetType:typeof type==='string'&&type.length>0&&type.length<=128&&!/[\u0000-\u001f\u007f]/.test(type)?type:null});
     }
     for(const c of r.cash_accounts){
       const cid=plain(c)?id(c.id):null;

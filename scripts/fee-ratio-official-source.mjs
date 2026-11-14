@@ -15,6 +15,7 @@ export function createOfficialRatioSourceCore(){
   const key=(a,c,m)=>JSON.stringify([a,c,m]);
   const four=s=>s==='VC/PE'?'PE/VC':s==='对冲基金'||s==='常青基金'?s:'二级市场';
   const names=['PE/VC','对冲基金','常青基金','二级市场'];
+  const ETF_TYPES=new Set(['exchange_traded_fund','exchange_traded_funds','etf']);
   const BENCHMARK_EXCLUDED_BASIS='complete-official-classification-excluding-benchmark-only.v1';
   const LOOK_THROUGH_SECONDARY_BASIS='Exposure individual security direct plus ETF look-through, includes cash in class denominator';
   const benchmarkOnly=r=>r.account.replaceAll('&amp;','&')==='Citi-HK & 地产四期'&&['QQQ.NASDAQ','SPY.NYSE'].includes(r.securityCode+'.'+r.market);
@@ -129,8 +130,12 @@ export function createOfficialRatioSourceCore(){
     }
     const accounts=new Set(raw.accounts),positions=[],cash=[],byKey=new Map(),cashByKey=new Map(),sourceRows=new Set();
     const common=r=>{if(!accounts.has(r.account)||!text(r.name)||!Number.isSafeInteger(r.sourceRow)||r.sourceRow<1||sourceRows.has(r.sourceRow)||!text(r.sharesightCategory)||cents(r.valueUSD)<0)fail();sourceRows.add(r.sourceRow);};
+    // An API original carries the provider's own asset type per position.
+    // Either every position declares it or none does (an earlier original).
+    const typed=api&&c.positions.length>0&&c.positions.some(r=>Object.hasOwn(r||{},'assetType'));
     for(const r of c.positions){
-      if(!exact(r,['sourceRow','account','name','valueUSD','sharesightCategory','securityCode','market','quantity']))fail();common(r);
+      if(!exact(r,['sourceRow','account','name','valueUSD','sharesightCategory','securityCode','market','quantity',...(typed?['assetType']:[])]))fail();common(r);
+      if(typed&&!(r.assetType===null||text(r.assetType)&&r.assetType.length<=128))fail();
       if(!text(r.securityCode)||!text(r.market)||!(r.quantity===null||typeof r.quantity==='number'&&Number.isFinite(r.quantity)&&r.quantity>=0))fail();
       const k=key(r.account,r.securityCode,r.market);if(byKey.has(k))fail();const p={...r,fourClass:four(r.sharesightCategory)};byKey.set(k,p);positions.push(p);
     }
@@ -176,7 +181,12 @@ export function createOfficialRatioSourceCore(){
       // look-through rows) is still reproduced exactly when it declares it.
       if(i<3||directSecondary){
         const grouped=new Map();
-        for(const r of positions30.filter(p=>p.fourClass===name)){
+        // Owner rule (2026-11-14): the secondary-market ranking never lists an
+        // ETF. Only the provider's own asset type decides; a position whose type
+        // is unknown or anything else still ranks. ETFs stay in the class total.
+        const ranked=positions30.filter(p=>p.fourClass===name);
+        if(i===3&&typed&&!ranked.some(p=>p.assetType!==null))fail();
+        for(const r of ranked.filter(p=>!(i===3&&typed&&ETF_TYPES.has(String(p.assetType).toLowerCase())))){
           const suffix=i===2?evergreenName(r):null,k=suffix?JSON.stringify(['dated-fund-name',suffix]):key('',r.securityCode,r.market);
           const old=grouped.get(k)||{name:suffix||r.name,securityCode:r.securityCode,market:r.market,accounts:[],valueUSD:0,...(i===2?{sourceHoldings:[]}: {})};
           if(!old.accounts.includes(r.account))old.accounts.push(r.account);old.accounts.sort();
