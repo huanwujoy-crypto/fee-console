@@ -15,6 +15,7 @@ export function createOfficialRatioSourceCore(){
   const four=s=>s==='VC/PE'?'PE/VC':s==='对冲基金'||s==='常青基金'?s:'二级市场';
   const names=['PE/VC','对冲基金','常青基金','二级市场'];
   const BENCHMARK_EXCLUDED_BASIS='complete-official-classification-excluding-benchmark-only.v1';
+  const LOOK_THROUGH_SECONDARY_BASIS='Exposure individual security direct plus ETF look-through, includes cash in class denominator';
   const benchmarkOnly=r=>r.account.replaceAll('&amp;','&')==='Citi-HK & 地产四期'&&['QQQ.NASDAQ','SPY.NYSE'].includes(r.securityCode+'.'+r.market);
   // Exact Sharesight dated-name suffix, not a fuzzy product/share-class alias.
   function evergreenName(r){
@@ -88,8 +89,8 @@ export function createOfficialRatioSourceCore(){
     const gold={rule:'physical-gold-etf.GLD.NYSE.v1',valueUSD:sum(goldRows),secondaryIncluded:goldRows.every(r=>r.fourClass==='二级市场')};
     return {schema:'fee-console.classification-overview.v1',asOf,currency:'USD',basis:excludeBenchmarkOnly?BENCHMARK_EXCLUDED_BASIS:'complete-official-classification-row-sum',totalValueUSD:sum(all),classes,gold,...(includeFundDistributions?{fundDistributions:fundDistributions(positions,includeFundHoldings)}:{}),...(includeAssetAllocation?{assetAllocation:assetAllocation(positions,cash)}:{})};
   }
-  function build(raw,{sourceSha256,sourceBytes,includeFundDistributions=true,includeAssetAllocation=true,excludeBenchmarkOnly=true,includeFundHoldings=true}={}){
-    if(typeof includeFundDistributions!=='boolean'||typeof includeAssetAllocation!=='boolean'||typeof excludeBenchmarkOnly!=='boolean'||typeof includeFundHoldings!=='boolean')fail();
+  function build(raw,{sourceSha256,sourceBytes,includeFundDistributions=true,includeAssetAllocation=true,excludeBenchmarkOnly=true,includeFundHoldings=true,directSecondary=true}={}){
+    if(typeof includeFundDistributions!=='boolean'||typeof includeAssetAllocation!=='boolean'||typeof excludeBenchmarkOnly!=='boolean'||typeof includeFundHoldings!=='boolean'||typeof directSecondary!=='boolean')fail();
     if(!exact(raw,['schemaVersion','source','accounts','sources','classification','exposure','coverage','limitations'])||raw.schemaVersion!==RAW
       ||!exact(raw.source,['provider','view','transport'])||raw.source.provider!=='Sharesight'||raw.source.view!=='All Together'||raw.source.transport!=='official-workbook-exports'
       ||!hex(sourceSha256)||!Number.isSafeInteger(sourceBytes)||sourceBytes<1||sourceBytes>5*1024*1024
@@ -145,7 +146,11 @@ export function createOfficialRatioSourceCore(){
     if(cents(sum(positions30.concat(cash30)))!==cents(sum(rows)))fail();
     const groups=names.map((name,i)=>{
       let top;
-      if(i<3){
+      // By default all four classes rank actually held positions at their
+      // asset value, merged per security across accounts: an ETF ranks as the
+      // ETF itself. An input prepared under the earlier secondary basis (ETF
+      // look-through rows) is still reproduced exactly when it declares it.
+      if(i<3||directSecondary){
         const grouped=new Map();
         for(const r of positions30.filter(p=>p.fourClass===name)){
           const suffix=i===2?evergreenName(r):null,k=suffix?JSON.stringify(['dated-fund-name',suffix]):key('',r.securityCode,r.market);
@@ -161,7 +166,7 @@ export function createOfficialRatioSourceCore(){
       }
       else {const selected=new Map();for(const r of rows.filter(p=>p.fourClass===name&&(p.ownership==='Direct'||p.ownership==='Underlying'))){const k=key('',r.securityCode,r.market),old=selected.get(k)||{name:r.name,securityCode:r.securityCode,market:r.market,accounts:[],valueUSD:0};if(!old.accounts.includes(r.account))old.accounts.push(r.account);old.accounts.sort();old.valueUSD=(cents(old.valueUSD)+cents(r.valueUSD))/100;selected.set(k,old);}top=[...selected.values()];}
       top=top.sort((a,b)=>b.valueUSD-a.valueUSD||(a.name<b.name?-1:a.name>b.name?1:0)).slice(0,5);if(top.length!==5)fail();
-      return {name,totalValueUSD:sum(positions30.concat(cash30).filter(r=>r.fourClass===name)),basis:i===3?'Exposure individual security direct plus ETF look-through, includes cash in class denominator':'direct',...(i===0?{sourceCategory:'VC/PE'}:{}),top5:top};
+      return {name,totalValueUSD:sum(positions30.concat(cash30).filter(r=>r.fourClass===name)),basis:i===3&&!directSecondary?LOOK_THROUGH_SECONDARY_BASIS:'direct',...(i===0?{sourceCategory:'VC/PE'}:{}),top5:top};
     });
     const total=sum(rows),residual=sum(rows.filter(r=>r.ownership==='Residual'));
     const exposure={schema:'xuan.sharesight-exposure-ranked.v2',summary:{asOf:e.asOf,currency:'USD',source:{provider:'Sharesight',view:'All Together',report:'Tools Exposure',groupBy:'No grouping',show:'Top 500',classification:'Investments→资产类别',url:null},totalValueUSD:total,accounts:[...raw.accounts],classes:groups,residualETFs:{valueUSD:residual,weightTotalPct:residual/total*100,weightSecondaryClassPct:residual/groups[3].totalValueUSD*100},limitations:[...raw.limitations,e.asOf+' Exposure分组沿用 '+c.asOf+' 资产类别标签；金额和比例分母取 '+e.asOf+' 完整Exposure原表。'],transferStatus:'按Sharesight现有记录显示；不新增或重复任何转仓和认购。',sourceXlsxSHA256:sources.get('exposure.xlsx').sha256},retrievedAt:e.capturedAt,retrievedAtBasis:'原始官方导出文件mtime（非独立下载完成时间）'};
@@ -170,5 +175,5 @@ export function createOfficialRatioSourceCore(){
     const book={schema:'fee-console.ratio-sharesight-browser-book.v2',source:'Sharesight',currency:'USD',asOf:c.asOf,retrievedAt:c.capturedAt,sourceSha256,provenance,ib:{name:'IB-HK',holdings:ibRows.map(r=>({code:r.securityCode,market:r.market,group:r.sharesightCategory,valueUSD:r.valueUSD,quantity:r.quantity,name:r.name,valueBasis:'preserved-browser-source'})),holdingsValueUSD:sum(ibRows),cashRows:ibCash.map(r=>({label:r.name,valueUSD:r.valueUSD,valueBasis:'portfolio-usd-converted'})),cashValueUSD:sum(ibCash),totalValueUSD:sum(ibRows.concat(ibCash))},noah:{name:'NOAH-HK',cashValueUSD:sum(noahCash),valueBasis:'portfolio-usd-converted'}};
     return {input:{schema:INPUT,classification,exposure,book},sourceDates,classificationSummary:classification,companyContext:{rows,positions:positions30},capturedAt:[c.capturedAt,e.capturedAt].sort()[0],targetDate:e.asOf};
   }
-  return {RAW,INPUT,BENCHMARK_EXCLUDED_BASIS,build,canonical};
+  return {RAW,INPUT,BENCHMARK_EXCLUDED_BASIS,LOOK_THROUGH_SECONDARY_BASIS,build,canonical};
 }

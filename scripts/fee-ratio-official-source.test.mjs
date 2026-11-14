@@ -7,6 +7,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import {createOfficialRatioSourceCore} from './fee-ratio-official-source.mjs';
 import {createFeeCompanyExposureCore} from './fee-ratio-company-exposure.mjs';
+import {createAggregateReturnsCore} from './fee-ratio-aggregate-returns.mjs';
 import {createRatioSourceCore} from './fee-ratio-source-core.mjs';
 import {createRankedExposureCore} from './xuan-ib-sharesight-exposure.mjs';
 import {createFeeRatioCore} from './fee-ratio-management.mjs';
@@ -93,13 +94,67 @@ test('full source to manager snapshot authenticates both dates, renders distinct
  const f=await authenticated(t),result=await f.snapshot.verify(f.signed,f.manager,{now:f.now});
  assert.deepEqual(result.source.sourceDates,f.model.sourceDates);assert.equal(result.stale,false);
  const html=f.ratio.render(result.model);
- for(const text of ['资产分类截至 2026-10-29','个股穿透截至 2026-10-30','Exposure截至 2026-10-30','黄金（GLD）','已计入所属分类，不另加总','独立下载完成时间未知','公司经济敞口前五','计算口径与合并规则'])assert.ok(html.includes(text),text);
+ for(const text of ['资产分类截至 2026-10-29','个股穿透截至 2026-10-30','Exposure截至 2026-10-30','黄金（GLD）','已计入所属分类，不另加总','独立下载完成时间未知','二级市场 · 直接持仓前五','不做ETF穿透、不乘杠杆倍数','计算口径与合并规则'])assert.ok(html.includes(text),text);
+ assert.doesNotMatch(html,/公司经济敞口|原证券口径前五|持仓与穿透明细/);
  assert.doesNotMatch(html,/完整持仓|undefined|<details open/);
  assert.equal((html.match(/<details><summary>/g)||[]).length>=4,true);
  assert.equal(result.model.feeCalculationReceipt,undefined);
  const late=await f.snapshot.verify(f.signed,f.manager,{now:new Date('2026-11-02T00:00:00.000Z')});assert.equal(late.stale,true);
 });
 
+test('secondary top five ranks actually held securities at asset value without look-through, leverage or aliases',async t=>{
+ const f=projected(),secondary=f.built.input.exposure.summary.classes[3];
+ assert.equal(secondary.basis,'direct');
+ assert.deepEqual(secondary.top5.map(r=>[r.securityCode,r.valueUSD]),[['USSC',44],['OTHER',43],['GOOGL',42],['GOOG',41],['VST',40]]);
+ for(const r of secondary.top5)assert.deepEqual(r.accounts,['IB-HK']);
+ // A leveraged product ranks as itself at its own asset value: the 60 of
+ // underlying exposure and the 2x rule never enter the ranking.
+ const leveraged=syntheticOfficialSource(),row=leveraged.exposure.rows.find(r=>r.ownership==='Underlying'&&r.withinETF==='VSTL.NASDAQ');row.valueUSD=160;
+ const top=projected(leveraged).built.input.exposure.summary.classes[3].top5;
+ assert.deepEqual(top.map(r=>[r.securityCode,r.valueUSD]),[['VSTL',130],['USSC',44],['OTHER',43],['GOOGL',42],['GOOG',41]]);
+ assert.equal(top.some(r=>r.name.includes('underlying')),false);
+ // The same security in two accounts merges and keeps both accounts.
+ const merged=syntheticOfficialSource(),p=merged.classification.positions.find(x=>x.securityCode==='GOOG'),e=merged.exposure.rows.find(x=>x.securityCode==='GOOG'&&x.ownership==='Direct');
+ merged.classification.positions.push({...p,sourceRow:910,account:merged.accounts[4],valueUSD:5});merged.exposure.rows.push({...e,sourceRow:910,account:merged.accounts[4],valueUSD:6});
+ merged.classification.canonicalDataRows++;merged.classification.allWorksheetXmlRows++;merged.exposure.canonicalDataRows++;merged.exposure.allWorksheetXmlRows++;
+ const first=projected(merged).built.input.exposure.summary.classes[3].top5[0];
+ assert.deepEqual([first.securityCode,first.valueUSD,first.accounts],['GOOG',47,['IB-HK',merged.accounts[4]]]);
+ const view=f.exposure.buildRankedExposureView(f.built.input.exposure);
+ assert.equal(view.groups[3].directOnly,true);assert.equal(view.groups.slice(0,3).some(g=>Object.hasOwn(g,'directOnly')),false);
+ // A direct ranking must fit inside its own class; the older look-through
+ // basis stays readable, and neither basis can be relabelled as the other.
+ const over=structuredClone(f.built.input.exposure);over.summary.classes[3].top5[0].valueUSD=over.summary.classes[3].totalValueUSD+1;
+ assert.throws(()=>f.exposure.buildRankedExposureView(over),/RANKED_TOTAL/);
+ const legacy=structuredClone(f.built.input.exposure);legacy.summary.classes[3].basis='Exposure individual security direct plus ETF look-through, includes cash in class denominator';
+ assert.equal(Object.hasOwn(f.exposure.buildRankedExposureView(legacy).groups[3],'directOnly'),false);
+ const v1=structuredClone(f.built.input.exposure);v1.schema='xuan.sharesight-exposure-ranked.v1';assert.throws(()=>f.exposure.buildRankedExposureView(v1));
+ for(const basis of ['Direct','direct ',''])assert.throws(()=>{const bad=structuredClone(f.built.input.exposure);bad.summary.classes[3].basis=basis;f.exposure.buildRankedExposureView(bad);},/RANKED_CLASSES/);
+ const targets=createAggregateReturnsCore().topTargets(f.built.input.exposure,[{name:'Invented company',constituents:[]}]);
+ assert.equal(targets.length,20);assert.deepEqual(targets.slice(15).map(r=>[r.category,r.name,r.basis,r.members]),secondary.top5.map(r=>['二级市场',r.name,'direct-holdings-only',[{account:'IB-HK',market:r.market,securityCode:r.securityCode}]]));
+ assert.equal(createAggregateReturnsCore().topTargets(legacy,[{name:'Invented company',constituents:[]}]).at(-1).name,'Invented company');
+ const a=await authenticated(t),html=a.ratio.render(a.model),section=html.split('二级市场 · 直接持仓前五')[1].split('</section>')[0];
+ assert.deepEqual([...section.matchAll(/data-security-code="([^"]*)"/g)].map(m=>m[1]),['USSC','OTHER','GOOGL','GOOG','VST']);
+ assert.doesNotMatch(html,/Vistra|Alphabet|经济敞口 USD/);
+});
+test('an input prepared under the earlier look-through secondary basis still associates exactly; neither basis passes as the other',()=>{
+ const core=createOfficialRatioSourceCore(),direct=projected(),legacy=projected(undefined,{directSecondary:false});
+ const old=legacy.built.input.exposure.summary.classes[3];
+ assert.equal(old.basis,core.LOOK_THROUGH_SECONDARY_BASIS);
+ // The earlier basis adds the leveraged ETF's look-through row (60) to the direct holding (40).
+ assert.deepEqual(old.top5[0],{name:'Synthetic VST',securityCode:'VST',market:'NYSE',accounts:['IB-HK'],valueUSD:100});
+ assert.equal(direct.built.input.exposure.summary.classes[3].basis,'direct');
+ // Everything outside the secondary ranking is identical under both.
+ const strip=i=>{const c=structuredClone(i);delete c.exposure.summary.classes[3].basis;delete c.exposure.summary.classes[3].top5;return core.canonical(c);};
+ assert.equal(strip(legacy.built.input),strip(direct.built.input));
+ // The association follows the basis the input itself declares.
+ for(const f of [direct,legacy])f.source.verifyBrowserSourceAssociations(f.raw,f.built.input,{scopeHash:f.scope,now:f.now});
+ for(const [from,to] of [[direct,legacy],[legacy,direct]]){
+  const relabelled=structuredClone(from.built.input);relabelled.exposure.summary.classes[3].basis=to.built.input.exposure.summary.classes[3].basis;
+  assert.throws(()=>from.source.verifyBrowserSourceAssociations(from.raw,relabelled,{scopeHash:from.scope,now:from.now}),/RATIO_BROWSER_EVIDENCE_REFUSED/);
+ }
+ assert.throws(()=>projected(undefined,{directSecondary:'yes'}));
+ assert.equal(legacy.exposure.buildRankedExposureView(legacy.built.input.exposure).groups[3].directOnly,undefined);
+});
 function benchmarkOnlyFixture(){
  const raw=syntheticOfficialSource(),account='Citi-HK & 地产四期';raw.accounts[9]=account;
  const add=(account,code,market,valueUSD,sourceRow,legs)=>{
@@ -328,7 +383,7 @@ test('six-category snapshot validates targets, account membership, sums and rend
  }
  const html=f.ratio.render(result.model),overview=html.split('<section class="card ratio-asset-overview')[1].split('</table>')[0];
  assert.equal((overview.match(/<tr>/g)||[]).length,7);assert.match(html,/<div class="ratio-total-summary">[^]*?总资产（USD）/);assert.doesNotMatch(overview,/<tfoot>/);assert.match(overview,/PE\/VC<small class="ratio-overview-weights">[\d.]+%／0%[^]*?class="ratio-money-precise">490\.00/);assert.match(overview,/资产分类截至 2026-10-29/);assert.doesNotMatch(overview,/2026-10-30/);
- assert.match(html,/参考目标合计100%/);assert.match(html,/DEF-OTHER/);assert.match(html,/不代表卖出指令/);assert.doesNotMatch(html,/NaN|Infinity|<details[^>]* open/);
+ assert.match(html,/参考目标合计100%/);assert.match(html,/二级市场 · 直接持仓前五/);assert.doesNotMatch(html,/DEF-OTHER/);assert.match(html,/不代表卖出指令/);assert.doesNotMatch(html,/NaN|Infinity|<details[^>]* open/);
  const old=structuredClone(f.model);delete old.classificationSummary.assetAllocation;await f.ratio.validateModel(old);assert.match(f.ratio.render(old),/四类资产配置总览/);assert.doesNotMatch(f.ratio.render(old),/ratio-six-allocation/);
  const zero=sixAllocationFixture();for(const p of zero.classification.positions)if(p.sharesightCategory==='VC/PE')p.valueUSD=0;
  const z=await authenticated(t,zero);await z.ratio.validateModel(z.model);assert.match(z.ratio.render(z.model),/PE\/VC<small class="ratio-overview-weights">0\.00%／0%[^]*?class="ratio-money-precise">0\.00/);
