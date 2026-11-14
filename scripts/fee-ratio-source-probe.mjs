@@ -9,12 +9,14 @@
 //   3 GET  /api/v2/portfolios.json
 //   4 GET  /api/v2/groups.json
 //   5 GET  /api/v3/portfolios/{view}/performance (custom-group classification)
+//   6-13 GET the same route for four custom groups x two windows (shape only)
 //
 // It writes no file, candidate, snapshot, issue or artifact, reads no ledger,
 // fee key, manager token or storage, and publishes nothing. The printed
 // result contains no amount, quantity, name, identifier, URL, header, token
 // or remote error text: only enumerated strings, booleans and counts of
-// anomalies. A success means only that these five requests answered and the
+// anomalies, plus the API's own field names for the performance reports. A
+// success means only that these requests answered and the
 // pure projection accepted the report shape at that time. It is not source
 // authentication, a reconciliation, or approval to wire or publish anything.
 import crypto from 'node:crypto';
@@ -34,9 +36,17 @@ export const RATIO_PROBE_INPUTS=Object.freeze(['source_probe_once','source_probe
 const OFF=['ib_diagnostic_once','ib_envelope_once','source_plan_check_only','source_acceptance_once','run_reviewed_once'];
 const BLANK=['ib_diagnostic_main','ib_envelope_main','ratio_main','ratio_plan','source_from','source_target','source_main','manual_sync_completed_for','confirmed_main','recovery_main','report_kind','report_target','report_markets'];
 const off=v=>v===undefined||v===false||v==='false',blank=v=>v===undefined||v==='';
-export const RATIO_PROBE_STAGES=Object.freeze(['ADMISSION','TOKEN','VIEWS','PORTFOLIOS','GROUPS','REPORT','PROJECTION','COMPLETE']);
-export const RATIO_PROBE_BUDGET=Object.freeze({requests:5,overallMs:120000,requestMs:30000,reportBytes:8*1024*1024});
+export const RATIO_PROBE_STAGES=Object.freeze(['ADMISSION','TOKEN','VIEWS','PORTFOLIOS','GROUPS','REPORT','PROJECTION','PERFORMANCE','COMPLETE']);
+export const RATIO_PROBE_BUDGET=Object.freeze({requests:13,overallMs:300000,requestMs:30000,reportBytes:8*1024*1024});
 export const RATIO_PROBE_VIEW='All Together',RATIO_PROBE_GROUP='资产类别';
+// The four existing custom groups the performance section is read through,
+// found by exact name in the account's own group list (never by a stored id),
+// each for two windows ending on the target date and including sold positions.
+export const RATIO_PROBE_PERFORMANCE_GROUPS=Object.freeze({asset:RATIO_PROBE_GROUP,income:'小程序收益分类',top:'小程序前五收益',stock:'小程序股票市场收益'});
+export const RATIO_PROBE_PERFORMANCE_WINDOWS=Object.freeze(['all','oneYear']);
+// A shape probe needs only a start early enough to precede every holding; it
+// is not the published inception date and no return figure is read out.
+const ALL_WINDOW_START='2000-01-01';
 const REPO='huanwujoy-crypto/fee-console',OWNER=283054367,API='https://api.sharesight.com';
 const PRIVATE=['FEE_CLOUD_SHARESIGHT_CLIENT_ID','FEE_CLOUD_SHARESIGHT_CLIENT_SECRET'];
 // Nothing else that can read or write financial state may be present.
@@ -127,6 +137,35 @@ export function ratioReportShapeFacts(report){
     }
   };
 }
+// Value-free description of one performance report: which API field names
+// each row kind carries and the kinds of their values across all rows. Only
+// field names of the API's own snake_case form are listed; no value, name,
+// identifier or row count is copied.
+const FIELD=/^[a-z][a-z0-9_]{0,47}$/;
+function fieldKinds(rows){
+  const seen=new Map();let other=0;
+  for(const row of rows){
+    if(!object(row)){other++;continue;}
+    for(const [k,v]of Object.entries(row)){if(!FIELD.test(k)||!seen.has(k)&&seen.size>=80){other++;continue;}const s=seen.get(k)||new Set();s.add(kind(v));seen.set(k,s);}
+  }
+  const out={};for(const k of [...seen.keys()].sort())out[k]=[...seen.get(k)].sort().join('|');
+  return {fields:out,unlisted:other>0};
+}
+export function ratioPerformanceShapeFacts(report,expected){
+  const r=object(report)?report:{},list=k=>Array.isArray(r[k])?r[k]:[];
+  const holdings=list('holdings'),subs=list('sub_totals'),cash=list('cash_accounts');
+  const count=(rows,test)=>rows.filter(x=>{try{return !object(x)||test(x);}catch{return true;}}).length;
+  const groupNames=new Set(holdings.map(h=>object(h)?h.group_name:null).filter(n=>typeof n==='string'&&n));
+  return {
+    echoes:{startDate:r.start_date===expected.start,endDate:r.end_date===expected.end,includeSales:r.include_sales===true,groupId:id(r.custom_group?.id)===expected.groupId,groupName:r.custom_group?.name===expected.groupName,currencyIsUsd:r.currency?.code==='USD'},
+    grouping:api.GROUPINGS.includes(r.grouping)?r.grouping:'OTHER',
+    percentagesAnnualised:typeof r.percentages_annualised==='boolean'?r.percentages_annualised:null,
+    has:{holdings:holdings.length>0,subTotals:subs.length>0,cash:cash.length>0,oneSubTotalPerGroupName:subs.length===groupNames.size},
+    report:fieldKinds([Object.fromEntries(Object.entries(r).filter(([k])=>!['holdings','sub_totals','cash_accounts'].includes(k)))]),
+    holding:fieldKinds(holdings),subTotal:fieldKinds(subs),cash:fieldKinds(cash),
+    anomalies:{holdingsNotUnlimited:count(holdings,h=>h.limited!==false),holdingsWithoutGroupName:count(holdings,h=>typeof h.group_name!=='string'||!h.group_name),holdingsWithoutPortfolio:count(holdings,h=>!object(h.portfolio)||!id(h.portfolio.id))}
+  };
+}
 const safeCode=error=>{const m=String(error?.message||'');return RATIO_PROBE_CODES.includes(m)?m:'RATIO_PROBE_FAILED';};
 const newResult=()=>({schema:RATIO_PROBE_SCHEMA,mode:'probe',outcome:'FAILED',stage:'ADMISSION',code:null,diagnostic:null,requests:0,requestBudget:RATIO_PROBE_BUDGET.requests,facts:null});
 
@@ -176,14 +215,13 @@ async function probeWork({argv,env,event,now=new Date(),fetchImpl=globalThis.fet
     for(const p of listed(await get('/api/v2/portfolios.json'),'portfolios')){const pid=object(p)?id(p.id):null;if(pid&&typeof p.name==='string'&&p.name)names.set(pid,p.name);}
 
     result.stage='GROUPS';
-    const groups=listed(await get('/api/v2/groups.json'),'groups').filter(g=>object(g)&&g.name===RATIO_PROBE_GROUP);
+    const listedGroups=listed(await get('/api/v2/groups.json'),'groups'),groups=listedGroups.filter(g=>object(g)&&g.name===RATIO_PROBE_GROUP);
     facts.groupMatches=groups.length;
     const groupId=groups.length===1?id(groups[0].id):null;if(!groupId)fail('GROUP_IDENTITY');
 
     result.stage='REPORT';
     const d=args.target;
     const payload=complete(await get(`/api/v3/portfolios/${viewId}/performance?consolidated=true&custom_group_id=${groupId}&end_date=${d}&grouping=custom_group&include_limited=true&include_sales=false&report_combined=false&start_date=${d}`,RATIO_PROBE_BUDGET.reportBytes));
-    token=null;
     facts.rootHasOnlyKnownKeys=Object.keys(payload).every(k=>['report','api_transaction','links'].includes(k));
     if(!object(payload.report))fail('SHAPE');
     const report=complete(payload.report);
@@ -204,8 +242,39 @@ async function probeWork({argv,env,event,now=new Date(),fetchImpl=globalThis.fet
     const accounts=memberIds.map(m=>({id:m,name:names.get(m)}));
     facts.scopeMatchesReviewedTen=crypto.createHash('sha256').update(JSON.stringify(accounts.map(a=>a.name.replaceAll('&amp;','&')).sort())).digest('hex')===ALL_TOGETHER_SCOPE_SHA256;
     const projected=api.project({schema:api.CAPTURE,provider:'Sharesight',view:{id:viewId,name:RATIO_PROBE_VIEW},group:{id:groupId,name:RATIO_PROBE_GROUP},asOf:d,capturedAt:new Date(now.getTime()).toISOString(),accounts,report});
-    facts.projection={responseGrouping:projected.responseGrouping,reportTotalEqualsRows:projected.totals.reportDeltaCents===0,membersWithoutRows:projected.accountsWithoutRows.length,
+    const delta=Math.abs(projected.totals.reportDeltaCents);
+    facts.projection={responseGrouping:projected.responseGrouping,reportTotalEqualsRows:delta===0,reportTotalDifference:delta===0?'NONE':delta<=100?'AT_MOST_ONE_USD':delta<=10000?'AT_MOST_100_USD':'OVER_100_USD',membersWithoutRows:projected.accountsWithoutRows.length,
       categoriesWithinKnownFour:projected.positions.some(p=>['VC/PE','对冲基金','常青基金'].includes(p.sharesightCategory))};
+    // Read-only shape check of the eight performance reports. A report that
+    // cannot be read is recorded by its fixed code and the next one is still
+    // tried: the classification result above already stands on its own.
+    result.stage='PERFORMANCE';
+    const allGroups=listedGroups,performance=facts.performance={complete:false,reports:{}};
+    const oneYear=new Date(Date.parse(d+'T00:00:00Z'));oneYear.setUTCFullYear(oneYear.getUTCFullYear()-1);
+    const starts={all:ALL_WINDOW_START,oneYear:oneYear.toISOString().slice(0,10)};
+    let reference=null,good=0;
+    for(const [key,name]of Object.entries(RATIO_PROBE_PERFORMANCE_GROUPS)){
+      const matches=allGroups.filter(g=>object(g)&&g.name===name),gid=matches.length===1?id(matches[0].id):null;
+      for(const window of RATIO_PROBE_PERFORMANCE_WINDOWS){
+        const slot=key+'.'+window;
+        if(!gid){performance.reports[slot]={read:false,code:'RATIO_PROBE_GROUP_IDENTITY'};continue;}
+        if(result.requests>=RATIO_PROBE_BUDGET.requests||state.deadlineExceeded||deadlineSignal.aborted){performance.reports[slot]={read:false,code:'RATIO_PROBE_BUDGET'};continue;}
+        try{
+          const body=complete(await get(`/api/v3/portfolios/${viewId}/performance?consolidated=true&custom_group_id=${gid}&end_date=${d}&grouping=custom_group&include_limited=true&include_sales=true&report_combined=false&start_date=${starts[window]}`,RATIO_PROBE_BUDGET.reportBytes));
+          if(!object(body.report))fail('SHAPE');
+          const shape=ratioPerformanceShapeFacts(complete(body.report),{start:starts[window],end:d,groupId:gid,groupName:name}),text=JSON.stringify([shape.report,shape.holding,shape.subTotal,shape.cash]);
+          // The full field list is printed once; later reports say whether theirs is identical.
+          if(reference===null){reference=text;performance.reports[slot]={read:true,...shape};}
+          else performance.reports[slot]={read:true,echoes:shape.echoes,grouping:shape.grouping,percentagesAnnualised:shape.percentagesAnnualised,has:shape.has,anomalies:shape.anomalies,sameFieldsAsFirst:text===reference,...(text===reference?{}:{report:shape.report,holding:shape.holding,subTotal:shape.subTotal,cash:shape.cash})};
+          good++;
+        }catch(error){
+          if(state.deadlineExceeded||deadlineSignal.aborted)throw error;
+          const bounded=error instanceof BoundedJsonError;
+          performance.reports[slot]={read:false,code:bounded?'RATIO_PROBE_TRANSPORT':safeCode(error),...(bounded?{httpCode:['HTTP','TYPE','SIZE','BODY','JSON','TIMEOUT','ABORTED','CONFIG'].includes(error.code)?error.code:'OTHER'}:{})};
+        }
+      }
+    }
+    token=null;performance.complete=good===8;
     result.stage='COMPLETE';result.outcome='REPORT_PROJECTED';return result;
   }catch(error){
     // Only this helper's own fixed error class and its value-free facts are
