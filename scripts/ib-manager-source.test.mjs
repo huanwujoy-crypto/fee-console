@@ -6,7 +6,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import {nyDate} from './daily-core.mjs';
-import {SharesightIbManagerReader,IbManagerSourceError,IB_CASH_RECONCILIATION_SITES,IB_CASH_DATE_ROLES,ibSourceCashSite,ibSourceCashDateRole,IB_PAST_POINT_SITES,IB_PAST_POINT_FIELDS,ibSourcePastPoint,ibBaselineBusinessHash,ibSourceFailureCode,validateIbBootstrapCoverage,validateIbManagerReportInput,IB_CAPTURE_RECHECK_DIAGNOSTIC_CODES,ibSourceCaptureRecheckDiagnostic,IB_CAPTURE_UNSTABLE_DIAGNOSTIC_CODES,ibSourceCaptureUnstableDiagnostic} from './ib-manager-source.mjs';
+import {SharesightIbManagerReader,IbManagerSourceError,IB_CASH_RECONCILIATION_SITES,IB_CASH_DATE_ROLES,ibSourceCashSite,ibSourceCashDateRole,IB_PAST_POINT_SITES,IB_PAST_POINT_FIELDS,ibSourcePastPoint,pastPointFields,ibBaselineBusinessHash,ibSourceFailureCode,validateIbBootstrapCoverage,validateIbManagerReportInput,IB_CAPTURE_RECHECK_DIAGNOSTIC_CODES,ibSourceCaptureRecheckDiagnostic,IB_CAPTURE_UNSTABLE_DIAGNOSTIC_CODES,ibSourceCaptureUnstableDiagnostic} from './ib-manager-source.mjs';
 import {BoundedJsonError} from './fee-http-json.mjs';
 import {buildIbManagerReportBundle,validateIbManagerReportState,buildIbOwnerBaseline,validateIbOwnerBaselineState,buildIbManagerReturnReceipt,buildIbManagerDrawdownReceipt,createIbManagerReturnConsumer,createIbManagerDrawdownConsumer} from './ib-manager-return.mjs';
 import {prepareIbManagerReport,loadIbManagerReport,sameIbManagerData,validateIbManagerCoverage,assertIbManagerConfiguration,assertIbManagerPublication,IB_PUBLICATION_DIAGNOSTIC_PREFIX,validateIbPublicationDiagnostic} from './ib-manager-report.mjs';
@@ -95,6 +95,30 @@ test('every past-point rejection has a literal allowlisted site and the thrown e
   assert.equal(/\d/.test(JSON.stringify(ibSourcePastPoint(repriced))),false);
   for(const other of [null,undefined,'IB_SOURCE_PAST_POINT_CHANGED',new Error('IB_SOURCE_PAST_POINT_CHANGED'),new IbManagerSourceError('PAST_POINT_CHANGED'),new IbManagerSourceError('UNSTABLE'),
     Object.assign(Object.create(IbManagerSourceError.prototype),{code:'PAST_POINT_CHANGED'})])assert.equal(ibSourcePastPoint(other),null);
+});
+test('past-point categories separate USD cash, repriced non-USD cash, marked and unmarked holdings without any value',()=>{
+  const mark=(id,v,q='1000')=>({d:'2026-09-02',holdingId:id,instrumentIdentityHash:'a'.repeat(64),quantityAtoms:q,valueCents:v});
+  const snap=()=>({d:'2026-09-02',totalCents:100000,cash:{3:5000,5:7000},cashCurrency:{3:'USD',5:'CAD'},nativeCash:{5:9800},
+    positions:{2:'1000',6:'1000',7:'1000',8:'500'},marks:{2:mark(2,30000),6:mark(6,20000),7:mark(7,18000),8:null},foreignCurrencies:{8:'CAD'}});
+  const diff=change=>{const b=snap();change(b);return pastPointFields(snap(),b);};
+  assert.deepEqual(diff(()=>{}),[]);
+  // Only the CAD account's USD value and the total moved: an FX repricing of an unchanged native balance.
+  assert.deepEqual(diff(b=>{b.cash[5]+=13;b.totalCents+=13;}),['totalCents','cash','cashForeignAccount']);
+  // A USD account's balance moved.
+  assert.deepEqual(diff(b=>{b.cash[3]+=13;b.totalCents+=13;}),['totalCents','cash','cashUsdAccount']);
+  assert.deepEqual(diff(b=>{b.cash[3]+=1;b.cash[5]+=1;b.nativeCash[5]+=1;b.totalCents+=2;}),['totalCents','cash','nativeCash','cashValueAll','cashUsdAccount','cashForeignAccount']);
+  // One, most and all of the marked USD holdings repriced.
+  assert.deepEqual(diff(b=>{b.marks[2].valueCents+=40;b.totalCents+=40;}),['totalCents','marks','markValue']);
+  assert.deepEqual(diff(b=>{b.marks[2].valueCents+=40;b.marks[6].valueCents-=10;b.totalCents+=30;}),['totalCents','marks','markValue','markValueMost']);
+  assert.deepEqual(diff(b=>{for(const k of [2,6,7])b.marks[k].valueCents+=10;b.totalCents+=30;}),['totalCents','marks','markValue','markValueMost','markValueAll']);
+  // The total moved by more than the marked holdings and cash explain: the unmarked non-USD holding was repriced.
+  assert.deepEqual(diff(b=>{b.marks[2].valueCents+=40;b.cash[5]+=13;b.totalCents+=53+700;}),['totalCents','cash','marks','markValue','cashForeignAccount','unmarkedHoldingValue']);
+  // Within the reader's own per-entry cent tolerance nothing further is claimed.
+  assert.deepEqual(diff(b=>{b.marks[2].valueCents+=40;b.totalCents+=40+6;}),['totalCents','marks','markValue']);
+  for(const out of [diff(b=>{b.cash[5]+=1234567;b.totalCents+=1234567;}),diff(b=>{b.marks[2].valueCents+=7654321;})]){
+    assert.equal(/\d/.test(JSON.stringify(out)),false);for(const k of out)assert.ok(IB_PAST_POINT_FIELDS.includes(k));
+  }
+  for(const bad of [[null,snap()],[snap(),undefined],['x',snap()],[snap(),{get cash(){throw Error('PRIVATE_CANARY');}}]])assert.deepEqual(pastPointFields(...bad),[]);
 });
 test('past-point diagnosis reports only the fixed site and field categories of a refused read',async t=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ib-past-point-test-'));fs.chmodSync(dir,0o700);t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
