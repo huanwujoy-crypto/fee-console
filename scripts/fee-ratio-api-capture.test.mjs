@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import {runRatioApiCapture,RATIO_CAPTURE_BUDGET,RATIO_CAPTURE_CODES,RATIO_CAPTURE_STAGES,RATIO_CAPTURE_GROUPS,RATIO_CAPTURE_VIEW} from './fee-ratio-api-capture.mjs';
-import {executeRatioCloud,validateRatioCapture,RATIO_BUCKET,RATIO_OWNER} from './fee-ratio-cloud-runtime.mjs';
+import {RATIO_SCHEDULE_CRON,RATIO_SCHEDULE_PREVIOUS,executeRatioCloud,validateRatioCapture,RATIO_BUCKET,RATIO_OWNER} from './fee-ratio-cloud-runtime.mjs';
 import {validateRatioCloudPlan} from './fee-ratio-cloud-publish.mjs';
 import {createRatioSourceCore} from './fee-ratio-source-core.mjs';
 import {syntheticCapture} from './fee-ratio-api-source.test.mjs';
@@ -154,6 +154,21 @@ test('each stage stops with its own fixed code, never retries, and never uploads
   assert.doesNotMatch(source,/child_process|method:'(?:PUT|PATCH|DELETE)'|gist\.github|api\.github/);assert.equal((source.match(/method:'POST'/g)||[]).length,2,'the token exchange and the create-only upload');
 });
 
+test('a scheduled capture needs no operator plan and binds its result to the derived plan of that run',async()=>{
+  const at=new Date('2026-11-11T01:00:05.000Z'),s=stub(routes()),d=dispatch();
+  const env={...d.env,GITHUB_EVENT_NAME:'schedule',RATIO_PLAN:'',FEE_RATIO_AUTO_ENABLED:'true',RATIO_SCHEDULE:RATIO_SCHEDULE_CRON,FEE_REPORT_MARKETS:'NYSE,NASDAQ,LSE'};delete env.GITHUB_ACTOR_ID;
+  const event={schedule:RATIO_SCHEDULE_CRON};
+  const result=await runRatioApiCapture({env,event,now:at,clock:()=>at.getTime(),fetchImpl:s.fetchImpl,expectedScopeSha256:scopeSha});
+  assert.deepEqual([result.status,result.stage,result.code],['CAPTURED','COMPLETE',null]);
+  // The same derived plan the publication step computes: the previous Hong Kong date, no handoff, the placeholder previous body.
+  const derived=JSON.stringify({mode:'publish-api',previousBodySha256:RATIO_SCHEDULE_PREVIOUS,asOf:D,fee:null});
+  assert.equal(result.planSha256,sha(Buffer.from(derived)));assert.equal(result.mainSha,MAIN);assert.equal(result.runId,RUN);
+  // Not opted in, another slot, or a day without a session: refused at admission before any request.
+  for(const [e,ev,t] of [[{...env,FEE_RATIO_AUTO_ENABLED:'false'},event,at],[env,{schedule:'30 3 * * *'},at],[{...env,RATIO_SCHEDULE:'30 3 * * *'},event,at],[env,event,new Date('2026-11-09T01:00:00.000Z')],[{...env,RATIO_PLAN:JSON.stringify(PLAN())},event,at]]){
+    const quiet=stub(routes()),r=await runRatioApiCapture({env:e,event:ev,now:t,clock:()=>t.getTime(),fetchImpl:quiet.fetchImpl,expectedScopeSha256:scopeSha});
+    assert.equal(r.status,'REFUSED');assert.equal(r.requests,0);assert.equal(quiet.calls.length,0);assert.equal(quiet.objects.size,0);
+  }
+});
 test('the publication step completes a publish-api plan only from the same run\'s capture and then follows the ordinary publish path',async()=>{
   const {result:capture}=await run(),d=dispatch();
   const env={...d.env,GITHUB_TOKEN:'synthetic-repository-token-not-real-123',FEE_ECON_GIST_ID:'0'.repeat(32),FEE_DATA_KEY:Buffer.alloc(32,7).toString('base64url'),FEE_RATIO_MANAGER_TOKEN:'synthetic-manager-token-not-real-123',RATIO_STORAGE_ACCESS_TOKEN:STORAGE};
@@ -175,5 +190,5 @@ test('the publication step completes a publish-api plan only from the same run\'
   }
   // The preflight needs neither the capture nor any financial credential.
   const pre=await executeRatioCloud({env:{...d.env,GITHUB_TOKEN:'synthetic-repository-token-not-real-123'},event:d.event,fetchImpl,saveReceipt:async()=>{},preflight:true});
-  assert.deepEqual(pre,{preflight:true,mode:'publish-api'});
+  assert.deepEqual(pre,{preflight:true,mode:'publish-api',due:true});
 });

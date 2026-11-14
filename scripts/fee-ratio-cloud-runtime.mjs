@@ -9,6 +9,7 @@ import {createFeeRatioCore} from './fee-ratio-management.mjs';
 import {createRankedExposureCore} from './xuan-ib-sharesight-exposure.mjs';
 import {createLegacyPolicy} from './fee-legacy-policy.mjs';
 import {verifyFeeFinalPublication,isFeeFinalPublicationProof,FEE_PUBLICATION_CODES} from './fee-ratio-fee-publication.mjs';
+import {sessionUnion} from './fee-market-calendar.mjs';
 
 export const RATIO_BUCKET='family-portfolio-gateway-fee-ratio-private';
 export const RATIO_OWNER=283054367;
@@ -43,6 +44,39 @@ export function ratioAdmission(env,event){
   const defaults={ib_envelope_once:'false',ib_envelope_main:'',ib_diagnostic_once:'false',ib_diagnostic_main:'',source_plan_check_only:'false',source_acceptance_once:'false',run_reviewed_once:'false',source_from:'',source_target:'',source_main:'',manual_sync_completed_for:'',confirmed_main:'',recovery_main:'',report_kind:'',report_target:'',report_markets:'',source_probe_once:'false',source_probe_main:'',source_probe_target:''};
   if(Object.keys(i).some(k=>!Object.hasOwn(defaults,k)&&!['ratio_main','ratio_plan'].includes(k))||Object.entries(defaults).some(([k,v])=>Object.hasOwn(i,k)&&i[k]!==v))fail();
   const plan=parse(Buffer.from(i.ratio_plan));validateRatioCloudPlan(plan);return plan;
+}
+
+// Scheduled ratio (owner decision 2026-11-14): the first daily schedule slot may
+// also publish the ratio, on its own, with no operator and no fee handoff. It
+// is a separate repository opt-in. The target is the Hong Kong date before the
+// run, and only when the reviewed calendar proves a session on that date for
+// the configured venues; an unknown venue or year refuses rather than guesses.
+// The plan it yields is an ordinary `publish-api` plan whose previous-body
+// field is a placeholder: the publication step replaces it with the verified
+// current snapshot (see `followCurrent`).
+export const RATIO_SCHEDULE_CRON='0 1 * * *',RATIO_SCHEDULE_PREVIOUS='0'.repeat(64);
+const hkDay=ms=>new Date(ms+8*3600000).toISOString().slice(0,10);
+export function ratioScheduledAdmission(env,event,now=new Date()){
+  const ms=now instanceof Date?now.getTime():NaN;
+  if(env.GITHUB_ACTIONS!=='true'||env.GITHUB_EVENT_NAME!=='schedule'||env.GITHUB_RUN_ATTEMPT!=='1'||env.GITHUB_REF!=='refs/heads/main'||env.GITHUB_REPOSITORY!==REPO
+    ||!/^[a-f0-9]{40}$/.test(env.GITHUB_SHA||'')||env.FEE_RATIO_AUTO_ENABLED!=='true'||(env.RATIO_PLAN!==undefined&&env.RATIO_PLAN!=='')
+    // The slot is the workflow's own `github.event.schedule`; an event file that names a slot must agree.
+    ||env.RATIO_SCHEDULE!==RATIO_SCHEDULE_CRON||!event||typeof event!=='object'||Array.isArray(event)||event.schedule!==undefined&&event.schedule!==RATIO_SCHEDULE_CRON
+    ||event.inputs!==undefined&&event.inputs!==null||!Number.isFinite(ms))fail();
+  const markets=String(env.FEE_REPORT_MARKETS||'').split(',');
+  if(!markets.length||markets.some(m=>!/^[A-Z_]{2,40}$/.test(m)))fail();
+  const asOf=new Date(Date.parse(hkDay(ms)+'T00:00:00Z')-86400000).toISOString().slice(0,10);
+  let sessions;try{sessions=sessionUnion(asOf,markets);}catch{fail();}
+  if(sessions.rows.some(r=>r.state==='unknown'))fail();
+  if(sessions.state!=='open')return {scheduled:true,due:false,asOf,plan:null,planText:null};
+  const plan={mode:'publish-api',previousBodySha256:RATIO_SCHEDULE_PREVIOUS,asOf,fee:null};
+  validateRatioCloudPlan(plan);
+  return {scheduled:true,due:true,asOf,plan,planText:JSON.stringify(plan)};
+}
+// One admission for both steps of a run: the owner's dispatch, or the schedule.
+export function ratioRunAdmission(env,event,now=new Date()){
+  if(env?.GITHUB_EVENT_NAME==='schedule')return ratioScheduledAdmission(env,event,now);
+  const plan=ratioAdmission(env,event);return {scheduled:false,due:true,asOf:plan.asOf??null,plan,planText:env.RATIO_PLAN};
 }
 
 export function createRatioTransport({fetchImpl=fetch,gistId,managerToken,accessToken,saveReceipt}){
@@ -126,7 +160,10 @@ export function saveRatioReceipt(file,value){
 export async function executeRatioCloud({env,event,fetchImpl=fetch,saveReceipt,publisher=createRatioCloudPublisher(),preflight=false,clock,readCapture}){
   let result={schema:'fee-console.ratio-cloud-safe-result.v1',status:'REFUSED',stage:'ADMISSION',claim:'NOT_ATTEMPTED',patchAttempts:0,bodySha256:null,contentSha256:null,cleanup:'NO_INPUTS_READ'},io;
   try{
-    let plan=ratioAdmission(env,event);result.stage='MAIN_TOKEN';
+    const admitted=ratioRunAdmission(env,event,clock?clock():new Date());let plan=admitted.plan;
+    // A scheduled day without a session has nothing to publish and reads nothing.
+    if(!admitted.due){if(preflight)return {preflight:true,mode:'not-due',due:false};fail();}
+    result.stage='MAIN_TOKEN';
     // Only the existing ephemeral contents:read token may authenticate this
     // fixed repository request. Financial credentials remain untouched here.
     const repositoryToken=env.GITHUB_TOKEN;
@@ -144,14 +181,14 @@ export async function executeRatioCloud({env,event,fetchImpl=fetch,saveReceipt,p
       const liveMain=JSON.parse(text)?.object?.sha;
       result.stage='MAIN_HEAD';if(liveMain!==env.GITHUB_SHA)fail();
     }finally{clearTimeout(timer);}
-    if(preflight)return {preflight:true,mode:plan.mode};
+    if(preflight)return {preflight:true,mode:plan.mode,due:true};
     if(plan.mode==='publish-api'){
       // Complete the plan only from this same run's capture step: same plan
       // bytes, same main, same run. Its hashes and generations are then pinned
       // exactly as a hand-prepared publish plan would pin them.
       result.stage='PLAN';
       if(typeof readCapture!=='function'||!/^\d{1,20}$/.test(env.GITHUB_RUN_ID||''))fail();
-      const capture=validateRatioCapture(await readCapture(),{planSha256:sha(Buffer.from(env.RATIO_PLAN)),mainSha:env.GITHUB_SHA,runId:env.GITHUB_RUN_ID});
+      const capture=validateRatioCapture(await readCapture(),{planSha256:sha(Buffer.from(admitted.planText)),mainSha:env.GITHUB_SHA,runId:env.GITHUB_RUN_ID});
       if(capture.status!=='CAPTURED')fail();
       plan={mode:'publish',previousBodySha256:plan.previousBodySha256,bundleId:capture.bundleId,original:capture.original,input:capture.input,library:null,fee:plan.fee};
       validateRatioCloudPlan(plan);
@@ -169,7 +206,7 @@ export async function executeRatioCloud({env,event,fetchImpl=fetch,saveReceipt,p
         fetchImpl,...(clock?{clock}:{}),...(previousProof!==undefined?{previousProof}:{})});
       if(!isFeeFinalPublicationProof(proof))fail();return proof;
     };
-    result=await publisher.run({plan,identity:{gistId:env.FEE_ECON_GIST_ID,ownerId:RATIO_OWNER},manager,io,...(clock?{clock}:{})});
+    result=await publisher.run({plan,identity:{gistId:env.FEE_ECON_GIST_ID,ownerId:RATIO_OWNER},manager,io,...(clock?{clock}:{}),...(admitted.scheduled?{followCurrent:{asOf:admitted.asOf}}:{})});
   }catch{if(io)try{await io.cleanupLocal();}catch{}/* No exception text can reach logs. */}
   // Save before the caller prints anything. Saving failure is not a publication retry.
   await saveReceipt(safeRatioReceipt(result));return result;
@@ -183,6 +220,8 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
     if(!process.env.RUNNER_TEMP||!path.isAbsolute(process.env.RUNNER_TEMP))fail();
     const file=path.join(process.env.RUNNER_TEMP,'fee-ratio-result.safe.json');
     const result=await executeRatioCloud({env:process.env,event,preflight,saveReceipt:v=>saveRatioReceipt(file,v),readCapture:()=>{const b=fs.readFileSync(captureFile);if(b.length>65536)fail();return parse(b);}});
-    console.log(JSON.stringify(result));if(preflight&&result.preflight!==true)process.exitCode=1;if(!preflight&&!['VERIFIED_CURRENT_NO_WRITE','UNCHANGED_SOURCE_NO_WRITE','PUBLISHED_CONFIRMED'].includes(result.status))process.exitCode=1;
+    console.log(JSON.stringify(result));if(preflight&&result.preflight!==true)process.exitCode=1;
+    // The only value handed to the next job: whether there is anything to publish.
+    if(preflight&&result.preflight===true&&process.env.GITHUB_OUTPUT)fs.appendFileSync(process.env.GITHUB_OUTPUT,'ratio_due='+(result.due===true?'true':'false')+'\n');if(!preflight&&!['VERIFIED_CURRENT_NO_WRITE','UNCHANGED_SOURCE_NO_WRITE','PUBLISHED_CONFIRMED'].includes(result.status))process.exitCode=1;
   }catch{console.error('RATIO_CLOUD_ENTRY_REFUSED');process.exitCode=1;}
 }

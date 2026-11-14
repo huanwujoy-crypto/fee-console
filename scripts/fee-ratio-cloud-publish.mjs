@@ -105,7 +105,12 @@ export function createRatioCloudPublisher({exposureCore=createRankedExposureCore
   // Caller holds the approved fixed-destination capability. In this local
   // candidate there is deliberately no way to obtain one from an environment.
   // All transport operations must be bounded, no-retry and fixed-service.
-  async function run({plan,identity,manager,io,clock=()=>new Date()}){
+  // `followCurrent` is only for the scheduled run, which has no operator to
+  // name the previous body: `{asOf}` makes the just-read, fully verified
+  // current snapshot the previous one. Every later lock still uses that exact
+  // hash, so a snapshot that changes during the run is refused as before. A
+  // current snapshot already at or beyond `asOf` is left as it is.
+  async function run({plan,identity,manager,io,clock=()=>new Date(),followCurrent=null}){
     const receipt={schema:'fee-console.ratio-cloud-safe-result.v1',status:'REFUSED',stage:'PLAN',claim:'NOT_ATTEMPTED',patchAttempts:0,bodySha256:null,contentSha256:null,cleanup:'NOT_RUN'};
     let claimed=false,sourceRead=false,originalBytes=null,inputBytes=null;
     let selectedPlan;
@@ -124,10 +129,16 @@ export function createRatioCloudPublisher({exposureCore=createRankedExposureCore
     }};
     try{await (async()=>{
       validateRatioCloudPlan(plan);plan=structuredClone(plan);selectedPlan=plan;identity=structuredClone(identity);
+      if(followCurrent!==null&&(!exact(followCurrent,['asOf'])||typeof followCurrent.asOf!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(followCurrent.asOf)||plan.mode!=='publish'||plan.fee!==null||plan.library!==null))refuse();
       if(!exact(identity,['gistId','ownerId'])||typeof identity.gistId!=='string'||!/^(?:[a-f0-9]{20}|[a-f0-9]{32})$/.test(identity.gistId)||!Number.isSafeInteger(identity.ownerId)||identity.ownerId<=0)refuse();
       receipt.stage='CURRENT';
-      const before=await read(),prior=await current(before,manager,plan.previousBodySha256,time());
+      const before=await read(),prior=await current(before,manager,followCurrent?null:plan.previousBodySha256,time());
       receipt.bodySha256=prior.result.watermark.id;
+      if(followCurrent){
+        if(!hex(prior.result.watermark.id)||typeof prior.result.watermark.sourceDate!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(prior.result.watermark.sourceDate))refuse();
+        if(prior.result.watermark.sourceDate>=followCurrent.asOf){receipt.status='VERIFIED_CURRENT_NO_WRITE';return;}
+        plan.previousBodySha256=prior.result.watermark.id;
+      }
       if(plan.mode==='verify-current'){receipt.status='VERIFIED_CURRENT_NO_WRITE';return;}
       receipt.stage='INPUT';sourceRead=true;
       const get=async spec=>{

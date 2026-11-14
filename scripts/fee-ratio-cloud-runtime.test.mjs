@@ -8,7 +8,7 @@ import {spawnSync} from 'node:child_process';
 import {authenticated} from './fee-ratio-official-source.test.mjs';
 import {createRatioCloudPublisher} from './fee-ratio-cloud-publish.mjs';
 import {syntheticFeePublicationFixture} from './fee-ratio-fee-publication.test.mjs';
-import {ratioAdmission,createRatioTransport,executeRatioCloud,saveRatioReceipt,safeRatioReceipt,RATIO_BUCKET,RATIO_OWNER} from './fee-ratio-cloud-runtime.mjs';
+import {ratioAdmission,ratioScheduledAdmission,ratioRunAdmission,RATIO_SCHEDULE_CRON,RATIO_SCHEDULE_PREVIOUS,createRatioTransport,executeRatioCloud,saveRatioReceipt,safeRatioReceipt,RATIO_BUCKET,RATIO_OWNER} from './fee-ratio-cloud-runtime.mjs';
 const gid='0'.repeat(32),managerToken='synthetic-manager-token-not-real-123',accessToken='synthetic-google-token-not-real-123',repositoryToken='synthetic-repository-token-not-real-123',head='a'.repeat(40),canary='CANARY_PRIVATE_TOKEN_NEVER_LOG';
 const mainUrl='https://api.github.com/repos/huanwujoy-crypto/fee-console/git/ref/heads/main';
 const hash=b=>crypto.createHash('sha256').update(b).digest('hex');
@@ -44,7 +44,7 @@ test('authenticated main preflight avoids synthetic anonymous rate limiting with
  const fetchImpl=async(url,o)=>{calls.push({url,authorization:o.headers.Authorization});assert.equal(url,mainUrl);return o.headers.Authorization==='Bearer '+repositoryToken?response(url,{object:{sha:head}}):response(url,{message:canary},403);};
  assert.equal((await fetchImpl(mainUrl,{headers:{}})).status,403);calls.length=0;
  const r=await executeRatioCloud({...a,preflight:true,fetchImpl,saveReceipt:async()=>assert.fail('successful preflight has no failure receipt')});
- assert.deepEqual(r,{preflight:true,mode:'verify-current'});assert.deepEqual(calls,[{url:mainUrl,authorization:'Bearer '+repositoryToken}]);assert.equal(reads(),0);
+ assert.deepEqual(r,{preflight:true,mode:'verify-current',due:true});assert.deepEqual(calls,[{url:mainUrl,authorization:'Bearer '+repositoryToken}]);assert.equal(reads(),0);
 });
 test('missing or malformed repository token refuses before fetch, publisher or financial-secret access',async()=>{
  for(const preflight of [true,false])for(const value of [undefined,null,false,42,'','short','a'.repeat(8193),' '+repositoryToken,repositoryToken+'\n',repositoryToken+'\0',repositoryToken+'\x7f',repositoryToken+'é']){
@@ -125,6 +125,79 @@ test('actual final command fails admission without networking and saves before d
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ratio-entry-test-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));fs.writeFileSync(path.join(dir,'event.json'),JSON.stringify({bad:canary}));
  const r=spawnSync(process.execPath,['scripts/fee-ratio-cloud-runtime.mjs','--preflight'],{cwd:new URL('..',import.meta.url),env:{...process.env,GITHUB_EVENT_PATH:path.join(dir,'event.json'),RUNNER_TEMP:dir,GITHUB_ACTIONS:'false'},encoding:'utf8'});assert.equal(r.status,1);assert.ok(!r.stdout.includes(canary));assert.ok(!r.stderr.includes(canary));assert.equal(JSON.parse(fs.readFileSync(path.join(dir,'fee-ratio-result.safe.json'))).stage,'ADMISSION');
 });
+test('scheduled ratio admission: first slot only, opt-in, a proved session on the previous Hong Kong date, no operator plan',()=>{
+ const env=(extra={})=>({GITHUB_ACTIONS:'true',GITHUB_EVENT_NAME:'schedule',GITHUB_RUN_ATTEMPT:'1',GITHUB_REF:'refs/heads/main',GITHUB_REPOSITORY:'huanwujoy-crypto/fee-console',GITHUB_SHA:head,
+  FEE_RATIO_AUTO_ENABLED:'true',RATIO_SCHEDULE:RATIO_SCHEDULE_CRON,FEE_REPORT_MARKETS:'NYSE,NASDAQ,LSE,SIX,EURONEXT_AMSTERDAM,EURONEXT_PARIS',RATIO_PLAN:'',...extra});
+ const event=()=>({schedule:RATIO_SCHEDULE_CRON}),at=t=>new Date(t);
+ // Tuesday 09:00 Hong Kong: the target is Monday, a session.
+ const due=ratioScheduledAdmission(env(),event(),at('2026-11-17T01:00:05Z'));
+ assert.deepEqual(due,{scheduled:true,due:true,asOf:'2026-11-16',plan:{mode:'publish-api',previousBodySha256:RATIO_SCHEDULE_PREVIOUS,asOf:'2026-11-16',fee:null},planText:JSON.stringify(due.plan)});
+ assert.deepEqual(ratioRunAdmission(env(),event(),at('2026-11-17T01:00:05Z')),due);
+ // A late delivery the same Hong Kong day keeps the same target; the next day moves on.
+ assert.equal(ratioScheduledAdmission(env(),event(),at('2026-11-17T15:59:00Z')).asOf,'2026-11-16');assert.equal(ratioScheduledAdmission(env(),event(),at('2026-11-17T16:00:00Z')).asOf,'2026-11-17');
+ // Sunday and Monday mornings follow a closed day: nothing is due and no plan exists.
+ for(const t of ['2026-11-15T01:00:00Z','2026-11-16T01:00:00Z','2026-12-26T01:00:00Z'])assert.deepEqual(ratioScheduledAdmission(env(),event(),at(t)),{scheduled:true,due:false,asOf:new Date(Date.parse(t)+8*3600000-86400000).toISOString().slice(0,10),plan:null,planText:null});
+ // U.S. Thanksgiving with Europe open is a session for the configured scope; with a U.S.-only scope it is not.
+ assert.equal(ratioScheduledAdmission(env(),event(),at('2026-11-27T01:00:00Z')).due,true);assert.equal(ratioScheduledAdmission(env({FEE_REPORT_MARKETS:'NYSE,NASDAQ'}),event(),at('2026-11-27T01:00:00Z')).due,false);
+ // The slot comes from the workflow's own value; an event file without the field is accepted, one that disagrees is not.
+ assert.equal(ratioScheduledAdmission(env(),{},at('2026-11-17T01:00:05Z')).due,true);
+ // Refused: not opted in, another slot, a rerun, another ref or repository, an operator plan, an unknown venue or year, a bad clock.
+ for(const [e,ev,t] of [[env({FEE_RATIO_AUTO_ENABLED:'false'}),event()],[env({FEE_RATIO_AUTO_ENABLED:undefined}),event()],[env(),{schedule:'30 3 * * *'}],[env(),{schedule:'0 6 * * *'}],[env({RATIO_SCHEDULE:'30 3 * * *'}),event()],[env({RATIO_SCHEDULE:'0 6 * * *'}),{}],[env({RATIO_SCHEDULE:''}),event()],[env({RATIO_SCHEDULE:undefined}),event()],[env(),null],[env(),[]],
+   [env({GITHUB_RUN_ATTEMPT:'2'}),event()],[env({GITHUB_REF:'refs/heads/other'}),event()],[env({GITHUB_REPOSITORY:'someone/fork'}),event()],[env({GITHUB_SHA:'x'}),event()],
+   [env({RATIO_PLAN:'{}'}),event()],[env(),{...event(),inputs:{ratio_plan:'{}'}}],[env({FEE_REPORT_MARKETS:''}),event()],[env({FEE_REPORT_MARKETS:'NYSE,EURONEXT'}),event()],
+   [env({FEE_REPORT_MARKETS:'NYSE,NYSE'}),event()],[env(),event(),'2028-01-05T01:00:00Z'],[env(),event(),'not a date']])
+  assert.throws(()=>ratioScheduledAdmission(e,ev,at(t||'2026-11-17T01:00:05Z')),/REFUSED/);
+ // A manual dispatch never becomes a scheduled admission, and a scheduled event never passes the manual one.
+ assert.equal(ratioRunAdmission(admission().env,admission().event).scheduled,false);assert.throws(()=>ratioAdmission(env(),event()),/REFUSED/);
+ assert.throws(()=>ratioScheduledAdmission(admission().env,admission().event,at('2026-11-17T01:00:05Z')),/REFUSED/);
+});
+test('a scheduled run publishes on its own, follows the verified current snapshot, and a day without a session reads nothing',async()=>{
+ const env={GITHUB_ACTIONS:'true',GITHUB_EVENT_NAME:'schedule',GITHUB_RUN_ATTEMPT:'1',GITHUB_REF:'refs/heads/main',GITHUB_REPOSITORY:'huanwujoy-crypto/fee-console',GITHUB_SHA:head,GITHUB_RUN_ID:'4300000001',GITHUB_TOKEN:repositoryToken,
+  FEE_RATIO_AUTO_ENABLED:'true',RATIO_SCHEDULE:RATIO_SCHEDULE_CRON,FEE_REPORT_MARKETS:'NYSE,NASDAQ,LSE',RATIO_PLAN:'',FEE_ECON_GIST_ID:gid,FEE_DATA_KEY:Buffer.alloc(32,7).toString('base64url'),FEE_RATIO_MANAGER_TOKEN:managerToken,RATIO_STORAGE_ACCESS_TOKEN:'synthetic-storage-token-not-real-123'};
+ const event={schedule:RATIO_SCHEDULE_CRON},now=new Date('2026-11-17T01:00:05Z'),fetchImpl=async url=>response(url,{object:{sha:head}});
+ const admitted=ratioScheduledAdmission(env,event,now),bundleId='a'.repeat(64);
+ const capture={schema:'fee-console.ratio-api-capture-safe.v1',status:'CAPTURED',stage:'COMPLETE',code:null,requests:54,planSha256:hash(Buffer.from(admitted.planText)),mainSha:head,runId:env.GITHUB_RUN_ID,
+  bundleId,original:{name:'inputs/'+bundleId+'/original.json',generation:'101',sha256:'1'.repeat(64)},input:{name:'inputs/'+bundleId+'/input.json',generation:'102',sha256:'2'.repeat(64)}};
+ const seen=[],ok={schema:'fee-console.ratio-cloud-safe-result.v1',status:'PUBLISHED_CONFIRMED',stage:'COMPLETE',claim:'OWNED',patchAttempts:1,bodySha256:'c'.repeat(64),contentSha256:'d'.repeat(64),cleanup:'LOCAL_AND_PINNED_INPUTS'};
+ const run=(extra={})=>executeRatioCloud({env,event,fetchImpl,clock:()=>now,saveReceipt:async()=>{},readCapture:async()=>structuredClone(capture),publisher:{run:async a=>{seen.push(a);return ok;}},...extra});
+ const pre=await run({preflight:true});assert.deepEqual(pre,{preflight:true,mode:'publish-api',due:true});
+ const r=await run();assert.equal(r.status,'PUBLISHED_CONFIRMED');assert.equal(seen.length,1);
+ assert.deepEqual(seen[0].plan,{mode:'publish',previousBodySha256:RATIO_SCHEDULE_PREVIOUS,bundleId,original:capture.original,input:capture.input,library:null,fee:null});
+ assert.deepEqual(seen[0].followCurrent,{asOf:'2026-11-16'});
+ // A capture made for another plan (for example a manual one) is not accepted by the scheduled run.
+ seen.length=0;const other=await run({readCapture:async()=>({...capture,planSha256:'0'.repeat(64)})});assert.deepEqual([other.status,other.stage,seen.length],['REFUSED','PLAN',0]);
+ // A closed day: the preflight says not due without a single request; the publication entry refuses if it is reached anyway.
+ const closed=new Date('2026-11-16T01:00:00Z');let calls=0;const none=async()=>{calls++;throw Error('NO_CALL');};
+ assert.deepEqual(await run({preflight:true,clock:()=>closed,fetchImpl:none}),{preflight:true,mode:'not-due',due:false});
+ const refused=await run({clock:()=>closed,fetchImpl:none});assert.deepEqual([refused.status,refused.stage],['REFUSED','ADMISSION']);assert.equal(calls,0);assert.equal(seen.length,0);
+ // A manual dispatch never asks the publisher to follow the current snapshot.
+ const a=admission({mode:'publish-api',previousBodySha256:'b'.repeat(64),asOf:'2026-11-16',fee:null}),manual=[];
+ const cap2={...capture,planSha256:hash(Buffer.from(a.env.RATIO_PLAN)),runId:'4300000002'};
+ await executeRatioCloud({env:{...a.env,GITHUB_RUN_ID:'4300000002',RATIO_STORAGE_ACCESS_TOKEN:'synthetic-storage-token-not-real-123'},event:a.event,fetchImpl,clock:()=>now,saveReceipt:async()=>{},readCapture:async()=>cap2,publisher:{run:async x=>{manual.push(x);return ok;}}});
+ assert.equal(manual.length,1);assert.equal(Object.hasOwn(manual[0],'followCurrent'),false);assert.equal(manual[0].plan.previousBodySha256,'b'.repeat(64));
+});
+test('the scheduled ratio branch is gated in the workflow and adds no job, input, title or secret',()=>{
+ const wf=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8');
+ const job=name=>wf.split('\n  '+name+':\n')[1].split(/\n  [a-z-]+:\n/)[0],pre=job('ratio-preflight'),ratio=job('ratio');
+ const gate="(github.event_name == 'schedule' && github.event.schedule == '0 1 * * *' && vars.FEE_RATIO_AUTO_ENABLED == 'true')";
+ for(const body of [pre,ratio]){const line=body.split('\n').find(l=>l.startsWith('    if: '));assert.ok(line.includes(gate));assert.ok(line.includes("github.ref == 'refs/heads/main' && github.run_attempt == 1 && ("));assert.ok(line.startsWith('    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && '));}
+ // The manual branch keeps every earlier condition, including the owner check and the exact main.
+ assert.ok(pre.includes("github.event_name == 'workflow_dispatch' && github.actor_id == '283054367' && inputs.report_kind != 'automatic-daily' && inputs.ratio_plan != '' && inputs.ratio_main == github.sha"));
+ assert.ok(ratio.includes("!cancelled() && needs.ratio-preflight.result == 'success' && needs.ratio-preflight.outputs.due == 'true'"));
+ // The ratio waits for the fee source job of the same run, so the two never read Sharesight at once; it runs whatever that job's outcome.
+ assert.ok(ratio.startsWith('    # Also after the fee source job'));assert.ok(ratio.includes('\n    needs: [ratio-preflight, produce]\n'));assert.equal(pre.includes('needs:'),false);
+ assert.equal(wf.split('RATIO_SCHEDULE: ${{ github.event.schedule }}').length-1,3);assert.ok(ratio.includes("github.event_name == 'workflow_dispatch' && inputs.ratio_main == github.sha"));
+ assert.ok(pre.includes('    outputs:\n      due: ${{ steps.ratio_admission.outputs.ratio_due }}\n'));
+ // Only the first of the three slots, and only this one new opt-in variable; the other slots and jobs are untouched.
+ assert.equal(wf.split("github.event.schedule == '0 1 * * *'").length-1,2);assert.equal(wf.split('vars.FEE_RATIO_AUTO_ENABLED').length-1,5);
+ assert.equal(wf.includes("github.event.schedule == '30 3 * * *'"),false);assert.equal(wf.includes("github.event.schedule == '0 6 * * *'"),false);
+ assert.deepEqual([...wf.matchAll(/^  ([a-z][a-z-]*):\n/gm)].map(m=>m[1]).filter(n=>n.startsWith('ratio')),['ratio-preflight','ratio']);
+ assert.match(wf,/^run-name: \$\{\{ inputs\.source_probe_once && 'Fee source probe' \|\| \(inputs\.ib_diagnostic_once \|\| inputs\.ib_envelope_once\) && 'IB diagnostic 2026-11-06' \|\| \(inputs\.ratio_plan != '' \|\| inputs\.ratio_main != ''\) && 'Manual ratio snapshot' \|\| github\.workflow \}\}$/m);
+ // A scheduled ratio failure does not fail the scheduled fee run; a manual one still fails. No other job has this.
+ for(const body of [pre,ratio])assert.ok(body.includes("\n    continue-on-error: ${{ github.event_name == 'schedule' }}\n"));assert.equal(wf.split('continue-on-error:').length-1,2);
+ // An empty manual plan can never be parsed on a scheduled run.
+ assert.equal(wf.includes('fromJSON(inputs.ratio_plan)'),false);assert.equal(wf.split("fromJSON(inputs.ratio_plan || '{}')").length-1,5);
+});
 test('workflow isolates all fee jobs, preserves schedule/concurrency and never exposes SS credentials to ratio',()=>{
  const wf=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8');for(const job of ['period','once-admit','produce','once-finish','source-plan-check','source-acceptance']){const body=wf.split('\n  '+job+':\n')[1].split(/\n  [a-z-]+:\n/)[0];assert.match(body,/    if: \$\{\{ !inputs\.ib_diagnostic_once && !inputs\.ib_diagnostic_main && !inputs\.ratio_plan && !inputs\.ratio_main && /,job);}
  assert.match(wf,/group: fee-cloud-producer\n  cancel-in-progress: false/);assert.match(wf,/cron: '0 1 \* \* \*'/);assert.deepEqual([...wf.matchAll(/- cron: '([^']+)'/g)].map(m=>m[1]),['0 1 * * *','30 3 * * *','0 6 * * *']);
@@ -133,12 +206,12 @@ test('workflow isolates all fee jobs, preserves schedule/concurrency and never e
  // The publication step never receives a Sharesight value; the capture step never receives a publication secret.
  assert.ok(publishStep&&captureStep);assert.ok(!publishStep.includes('SHARESIGHT'));assert.ok(!publishStep.includes('ratio_capture_credentials'));
  for(const secret of ['FEE_RATIO_MANAGER_TOKEN','FEE_DATA_KEY','FEE_ECON_GIST_ID','IB_MANAGER_BASELINE_SHA256','GITHUB_TOKEN','secrets.'])assert.ok(!captureStep.includes(secret),secret);
- assert.deepEqual([...captureStep.matchAll(/^          ([A-Z_]+):/gm)].map(m=>m[1]),['RATIO_PLAN','RATIO_STORAGE_ACCESS_TOKEN','FEE_CLOUD_SHARESIGHT_CLIENT_ID','FEE_CLOUD_SHARESIGHT_CLIENT_SECRET','GOOGLE_APPLICATION_CREDENTIALS','CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE','GOOGLE_GHA_CREDS_PATH']);
+ assert.deepEqual([...captureStep.matchAll(/^          ([A-Z_]+):/gm)].map(m=>m[1]),['RATIO_PLAN','FEE_RATIO_AUTO_ENABLED','RATIO_SCHEDULE','FEE_REPORT_MARKETS','RATIO_STORAGE_ACCESS_TOKEN','FEE_CLOUD_SHARESIGHT_CLIENT_ID','FEE_CLOUD_SHARESIGHT_CLIENT_SECRET','GOOGLE_APPLICATION_CREDENTIALS','CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE','GOOGLE_GHA_CREDS_PATH']);
  assert.equal(ratioSteps.filter(s=>s.includes('SHARESIGHT')).length,1);assert.equal(ratioSteps.filter(s=>s.includes('sharesight-broker-sync')).length,1);
  // Every API-capture step runs only for the publish-api mode, and the capture precedes the publication.
- for(const s of ratioSteps.filter(s=>/API capture|fee-ratio-api-capture/.test(s)))assert.match(s,/\n        if: \$\{\{ fromJSON\(inputs\.ratio_plan\)\.mode == 'publish-api' \}\}\n/);
+ for(const s of ratioSteps.filter(s=>/API capture|fee-ratio-api-capture/.test(s)))assert.ok(s.includes("\n        if: ${{ github.event_name == 'schedule' || fromJSON(inputs.ratio_plan || '{}').mode == 'publish-api' }}\n"));
  assert.ok(ratioSteps.indexOf(captureStep)<ratioSteps.indexOf(publishStep));assert.equal(ratioSteps.filter(s=>/API capture|fee-ratio-api-capture/.test(s)).length,3);
- for(const key of ['GOOGLE_APPLICATION_CREDENTIALS','CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE','GOOGLE_GHA_CREDS_PATH'])assert.ok(publishStep.includes(key+": ''"),key);assert.ok(!ratio.includes('fee-report-producer.mjs'));assert.match(ratio,/create_credentials_file: false/);assert.match(ratio,/access_token_scopes: https:\/\/www.googleapis.com\/auth\/devstorage.read_write/);assert.match(ratio,/fromJSON\(inputs.ratio_plan\).mode == 'publish'/);assert.equal((wf.match(/secrets.FEE_RATIO_MANAGER_TOKEN/g)||[]).length,1);assert.match(ratio,/path: \$\{\{ runner.temp \}\}\/fee-ratio-result.safe.json/);
+ for(const key of ['GOOGLE_APPLICATION_CREDENTIALS','CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE','GOOGLE_GHA_CREDS_PATH'])assert.ok(publishStep.includes(key+": ''"),key);assert.ok(!ratio.includes('fee-report-producer.mjs'));assert.match(ratio,/create_credentials_file: false/);assert.match(ratio,/access_token_scopes: https:\/\/www.googleapis.com\/auth\/devstorage.read_write/);assert.ok(ratio.includes("fromJSON(inputs.ratio_plan || '{}').mode == 'publish'"));assert.equal((wf.match(/secrets.FEE_RATIO_MANAGER_TOKEN/g)||[]).length,1);assert.match(ratio,/path: \$\{\{ runner.temp \}\}\/fee-ratio-result.safe.json/);
  for(const job of ['ratio-preflight','ratio']){const body=wf.split('\n  '+job+':\n')[1].split(/\n  [a-z-]+:\n/)[0];assert.equal((body.match(/GITHUB_TOKEN: \$\{\{ github.token \}\}/g)||[]).length,1);assert.match(body,/GITHUB_TOKEN: \$\{\{ github.token \}\}\n          RATIO_PLAN: \$\{\{ inputs.ratio_plan \}\}/);assert.match(body,/permissions:\n      contents: read\n/);assert.ok(!body.includes('contents: write'));}
  const preflight=wf.split('\n  ratio-preflight:\n')[1].split(/\n  [a-z-]+:\n/)[0];assert.ok(!preflight.includes('secrets.'));assert.ok(!preflight.includes('id-token: write'));
  // The fee readback needs only the existing non-secret baseline variable; no new secret or scope.

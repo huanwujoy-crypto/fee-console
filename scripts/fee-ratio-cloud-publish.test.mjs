@@ -382,6 +382,37 @@ test('an API original publishes through the same claim, fee gate, single PATCH a
   assert.match(f.ratio.render(verified.model),/来源：Sharesight 官方 API/);assert.doesNotMatch(f.ratio.render(verified.model),/工作簿|mtime|Library/);
   assert.deepEqual(f.state.deleted,[[plan.original,plan.input]]);
 });
+test('a scheduled run follows the verified current snapshot; an operator placeholder alone never does',async t=>{
+  const ZERO='0'.repeat(64);
+  const f=await fixture(t),{plan}=apiInputs(f),scheduled={...plan,previousBodySha256:ZERO,fee:null};
+  // The synthetic current snapshot is dated 2026-10-30, so a later target is due.
+  const r=await f.run({plan:scheduled,followCurrent:{asOf:'2026-10-31'}});
+  assert.equal(r.status,'PUBLISHED_CONFIRMED');assert.equal(r.patchAttempts,1);assert.equal(f.state.patches.length,1);
+  // The published snapshot chains to the real current one, not to the placeholder, and no fee stage ran.
+  const packet=JSON.parse(f.state.raw);assert.equal(packet.body.previousSnapshotId,f.plan.previousBodySha256);assert.notEqual(packet.body.previousSnapshotId,ZERO);
+  assert.equal(f.state.events.some(e=>e.startsWith('fee-')),false);
+  // The current snapshot is already at (or beyond) the target date: nothing is read from storage, claimed or written.
+  const published=(await f.snapshot.verify(packet,f.manager,{now:f.now})).watermark.sourceDate;assert.equal(published,'2026-10-30');
+  for(const asOf of ['2026-10-30','2026-10-29']){
+    const before=f.state.events.length,again=await f.run({plan:scheduled,followCurrent:{asOf}});
+    assert.equal(again.status,'VERIFIED_CURRENT_NO_WRITE');assert.equal(f.state.patches.length,1);
+    assert.deepEqual(f.state.events.slice(before).filter(e=>['input','claim','patch'].includes(e)),[]);
+  }
+  // Without the scheduled flag the same placeholder plan is an ordinary plan whose previous body does not match.
+  const g=await fixture(t),api=apiInputs(g),plain=await g.run({plan:{...api.plan,previousBodySha256:ZERO,fee:null}});
+  assert.deepEqual([plain.status,plain.stage,plain.patchAttempts],['REFUSED','CURRENT',0]);assert.equal(g.state.claimCalls,0);
+  // The flag is only for an API plan without a handoff, with a real date; anything else is refused before any read.
+  for(const [p,follow] of [[{...api.plan,previousBodySha256:ZERO},{asOf:'2026-10-30'}],[{...g.plan,previousBodySha256:ZERO,fee:null},{asOf:'2026-10-30'}],
+    [{...api.plan,previousBodySha256:ZERO,fee:null},{asOf:'2026-10-30',extra:1}],[{...api.plan,previousBodySha256:ZERO,fee:null},{asOf:'tomorrow'}],[{...api.plan,previousBodySha256:ZERO,fee:null},{}],
+    [{mode:'verify-current',previousBodySha256:ZERO,bundleId:null,original:null,input:null,library:null,fee:null},{asOf:'2026-10-30'}]]){
+    const reads=g.state.reads,x=await g.run({plan:p,followCurrent:follow});assert.equal(x.status,'REFUSED');assert.equal(x.stage,'PLAN');assert.equal(g.state.reads,reads);
+  }
+  // The snapshot changing between the first read and the write is still refused: the lock uses the hash that was followed.
+  const h=await fixture(t),hp=apiInputs(h),read=h.io.readDestination;let n=0;
+  h.io.readDestination=async file=>{const v=await read(file);if(++n===2)v.revision='c'.repeat(40);return v;};
+  const moved=await h.run({plan:{...hp.plan,previousBodySha256:ZERO,fee:null},followCurrent:{asOf:'2026-10-31'}});
+  assert.deepEqual([moved.status,moved.stage,moved.patchAttempts],['REFUSED','PREWRITE',0]);assert.equal(h.state.patches.length,0);
+});
 test('the plan and the pinned original must agree on the source kind; a mismatch stops before the fee gate, claim or write',async t=>{
   // An API original under a Library-bound plan.
   const a=await fixture(t),api=apiInputs(a),bound=await a.run({plan:{...api.plan,library:a.plan.library}});

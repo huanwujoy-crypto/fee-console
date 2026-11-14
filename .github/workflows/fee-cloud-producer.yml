@@ -552,11 +552,19 @@ jobs:
           fi
 
   ratio-preflight:
-    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && !inputs.confirmed_main && !inputs.ib_envelope_once && !inputs.ib_envelope_main && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor_id == '283054367' && github.run_attempt == 1 && inputs.report_kind != 'automatic-daily' && inputs.ratio_plan != '' && inputs.ratio_main == github.sha && !inputs.run_reviewed_once && !inputs.source_plan_check_only && !inputs.source_acceptance_once && !inputs.source_probe_once && !inputs.source_probe_main && !inputs.source_probe_target }}
+    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && !inputs.confirmed_main && !inputs.ib_envelope_once && !inputs.ib_envelope_main && github.ref == 'refs/heads/main' && github.run_attempt == 1 && ((github.event_name == 'workflow_dispatch' && github.actor_id == '283054367' && inputs.report_kind != 'automatic-daily' && inputs.ratio_plan != '' && inputs.ratio_main == github.sha && !inputs.run_reviewed_once && !inputs.source_plan_check_only && !inputs.source_acceptance_once && !inputs.source_probe_once && !inputs.source_probe_main && !inputs.source_probe_target) || (github.event_name == 'schedule' && github.event.schedule == '0 1 * * *' && vars.FEE_RATIO_AUTO_ENABLED == 'true')) }}
+    # A scheduled ratio problem must not mark the scheduled fee run as failed
+    # (the supervisor counts failed producer runs). A manual dispatch still fails.
+    continue-on-error: ${{ github.event_name == 'schedule' }}
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
       contents: read
+    # The only value passed on: whether there is anything to publish. A manual
+    # dispatch is always due; the scheduled slot is due only when the reviewed
+    # calendar proves a session on the previous Hong Kong date.
+    outputs:
+      due: ${{ steps.ratio_admission.outputs.ratio_due }}
     steps:
       - name: Check out exact reviewed ratio code
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -564,13 +572,20 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
       - name: Validate manual ratio admission without financial credentials
+        id: ratio_admission
         env:
           GITHUB_TOKEN: ${{ github.token }}
           RATIO_PLAN: ${{ inputs.ratio_plan }}
+          FEE_RATIO_AUTO_ENABLED: ${{ vars.FEE_RATIO_AUTO_ENABLED }}
+          RATIO_SCHEDULE: ${{ github.event.schedule }}
+          FEE_REPORT_MARKETS: ${{ vars.FEE_REPORT_MARKETS }}
         run: node scripts/fee-ratio-cloud-runtime.mjs --preflight
 
   ratio:
-    needs: ratio-preflight
+    # Also after the fee source job of the same run, whatever its outcome, so a
+    # scheduled ratio never reads Sharesight while the fee report is reading it.
+    # In a manual ratio run that job is skipped and this waits for nothing.
+    needs: [ratio-preflight, produce]
     # Fee-first critical section, shared only with the protected promote job.
     # Job-level and FIFO-queued (never replaced, never cancelled for a newer
     # run while queue room remains). A holder never waits on another workflow,
@@ -579,7 +594,8 @@ jobs:
       group: fee-publication-critical
       cancel-in-progress: false
       queue: max
-    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && !inputs.confirmed_main && !inputs.ib_envelope_once && !inputs.ib_envelope_main && needs.ratio-preflight.result == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && inputs.ratio_main == github.sha && !inputs.source_probe_once && !inputs.source_probe_main && !inputs.source_probe_target }}
+    if: ${{ !inputs.ib_diagnostic_once && !inputs.ib_diagnostic_main && !inputs.confirmed_main && !inputs.ib_envelope_once && !inputs.ib_envelope_main && !cancelled() && needs.ratio-preflight.result == 'success' && needs.ratio-preflight.outputs.due == 'true' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && ((github.event_name == 'workflow_dispatch' && inputs.ratio_main == github.sha && !inputs.source_probe_once && !inputs.source_probe_main && !inputs.source_probe_target) || (github.event_name == 'schedule' && github.event.schedule == '0 1 * * *' && vars.FEE_RATIO_AUTO_ENABLED == 'true')) }}
+    continue-on-error: ${{ github.event_name == 'schedule' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: fee-cloud-producer
@@ -593,7 +609,7 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
       - name: Authenticate existing cloud identity for pinned ratio inputs only
-        if: ${{ fromJSON(inputs.ratio_plan).mode == 'publish' || fromJSON(inputs.ratio_plan).mode == 'publish-api' }}
+        if: ${{ github.event_name == 'schedule' || fromJSON(inputs.ratio_plan || '{}').mode == 'publish' || fromJSON(inputs.ratio_plan || '{}').mode == 'publish-api' }}
         id: ratio-auth
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
         with:
@@ -613,14 +629,14 @@ jobs:
       # directory. (Owner decision 2026-11-14: step-level instead of job-level
       # separation, so that one dispatch can capture and publish.)
       - name: Authenticate for the Sharesight pair of an API capture only
-        if: ${{ fromJSON(inputs.ratio_plan).mode == 'publish-api' }}
+        if: ${{ github.event_name == 'schedule' || fromJSON(inputs.ratio_plan || '{}').mode == 'publish-api' }}
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
         with:
           project_id: family-portfolio-gateway
           workload_identity_provider: projects/860729177589/locations/global/workloadIdentityPools/fee-console-github/providers/fee-console-main
           service_account: fee-cloud-producer@family-portfolio-gateway.iam.gserviceaccount.com
       - name: Read only the existing Sharesight pair for an API capture
-        if: ${{ fromJSON(inputs.ratio_plan).mode == 'publish-api' }}
+        if: ${{ github.event_name == 'schedule' || fromJSON(inputs.ratio_plan || '{}').mode == 'publish-api' }}
         id: ratio_capture_credentials
         uses: google-github-actions/get-secretmanager-secrets@bc9c54b29fdffb8a47776820a7d26e77b379d262
         with:
@@ -628,9 +644,12 @@ jobs:
             client_id:family-portfolio-gateway/sharesight-broker-sync-client-id/1
             client_secret:family-portfolio-gateway/sharesight-broker-sync-client-secret/1
       - name: Capture the ratio source from the Sharesight API without any publication secret
-        if: ${{ fromJSON(inputs.ratio_plan).mode == 'publish-api' }}
+        if: ${{ github.event_name == 'schedule' || fromJSON(inputs.ratio_plan || '{}').mode == 'publish-api' }}
         env:
           RATIO_PLAN: ${{ inputs.ratio_plan }}
+          FEE_RATIO_AUTO_ENABLED: ${{ vars.FEE_RATIO_AUTO_ENABLED }}
+          RATIO_SCHEDULE: ${{ github.event.schedule }}
+          FEE_REPORT_MARKETS: ${{ vars.FEE_REPORT_MARKETS }}
           RATIO_STORAGE_ACCESS_TOKEN: ${{ steps.ratio-auth.outputs.access_token }}
           FEE_CLOUD_SHARESIGHT_CLIENT_ID: ${{ steps.ratio_capture_credentials.outputs.client_id }}
           FEE_CLOUD_SHARESIGHT_CLIENT_SECRET: ${{ steps.ratio_capture_credentials.outputs.client_secret }}
@@ -642,6 +661,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           RATIO_PLAN: ${{ inputs.ratio_plan }}
+          FEE_RATIO_AUTO_ENABLED: ${{ vars.FEE_RATIO_AUTO_ENABLED }}
+          RATIO_SCHEDULE: ${{ github.event.schedule }}
+          FEE_REPORT_MARKETS: ${{ vars.FEE_REPORT_MARKETS }}
           RATIO_STORAGE_ACCESS_TOKEN: ${{ steps.ratio-auth.outputs.access_token }}
           FEE_RATIO_MANAGER_TOKEN: ${{ secrets.FEE_RATIO_MANAGER_TOKEN }}
           FEE_DATA_KEY: ${{ secrets.FEE_DATA_KEY }}

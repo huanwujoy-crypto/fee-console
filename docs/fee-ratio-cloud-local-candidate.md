@@ -55,6 +55,34 @@ publish plan uses `mode: "publish"` and two `{name,generation,sha256}` reference
 `inputs/<64-hex-bundle>/original.json` and `input.json`. `library` is the approved
 private source `{fileId,version}`. No arbitrary URL, destination or secret is input.
 
+### Scheduled ratio (owner decision, 2026-11-14)
+
+The first daily schedule slot (`0 1 * * *`, 09:00 Hong Kong) may also publish
+the ratio, in the same run as the scheduled fee report and independently of it.
+It is a separate opt-in: the repository variable `FEE_RATIO_AUTO_ENABLED` must
+be `true`. Setting it to anything else returns the ratio to manual dispatch and
+changes nothing for the fee report. No job, input, run title, secret or
+credential is added; the existing `ratio-preflight` and `ratio` jobs gain a
+schedule branch beside the unchanged owner dispatch.
+
+- Target: the Hong Kong date before the run, and only when the reviewed market
+  calendar proves a session on that date for `FEE_REPORT_MARKETS`. A day with
+  no session publishes nothing and reads nothing. An unknown venue or year
+  refuses.
+- Plan: an ordinary `publish-api` plan with `fee: null`, derived by the code,
+  never supplied by an operator. Its previous-body field is a placeholder; the
+  publication step takes the just-read, fully verified current snapshot as the
+  previous one, and every later lock uses that exact hash, so a snapshot that
+  changes during the run is refused as before.
+- Once a day: only the first slot carries the ratio, and a current snapshot
+  already at or beyond the target date is left untouched.
+- A scheduled ratio failure does not mark the scheduled run as failed (job-level
+  `continue-on-error` on schedule only), so it cannot raise a fee-producer
+  alert; its closed safe result is still printed and retained as an artifact.
+- A missed or failed first slot is not retried by the later slots; publish
+  manually for that day. The fee report's own 11:30 and 14:00 slots are
+  unaffected, and `ratio` jobs never count as fee source attempts.
+
 ### Fee-first gate
 
 **The handoff is optional (owner decision, 2026-11-14).** A publish plan may
