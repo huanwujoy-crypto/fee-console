@@ -32,6 +32,12 @@ function perfReport(g,w){
     sub_totals:[{group_id:7,group_name:'VC/PE',value:10,total_gain:1,total_gain_percent:2.5},{group_id:7,group_name:'美国底仓',value:20,total_gain:2,total_gain_percent:3.5}],
     cash_accounts:base.cash_accounts.map(c=>({...c,total_gain:null,total_gain_percent:null}))};
 }
+// Holdings listings: the six report positions (ids 9000-9005) each carry a
+// first-buy date; one extra sold-out holding carries one too.
+const viewHoldingsUrl=API+'/api/v3/portfolios/39/holdings?consolidated=true',memberHoldingsUrl=a=>`${API}/api/v3/portfolios/${a.id}/holdings?consolidated=false`;
+const TRADES_URL=`${API}/api/v3/portfolios/${accounts[0].id}/trades.json?consolidated=false&end_date=${TARGET}`;
+const listedHolding=(a,hid,when)=>({id:hid,portfolio_id:a.id,inception_date:when,instrument:{code:'SYN',market_code:'TEST'},valid_position:true});
+const memberHoldings=a=>{const i=accounts.indexOf(a);return {holdings:i<6?[listedHolding(a,9000+i,'2021-03-0'+(i+1)),...(i===0?[listedHolding(a,9900,'2019-01-02')]:[])]:[]};};
 function routes(edit=()=>{}){
   const r=new Map([
     [API+'/oauth2/token',{access_token:TOKEN,token_type:'Bearer'}],
@@ -39,6 +45,9 @@ function routes(edit=()=>{}){
     [API+'/api/v2/portfolios.json',{portfolios:[...accounts,{id:777,name:'Invented outsider'}]}],
     [API+'/api/v2/groups.json',{groups:[{id:88,name:RATIO_PROBE_GROUP},{id:89,name:'Invented other group'},...PERF_GROUPS.filter(g=>g.key!=='asset').map(g=>({id:g.id,name:g.name}))]}],
     ...PERF_GROUPS.flatMap(g=>['all','oneYear'].map(w=>[perfUrl(g,w),{report:perfReport(g,w)}])),
+    [viewHoldingsUrl,{holdings:accounts.slice(0,6).map((a,i)=>listedHolding(a,9000+i,null))}],
+    ...accounts.map(a=>[memberHoldingsUrl(a),memberHoldings(a)]),
+    [TRADES_URL,{trades:[{id:1,holding_id:9000,portfolio_id:accounts[0].id,transaction_date:'2021-03-01',description_code:'BUY',state:'confirmed',quantity:3,price:411.5},{id:2,holding_id:9900,portfolio_id:accounts[0].id,transaction_date:'2020-05-05',description_code:'SELL',state:'confirmed',quantity:1,price:9.75}]}],
     [REPORT_URL,{report:report(),api_transaction:{id:1,version:3,action:'/api/v3/example',timestamp:'2026-11-11T02:00:00.000Z'},links:{self:'https://www.example.com/api/v3/example'}}]]);
   edit(r);return r;
 }
@@ -57,10 +66,10 @@ const run=(map,options={})=>{const s=stub(map,options.stub);return runRatioSourc
 // The reviewed ten-account scope hash is for the real names; synthetic names never match it.
 const leakFree=(result)=>{const text=JSON.stringify(result);for(const secret of [SECRET,CLIENT,TOKEN,'Invented','SYN0','1234.5','77.25','39','88'].filter(s=>s.length>3))assert.equal(text.includes(secret),false,secret);};
 
-test('complete synthetic read makes exactly thirteen fixed requests, GET-only after the token, and reports value-free facts',async()=>{
+test('complete synthetic read makes exactly twenty-five fixed requests, GET-only after the token, and reports value-free facts',async()=>{
   const {result,calls}=await run(routes());
-  assert.equal(result.outcome,'REPORT_PROJECTED');assert.equal(result.stage,'COMPLETE');assert.equal(result.code,null);assert.equal(result.requests,13);
-  assert.deepEqual(calls.map(c=>[c.method,c.url]),[['POST',API+'/oauth2/token'],['GET',API+'/api/v3/portfolios?consolidated=true'],['GET',API+'/api/v2/portfolios.json'],['GET',API+'/api/v2/groups.json'],['GET',REPORT_URL],...PERF_GROUPS.flatMap(g=>['all','oneYear'].map(w=>['GET',perfUrl(g,w)]))]);
+  assert.equal(result.outcome,'REPORT_PROJECTED');assert.equal(result.stage,'COMPLETE');assert.equal(result.code,null);assert.equal(result.requests,25);
+  assert.deepEqual(calls.map(c=>[c.method,c.url]),[['POST',API+'/oauth2/token'],['GET',API+'/api/v3/portfolios?consolidated=true'],['GET',API+'/api/v2/portfolios.json'],['GET',API+'/api/v2/groups.json'],['GET',REPORT_URL],...PERF_GROUPS.flatMap(g=>['all','oneYear'].map(w=>['GET',perfUrl(g,w)])),['GET',viewHoldingsUrl],...accounts.map(a=>['GET',memberHoldingsUrl(a)]),['GET',TRADES_URL]]);
   assert.equal(calls[0].auth,null);assert.equal(calls.slice(1).every(c=>c.auth==='Bearer '+TOKEN&&c.body===null),true);assert.equal(calls.every(c=>c.redirect==='error'),true);
   const f=result.facts;
   assert.deepEqual([f.consolidatedViewMatches,f.groupMatches,f.viewCurrencyIsUsd,f.viewDeclaresMembers,f.membersSource,f.memberCountIsTen,f.everyMemberListed,f.observedWithinMembers,f.rootHasOnlyKnownKeys],[1,1,true,true,'view',true,true,true,true]);
@@ -93,6 +102,29 @@ test('eight performance reports are described by field names and kinds only; one
   if(last!=='stock')assert.deepEqual(m.reports['stock.all'],{read:false,code:'RATIO_PROBE_INCOMPLETE'});
   leakFree(mixed.result);
   assert.equal(ratioPerformanceShapeFacts(undefined,{start:'a',end:'b',groupId:'1',groupName:'x'}).has.holdings,false);
+});
+
+test('first-buy dates: member holdings listings are matched to the report positions by counts and field names only',async()=>{
+  const {result}=await run(routes());const n=result.facts.inception;
+  assert.deepEqual([n.consolidated.read,n.consolidated.inceptionDates,n.consolidated.fields.inception_date],[true,'NONE','null']);
+  assert.deepEqual([n.membersRead,n.memberCodes],[10,[]]);
+  assert.equal(n.holding.fields.inception_date,'string');
+  assert.deepEqual(n.anomalies,{listedWithoutInceptionDate:0,inceptionAfterTarget:0,listedWithoutId:0});
+  assert.deepEqual(n.classification,{everyPositionListed:true,positionsNotListed:0,listedPositionsWithoutDate:0});
+  assert.deepEqual([n.trades.read,n.trades.hasRows,n.trades.descriptionCodes,n.trades.states,n.trades.transactionDates,n.trades.withHoldingId],[true,true,['BUY','SELL'],['confirmed'],'ALL','ALL']);
+  assert.equal(n.trades.fields.price,'number');
+  leakFree(result);for(const secret of ['2021-03','2019-01','2020-05','411.5','9.75','9900'])assert.equal(JSON.stringify(n).includes(secret),false,secret);
+  // Gaps are counted, unreadable members are one fixed code each, and odd codes are not echoed.
+  const gaps=await run(routes(r=>{
+    r.get(memberHoldingsUrl(accounts[1])).holdings[0].inception_date=null;r.get(memberHoldingsUrl(accounts[2])).holdings=[];
+    r.get(memberHoldingsUrl(accounts[3])).holdings[0].inception_date='2026-12-01';r.delete(memberHoldingsUrl(accounts[9]));r.get(memberHoldingsUrl(accounts[8])).links={next:'x'};
+    r.get(TRADES_URL).trades[0].description_code='Invented free text 123';r.get(TRADES_URL).trades[1].holding_id=null;}));
+  const g=gaps.result.facts.inception;
+  assert.equal(gaps.result.outcome,'REPORT_PROJECTED');
+  assert.deepEqual([g.membersRead,g.memberCodes],[8,['RATIO_PROBE_INCOMPLETE','RATIO_PROBE_TRANSPORT']]);
+  assert.deepEqual(g.anomalies,{listedWithoutInceptionDate:1,inceptionAfterTarget:1,listedWithoutId:0});
+  assert.deepEqual(g.classification,{everyPositionListed:false,positionsNotListed:1,listedPositionsWithoutDate:1});
+  assert.deepEqual([g.trades.descriptionCodes,g.trades.withHoldingId],[['OTHER','SELL'],'NOT_ALL']);leakFree(gaps.result);
 });
 
 test('members fall back to the report rows when the view declares none; a different count stops at MEMBERS',async()=>{
@@ -152,8 +184,8 @@ test('admission accepts only the exact owner dispatch, main, first attempt, the 
 });
 
 test('budget, shape facts and the dispatch workflow stay fixed and read-only',()=>{
-  assert.deepEqual(RATIO_PROBE_BUDGET,{requests:13,overallMs:300000,requestMs:30000,reportBytes:8388608});
-  assert.deepEqual(RATIO_PROBE_STAGES,['ADMISSION','TOKEN','VIEWS','PORTFOLIOS','GROUPS','REPORT','PROJECTION','PERFORMANCE','COMPLETE']);
+  assert.deepEqual(RATIO_PROBE_BUDGET,{requests:25,overallMs:300000,requestMs:30000,reportBytes:8388608});
+  assert.deepEqual(RATIO_PROBE_STAGES,['ADMISSION','TOKEN','VIEWS','PORTFOLIOS','GROUPS','REPORT','PROJECTION','PERFORMANCE','INCEPTION','COMPLETE']);
   assert.equal(new Set(RATIO_PROBE_CODES).size,RATIO_PROBE_CODES.length);
   const facts=ratioReportShapeFacts({holdings:[null,{value:'9',limited:true}],cash_accounts:'none',value:1.001});
   assert.deepEqual([facts.anomalies.holdingsNotUnlimited,facts.anomalies.holdingValuesNotNumeric,facts.anomalies.reportValueBeyondCents,facts.hasCash,facts.grouping],[2,2,1,false,'OTHER']);
