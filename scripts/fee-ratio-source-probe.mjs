@@ -12,7 +12,7 @@
 //   6-13 GET the same route for four custom groups x two windows (shape only)
 //   14    GET /api/v3/portfolios/{view}/holdings?consolidated=true (shape only)
 //   15-24 GET /api/v3/portfolios/{member}/holdings?consolidated=false, one per member
-//   25    GET /api/v3/portfolios/{member}/trades.json for one member (shape only)
+//   25-34 GET /api/v3/portfolios/{member}/trades.json, one per member
 //
 // It writes no file, candidate, snapshot, issue or artifact, reads no ledger,
 // fee key, manager token or storage, and publishes nothing. The printed
@@ -41,7 +41,7 @@ const OFF=['ib_diagnostic_once','ib_envelope_once','source_plan_check_only','sou
 const BLANK=['ib_diagnostic_main','ib_envelope_main','ratio_main','ratio_plan','source_from','source_target','source_main','manual_sync_completed_for','confirmed_main','recovery_main','report_kind','report_target','report_markets'];
 const off=v=>v===undefined||v===false||v==='false',blank=v=>v===undefined||v==='';
 export const RATIO_PROBE_STAGES=Object.freeze(['ADMISSION','TOKEN','VIEWS','PORTFOLIOS','GROUPS','REPORT','PROJECTION','PERFORMANCE','INCEPTION','COMPLETE']);
-export const RATIO_PROBE_BUDGET=Object.freeze({requests:25,overallMs:300000,requestMs:30000,reportBytes:8*1024*1024});
+export const RATIO_PROBE_BUDGET=Object.freeze({requests:34,overallMs:300000,requestMs:30000,reportBytes:8*1024*1024});
 export const RATIO_PROBE_VIEW='All Together',RATIO_PROBE_GROUP='资产类别';
 // The four existing custom groups the performance section is read through,
 // found by exact name in the account's own group list (never by a stored id),
@@ -170,6 +170,8 @@ export function ratioPerformanceShapeFacts(report,expected){
     anomalies:{holdingsNotUnlimited:count(holdings,h=>h.limited!==false),holdingsWithoutGroupName:count(holdings,h=>typeof h.group_name!=='string'||!h.group_name),holdingsWithoutPortfolio:count(holdings,h=>!object(h.portfolio)||!id(h.portfolio.id))}
   };
 }
+// Size class of a count: enough to judge how common a case is, without the count itself.
+const bucket=n=>n===0?'NONE':n<=5?'1_TO_5':n<=20?'6_TO_20':'OVER_20';
 const safeCode=error=>{const m=String(error?.message||'');return RATIO_PROBE_CODES.includes(m)?m:'RATIO_PROBE_FAILED';};
 const newResult=()=>({schema:RATIO_PROBE_SCHEMA,mode:'probe',outcome:'FAILED',stage:'ADMISSION',code:null,diagnostic:null,requests:0,requestBudget:RATIO_PROBE_BUDGET.requests,facts:null});
 
@@ -256,7 +258,7 @@ async function probeWork({argv,env,event,now=new Date(),fetchImpl=globalThis.fet
     const allGroups=listedGroups,performance=facts.performance={complete:false,reports:{}};
     const oneYear=new Date(Date.parse(d+'T00:00:00Z'));oneYear.setUTCFullYear(oneYear.getUTCFullYear()-1);
     const starts={all:ALL_WINDOW_START,oneYear:oneYear.toISOString().slice(0,10)};
-    let reference=null,good=0;
+    let reference=null,good=0;const everHeld=new Set();
     for(const [key,name]of Object.entries(RATIO_PROBE_PERFORMANCE_GROUPS)){
       const matches=allGroups.filter(g=>object(g)&&g.name===name),gid=matches.length===1?id(matches[0].id):null;
       for(const window of RATIO_PROBE_PERFORMANCE_WINDOWS){
@@ -266,6 +268,8 @@ async function probeWork({argv,env,event,now=new Date(),fetchImpl=globalThis.fet
         try{
           const body=complete(await get(`/api/v3/portfolios/${viewId}/performance?consolidated=true&custom_group_id=${gid}&end_date=${d}&grouping=custom_group&include_limited=true&include_sales=true&report_combined=false&start_date=${starts[window]}`,RATIO_PROBE_BUDGET.reportBytes));
           if(!object(body.report))fail('SHAPE');
+          // Positions these reports cover, sold ones included: kept in memory only.
+          for(const h of Array.isArray(body.report.holdings)?body.report.holdings:[]){const pid=object(h?.portfolio)?id(h.portfolio.id):null,hid=object(h)?id(h.id):null;if(pid&&hid)everHeld.add(pid+'|'+hid);}
           const shape=ratioPerformanceShapeFacts(complete(body.report),{start:starts[window],end:d,groupId:gid,groupName:name}),text=JSON.stringify([shape.report,shape.holding,shape.subTotal,shape.cash]);
           // The full field list is printed once; later reports say whether theirs is identical.
           if(reference===null){reference=text;performance.reports[slot]={read:true,...shape};}
@@ -284,7 +288,7 @@ async function probeWork({argv,env,event,now=new Date(),fetchImpl=globalThis.fet
     // trades routes the fee reader already uses, here for the ten members.
     // Only field names, enumerated codes and counts of anomalies are kept.
     result.stage='INCEPTION';
-    const inception=facts.inception={consolidated:null,membersRead:0,memberCodes:[],holding:null,anomalies:null,classification:null,trades:null};
+    const inception=facts.inception={consolidated:null,membersRead:0,memberCodes:[],holding:null,anomalies:null,classification:null,performance:null,trades:null};
     const slot=async(route,key,use)=>{
       if(result.requests>=RATIO_PROBE_BUDGET.requests||state.deadlineExceeded||deadlineSignal.aborted)return {read:false,code:'RATIO_PROBE_BUDGET'};
       try{return {read:true,...use(listed(await get(route,RATIO_PROBE_BUDGET.reportBytes),key))};}
@@ -308,8 +312,29 @@ async function probeWork({argv,env,event,now=new Date(),fetchImpl=globalThis.fet
     // Every position of the classification report should be found, with a date.
     const held=(Array.isArray(report.holdings)?report.holdings:[]).map(h=>(object(h?.portfolio)?id(h.portfolio.id):null)+'|'+(object(h)?id(h.id):null));
     inception.classification={everyPositionListed:held.every(k=>listing.has(k)),positionsNotListed:held.filter(k=>!listing.has(k)).length,listedPositionsWithoutDate:held.filter(k=>listing.has(k)&&!dated(listing.get(k))).length};
+    // The performance reports also cover sold positions. Are those listed with a date too?
+    const ever=[...everHeld];
+    inception.performance={everyHoldingListed:ever.every(k=>listing.has(k)),holdingsNotListed:bucket(ever.filter(k=>!listing.has(k)).length),listedWithoutDate:bucket(ever.filter(k=>listing.has(k)&&!dated(listing.get(k))).length),coversMoreThanCurrentPositions:ever.some(k=>!held.includes(k))};
     const enumerated=(rows,key,pattern)=>{const out=new Set();for(const r of rows){const v=object(r)?r[key]:undefined;out.add(typeof v==='string'&&pattern.test(v)?v:v===undefined?'ABSENT':'OTHER');}return [...out].sort().slice(0,40);};
-    inception.trades=await slot(`/api/v3/portfolios/${accounts[0].id}/trades.json?consolidated=false&end_date=${d}`,'trades',rows=>({hasRows:rows.length>0,descriptionCodes:enumerated(rows,'description_code',/^[A-Z][A-Z_]{0,23}$/),states:enumerated(rows,'state',/^[a-z][a-z_]{0,15}$/),transactionDates:rows.length===0?'NO_ROWS':rows.every(r=>object(r)&&date(r.transaction_date))?'ALL':'NOT_ALL',withHoldingId:rows.length===0?'NO_ROWS':rows.every(r=>object(r)&&id(r.holding_id))?'ALL':'NOT_ALL',...fieldKinds(rows)}));
+    // What is each listed holding's earliest confirmed record, and does the
+    // listing's first-buy date equal that record's date? Size classes only.
+    const allTrades=[];let tradeMembers=0;const tradeCodes=new Set();
+    for(const account of accounts){
+      const got=await slot(`/api/v3/portfolios/${account.id}/trades.json?consolidated=false&end_date=${d}`,'trades',rows=>{for(const r of rows)allTrades.push([account.id,r]);return {};});
+      if(got.read)tradeMembers++;else tradeCodes.add(got.code);
+    }
+    const rows=allTrades.map(([,r])=>r),first=new Map();
+    for(const [pid,r]of allTrades){
+      if(!object(r)||r.state!=='confirmed'||!date(r.transaction_date)||!id(r.holding_id))continue;
+      const k=pid+'|'+id(r.holding_id),code=typeof r.description_code==='string'&&/^[A-Z][A-Z_]{0,23}$/.test(r.description_code)?r.description_code:'OTHER',seen=first.get(k);
+      // The same earliest date can carry several records; an opening balance on that date counts as one.
+      if(!seen||r.transaction_date<seen.date)first.set(k,{date:r.transaction_date,codes:new Set([code])});else if(r.transaction_date===seen.date)seen.codes.add(code);
+    }
+    const listedKeys=[...listing.keys()],kindOf=k=>{const f=first.get(k);return !f?'NO_CONFIRMED_RECORD':f.codes.has('OPENING_BALANCE')?'OPENING_BALANCE':f.codes.has('BUY')?'BUY':'OTHER';};
+    const classes=keys=>Object.fromEntries(['BUY','OPENING_BALANCE','OTHER','NO_CONFIRMED_RECORD'].map(c=>[c,bucket(keys.filter(k=>kindOf(k)===c).length)]));
+    inception.trades={membersRead:tradeMembers,memberCodes:[...tradeCodes].sort(),hasRows:rows.length>0,descriptionCodes:enumerated(rows,'description_code',/^[A-Z][A-Z_]{0,23}$/),states:enumerated(rows,'state',/^[a-z][a-z_]{0,15}$/),transactionDates:rows.length===0?'NO_ROWS':rows.every(r=>object(r)&&date(r.transaction_date))?'ALL':'NOT_ALL',withHoldingId:rows.length===0?'NO_ROWS':rows.every(r=>object(r)&&id(r.holding_id))?'ALL':'NOT_ALL',
+      earliestRecordOfCurrentPositions:classes(held.filter(k=>listing.has(k))),earliestRecordOfAllListedHoldings:classes(listedKeys),
+      firstBuyDateDiffersFromEarliestRecord:bucket(listedKeys.filter(k=>first.has(k)&&dated(listing.get(k))&&listing.get(k).inception_date!==first.get(k).date).length),...fieldKinds(rows)};
     token=null;
     result.stage='COMPLETE';result.outcome='REPORT_PROJECTED';return result;
   }catch(error){
