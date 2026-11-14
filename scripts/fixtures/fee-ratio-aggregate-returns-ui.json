@@ -1,7 +1,7 @@
 {
   "schema": "fee-console.ratio-aggregate-ui-stage.v1",
   "priorSha256": "e98b04d9f95353596410cf1f6c7a1f06a3072dca9d6211a5f390afcb6fa2b194",
-  "nextSha256": "8a5a9671e894c0e3d6637f6384b89457d908fa54e846b3ed748867dd1fff685d",
+  "nextSha256": "98fae5615fbe3e2f2996c1d0f9a69be3d3729f2493bf817076a71ce93bf32e97",
   "regions": [
     {
       "prior": ".ratio-fund-distribution{margin-bottom:10px}.ratio-fund-distribution h2{margin-bottom:4px}.ratio-fund-distribution>p{font-size:11px;color:var(--ink-2);margin:0 0 8px}.ratio-distribution-row{margin:8px 0}.ratio-distribution-label{display:flex;justify-content:space-between;gap:12px;font-size:12px;line-height:1.5}.ratio-distribution-label span{min-width:0;overflow-wrap:anywhere}.ratio-distribution-label strong{flex-shrink:0;font-variant-numeric:tabular-nums}.ratio-distribution-track{height:6px;background:var(--line);border-radius:4px;overflow:hidden;margin-top:4px}.ratio-distribution-track i{display:block;height:100%;background:var(--accent,#4d8ec9);border-radius:4px}.ratio-fund-distribution details{font-size:11px;color:var(--ink-2);margin-top:10px}\n</style>\n",
@@ -393,8 +393,72 @@
       "name": "browser-inception-v2-version",
       "prior": "const UI_VERSION_LABEL=\" · v4.9.52\";",
       "next": "const UI_VERSION_LABEL=\" · v4.9.53\";"
+    },
+    {
+      "prior": "<meta name=\"fee-console-build\" content=\"4.9.53\">\n",
+      "next": "<meta name=\"fee-console-build\" content=\"4.9.54\">\n"
+    },
+    {
+      "prior": "const UI_VERSION_LABEL=\" · v4.9.53\";\n",
+      "next": "const UI_VERSION_LABEL=\" · v4.9.54\";\n"
+    },
+    {
+      "prior": "    && amount(g.totalValueUSD) && g.totalValueUSD > 0 && g.basis === (i === 3 ? secondaryBasis : 'direct')\n",
+      "next": "    && amount(g.totalValueUSD) && g.totalValueUSD > 0 && (g.basis === 'direct' ? i < 3 || official : i === 3 && g.basis === secondaryBasis)\n"
+    },
+    {
+      "prior": "    check(official && i === 3 || sum(g.top5.map(r => r.valueUSD)) <= g.totalValueUSD + .05, 'RANKED_TOTAL');\n    return {category: g.name, totalUsd: g.totalValueUSD, top: g.top5.map(r => ({name: r.name,\n",
+      "next": "    // A v2 secondary class declared 'direct' ranks actually held securities at\n    // asset value: no look-through, no leverage, and it must fit the class total.\n    const directSecondary = i === 3 && g.basis === 'direct';\n    check(official && i === 3 && !directSecondary || sum(g.top5.map(r => r.valueUSD)) <= g.totalValueUSD + .05, 'RANKED_TOTAL');\n    return {category: g.name, totalUsd: g.totalValueUSD, ...(directSecondary ? {directOnly: true} : {}), top: g.top5.map(r => ({name: r.name,\n"
+    },
+    {
+      "prior": "    + m.groups.map((g, i) => `<section><h3>${i + 1}. ${esc(g.category)} · ${i === 3 ? 'Exposure个股' : '直接持仓'}前五</h3><p>本类资产 ${esc(usd(g.totalUsd))}</p>${table(g.top)}</section>`).join('')\n",
+      "next": "    + m.groups.map((g, i) => `<section><h3>${i + 1}. ${esc(g.category)} · ${i === 3 && !g.directOnly ? 'Exposure个股' : '直接持仓'}前五</h3><p>本类资产 ${esc(usd(g.totalUsd))}</p>${table(g.top)}</section>`).join('')\n"
+    },
+    {
+      "prior": "  const benchmarkOnly=r=>r.account.replaceAll('&amp;','&')==='Citi-HK & 地产四期'&&['QQQ.NASDAQ','SPY.NYSE'].includes(r.securityCode+'.'+r.market);\n",
+      "next": "  const LOOK_THROUGH_SECONDARY_BASIS='Exposure individual security direct plus ETF look-through, includes cash in class denominator';\n  const benchmarkOnly=r=>r.account.replaceAll('&amp;','&')==='Citi-HK & 地产四期'&&['QQQ.NASDAQ','SPY.NYSE'].includes(r.securityCode+'.'+r.market);\n"
+    },
+    {
+      "prior": "  function build(raw,{sourceSha256,sourceBytes,includeFundDistributions=true,includeAssetAllocation=true,excludeBenchmarkOnly=true,includeFundHoldings=true}={}){\n    if(typeof includeFundDistributions!=='boolean'||typeof includeAssetAllocation!=='boolean'||typeof excludeBenchmarkOnly!=='boolean'||typeof includeFundHoldings!=='boolean')fail();\n",
+      "next": "  function build(raw,{sourceSha256,sourceBytes,includeFundDistributions=true,includeAssetAllocation=true,excludeBenchmarkOnly=true,includeFundHoldings=true,directSecondary=true}={}){\n    if(typeof includeFundDistributions!=='boolean'||typeof includeAssetAllocation!=='boolean'||typeof excludeBenchmarkOnly!=='boolean'||typeof includeFundHoldings!=='boolean'||typeof directSecondary!=='boolean')fail();\n"
+    },
+    {
+      "prior": "      if(i<3){\n",
+      "next": "      // By default all four classes rank actually held positions at their\n      // asset value, merged per security across accounts: an ETF ranks as the\n      // ETF itself. An input prepared under the earlier secondary basis (ETF\n      // look-through rows) is still reproduced exactly when it declares it.\n      if(i<3||directSecondary){\n"
+    },
+    {
+      "prior": "      return {name,totalValueUSD:sum(positions30.concat(cash30).filter(r=>r.fourClass===name)),basis:i===3?'Exposure individual security direct plus ETF look-through, includes cash in class denominator':'direct',...(i===0?{sourceCategory:'VC/PE'}:{}),top5:top};\n",
+      "next": "      return {name,totalValueUSD:sum(positions30.concat(cash30).filter(r=>r.fourClass===name)),basis:i===3&&!directSecondary?LOOK_THROUGH_SECONDARY_BASIS:'direct',...(i===0?{sourceCategory:'VC/PE'}:{}),top5:top};\n"
+    },
+    {
+      "prior": "  return {RAW,INPUT,BENCHMARK_EXCLUDED_BASIS,build,canonical};\n",
+      "next": "  return {RAW,INPUT,BENCHMARK_EXCLUDED_BASIS,LOOK_THROUGH_SECONDARY_BASIS,build,canonical};\n"
+    },
+    {
+      "prior": "  for(const g of exposure.summary.classes.slice(0,3))for(const r of g.top5){\n",
+      "next": "  // A secondary class declared 'direct' ranks actually held securities, so its\n  // targets are those same rows. Company look-through targets are legacy only.\n  const directSecondary=exposure.summary.classes[3]?.basis==='direct';\n  for(const g of exposure.summary.classes.slice(0,directSecondary?4:3))for(const r of g.top5){\n"
+    },
+    {
+      "prior": "   out.push({category:g.name,name:r.name,members:unique(members),basis:'fund-holding'});\n",
+      "next": "   out.push({category:g.name,name:r.name,members:unique(members),basis:g.name==='二级市场'?'direct-holdings-only':'fund-holding'});\n"
+    },
+    {
+      "prior": "  if(companyTop)for(const r of companyTop){\n",
+      "next": "  if(companyTop&&!directSecondary)for(const r of companyTop){\n"
+    },
+    {
+      "prior": "    const groups=view.groups.map((g,i)=>'<section><h3>'+esc(g.category)+(i===3?(company?.top?' · 公司经济敞口前五':' · 原证券口径前五'):' · 直接持仓前五')+'</h3><p>Exposure截至 '+esc(view.valuationDate)+' · 本类资产 '+money(Math.round(g.totalUsd*100))+'</p>'+(i===3&&company?.top?companyCore.render(m.companyExposure,m.exposure,b?.sourceSha256,r=>topReturns('二级市场',r.name)):table(g.top,g.category))+'</section>').join('');\n    const companyStatus=company?.top?'<p class=\"ratio-key-status\">公司经济敞口含显式杠杆，比例可能超过100%；不改变总资产、类别资产及管理费。</p>':company?companyCore.render(m.companyExposure,m.exposure,b?.sourceSha256):'<p class=\"ratio-key-status\">旧快照仅有证券前五，未由同份完整原件重算公司排名；不猜测合并后的前五。</p>';\n",
+      "next": "    // A snapshot whose secondary class is declared 'direct' ranks actually held\n    // securities at asset value. Company look-through is rendered for older\n    // snapshots only; it never replaces a direct ranking.\n    const directSecondary=view.groups[3].directOnly===true;\n    const groups=view.groups.map((g,i)=>'<section><h3>'+esc(g.category)+(i===3&&!directSecondary?(company?.top?' · 公司经济敞口前五':' · 原证券口径前五'):' · 直接持仓前五')+'</h3><p>Exposure截至 '+esc(view.valuationDate)+' · 本类资产 '+money(Math.round(g.totalUsd*100))+'</p>'+(i===3&&!directSecondary&&company?.top?companyCore.render(m.companyExposure,m.exposure,b?.sourceSha256,r=>topReturns('二级市场',r.name)):table(g.top,g.category))+'</section>').join('');\n    const companyStatus=directSecondary?'<p class=\"ratio-key-status\">四类均按实际持有的证券或基金市值排名；二级市场不做ETF穿透、不乘杠杆倍数、不合并不同证券。</p>':company?.top?'<p class=\"ratio-key-status\">公司经济敞口含显式杠杆，比例可能超过100%；不改变总资产、类别资产及管理费。</p>':company?companyCore.render(m.companyExposure,m.exposure,b?.sourceSha256):'<p class=\"ratio-key-status\">旧快照仅有证券前五，未由同份完整原件重算公司排名；不猜测合并后的前五。</p>';\n"
+    },
+    {
+      "prior": "    const method='<p>黄金占比的分母为同日All Together分类来源总资产；已计入对应类别，不额外累加。常青按原始年月后的完整基金名聚合，份额类别和内部连字符保留，先合并全部持仓再选前五。</p>'+(benchmarkExcluded?'<p>指定Citi账户的QQQ／SPY仅作基准取值，不计入投资资产、占比分母和穿透；原始资料及基准用途保留。</p>':'<p>此历史快照仅排除了指定Citi基准的公司穿透，资产总额保留原口径。</p>')+'<p>'+(asset?'下方四类前五沿用原排名分组：二级市场为前三类以外全部资产，含现金，与上方六类中的股票市场范围不同。':'二级市场为前三类以外全部资产，含现金；')+'公司经济敞口只重算分子，不改变真实资产金额、NAV 或费用。仅明确证券及市场映射合并：VST（NYSE）与VSTL（NASDAQ）归Vistra，GOOG／GOOGL（NASDAQ）归Alphabet；未知证券保持独立。</p><p>VSTL按2倍、TQQQ按3倍经济敞口；来源已完整包含相同杠杆时不重复相乘。直接持仓按实际市值降序，穿透按经济敞口降序；各行保留账户。未穿透的残余不猜测归属到个股，ETF本体与底层不双计；真实资产、现金和费用不乘杠杆。</p><p>管理费仍为嘉信＋Webull；Jenny&#39;s IB 收益及回撤独立考核，比例管理不扩大计费范围。</p>';\n",
+      "next": "    const method='<p>黄金占比的分母为同日All Together分类来源总资产；已计入对应类别，不额外累加。常青按原始年月后的完整基金名聚合，份额类别和内部连字符保留，先合并全部持仓再选前五。</p>'+(benchmarkExcluded?'<p>指定Citi账户的QQQ／SPY仅作基准取值，不计入投资资产、占比分母和穿透；原始资料及基准用途保留。</p>':'<p>此历史快照仅排除了指定Citi基准的公司穿透，资产总额保留原口径。</p>')+'<p>'+(asset?'下方四类前五沿用原排名分组：二级市场为前三类以外全部资产，含现金，与上方六类中的股票市场范围不同。':'二级市场为前三类以外全部资产，含现金；')+(directSecondary?'二级市场前五与其余三类一致，按实际持有的证券市值降序；同一证券跨账户合并并保留账户，不同证券不合并。</p><p>ETF和杠杆产品按其自身实际市值列示，不穿透到底层公司，也不乘杠杆倍数。</p><p>管理费':'公司经济敞口只重算分子，不改变真实资产金额、NAV 或费用。仅明确证券及市场映射合并：VST（NYSE）与VSTL（NASDAQ）归Vistra，GOOG／GOOGL（NASDAQ）归Alphabet；未知证券保持独立。</p><p>VSTL按2倍、TQQQ按3倍经济敞口；来源已完整包含相同杠杆时不重复相乘。直接持仓按实际市值降序，穿透按经济敞口降序；各行保留账户。未穿透的残余不猜测归属到个股，ETF本体与底层不双计；真实资产、现金和费用不乘杠杆。</p><p>管理费')+'仍为嘉信＋Webull；Jenny&#39;s IB 收益及回撤独立考核，比例管理不扩大计费范围。</p>';\n"
+    },
+    {
+      "prior": "    const built=core.build(raw,{sourceSha256:input?.book?.sourceSha256,sourceBytes:input?.book?.provenance?.fullSourceBytes,includeFundDistributions:Object.hasOwn(input?.classification||{},'fundDistributions'),includeAssetAllocation:Object.hasOwn(input?.classification||{},'assetAllocation'),excludeBenchmarkOnly:input?.classification?.basis===core.BENCHMARK_EXCLUDED_BASIS,includeFundHoldings:input?.classification?.fundDistributions?.some(f=>f.groups?.some(g=>Object.hasOwn(g,'holdings')))===true});\n",
+      "next": "    const built=core.build(raw,{sourceSha256:input?.book?.sourceSha256,sourceBytes:input?.book?.provenance?.fullSourceBytes,includeFundDistributions:Object.hasOwn(input?.classification||{},'fundDistributions'),includeAssetAllocation:Object.hasOwn(input?.classification||{},'assetAllocation'),excludeBenchmarkOnly:input?.classification?.basis===core.BENCHMARK_EXCLUDED_BASIS,includeFundHoldings:input?.classification?.fundDistributions?.some(f=>f.groups?.some(g=>Object.hasOwn(g,'holdings')))===true,directSecondary:input?.exposure?.summary?.classes?.[3]?.basis!==core.LOOK_THROUGH_SECONDARY_BASIS});\n"
     }
   ],
-  "supportSha256": "24c5fec4206d2e4b97bdb50e2483ae0b6fe243667803e06a024a99216a9e5948",
-  "supportRegionCount": 88
+  "supportSha256": "8a5a9671e894c0e3d6637f6384b89457d908fa54e846b3ed748867dd1fff685d",
+  "supportRegionCount": 92
 }

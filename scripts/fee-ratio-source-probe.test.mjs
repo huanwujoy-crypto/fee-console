@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import {runRatioSourceProbe,ratioProbeArgs,validateRatioProbeAdmission,ratioReportShapeFacts,RATIO_PROBE_CODES,RATIO_PROBE_BUDGET,RATIO_PROBE_STAGES,RATIO_PROBE_VIEW,RATIO_PROBE_GROUP,RATIO_PROBE_INPUTS} from './fee-ratio-source-probe.mjs';
+import {runRatioSourceProbe,ratioProbeArgs,validateRatioProbeAdmission,ratioReportShapeFacts,RATIO_PROBE_CODES,RATIO_PROBE_BUDGET,RATIO_PROBE_STAGES,RATIO_PROBE_VIEW,RATIO_PROBE_GROUP,RATIO_PROBE_INPUTS,RATIO_PROBE_PERFORMANCE_GROUPS,ratioPerformanceShapeFacts} from './fee-ratio-source-probe.mjs';
 globalThis.fetch=async()=>{throw Error('OFFLINE_TEST_NETWORK_FORBIDDEN');};
 
 const MAIN='a'.repeat(40),TARGET='2026-11-10',NOW=new Date('2026-11-11T02:00:00.000Z'),API='https://api.sharesight.com';
@@ -21,12 +21,24 @@ function report(){
   return {id:'PerformanceReport_39',portfolio_id:39,value,grouping:'custom_group_category',custom_group:{id:88,name:RATIO_PROBE_GROUP},currency:{code:'USD'},start_date:TARGET,end_date:TARGET,include_sales:false,percentages_annualised:false,holdings,sub_totals:[],cash_accounts};
 }
 const REPORT_URL=`${API}/api/v3/portfolios/39/performance?consolidated=true&custom_group_id=88&end_date=${TARGET}&grouping=custom_group&include_limited=true&include_sales=false&report_combined=false&start_date=${TARGET}`;
+// Eight synthetic performance reports: four groups (asset reuses group 88) x two windows.
+const PERF_GROUPS=Object.entries(RATIO_PROBE_PERFORMANCE_GROUPS).map(([key,name],i)=>({key,name,id:key==='asset'?88:90+i}));
+const PERF_STARTS={all:'2000-01-01',oneYear:'2025-11-10'};
+const perfUrl=(g,w)=>`${API}/api/v3/portfolios/39/performance?consolidated=true&custom_group_id=${g.id}&end_date=${TARGET}&grouping=custom_group&include_limited=true&include_sales=true&report_combined=false&start_date=${PERF_STARTS[w]}`;
+function perfReport(g,w){
+  const base=report();
+  return {...base,custom_group:{id:g.id,name:g.name},start_date:PERF_STARTS[w],include_sales:true,percentages_annualised:w==='all',
+    holdings:base.holdings.map(h=>({...h,capital_gain:12.5,capital_gain_percent:1.25,total_gain:13.5,total_gain_percent:1.35})),
+    sub_totals:[{group_id:7,group_name:'VC/PE',value:10,total_gain:1,total_gain_percent:2.5},{group_id:7,group_name:'美国底仓',value:20,total_gain:2,total_gain_percent:3.5}],
+    cash_accounts:base.cash_accounts.map(c=>({...c,total_gain:null,total_gain_percent:null}))};
+}
 function routes(edit=()=>{}){
   const r=new Map([
     [API+'/oauth2/token',{access_token:TOKEN,token_type:'Bearer'}],
     [API+'/api/v3/portfolios?consolidated=true',{portfolios:[{id:39,name:RATIO_PROBE_VIEW,consolidated:true,currency_code:'USD',portfolio_ids:accounts.map(a=>a.id)},{id:40,name:'Invented other view',consolidated:true,currency_code:'USD'}]}],
     [API+'/api/v2/portfolios.json',{portfolios:[...accounts,{id:777,name:'Invented outsider'}]}],
-    [API+'/api/v2/groups.json',{groups:[{id:88,name:RATIO_PROBE_GROUP},{id:89,name:'Invented other group'}]}],
+    [API+'/api/v2/groups.json',{groups:[{id:88,name:RATIO_PROBE_GROUP},{id:89,name:'Invented other group'},...PERF_GROUPS.filter(g=>g.key!=='asset').map(g=>({id:g.id,name:g.name}))]}],
+    ...PERF_GROUPS.flatMap(g=>['all','oneYear'].map(w=>[perfUrl(g,w),{report:perfReport(g,w)}])),
     [REPORT_URL,{report:report(),api_transaction:{id:1,version:3,action:'/api/v3/example',timestamp:'2026-11-11T02:00:00.000Z'},links:{self:'https://www.example.com/api/v3/example'}}]]);
   edit(r);return r;
 }
@@ -45,18 +57,42 @@ const run=(map,options={})=>{const s=stub(map,options.stub);return runRatioSourc
 // The reviewed ten-account scope hash is for the real names; synthetic names never match it.
 const leakFree=(result)=>{const text=JSON.stringify(result);for(const secret of [SECRET,CLIENT,TOKEN,'Invented','SYN0','1234.5','77.25','39','88'].filter(s=>s.length>3))assert.equal(text.includes(secret),false,secret);};
 
-test('complete synthetic read makes exactly five fixed GET-only requests and reports value-free facts',async()=>{
+test('complete synthetic read makes exactly thirteen fixed requests, GET-only after the token, and reports value-free facts',async()=>{
   const {result,calls}=await run(routes());
-  assert.equal(result.outcome,'REPORT_PROJECTED');assert.equal(result.stage,'COMPLETE');assert.equal(result.code,null);assert.equal(result.requests,5);
-  assert.deepEqual(calls.map(c=>[c.method,c.url]),[['POST',API+'/oauth2/token'],['GET',API+'/api/v3/portfolios?consolidated=true'],['GET',API+'/api/v2/portfolios.json'],['GET',API+'/api/v2/groups.json'],['GET',REPORT_URL]]);
+  assert.equal(result.outcome,'REPORT_PROJECTED');assert.equal(result.stage,'COMPLETE');assert.equal(result.code,null);assert.equal(result.requests,13);
+  assert.deepEqual(calls.map(c=>[c.method,c.url]),[['POST',API+'/oauth2/token'],['GET',API+'/api/v3/portfolios?consolidated=true'],['GET',API+'/api/v2/portfolios.json'],['GET',API+'/api/v2/groups.json'],['GET',REPORT_URL],...PERF_GROUPS.flatMap(g=>['all','oneYear'].map(w=>['GET',perfUrl(g,w)]))]);
   assert.equal(calls[0].auth,null);assert.equal(calls.slice(1).every(c=>c.auth==='Bearer '+TOKEN&&c.body===null),true);assert.equal(calls.every(c=>c.redirect==='error'),true);
   const f=result.facts;
   assert.deepEqual([f.consolidatedViewMatches,f.groupMatches,f.viewCurrencyIsUsd,f.viewDeclaresMembers,f.membersSource,f.memberCountIsTen,f.everyMemberListed,f.observedWithinMembers,f.rootHasOnlyKnownKeys],[1,1,true,true,'view',true,true,true,true]);
   assert.equal(f.scopeMatchesReviewedTen,false);
-  assert.deepEqual(f.projection,{responseGrouping:'custom_group_category',reportTotalEqualsRows:true,membersWithoutRows:2,categoriesWithinKnownFour:true});
+  assert.deepEqual(f.projection,{responseGrouping:'custom_group_category',reportTotalEqualsRows:true,reportTotalDifference:'NONE',membersWithoutRows:2,categoriesWithinKnownFour:true});
   assert.equal(Object.values(f.shape.anomalies).every(n=>n===0),true);
   assert.equal(f.shape.holding.value,'number');assert.equal(f.shape.instrument.market_code,'string');assert.equal(f.shape.report.combined_holdings,'absent');
   leakFree(result);
+});
+
+test('eight performance reports are described by field names and kinds only; one unreadable report does not stop the rest',async()=>{
+  const {result}=await run(routes());const p=result.facts.performance;
+  assert.equal(p.complete,true);assert.deepEqual(Object.keys(p.reports),['asset.all','asset.oneYear','income.all','income.oneYear','top.all','top.oneYear','stock.all','stock.oneYear']);
+  const first=p.reports['asset.all'];
+  assert.deepEqual(first.echoes,{startDate:true,endDate:true,includeSales:true,groupId:true,groupName:true,currencyIsUsd:true});
+  assert.equal(first.percentagesAnnualised,true);assert.equal(p.reports['asset.oneYear'].percentagesAnnualised,false);
+  assert.deepEqual(first.has,{holdings:true,subTotals:true,cash:true,oneSubTotalPerGroupName:true});
+  assert.equal(first.holding.fields.total_gain_percent,'number');assert.equal(first.cash.fields.total_gain,'null');assert.equal(first.subTotal.fields.total_gain_percent,'number');assert.equal(first.report.fields.percentages_annualised,'boolean');
+  assert.equal(Object.values(p.reports).slice(1).every(r=>r.read&&r.sameFieldsAsFirst===true&&!Object.hasOwn(r,'holding')),true);
+  leakFree(result);for(const amount of ['12.5','1.25','13.5','1.35','2.5','3.5'])assert.equal(JSON.stringify(p).includes(':'+amount),false,amount);
+  // A different field set is printed in full; a refused or missing report is one fixed code.
+  const g=PERF_GROUPS.find(x=>x.key==='top'),s=PERF_GROUPS.find(x=>x.key==='stock');
+  const mixed=await run(routes(r=>{r.get(perfUrl(g,'all')).report.holdings[0].total_gain=null;r.get(perfUrl(g,'all')).report.holdings[0]['Odd Key']=1;r.delete(perfUrl(g,'oneYear'));r.get(perfUrl(s,'all')).report.limited=true;r.get(API+'/api/v2/groups.json').groups.pop();}));
+  const m=mixed.result.facts.performance;
+  assert.equal(mixed.result.outcome,'REPORT_PROJECTED');assert.equal(m.complete,false);
+  assert.equal(m.reports['top.all'].sameFieldsAsFirst,false);assert.equal(m.reports['top.all'].holding.fields.total_gain,'null|number');assert.equal(m.reports['top.all'].holding.unlisted,true);assert.equal(JSON.stringify(m).includes('Odd Key'),false);
+  assert.deepEqual(m.reports['top.oneYear'],{read:false,code:'RATIO_PROBE_TRANSPORT',httpCode:'OTHER'});
+  const last=PERF_GROUPS.at(-1).key;
+  assert.deepEqual(m.reports[last+'.all'],{read:false,code:'RATIO_PROBE_GROUP_IDENTITY'});assert.deepEqual(m.reports[last+'.oneYear'],{read:false,code:'RATIO_PROBE_GROUP_IDENTITY'});
+  if(last!=='stock')assert.deepEqual(m.reports['stock.all'],{read:false,code:'RATIO_PROBE_INCOMPLETE'});
+  leakFree(mixed.result);
+  assert.equal(ratioPerformanceShapeFacts(undefined,{start:'a',end:'b',groupId:'1',groupName:'x'}).has.holdings,false);
 });
 
 test('members fall back to the report rows when the view declares none; a different count stops at MEMBERS',async()=>{
@@ -116,8 +152,8 @@ test('admission accepts only the exact owner dispatch, main, first attempt, the 
 });
 
 test('budget, shape facts and the dispatch workflow stay fixed and read-only',()=>{
-  assert.deepEqual(RATIO_PROBE_BUDGET,{requests:5,overallMs:120000,requestMs:30000,reportBytes:8388608});
-  assert.deepEqual(RATIO_PROBE_STAGES,['ADMISSION','TOKEN','VIEWS','PORTFOLIOS','GROUPS','REPORT','PROJECTION','COMPLETE']);
+  assert.deepEqual(RATIO_PROBE_BUDGET,{requests:13,overallMs:300000,requestMs:30000,reportBytes:8388608});
+  assert.deepEqual(RATIO_PROBE_STAGES,['ADMISSION','TOKEN','VIEWS','PORTFOLIOS','GROUPS','REPORT','PROJECTION','PERFORMANCE','COMPLETE']);
   assert.equal(new Set(RATIO_PROBE_CODES).size,RATIO_PROBE_CODES.length);
   const facts=ratioReportShapeFacts({holdings:[null,{value:'9',limited:true}],cash_accounts:'none',value:1.001});
   assert.deepEqual([facts.anomalies.holdingsNotUnlimited,facts.anomalies.holdingValuesNotNumeric,facts.anomalies.reportValueBeyondCents,facts.hasCash,facts.grouping],[2,2,1,false,'OTHER']);

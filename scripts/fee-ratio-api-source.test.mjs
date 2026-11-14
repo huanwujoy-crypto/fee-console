@@ -2,7 +2,10 @@
 // credential, file or real Sharesight response is used by these tests.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import {createApiRatioSourceCore} from './fee-ratio-api-source.mjs';
+import {createOfficialRatioSourceCore} from './fee-ratio-official-source.mjs';
+import {createRankedExposureCore} from './xuan-ib-sharesight-exposure.mjs';
 globalThis.fetch=async()=>{throw Error('OFFLINE_TEST_NETWORK_FORBIDDEN');};
 
 const core=createApiRatioSourceCore();
@@ -66,4 +69,28 @@ test('every refusal names the stage that stopped it',()=>{
   refused(c=>c.report.cash_accounts[0].value=-0.01,'CASH_VALUE');refused(c=>c.report.cash_accounts[0].value=NaN,'CASH_VALUE');
   refused(c=>{const x=structuredClone(c.report.cash_accounts[0]);x.id=9998;c.report.cash_accounts.push(x);},'CASH_DUPLICATE');
   assert.deepEqual([...core.CODES].sort(),[...new Set(core.CODES)].sort());
+});
+
+test('projected rows drive the existing projection to a direct-holdings top five for all four classes',()=>{
+  // Test-only envelope: it shows the projected rows are consumable unchanged by
+  // the existing strict projection. It is NOT the production wiring and does
+  // not claim that an API capture is an official workbook.
+  const p=core.project(syntheticCapture()),sha=n=>String(n).repeat(64);
+  const capture=(rows)=>({asOf:p.asOf,capturedAt:p.capturedAt,captureTimeBasis:'original-download-file-mtime',downloadCompletedAt:null,serverSuggestedOriginalFilename:null,dateEvidence:'Synthetic test envelope as at 10 Nov 2026',canonicalDataRows:rows,allWorksheetXmlRows:rows+5});
+  const raw={schemaVersion:'sharesight-private-full-v2',source:{provider:'Sharesight',view:'All Together',transport:'official-workbook-exports'},accounts:p.accounts,
+    sources:['classification.xlsx','exposure.xlsx','capture-metadata.json'].map((file,i)=>({file,sha256:sha(i+1),libraryFileId:'libfile_'+String(i+1).repeat(32),libraryVersion:0})),
+    classification:{...capture(p.positions.length+p.cashAccounts.length),positions:p.positions,cashAccounts:p.cashAccounts},exposure:{...capture(p.rows.length),rows:p.rows},
+    coverage:{classificationCombinedComplete:true,exposureCombinedComplete:true,groupingSheetsAreDuplicates:true,closedPositionsIncluded:false,transactionHistoryIncluded:false,completeETFUniverseClaimed:false},limitations:['Synthetic test envelope only.']};
+  const bytes=Buffer.from(JSON.stringify(raw)),built=createOfficialRatioSourceCore().build(raw,{sourceSha256:crypto.createHash('sha256').update(bytes).digest('hex'),sourceBytes:bytes.length});
+  const classes=built.input.exposure.summary.classes;
+  assert.deepEqual(classes.map(g=>g.basis),['direct','direct','direct','direct']);
+  // A leveraged product ranks as itself at its own value; the same security in
+  // two accounts merges and keeps both; different securities stay separate.
+  assert.deepEqual(classes[3].top5.map(r=>[r.securityCode,r.valueUSD,r.accounts]),[['TQQQ',130,['IB-HK']],['GOOG',47.25,['IB-HK','Synthetic 2']],['USSC',44.5,['IB-HK']],['OTHER',43,['IB-HK']],['GOOGL',42,['IB-HK']]]);
+  assert.equal(built.input.exposure.summary.residualETFs.valueUSD,0);
+  assert.equal(built.input.classification.totalValueUSD,p.totals.rowsCents/100);
+  assert.equal(built.sourceDates.classification,built.sourceDates.exposure);
+  const scope=crypto.createHash('sha256').update(JSON.stringify([...p.accounts].sort())).digest('hex');
+  const view={...createRankedExposureCore(),ALL_TOGETHER_SCOPE_SHA256:scope}.buildRankedExposureView(built.input.exposure);
+  assert.equal(view.groups[3].directOnly,true);assert.equal(view.residualUsd,0);
 });

@@ -18,6 +18,32 @@ independent cloud publisher is imported. The unified manager tab retains current
 plan, cash-priority reference, stock four-category allocation, four Exposure
 top-five groups and complete-holdings sections. Missing inputs remain unknown.
 
+## Direct-holdings top five for every class (2026-11-13)
+
+All four classes now rank actually held positions at their own asset value,
+merged per security and market across accounts, with every contributing
+account retained. The secondary class no longer substitutes ETF look-through
+rows: an ETF or leveraged product ranks as itself, no leverage multiple is
+applied, and different securities (for example GOOG and GOOGL) stay separate.
+A new official projection declares `basis: 'direct'` on the secondary class.
+The viewer accepts that basis only for the official v2 summary, requires the
+five rows to fit inside the class total, labels the group `直接持仓前五`, and
+takes the secondary return targets from those same rows. Class totals, the
+denominators, residual disclosure and fees are unchanged.
+
+Snapshots already published with the earlier look-through basis remain
+readable and keep their company-exposure presentation; neither basis can be
+relabelled as the other. `companyExposure` is still produced and validated for
+continuity but is not displayed for a direct snapshot. Retiring it is a
+separate change. The paragraph below describes the earlier snapshots.
+
+The projection takes the basis as an option (`directSecondary`, default true).
+The original-association check rebuilds with the basis the prepared input
+itself declares, so an input prepared by an older copy of the builder under the
+look-through basis still associates exactly and publishes as before; nothing is
+converted from one basis to the other. This keeps the current manual
+preparation working while preparers move to the direct default.
+
 Exposure’s twenty ranked rows are not full holdings/cash/commitment data.
 Secondary rows are individual securities already supplied by Exposure, not ETF
 products or a second leverage multiplier. Original dual weights, class cash,

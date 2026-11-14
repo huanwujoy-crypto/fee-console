@@ -45,7 +45,7 @@ function buildRankedExposureView(input) {
   check(Array.isArray(s.accounts) && s.accounts.length === 10 && s.accounts.every(text)
     && unique(s.accounts.map(n => n.replaceAll('&amp;', '&'))), 'SCOPE');
   check(Array.isArray(s.classes) && s.classes.length === 4 && s.classes.every((g, i) => g?.name === categories[i]
-    && amount(g.totalValueUSD) && g.totalValueUSD > 0 && g.basis === (i === 3 ? secondaryBasis : 'direct')
+    && amount(g.totalValueUSD) && g.totalValueUSD > 0 && (g.basis === 'direct' ? i < 3 || official : i === 3 && g.basis === secondaryBasis)
     && Array.isArray(g.top5) && g.top5.length === 5), 'RANKED_CLASSES');
   check(s.classes[0].sourceCategory === 'VC/PE' && Math.abs(sum(s.classes.map(g => g.totalValueUSD)) - s.totalValueUSD) <= .05, 'CLASS_TOTALS');
   const groups = s.classes.map((g, i) => {
@@ -60,8 +60,11 @@ function buildRankedExposureView(input) {
     // v1 ranks asset values. v2 secondary rows are complete-export economic
     // exposures: a leveraged product's negative residual can make these exceed
     // asset NAV. Its full-source association is recomputed before publication.
-    check(official && i === 3 || sum(g.top5.map(r => r.valueUSD)) <= g.totalValueUSD + .05, 'RANKED_TOTAL');
-    return {category: g.name, totalUsd: g.totalValueUSD, top: g.top5.map(r => ({name: r.name,
+    // A v2 secondary class declared 'direct' ranks actually held securities at
+    // asset value: no look-through, no leverage, and it must fit the class total.
+    const directSecondary = i === 3 && g.basis === 'direct';
+    check(official && i === 3 && !directSecondary || sum(g.top5.map(r => r.valueUSD)) <= g.totalValueUSD + .05, 'RANKED_TOTAL');
+    return {category: g.name, totalUsd: g.totalValueUSD, ...(directSecondary ? {directOnly: true} : {}), top: g.top5.map(r => ({name: r.name,
       ...(r.securityCode ? {securityCode: r.securityCode, market: r.market} : {}), ...(r.accounts?{accounts:[...r.accounts]}:{}), ...(r.sourceHoldings?{sourceHoldings:structuredClone(r.sourceHoldings)}:{}), valueUsd: r.valueUSD,
       portfolioWeightPct: pct(r.valueUSD, s.totalValueUSD), categoryWeightPct: pct(r.valueUSD, g.totalValueUSD)}))};
   });
@@ -83,7 +86,7 @@ function renderRankedExposure(input) {
   const m = buildRankedExposureView(input);
   return '<section class="card sharesight-exposure"><h2>All Together · 四类前五大持仓</h2>'
     + `<p>10账户 · USD · 估值 ${esc(m.valuationDate)} · 读取 ${esc(m.retrievedAt ?? '时间未取得')} · 参考数据</p>`
-    + m.groups.map((g, i) => `<section><h3>${i + 1}. ${esc(g.category)} · ${i === 3 ? 'Exposure个股' : '直接持仓'}前五</h3><p>本类资产 ${esc(usd(g.totalUsd))}</p>${table(g.top)}</section>`).join('')
+    + m.groups.map((g, i) => `<section><h3>${i + 1}. ${esc(g.category)} · ${i === 3 && !g.directOnly ? 'Exposure个股' : '直接持仓'}前五</h3><p>本类资产 ${esc(usd(g.totalUsd))}</p>${table(g.top)}</section>`).join('')
     + `<details><summary>来源与覆盖说明</summary><ol><li>时间依据：${esc(m.retrievedAtBasis ?? '未取得')}；不代表首屏查看、行情刷新或分类读取时间。</li><li>Sharesight Tools→Exposure（No grouping／Top 500）与Investments资产类别关联；采用来源已汇总排名，未取得完整逐项穿透明细。源文件哈希只作绑定，不代表已独立核验该文件。</li>`
     + '<li>每项依次显示占All Together总资产和占本类资产比例；二级分母含现金。二级只列个股，不再加ETF本体；不额外乘杠杆或合并不同证券、不同期次基金。</li>'
     + `<li>ETF Residual ${esc(usd(m.residualUsd))}（占总资产 ${percent(m.residualPortfolioWeightPct)}／占二级 ${percent(m.residualCategoryWeightPct)}）；残余不列作个股，不代表完整杠杆风险。</li>`
