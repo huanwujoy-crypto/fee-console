@@ -57,6 +57,17 @@ private source `{fileId,version}`. No arbitrary URL, destination or secret is in
 
 ### Fee-first gate
 
+**The handoff is optional (owner decision, 2026-11-14).** A publish plan may
+carry `fee: null`. The ratio is then published on its own: `FEE_READBACK`,
+`SOURCE_ROUND` and `FEE_RECHECK` do not run and no fee report is read. Nothing
+in the snapshot, its signature or the page depends on the fee report — the
+snapshot stores no fee identity and the page compares none — and each report
+keeps its own real source date, so the two may show different dates. The key is
+still required: a missing or malformed `fee` is refused, never read as absent.
+Everything below applies unchanged to a plan that does carry a handoff. The
+shared `fee-publication-critical` queue is kept, so a fee promotion and a ratio
+write still never run at the same time.
+
 A publish plan also carries `fee`: the coordinator's handoff of the fee report
 that is already formally published, `{mainSha, accountingThrough, dataSha256,
 healthSha256}`. A producer job or a candidate branch is not a publication. Before

@@ -78,6 +78,25 @@ test('fee publication changes after claim prevent PATCH and never release the co
   const r=await f.run();assert.equal(r.status,'REFUSED');assert.equal(r.stage,'FEE_RECHECK:FEE_PUBLICATION_MAIN');assert.equal(r.claim,'OWNED');assert.equal(r.patchAttempts,0);
   f.io.verifyFeePublication=check;const retry=await f.run();assert.equal(retry.claim,'EXISTS');assert.equal(f.state.patches.length,0);
 });
+test('without a handoff the ratio publishes on its own and no fee report is read',async t=>{
+  const f=await fixture(t);let checks=0;f.io.verifyFeePublication=async()=>{checks++;throw Error('FEE_PUBLICATION_MAIN');};
+  const r=await f.run({plan:{...f.plan,fee:null}});
+  assert.equal(r.status,'PUBLISHED_CONFIRMED');assert.equal(r.stage,'COMPLETE');assert.equal(r.claim,'OWNED');assert.equal(r.patchAttempts,1);
+  assert.equal(checks,0,'the fee verifier is never called');assert.equal(f.state.patches.length,1);
+  // It does not even need a verifier, and the other guards are unchanged: one claim per input pair, no second write.
+  const g=await fixture(t);delete g.io.verifyFeePublication;
+  const first=await g.run({plan:{...g.plan,fee:null}});assert.equal(first.status,'PUBLISHED_CONFIRMED');
+  const again=await g.run({plan:{...g.plan,fee:null}});assert.notEqual(again.status,'PUBLISHED_CONFIRMED');assert.equal(g.state.patches.length,1);
+  // Nothing of the fee report is in the published snapshot, with or without a handoff.
+  const a=await fixture(t);assert.equal((await a.run()).status,'PUBLISHED_CONFIRMED');
+  for(const state of [f.state,a.state]){
+    const text=JSON.stringify(state.patches[0]);
+    for(const value of Object.values(FEE))assert.equal(text.includes(String(value)),false);
+  }
+  // A handoff that is present is still verified in full.
+  const h=await fixture(t);h.io.verifyFeePublication=async()=>{throw Error('FEE_PUBLICATION_PAGES_DATA');};
+  const held=await h.run();assert.equal(held.status,'WAITING_FEE_READBACK_NO_WRITE');assert.equal(h.state.patches.length,0);
+});
 test('missing fee verifier fails closed while verify-current remains purely read-only',async t=>{
   const f=await fixture(t);delete f.io.verifyFeePublication;
   assert.equal((await f.run()).status,'WAITING_FEE_READBACK_NO_WRITE');assert.equal(f.state.claimCalls,0);
@@ -189,10 +208,12 @@ test('two concurrent invocations share one atomic input claim and produce at mos
   assert.equal(f.state.patches.length,1);assert.equal(results.filter(r=>r.status==='PUBLISHED_CONFIRMED').length,1);assert.equal(results.filter(r=>r.claim==='EXISTS').length,1);assert.equal(f.state.deleted.length,1);
 });
 
-test('the plan binds the fee handoff for publish only; malformed or missing handoffs are refused before any read',async t=>{
+test('a fee handoff is optional for publish; a malformed or absent key is refused before any read',async t=>{
   const {validateRatioCloudPlan}=await import('./fee-ratio-cloud-publish.mjs');
   const f=await fixture(t);validateRatioCloudPlan(f.plan);
-  for(const fee of [undefined,null,{...FEE,extra:1},{...FEE,mainSha:'bad'},{...FEE,accountingThrough:'2026-13-01'},{...FEE,dataSha256:'x'}]){
+  // `fee: null` is a valid plan (independent publication); the key itself is never optional.
+  validateRatioCloudPlan({...f.plan,fee:null});
+  for(const fee of [undefined,false,0,'',{},[],{...FEE,extra:1},{...FEE,mainSha:'bad'},{...FEE,accountingThrough:'2026-13-01'},{...FEE,dataSha256:'x'}]){
     const plan={...f.plan,fee};if(fee===undefined)delete plan.fee;assert.throws(()=>validateRatioCloudPlan(plan),/RATIO_CLOUD_REFUSED/);
   }
   const current={mode:'verify-current',previousBodySha256:f.plan.previousBodySha256,bundleId:null,original:null,input:null,library:null,fee:null};

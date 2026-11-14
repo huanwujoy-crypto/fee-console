@@ -113,7 +113,9 @@ test('the capture step refuses any publication secret, a different plan mode, a 
   const other=await run(routes(),{env:{GITHUB_ACTOR_ID:'1'}});assert.deepEqual([other.result.code,other.calls.length],['RATIO_CLOUD_RUNTIME_REFUSED',0]);
   // Invented account names never match the reviewed ten-account scope: without the test override it stops at the first report.
   const scope=await run(routes(),{scope:null});assert.deepEqual([scope.result.stage,scope.result.code,scope.objects.size],['CLASSIFICATION','RATIO_CAPTURE_SCOPE',0]);
-  for(const plan of [{...PLAN(),library:null},{...PLAN(),asOf:'2026-02-30'},{...PLAN(),fee:null},{mode:'publish-api',previousBodySha256:'b'.repeat(64),asOf:D}])assert.throws(()=>validateRatioCloudPlan(plan),/RATIO_CLOUD_REFUSED/);
+  for(const plan of [{...PLAN(),library:null},{...PLAN(),asOf:'2026-02-30'},{...PLAN(),fee:{}},{...PLAN(),fee:false},{mode:'publish-api',previousBodySha256:'b'.repeat(64),asOf:D}])assert.throws(()=>validateRatioCloudPlan(plan),/RATIO_CLOUD_REFUSED/);
+  // The handoff is optional; the key is not.
+  validateRatioCloudPlan({...PLAN(),fee:null});
   validateRatioCloudPlan(PLAN());
 });
 
