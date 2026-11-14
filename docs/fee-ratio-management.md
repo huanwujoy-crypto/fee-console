@@ -44,11 +44,26 @@ are the row sum. An API source has no ETF look-through, so it produces no
 Exposure wording. The plan and the pinned original must agree on the kind, and
 neither kind can be relabelled as the other at any layer.
 
-Not yet supported: the performance wrapper (`sharesight-private-performance-v1`)
-still requires a workbook allocation, and nothing in the cloud workflow reads
-the API to produce these originals yet. Until both exist, production keeps
-publishing from workbooks; a signed snapshot that already carries performance
-cannot be followed by one that does not.
+### API performance beside an API allocation
+
+The performance wrapper (`sharesight-private-performance-v1`) accepts an API
+allocation, and then only API performance: one original holds one source kind.
+A performance source from the API declares `transport: 'official-api'`. Its
+report identities are `{apiReportId, sha256, locator}` (the hash of the exact
+response) instead of Library file ids and versions, its row locators name the
+report field (`sub_totals[n].total_gain_percent`) instead of worksheet cells,
+and its first-buy evidence is `sourceKind: 'sharesight-api-holdings'`.
+
+Sharesight's first-buy date of a holding is the date of its earliest confirmed
+record. When that record is an opening balance rather than a buy, the member is
+declared `holding-opening-balance`; the recorded date is used (owner decision,
+2026-11-14) and a scope whose earliest date is such a record says so in its
+start-date line. Returns are still the provider's own figures: nothing is
+averaged, annualised or converted here.
+
+Not yet built: the builder that turns the API reports into this performance
+source, and the cloud job that reads the API to produce these originals. Until
+both exist, production keeps publishing from workbooks.
 
 ## Direct-holdings top five for every class (2026-11-13)
 

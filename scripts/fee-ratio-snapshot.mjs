@@ -22,7 +22,7 @@ export function createRatioSnapshotCore(ratioCore,exposureCore,sourceFactory,par
     const apiSource=libraryVersion===undefined;
     if(m.report.kind!=='snapshot'||m.report.feeAccountingThrough!==null||!hex(sourceSha256)||!hex(inputSha256)||!(apiSource||Number.isSafeInteger(libraryVersion)&&libraryVersion>=0)||await digestBytes(originalBytes)!==sourceSha256||await digestBytes(inputBytes)!==inputSha256)fail();
     const raw=read(originalBytes),input=read(inputBytes),scope=accounts=>JSON.stringify(accounts.map(s=>s.replaceAll('&amp;','&')).sort());
-    if(apiSource!==(raw?.schemaVersion==='sharesight-api-full-v1')||apiSource!==(input?.book?.provenance?.transport==='official-api'))fail();
+    if(apiSource!==((raw?.allocation??raw)?.schemaVersion==='sharesight-api-full-v1')||apiSource!==(input?.book?.provenance?.transport==='official-api'))fail();
     const originalScope=scope(raw.accounts),inputScope=scope(input.exposure.summary.accounts),scopeHash=await hash(raw.accounts.map(s=>s.replaceAll('&amp;','&')).sort());
     if(originalScope!==inputScope||scopeHash!==exposureCore.ALL_TOGETHER_SCOPE_SHA256||input.book?.sourceSha256!==sourceSha256||input.book?.provenance.fullSourceSha256!==sourceSha256||input.book.provenance.fullSourceBytes!==originalBytes.byteLength)fail();
     const source=sourceFactory(accounts=>{if(scope(accounts)!==originalScope)fail();return scopeHash;});
