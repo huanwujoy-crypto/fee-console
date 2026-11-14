@@ -44,7 +44,10 @@ export function validateRatioCloudPlan(plan){
     return;
   }
   if(!validateFeeHandoff(plan.fee))refuse();
-  if(!hex(plan.bundleId)||!exact(plan.library,['fileId','version'])||!/^libfile_[a-f0-9]{32}$/.test(plan.library.fileId)||!Number.isSafeInteger(plan.library.version)||plan.library.version<0)refuse();
+  // `library: null` in a publish plan declares a Sharesight API source: there
+  // is no Library file. The pinned original must then be an API original, and
+  // a Library-bound plan can never carry one (checked against the bytes below).
+  if(!hex(plan.bundleId)||plan.library!==null&&(!exact(plan.library,['fileId','version'])||!/^libfile_[a-f0-9]{32}$/.test(plan.library.fileId)||!Number.isSafeInteger(plan.library.version)||plan.library.version<0))refuse();
   const prefix='inputs/'+plan.bundleId+'/';
   pinnedObject(plan.original,prefix,'original.json');pinnedObject(plan.input,prefix,'input.json');
 }
@@ -66,7 +69,8 @@ export function createRatioCloudPublisher({exposureCore=createRankedExposureCore
   }
   async function prepare({plan,originalBytes,inputBytes,manager,previous,now}){
     const raw=parse(originalBytes),input=parse(inputBytes);
-    if(sha(originalBytes)!==plan.original.sha256||sha(inputBytes)!==plan.input.sha256||!((raw.schemaVersion==='sharesight-private-full-v2'&&input.schema==='fee-console.ratio-sources.v2')||(raw.schemaVersion==='sharesight-private-performance-v1'&&input.schema==='fee-console.ratio-sources.v3')))refuse();
+    if(sha(originalBytes)!==plan.original.sha256||sha(inputBytes)!==plan.input.sha256||!((raw.schemaVersion==='sharesight-private-full-v2'&&input.schema==='fee-console.ratio-sources.v2')||(raw.schemaVersion==='sharesight-private-performance-v1'&&input.schema==='fee-console.ratio-sources.v3')||(raw.schemaVersion==='sharesight-api-full-v1'&&input.schema==='fee-console.ratio-sources.v2')))refuse();
+    const apiSource=raw.schemaVersion==='sharesight-api-full-v1';if(apiSource!==(plan.library===null))refuse();
     // Exact approved Library identity and version are bound to the uploaded
     // object's hash/generation by the future transport. A hash is not consent.
     const source=createRatioSourceCore(accounts=>sha(JSON.stringify(accounts.map(s=>s.replaceAll('&amp;','&')).sort())));
@@ -74,9 +78,9 @@ export function createRatioCloudPublisher({exposureCore=createRankedExposureCore
     const model=await buildRatioModel(input,{kind:'snapshot',targetDate:input.exposure.summary.asOf,feeAccountingThrough:null,now,viewCore:ratio,previewOnly:true});
     const {companyExposure,sourceDates,classificationSummary,performance,...association}=facts;
     const capturedAt=Date.parse(association.observedAt);if(!Number.isFinite(capturedAt))refuse();
-    model.book.browserEvidence={...model.book.browserEvidence,integrity:'verified-original-library-association',associationId:await ratio.digest([plan.original.sha256,plan.input.sha256,plan.library,manager.recipient.scopeId]),managerScopeId:manager.recipient.scopeId,sourceVersion:plan.library.version,migrationPending:association.migrationPending,classificationDeltaCents:association.classificationDeltaCents,exposureDeltaCents:association.exposureDeltaCents};
-    model.companyExposure=companyExposure;model.sourceDates=sourceDates;model.classificationSummary=classificationSummary;if(performance)model.performance=performance;
-    const proof=await snapshot.verifyOriginal({originalBytes,inputBytes,model,recipient:manager.recipient,sourceSha256:plan.original.sha256,inputSha256:plan.input.sha256,libraryVersion:plan.library.version,now});
+    model.book.browserEvidence={...model.book.browserEvidence,integrity:apiSource?'verified-original-api-association':'verified-original-library-association',associationId:await ratio.digest([plan.original.sha256,plan.input.sha256,plan.library,manager.recipient.scopeId]),managerScopeId:manager.recipient.scopeId,...(apiSource?{}:{sourceVersion:plan.library.version}),migrationPending:association.migrationPending,classificationDeltaCents:association.classificationDeltaCents,exposureDeltaCents:association.exposureDeltaCents};
+    if(companyExposure!==undefined)model.companyExposure=companyExposure;model.sourceDates=sourceDates;model.classificationSummary=classificationSummary;if(performance)model.performance=performance;
+    const proof=await snapshot.verifyOriginal({originalBytes,inputBytes,model,recipient:manager.recipient,sourceSha256:plan.original.sha256,inputSha256:plan.input.sha256,...(apiSource?{}:{libraryVersion:plan.library.version}),now});
     if(previous.body.source.sourceSha256===proof.evidence.sourceSha256&&previous.body.source.inputSha256===proof.evidence.inputSha256) return {sameSource:true};
     const candidate=await snapshot.candidate({model,recipient:manager.recipient,proof,previous,now});
     const signed=await snapshot.authenticate(candidate,proof,manager,{previous,profileSha256:await profile(),now});

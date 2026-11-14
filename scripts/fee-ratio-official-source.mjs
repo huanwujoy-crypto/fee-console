@@ -1,7 +1,8 @@
-// Pure projection of complete, pinned official workbook rows. This is not
+// Pure projection of complete, pinned official rows: downloaded workbooks or,
+// as a separately labelled source, one Sharesight API report. This is not
 // Sharesight authentication, a financial reader, an approval or a publisher.
 export function createOfficialRatioSourceCore(){
-  const RAW='sharesight-private-full-v2',INPUT='fee-console.ratio-sources.v2';
+  const RAW='sharesight-private-full-v2',RAW_API='sharesight-api-full-v1',INPUT='fee-console.ratio-sources.v2';
   const fail=()=>{throw Error('RATIO_OFFICIAL_SOURCE_REFUSED');};
   const exact=(o,k)=>o&&typeof o==='object'&&!Array.isArray(o)&&Object.keys(o).sort().join('|')===[...k].sort().join('|');
   const text=s=>typeof s==='string'&&s.length>0&&s.length<=1000&&!/[\u0000-\u001f\u007f]/.test(s);
@@ -91,18 +92,41 @@ export function createOfficialRatioSourceCore(){
   }
   function build(raw,{sourceSha256,sourceBytes,includeFundDistributions=true,includeAssetAllocation=true,excludeBenchmarkOnly=true,includeFundHoldings=true,directSecondary=true}={}){
     if(typeof includeFundDistributions!=='boolean'||typeof includeAssetAllocation!=='boolean'||typeof excludeBenchmarkOnly!=='boolean'||typeof includeFundHoldings!=='boolean'||typeof directSecondary!=='boolean')fail();
+    // The same projection serves two honestly distinct sources. An API source
+    // is one consolidated classification report: it has no Exposure export, so
+    // its direct and cash rows are the report's own rows at the same date, and
+    // it can only ever produce the direct secondary ranking.
+    const api=raw?.schemaVersion===RAW_API;let c,e,sources;
+    if(api){
+      if(!exact(raw,['schemaVersion','source','accounts','sources','classification','coverage','limitations'])
+        ||!exact(raw.source,['provider','view','transport'])||raw.source.provider!=='Sharesight'||raw.source.view!=='All Together'||raw.source.transport!=='official-api'
+        ||!hex(sourceSha256)||!Number.isSafeInteger(sourceBytes)||sourceBytes<1||sourceBytes>5*1024*1024||directSecondary!==true
+        ||!Array.isArray(raw.accounts)||raw.accounts.length!==10||!raw.accounts.every(text)||new Set(raw.accounts).size!==10
+        ||!Array.isArray(raw.sources)||raw.sources.length!==1||!exact(raw.sources[0],['report','route','sha256'])||raw.sources[0].report!=='classification'||raw.sources[0].route!=='api-v3-performance-custom-group'||!hex(raw.sources[0].sha256)
+        ||!Array.isArray(raw.limitations)||!raw.limitations.every(text))fail();
+      const cov=raw.coverage;if(!exact(cov,['classificationComplete','limitedHoldingsIncluded','closedPositionsIncluded','transactionHistoryIncluded','etfLookThroughIncluded'])||cov.classificationComplete!==true||cov.limitedHoldingsIncluded!==false||cov.closedPositionsIncluded!==false||cov.transactionHistoryIncluded!==false||cov.etfLookThroughIncluded!==false)fail();
+      c=raw.classification;
+      // The report's own total may differ from the sum of its rows by rounding
+      // only; the difference is carried and disclosed, never absorbed.
+      if(!exact(c,['asOf','capturedAt','captureTimeBasis','reportTotalDeltaCents','positions','cashAccounts'])||!date(c.asOf)||!instant(c.capturedAt)||c.captureTimeBasis!=='api-response-received'
+        ||c.asOf>new Date(Date.parse(c.capturedAt)+8*3600000).toISOString().slice(0,10)||!Number.isSafeInteger(c.reportTotalDeltaCents)||Math.abs(c.reportTotalDeltaCents)>100
+        ||!Array.isArray(c.positions)||!Array.isArray(c.cashAccounts)||c.positions.length<1||c.positions.length+c.cashAccounts.length>100000)fail();
+      const row=(r,ownership)=>({sourceRow:r?.sourceRow,account:r?.account,securityCode:ownership==='Cash'?null:r?.securityCode,market:ownership==='Cash'?null:r?.market,name:r?.name,withinETF:null,ownership,valueUSD:r?.valueUSD,sourcePercentage:null});
+      e={asOf:c.asOf,capturedAt:c.capturedAt,rows:[...c.positions.map(r=>row(r,'Direct')),...c.cashAccounts.map(r=>row(r,'Cash'))]};
+    }else{
     if(!exact(raw,['schemaVersion','source','accounts','sources','classification','exposure','coverage','limitations'])||raw.schemaVersion!==RAW
       ||!exact(raw.source,['provider','view','transport'])||raw.source.provider!=='Sharesight'||raw.source.view!=='All Together'||raw.source.transport!=='official-workbook-exports'
       ||!hex(sourceSha256)||!Number.isSafeInteger(sourceBytes)||sourceBytes<1||sourceBytes>5*1024*1024
       ||!Array.isArray(raw.accounts)||raw.accounts.length!==10||!raw.accounts.every(text)||new Set(raw.accounts).size!==10
       ||!Array.isArray(raw.sources)||raw.sources.length!==3||!Array.isArray(raw.limitations)||!raw.limitations.every(text))fail();
     raw.sources.forEach(sourceId);if(new Set(raw.sources.map(s=>s.file)).size!==3||new Set(raw.sources.map(s=>s.libraryFileId)).size!==3)fail();
-    const sources=new Map(raw.sources.map(s=>[s.file,s]));if(!['classification.xlsx','exposure.xlsx','capture-metadata.json'].every(s=>sources.has(s)))fail();
+    sources=new Map(raw.sources.map(s=>[s.file,s]));if(!['classification.xlsx','exposure.xlsx','capture-metadata.json'].every(s=>sources.has(s)))fail();
     const cov=raw.coverage;if(!exact(cov,['classificationCombinedComplete','exposureCombinedComplete','groupingSheetsAreDuplicates','closedPositionsIncluded','transactionHistoryIncluded','completeETFUniverseClaimed'])||cov.classificationCombinedComplete!==true||cov.exposureCombinedComplete!==true||cov.groupingSheetsAreDuplicates!==true||cov.closedPositionsIncluded!==false||cov.transactionHistoryIncluded!==false||cov.completeETFUniverseClaimed!==false)fail();
-    const c=raw.classification,e=raw.exposure,metadata=['asOf','capturedAt','captureTimeBasis','downloadCompletedAt','serverSuggestedOriginalFilename','dateEvidence','canonicalDataRows','allWorksheetXmlRows'];
+    c=raw.classification;e=raw.exposure;const metadata=['asOf','capturedAt','captureTimeBasis','downloadCompletedAt','serverSuggestedOriginalFilename','dateEvidence','canonicalDataRows','allWorksheetXmlRows'];
     if(!exact(c,[...metadata,'positions','cashAccounts'])||!exact(e,[...metadata,'rows']))fail();
     capture(c);capture(e);if(c.asOf>e.asOf)fail();
     if(!Array.isArray(c.positions)||!Array.isArray(c.cashAccounts)||c.positions.length+c.cashAccounts.length!==c.canonicalDataRows||!Array.isArray(e.rows)||e.rows.length!==e.canonicalDataRows||e.rows.length>100000)fail();
+    }
     const accounts=new Set(raw.accounts),positions=[],cash=[],byKey=new Map(),cashByKey=new Map(),sourceRows=new Set();
     const common=r=>{if(!accounts.has(r.account)||!text(r.name)||!Number.isSafeInteger(r.sourceRow)||r.sourceRow<1||sourceRows.has(r.sourceRow)||!text(r.sharesightCategory)||cents(r.valueUSD)<0)fail();sourceRows.add(r.sourceRow);};
     for(const r of c.positions){
@@ -169,11 +193,11 @@ export function createOfficialRatioSourceCore(){
       return {name,totalValueUSD:sum(positions30.concat(cash30).filter(r=>r.fourClass===name)),basis:i===3&&!directSecondary?LOOK_THROUGH_SECONDARY_BASIS:'direct',...(i===0?{sourceCategory:'VC/PE'}:{}),top5:top};
     });
     const total=sum(rows),residual=sum(rows.filter(r=>r.ownership==='Residual'));
-    const exposure={schema:'xuan.sharesight-exposure-ranked.v2',summary:{asOf:e.asOf,currency:'USD',source:{provider:'Sharesight',view:'All Together',report:'Tools Exposure',groupBy:'No grouping',show:'Top 500',classification:'Investments→资产类别',url:null},totalValueUSD:total,accounts:[...raw.accounts],classes:groups,residualETFs:{valueUSD:residual,weightTotalPct:residual/total*100,weightSecondaryClassPct:residual/groups[3].totalValueUSD*100},limitations:[...raw.limitations,e.asOf+' Exposure分组沿用 '+c.asOf+' 资产类别标签；金额和比例分母取 '+e.asOf+' 完整Exposure原表。'],transferStatus:'按Sharesight现有记录显示；不新增或重复任何转仓和认购。',sourceXlsxSHA256:sources.get('exposure.xlsx').sha256},retrievedAt:e.capturedAt,retrievedAtBasis:'原始官方导出文件mtime（非独立下载完成时间）'};
+    const exposure={schema:'xuan.sharesight-exposure-ranked.v2',summary:{asOf:e.asOf,currency:'USD',source:{provider:'Sharesight',view:'All Together',...(api?{report:'API V3 Performance',groupBy:'Custom group',show:'All holdings'}:{report:'Tools Exposure',groupBy:'No grouping',show:'Top 500'}),classification:'Investments→资产类别',url:null},totalValueUSD:total,accounts:[...raw.accounts],classes:groups,residualETFs:{valueUSD:residual,weightTotalPct:residual/total*100,weightSecondaryClassPct:residual/groups[3].totalValueUSD*100},limitations:[...raw.limitations,api?c.asOf+' 持仓与现金取自同一份Sharesight API分类报表；不含ETF穿透。':e.asOf+' Exposure分组沿用 '+c.asOf+' 资产类别标签；金额和比例分母取 '+e.asOf+' 完整Exposure原表。'],transferStatus:'按Sharesight现有记录显示；不新增或重复任何转仓和认购。',...(api?{sourceReportSHA256:raw.sources[0].sha256}:{sourceXlsxSHA256:sources.get('exposure.xlsx').sha256})},retrievedAt:e.capturedAt,retrievedAtBasis:api?'Sharesight API 响应接收时间':'原始官方导出文件mtime（非独立下载完成时间）'};
     const ibRows=positions.filter(r=>r.account==='IB-HK'),ibCash=cash.filter(r=>r.account==='IB-HK'),noahCash=cash.filter(r=>r.account==='NOAH-HK');if(!ibRows.length||!ibCash.length||!noahCash.length)fail();
-    const provenance={transport:'official-workbooks',observedAtBasis:'original-download-file-mtime',classificationCapturedAt:c.capturedAt,exposureCapturedAt:e.capturedAt,downloadCompletedAt:null,fullSourceBytes:sourceBytes,fullSourceSha256:sourceSha256,transferStatus:exposure.summary.transferStatus,limitations:[...raw.limitations]};
-    const book={schema:'fee-console.ratio-sharesight-browser-book.v2',source:'Sharesight',currency:'USD',asOf:c.asOf,retrievedAt:c.capturedAt,sourceSha256,provenance,ib:{name:'IB-HK',holdings:ibRows.map(r=>({code:r.securityCode,market:r.market,group:r.sharesightCategory,valueUSD:r.valueUSD,quantity:r.quantity,name:r.name,valueBasis:'preserved-browser-source'})),holdingsValueUSD:sum(ibRows),cashRows:ibCash.map(r=>({label:r.name,valueUSD:r.valueUSD,valueBasis:'portfolio-usd-converted'})),cashValueUSD:sum(ibCash),totalValueUSD:sum(ibRows.concat(ibCash))},noah:{name:'NOAH-HK',cashValueUSD:sum(noahCash),valueBasis:'portfolio-usd-converted'}};
+    const provenance=api?{transport:'official-api',observedAtBasis:'api-response-received',classificationCapturedAt:c.capturedAt,reportTotalDeltaCents:c.reportTotalDeltaCents,fullSourceBytes:sourceBytes,fullSourceSha256:sourceSha256,transferStatus:exposure.summary.transferStatus,limitations:[...raw.limitations]}:{transport:'official-workbooks',observedAtBasis:'original-download-file-mtime',classificationCapturedAt:c.capturedAt,exposureCapturedAt:e.capturedAt,downloadCompletedAt:null,fullSourceBytes:sourceBytes,fullSourceSha256:sourceSha256,transferStatus:exposure.summary.transferStatus,limitations:[...raw.limitations]};
+    const book={schema:'fee-console.ratio-sharesight-browser-book.v2',source:'Sharesight',currency:'USD',asOf:c.asOf,retrievedAt:c.capturedAt,sourceSha256,provenance,ib:{name:'IB-HK',holdings:ibRows.map(r=>({code:r.securityCode,market:r.market,group:r.sharesightCategory,valueUSD:r.valueUSD,quantity:r.quantity,name:r.name,valueBasis:api?'api-report-value':'preserved-browser-source'})),holdingsValueUSD:sum(ibRows),cashRows:ibCash.map(r=>({label:r.name,valueUSD:r.valueUSD,valueBasis:'portfolio-usd-converted'})),cashValueUSD:sum(ibCash),totalValueUSD:sum(ibRows.concat(ibCash))},noah:{name:'NOAH-HK',cashValueUSD:sum(noahCash),valueBasis:'portfolio-usd-converted'}};
     return {input:{schema:INPUT,classification,exposure,book},sourceDates,classificationSummary:classification,companyContext:{rows,positions:positions30},capturedAt:[c.capturedAt,e.capturedAt].sort()[0],targetDate:e.asOf};
   }
-  return {RAW,INPUT,BENCHMARK_EXCLUDED_BASIS,LOOK_THROUGH_SECONDARY_BASIS,build,canonical};
+  return {RAW,RAW_API,INPUT,BENCHMARK_EXCLUDED_BASIS,LOOK_THROUGH_SECONDARY_BASIS,build,canonical};
 }

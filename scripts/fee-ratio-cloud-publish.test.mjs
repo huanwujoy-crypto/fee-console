@@ -5,6 +5,8 @@ import crypto from 'node:crypto';
 import {authenticated,syntheticOfficialSource} from './fee-ratio-official-source.test.mjs';
 import {createOfficialRatioSourceCore} from './fee-ratio-official-source.mjs';
 import {createRatioCloudPublisher,RATIO_CLOUD_FILE} from './fee-ratio-cloud-publish.mjs';
+import {createApiRatioSourceCore} from './fee-ratio-api-source.mjs';
+import {syntheticCapture} from './fee-ratio-api-source.test.mjs';
 const hash=b=>crypto.createHash('sha256').update(b).digest('hex');
 const json=v=>Buffer.from(JSON.stringify(v));
 const canary='SECRET_CANARY_DO_NOT_LEAK https://private.invalid/?token=not-real';
@@ -335,4 +337,36 @@ test('the date policy is signed: unknown, downgraded, stripped or missing polici
   // A legacy-signed previous snapshot may still precede a new policy snapshot.
   const legacyPrevious=await sign(legacyBody,'2026-10-30T06:00:00.000Z');
   assert.equal((await f.snapshot.verify(legacyPrevious,f.manager,{now:new Date('2026-10-30T06:01:00.000Z')})).source.datePolicy,undefined);
+});
+
+// ---- Sharesight API original through the same publisher ----
+function apiInputs(f){
+  const capture=syntheticCapture();capture.view.name='All Together';capture.asOf=capture.report.start_date=capture.report.end_date='2026-10-30';capture.capturedAt='2026-10-30T05:50:00.000Z';
+  const api=createApiRatioSourceCore(),raw=api.toRaw(api.project(capture),{reportSha256:'7'.repeat(64)});
+  const original=json(raw),input=json(createOfficialRatioSourceCore().build(raw,{sourceSha256:hash(original),sourceBytes:original.length}).input);
+  const bundleId=hash(Buffer.concat([original,input])),prefix='inputs/'+bundleId+'/';
+  const plan={...f.plan,bundleId,original:{name:prefix+'original.json',generation:'201',sha256:hash(original)},input:{name:prefix+'input.json',generation:'202',sha256:hash(input)},library:null};
+  f.values.set(plan.original.name,original);f.values.set(plan.input.name,input);
+  return {raw,plan};
+}
+test('an API original publishes through the same claim, fee gate, single PATCH and readback as its own signed kind',async t=>{
+  const f=await fixture(t),{plan}=apiInputs(f),result=await f.run({plan});
+  assert.equal(result.status,'PUBLISHED_CONFIRMED');assert.equal(result.patchAttempts,1);assert.equal(f.state.patches.length,1);
+  assert.ok(f.state.events.indexOf('fee-readback')<f.state.events.indexOf('claim'));assert.ok(f.state.events.indexOf('fee-recheck')<f.state.events.indexOf('save:WRITE_INTENT'));
+  const packet=JSON.parse(f.state.raw),verified=await f.snapshot.verify(packet,f.manager,{now:f.now});
+  assert.equal(packet.body.source.kind,'complete-official-api-association');assert.equal(Object.hasOwn(packet.body.source,'libraryVersion'),false);
+  assert.equal(verified.watermark.version,2);assert.equal(packet.body.previousSnapshotId,f.plan.previousBodySha256);
+  const evidence=verified.model.book.browserEvidence;
+  assert.deepEqual([evidence.transport,evidence.integrity,Object.hasOwn(evidence,'sourceVersion'),Object.hasOwn(verified.model,'companyExposure')],['official-api','verified-original-api-association',false,false]);
+  assert.match(f.ratio.render(verified.model),/来源：Sharesight 官方 API/);assert.doesNotMatch(f.ratio.render(verified.model),/工作簿|mtime|Library/);
+  assert.deepEqual(f.state.deleted,[[plan.original,plan.input]]);
+});
+test('the plan and the pinned original must agree on the source kind; a mismatch stops before the fee gate, claim or write',async t=>{
+  // An API original under a Library-bound plan.
+  const a=await fixture(t),api=apiInputs(a),bound=await a.run({plan:{...api.plan,library:a.plan.library}});
+  assert.deepEqual([bound.status,bound.stage,bound.claim,bound.patchAttempts],['REFUSED','SOURCE','NOT_ATTEMPTED',0]);
+  // A workbook original under a plan that declares no Library file.
+  const b=await fixture(t),unbound=await b.run({plan:{...b.plan,library:null}});
+  assert.deepEqual([unbound.status,unbound.stage,unbound.claim,unbound.patchAttempts],['REFUSED','SOURCE','NOT_ATTEMPTED',0]);
+  for(const f of [a,b]){assert.equal(f.state.patches.length,0);assert.equal(f.state.events.includes('fee-readback'),false);assert.equal(f.state.claimCalls,0);}
 });
