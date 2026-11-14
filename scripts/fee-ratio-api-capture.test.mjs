@@ -53,7 +53,7 @@ function routes(edit=()=>{}){
   edit(r,b);return r;
 }
 const UPLOAD='https://storage.googleapis.com/upload/storage/v1/b/'+RATIO_BUCKET+'/o?uploadType=media&name=';
-function stub(map,{exists=false}={}){
+function stub(map,{exists=false,refuse=null}={}){
   const calls=[],objects=new Map();let generation=100;
   const reply=(url,value,status=200)=>{const body=new TextEncoder().encode(JSON.stringify(value));let sent=false;
     return {url,status,redirected:false,ok:status===200,headers:{get:k=>k.toLowerCase()==='content-type'?'application/json':null},body:{getReader(){return {read:async()=>sent?{done:true}:(sent=true,{done:false,value:body}),cancel:async()=>{},releaseLock(){}};}}};};
@@ -63,6 +63,7 @@ function stub(map,{exists=false}={}){
       const name=decodeURIComponent(url.slice(UPLOAD.length).split('&')[0]);
       if(!url.endsWith('&ifGenerationMatch=0')||init.method!=='POST')throw new TypeError('unexpected upload');
       if(exists)return reply(url,{error:{code:412}},412);
+      if(refuse)return reply(url,{error:{code:refuse,message:'Invented remote text with account 1234567'}},refuse);
       objects.set(name,Buffer.from(init.body));return reply(url,{bucket:RATIO_BUCKET,name,generation:String(++generation),size:String(init.body.length)});
     }
     if(!map.has(url))throw new TypeError('unexpected synthetic route');
@@ -139,6 +140,13 @@ test('each stage stops with its own fixed code, never retries, and never uploads
   }
   const exists=await run(routes(),{stubOptions:{exists:true}});
   assert.deepEqual([exists.result.status,exists.result.stage,exists.result.code,exists.result.original],['REFUSED','UPLOAD','RATIO_CAPTURE_OBJECT_EXISTS',null]);
+  // A refused upload is named by the service's numeric code only; an unlisted status is a transport refusal with value-free facts.
+  for(const [status,code]of [[401,'UPLOAD_UNAUTHORIZED'],[403,'UPLOAD_FORBIDDEN'],[400,'UPLOAD_BAD_REQUEST'],[404,'UPLOAD_NOT_FOUND']]){
+    const r=await run(routes(),{stubOptions:{refuse:status}});assert.deepEqual([r.result.status,r.result.stage,r.result.code,r.objects.size],['REFUSED','UPLOAD','RATIO_CAPTURE_'+code,0]);leakFree(r.result);assert.equal(JSON.stringify(r.result).includes('remote text'),false);
+  }
+  const odd=stub(routes(),{refuse:500}),d=dispatch();let seen=null;
+  const failed=await runRatioApiCapture({env:d.env,event:d.event,now:NOW,clock:()=>NOW.getTime(),fetchImpl:odd.fetchImpl,expectedScopeSha256:scopeSha,onTransport:t=>{seen=t;}});
+  assert.deepEqual([failed.stage,failed.code],['UPLOAD','RATIO_CAPTURE_TRANSPORT']);assert.deepEqual(Object.keys(seen).sort(),['category','kind','phase']);assert.equal(seen.kind,'HTTP');
   assert.equal(new Set(RATIO_CAPTURE_CODES).size,RATIO_CAPTURE_CODES.length);assert.equal(RATIO_CAPTURE_STAGES.at(-1),'COMPLETE');assert.equal(RATIO_CAPTURE_BUDGET.requests>=1+3+1+30+RATIO_CAPTURE_BUDGET.cashAccounts+8+2,true);
   const source=fs.readFileSync(new URL('./fee-ratio-api-capture.mjs',import.meta.url),'utf8');
   assert.doesNotMatch(source,/child_process|method:'(?:PUT|PATCH|DELETE)'|gist\.github|api\.github/);assert.equal((source.match(/method:'POST'/g)||[]).length,2,'the token exchange and the create-only upload');
