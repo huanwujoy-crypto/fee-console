@@ -593,7 +593,7 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
       - name: Authenticate existing cloud identity for pinned ratio inputs only
-        if: ${{ fromJSON(inputs.ratio_plan).mode == 'publish' }}
+        if: ${{ fromJSON(inputs.ratio_plan).mode == 'publish' || fromJSON(inputs.ratio_plan).mode == 'publish-api' }}
         id: ratio-auth
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
         with:
@@ -604,6 +604,40 @@ jobs:
           access_token_scopes: https://www.googleapis.com/auth/devstorage.read_write
           create_credentials_file: false
           export_environment_variables: false
+      # `publish-api` only. The capture step reads the Sharesight API and pins the
+      # two input objects itself. Credentials are separated by step: the capture
+      # step receives the two Sharesight values and the storage token and none of
+      # the publication secrets; the publication step below receives those and
+      # never a Sharesight value. The two meet only through the pinned objects
+      # and one file of hashes and object generations in the runner's temp
+      # directory. (Owner decision 2026-11-14: step-level instead of job-level
+      # separation, so that one dispatch can capture and publish.)
+      - name: Authenticate for the Sharesight pair of an API capture only
+        if: ${{ fromJSON(inputs.ratio_plan).mode == 'publish-api' }}
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          project_id: family-portfolio-gateway
+          workload_identity_provider: projects/860729177589/locations/global/workloadIdentityPools/fee-console-github/providers/fee-console-main
+          service_account: fee-cloud-producer@family-portfolio-gateway.iam.gserviceaccount.com
+      - name: Read only the existing Sharesight pair for an API capture
+        if: ${{ fromJSON(inputs.ratio_plan).mode == 'publish-api' }}
+        id: ratio_capture_credentials
+        uses: google-github-actions/get-secretmanager-secrets@bc9c54b29fdffb8a47776820a7d26e77b379d262
+        with:
+          secrets: |-
+            client_id:family-portfolio-gateway/sharesight-broker-sync-client-id/1
+            client_secret:family-portfolio-gateway/sharesight-broker-sync-client-secret/1
+      - name: Capture the ratio source from the Sharesight API without any publication secret
+        if: ${{ fromJSON(inputs.ratio_plan).mode == 'publish-api' }}
+        env:
+          RATIO_PLAN: ${{ inputs.ratio_plan }}
+          RATIO_STORAGE_ACCESS_TOKEN: ${{ steps.ratio-auth.outputs.access_token }}
+          FEE_CLOUD_SHARESIGHT_CLIENT_ID: ${{ steps.ratio_capture_credentials.outputs.client_id }}
+          FEE_CLOUD_SHARESIGHT_CLIENT_SECRET: ${{ steps.ratio_capture_credentials.outputs.client_secret }}
+          GOOGLE_APPLICATION_CREDENTIALS: ''
+          CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE: ''
+          GOOGLE_GHA_CREDS_PATH: ''
+        run: node scripts/fee-ratio-api-capture.mjs --capture
       - name: Execute only the reviewed ratio operation
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -613,6 +647,9 @@ jobs:
           FEE_DATA_KEY: ${{ secrets.FEE_DATA_KEY }}
           FEE_ECON_GIST_ID: ${{ secrets.FEE_ECON_GIST_ID }}
           IB_MANAGER_BASELINE_SHA256: ${{ vars.IB_MANAGER_BASELINE_SHA256 }}
+          GOOGLE_APPLICATION_CREDENTIALS: ''
+          CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE: ''
+          GOOGLE_GHA_CREDS_PATH: ''
         run: node scripts/fee-ratio-cloud-runtime.mjs --run
       - name: Retain only the closed safe ratio result
         if: ${{ always() }}
