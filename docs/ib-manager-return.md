@@ -293,6 +293,37 @@ and manager recipient; genuine fresh producer health/code identity; protected
 cipher promotion and normal manager/investor read-back. No real execution or
 switch change is authorized by a source schema or synthetic test.
 
+## Later valuation of the last published day (owner rule, 2026-11-14)
+
+Sharesight can finalize a closing price or an FX rate after a day was already
+published. The reader used to refuse every such difference as
+`IB_SOURCE_PAST_POINT_CHANGED`, which stopped the next day's report although no
+account record had changed (first seen for 2026-11-12, published about two and a
+half hours after the New York close).
+
+For the checkpoint's own last day only, and only when the checkpoint stores that
+day's closing snapshot, a re-read is now accepted when nothing but valuation
+moved. All of the following must hold, otherwise the refusal is unchanged:
+
+- the same holdings, each with the same quantity and the same instrument identity;
+- the same cash accounts with the same currencies;
+- every USD cash account's balance identical;
+- every non-USD cash account's native balance identical;
+- no field other than a holding's USD value, a non-USD account's USD value and
+  the day's total differs.
+
+Nothing published is rewritten. The published point and stored snapshot of that
+day are kept exactly; the following day is measured from them. The later
+valuation therefore appears in the following day's return. With no external flow
+between the two days the product of the two daily returns, and so every
+cumulative return, is unchanged; only the split between the two days differs
+from a source read today. Drawdown uses the same published path, so it can
+differ from a fully re-read path only by that one day's published level. A real
+booking change — a new or edited trade or cash row, a balance or a quantity —
+moves one of the fields above and is still refused; older published days are not
+re-read at all. The reader writes the fixed line `FEE_CLOUD_IB_ANCHOR_REPRICED=1`
+to stderr when the rule applied; it carries no amount, date or identifier.
+
 Run `node --test scripts/ib-manager-return.test.mjs scripts/ib-manager-source.test.mjs scripts/ib-manager-noncash.test.mjs`.
 All inputs and keys in these tests are synthetic. UI stays index-only; local
 UI overlay testing never changes production or its protection policy.

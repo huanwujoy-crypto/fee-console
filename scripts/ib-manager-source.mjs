@@ -126,6 +126,38 @@ const failPast=(site,old,current)=>{
   throw error;
 };
 export const ibSourcePastPoint=error=>pastPointByError.get(error)||null;
+// Owner rule of 2026-11-14 for the last published day only. The source may
+// still finalize a closing price or an FX rate after that day was published.
+// Such a later reading is accepted when nothing but valuation moved: the same
+// holdings with the same quantities and instruments, the same cash accounts
+// and currencies, every USD cash balance and every non-USD native balance
+// identical. Only a holding's USD value, a non-USD account's USD value and the
+// total may differ. Anything else is still a changed past point.
+export const IB_ANCHOR_REPRICED_MARKER='FEE_CLOUD_IB_ANCHOR_REPRICED=1';
+export function ibAnchorRepricedOnly(published,current){
+  try{
+    const top=['d','totalCents','cash','cashCurrency','positions','marks','nativeCash','foreignCurrencies'];
+    if(!object(published)||!object(current)||top.some(k=>Object.hasOwn(published,k)!==Object.hasOwn(current,k))
+      ||Object.keys(published).some(k=>!top.includes(k))||Object.keys(current).some(k=>!top.includes(k)))return false;
+    if(ibCanonical(published)===ibCanonical(current))return false;
+    for(const k of ['d','cashCurrency','positions','nativeCash','foreignCurrencies'])if(ibCanonical(published[k]??null)!==ibCanonical(current[k]??null))return false;
+    if(!Number.isSafeInteger(published.totalCents)||!Number.isSafeInteger(current.totalCents)||current.totalCents<=0)return false;
+    const names=v=>Object.keys(v).sort().join(',');
+    if(!['cash','cashCurrency','positions','marks'].every(k=>object(published[k])&&object(current[k]))||names(published.cash)!==names(current.cash)||names(published.marks)!==names(current.marks))return false;
+    for(const k of Object.keys(published.cash)){
+      if(!Number.isSafeInteger(published.cash[k])||!Number.isSafeInteger(current.cash[k])||!/^[A-Z]{3}$/.test(published.cashCurrency[k]||''))return false;
+      if(published.cashCurrency[k]==='USD'){if(published.cash[k]!==current.cash[k])return false;}
+      else if(!Number.isSafeInteger(published.nativeCash?.[k])||published.nativeCash[k]!==current.nativeCash?.[k])return false;
+    }
+    for(const k of Object.keys(published.marks)){
+      const a=published.marks[k],b=current.marks[k];
+      if(a===null||b===null){if(a!==b)return false;continue;}
+      const {valueCents:x,...before}=a,{valueCents:y,...after}=b;
+      if(!object(a)||!object(b)||!Number.isSafeInteger(x)||!Number.isSafeInteger(y)||x<0||y<0||ibCanonical(before)!==ibCanonical(after))return false;
+    }
+    return true;
+  }catch{return false;}
+}
 export const ibSourceFailureCode=e=>e instanceof IbManagerSourceError?'IB_SOURCE_'+e.code:'IB_SOURCE_NETWORK';
 export const ibCanonical=v=>Array.isArray(v)?'['+v.map(ibCanonical).join(',')+']':v&&typeof v==='object'?'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+ibCanonical(v[k])).join(',')+'}':JSON.stringify(v);
 const hash=v=>crypto.createHash('sha256').update(ibCanonical(v)).digest('hex');
@@ -695,6 +727,14 @@ export class SharesightIbManagerReader{
       while(stack.length){const out=edges.get(stack.at(-1));if(out?.length)stack.push(out.pop());else path.push(stack.pop());}
       if(path.length!==group.length+1)fail('CASH_RECONCILIATION','DAILY_CHAIN_LENGTH',current.d===targetDate?'TARGET':'WINDOW');
       if(path[0]!== (current.cash[cashId]||0))fail('CASH_RECONCILIATION','DAILY_CHAIN_END',current.d===targetDate?'TARGET':'WINDOW');
+    }
+    // The published anchor day keeps its published snapshot and return point;
+    // the day after it is measured from them, so the later valuation is carried
+    // by that day's return and no published figure is rewritten.
+    const publishedAnchor=prior?.closingSnapshots?.find(p=>p.d===anchor);
+    if(publishedAnchor&&ibAnchorRepricedOnly(publishedAnchor,reports[0])){
+      reports[0]=structuredClone(publishedAnchor);
+      try{process.stderr.write(IB_ANCHOR_REPRICED_MARKER+'\n');}catch{/* the marker never changes the result */}
     }
     if(prior){const previous=prior.periodReturnsInput.points.find(p=>p.d===anchor);if(!previous||ibMoneyCents(previous.tot)!==reports[0].totalCents)failPast('ANCHOR_TOTAL',prior.closingSnapshots?.find(p=>p.d===anchor),reports[0]);}
     if(prior?.closingSnapshots){const old=prior.closingSnapshots.find(p=>p.d===anchor);if(!old||ibCanonical(old)!==ibCanonical(reports[0]))failPast('ANCHOR_SNAPSHOT',old,reports[0]);}
