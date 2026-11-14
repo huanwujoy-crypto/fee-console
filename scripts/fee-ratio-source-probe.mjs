@@ -13,6 +13,8 @@
 //   14    GET /api/v3/portfolios/{view}/holdings?consolidated=true (shape only)
 //   15-24 GET /api/v3/portfolios/{member}/holdings?consolidated=false, one per member
 //   25-34 GET /api/v3/portfolios/{member}/trades.json, one per member
+//   35-44 GET /api/v2/portfolios/{member}/cash_accounts.json, one per member
+//   45-60 GET /api/v2/cash_accounts/{id}/cash_account_transactions.json?to={date}, at most sixteen
 //
 // It writes no file, candidate, snapshot, issue or artifact, reads no ledger,
 // fee key, manager token or storage, and publishes nothing. The printed
@@ -40,8 +42,8 @@ export const RATIO_PROBE_INPUTS=Object.freeze(['source_probe_once','source_probe
 const OFF=['ib_diagnostic_once','ib_envelope_once','source_plan_check_only','source_acceptance_once','run_reviewed_once'];
 const BLANK=['ib_diagnostic_main','ib_envelope_main','ratio_main','ratio_plan','source_from','source_target','source_main','manual_sync_completed_for','confirmed_main','recovery_main','report_kind','report_target','report_markets'];
 const off=v=>v===undefined||v===false||v==='false',blank=v=>v===undefined||v==='';
-export const RATIO_PROBE_STAGES=Object.freeze(['ADMISSION','TOKEN','VIEWS','PORTFOLIOS','GROUPS','REPORT','PROJECTION','PERFORMANCE','INCEPTION','COMPLETE']);
-export const RATIO_PROBE_BUDGET=Object.freeze({requests:34,overallMs:300000,requestMs:30000,reportBytes:8*1024*1024});
+export const RATIO_PROBE_STAGES=Object.freeze(['ADMISSION','TOKEN','VIEWS','PORTFOLIOS','GROUPS','REPORT','PROJECTION','PERFORMANCE','INCEPTION','CASH','COMPLETE']);
+export const RATIO_PROBE_BUDGET=Object.freeze({requests:60,overallMs:300000,requestMs:30000,reportBytes:8*1024*1024});
 export const RATIO_PROBE_VIEW='All Together',RATIO_PROBE_GROUP='资产类别';
 // The four existing custom groups the performance section is read through,
 // found by exact name in the account's own group list (never by a stored id),
@@ -167,9 +169,21 @@ export function ratioPerformanceShapeFacts(report,expected){
     has:{holdings:holdings.length>0,subTotals:subs.length>0,cash:cash.length>0,oneSubTotalPerGroupName:subs.length===groupNames.size},
     report:fieldKinds([Object.fromEntries(Object.entries(r).filter(([k])=>!['holdings','sub_totals','cash_accounts'].includes(k)))]),
     holding:fieldKinds(holdings),subTotal:fieldKinds(subs),cash:fieldKinds(cash),
+    // Does the report's own total equal the sum of its group sub-totals, or
+    // only once the cash rows are added? Decides whether the total covers cash.
+    totals:{value:closure(r.value,subs.map(x=>x?.value),cash.map(x=>x?.value)),totalGain:closure(r.total_gain,subs.map(x=>x?.total_gain),cash.map(x=>x?.total_gain)),cashGainRows:cash.length===0?'NO_ROWS':cash.every(c=>typeof c?.total_gain==='number')?'ALL_NUMERIC':cash.some(c=>typeof c?.total_gain==='number')?'SOME_NUMERIC':'NONE_NUMERIC'},
     anomalies:{holdingsNotUnlimited:count(holdings,h=>h.limited!==false),holdingsWithoutGroupName:count(holdings,h=>typeof h.group_name!=='string'||!h.group_name),holdingsWithoutPortfolio:count(holdings,h=>!object(h.portfolio)||!id(h.portfolio.id))}
   };
 }
+// Which sum reproduces a report total, to the dollar: its sub-totals alone, or
+// its sub-totals plus its cash rows. Non-numeric cash rows count as zero and
+// are reported separately. No amount is returned.
+const closure=(total,subs,cash)=>{
+  const n=v=>typeof v==='number'&&Number.isFinite(v)?v:0,sum=a=>a.reduce((s,v)=>s+n(v),0);
+  if(typeof total!=='number'||!Number.isFinite(total))return 'TOTAL_NOT_NUMERIC';
+  const a=Math.abs(total-sum(subs))<=1,b=Math.abs(total-sum(subs)-sum(cash))<=1;
+  return a&&b?'BOTH_WITHIN_ONE_USD':a?'SUB_TOTALS':b?'SUB_TOTALS_PLUS_CASH':'NEITHER';
+};
 // Size class of a count: enough to judge how common a case is, without the count itself.
 const bucket=n=>n===0?'NONE':n<=5?'1_TO_5':n<=20?'6_TO_20':'OVER_20';
 const safeCode=error=>{const m=String(error?.message||'');return RATIO_PROBE_CODES.includes(m)?m:'RATIO_PROBE_FAILED';};
@@ -273,7 +287,7 @@ async function probeWork({argv,env,event,now=new Date(),fetchImpl=globalThis.fet
           const shape=ratioPerformanceShapeFacts(complete(body.report),{start:starts[window],end:d,groupId:gid,groupName:name}),text=JSON.stringify([shape.report,shape.holding,shape.subTotal,shape.cash]);
           // The full field list is printed once; later reports say whether theirs is identical.
           if(reference===null){reference=text;performance.reports[slot]={read:true,...shape};}
-          else performance.reports[slot]={read:true,echoes:shape.echoes,grouping:shape.grouping,percentagesAnnualised:shape.percentagesAnnualised,has:shape.has,anomalies:shape.anomalies,sameFieldsAsFirst:text===reference,...(text===reference?{}:{report:shape.report,holding:shape.holding,subTotal:shape.subTotal,cash:shape.cash})};
+          else performance.reports[slot]={read:true,echoes:shape.echoes,grouping:shape.grouping,percentagesAnnualised:shape.percentagesAnnualised,has:shape.has,totals:shape.totals,anomalies:shape.anomalies,sameFieldsAsFirst:text===reference,...(text===reference?{}:{report:shape.report,holding:shape.holding,subTotal:shape.subTotal,cash:shape.cash})};
           good++;
         }catch(error){
           if(state.deadlineExceeded||deadlineSignal.aborted)throw error;
@@ -335,6 +349,25 @@ async function probeWork({argv,env,event,now=new Date(),fetchImpl=globalThis.fet
     inception.trades={membersRead:tradeMembers,memberCodes:[...tradeCodes].sort(),hasRows:rows.length>0,descriptionCodes:enumerated(rows,'description_code',/^[A-Z][A-Z_]{0,23}$/),states:enumerated(rows,'state',/^[a-z][a-z_]{0,15}$/),transactionDates:rows.length===0?'NO_ROWS':rows.every(r=>object(r)&&date(r.transaction_date))?'ALL':'NOT_ALL',withHoldingId:rows.length===0?'NO_ROWS':rows.every(r=>object(r)&&id(r.holding_id))?'ALL':'NOT_ALL',
       earliestRecordOfCurrentPositions:classes(held.filter(k=>listing.has(k))),earliestRecordOfAllListedHoldings:classes(listedKeys),
       firstBuyDateDiffersFromEarliestRecord:bucket(listedKeys.filter(k=>first.has(k)&&dated(listing.get(k))&&listing.get(k).inception_date!==first.get(k).date).length),...fieldKinds(rows)};
+
+    // Cash accounts: can a cash row of the reports be found in its member's own
+    // cash-account listing, and does each have a first dated transaction?
+    result.stage='CASH';
+    const cashFacts=facts.cash={membersRead:0,memberCodes:[],account:null,reportCashListed:null,transactions:null};
+    const reportCash=(Array.isArray(report.cash_accounts)?report.cash_accounts:[]).map(c=>(object(c?.portfolio)?id(c.portfolio.id):null)+'|'+(object(c)?id(c.id):null));
+    const cashRows=[],cashListed=new Set(),cashCodes=new Set();
+    for(const account of accounts){
+      const got=await slot(`/api/v2/portfolios/${account.id}/cash_accounts.json`,'cash_accounts',rows=>{for(const c of rows){cashRows.push(c);const cid=object(c)?id(c.id):null;if(cid)cashListed.add(account.id+'|'+cid);}return {};});
+      if(got.read)cashFacts.membersRead++;else cashCodes.add(got.code);
+    }
+    cashFacts.memberCodes=[...cashCodes].sort();cashFacts.account=fieldKinds(cashRows);
+    cashFacts.reportCashListed={everyReportCashAccountListed:reportCash.every(k=>cashListed.has(k)),notListed:bucket(reportCash.filter(k=>!cashListed.has(k)).length),listedBeyondReport:bucket([...cashListed].filter(k=>!reportCash.includes(k)).length)};
+    const wanted=reportCash.filter(k=>cashListed.has(k)).slice(0,16),txRows=[];let txRead=0,withFirstDate=0;const txCodes=new Set();
+    for(const k of wanted){
+      const got=await slot(`/api/v2/cash_accounts/${k.split('|')[1]}/cash_account_transactions.json?to=${d}`,'cash_account_transactions',rows=>{txRows.push(...rows);if(rows.some(r=>object(r)&&(date(r.date)||typeof r.date_time==='string'&&date(r.date_time.slice(0,10)))))withFirstDate++;return {};});
+      if(got.read)txRead++;else txCodes.add(got.code);
+    }
+    cashFacts.transactions={requested:bucket(wanted.length),allRequestedRead:txRead===wanted.length,codes:[...txCodes].sort(),everyReadAccountHasADatedRow:withFirstDate===txRead,typeNames:enumerated(txRows,'type_name',/^[A-Za-z][A-Za-z _-]{0,31}$/),...fieldKinds(txRows)};
     token=null;
     result.stage='COMPLETE';result.outcome='REPORT_PROJECTED';return result;
   }catch(error){
