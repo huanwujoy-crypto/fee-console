@@ -19,7 +19,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {boundedJson,BoundedJsonError} from './fee-http-json.mjs';
+import {boundedJson,boundedJsonTransportDiagnostic,BoundedJsonError} from './fee-http-json.mjs';
 import {ratioAdmission,RATIO_BUCKET,RATIO_CAPTURE_FILE,RATIO_CAPTURE_SCHEMA,validateRatioCapture} from './fee-ratio-cloud-runtime.mjs';
 import {createApiRatioSourceCore} from './fee-ratio-api-source.mjs';
 import {createApiPerformanceCore} from './fee-ratio-api-performance.mjs';
@@ -40,7 +40,7 @@ const FORBIDDEN=['NODE_OPTIONS','NODE_PATH','GH_TOKEN','GITHUB_TOKEN','FEE_DATA_
 const CLOUD_CREDENTIAL_PATHS=['GOOGLE_APPLICATION_CREDENTIALS','CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE','GOOGLE_GHA_CREDS_PATH'];
 const api=createApiRatioSourceCore(),performanceCore=createApiPerformanceCore();
 export const RATIO_CAPTURE_CODES=Object.freeze([
-  ...['ENVIRONMENT','PLAN','TARGET_DATE','BUDGET','DEADLINE','TRANSPORT','AUTH_RESPONSE','SHAPE','INCOMPLETE','VIEW_IDENTITY','GROUP_IDENTITY','MEMBERS','SCOPE','CASH_ACCOUNTS','ASSOCIATION','OBJECT_SIZE','OBJECT_EXISTS','UPLOAD_RESPONSE','FAILED'].map(c=>'RATIO_CAPTURE_'+c),
+  ...['ENVIRONMENT','PLAN','TARGET_DATE','BUDGET','DEADLINE','TRANSPORT','AUTH_RESPONSE','SHAPE','INCOMPLETE','VIEW_IDENTITY','GROUP_IDENTITY','MEMBERS','SCOPE','CASH_ACCOUNTS','ASSOCIATION','OBJECT_SIZE','OBJECT_EXISTS','UPLOAD_UNAUTHORIZED','UPLOAD_FORBIDDEN','UPLOAD_BAD_REQUEST','UPLOAD_NOT_FOUND','UPLOAD_REFUSED','UPLOAD_RESPONSE','FAILED'].map(c=>'RATIO_CAPTURE_'+c),
   ...api.CODES.map(c=>'RATIO_API_SOURCE_'+c),...performanceCore.CODES.map(c=>'RATIO_API_PERFORMANCE_'+c),'RATIO_CLOUD_RUNTIME_REFUSED','RATIO_OFFICIAL_SOURCE_REFUSED']);
 class CaptureError extends Error{constructor(code){super('RATIO_CAPTURE_'+code);}}
 const fail=code=>{throw new CaptureError(code);};
@@ -67,7 +67,7 @@ export async function runRatioApiCapture(options={}){
   const expired=new Promise(resolve=>{timer=setTimeout(()=>{state.deadlineExceeded=true;deadline.abort();resolve();},RATIO_CAPTURE_BUDGET.overallMs);});
   const work=captureWork(options,result,state,deadline.signal);
   try{
-    if(await Promise.race([work.then(()=>true),expired.then(()=>false)]))return result;
+    if(await Promise.race([work.then(()=>true),expired.then(()=>false)])){if(typeof options.onTransport==='function'&&state.transport)options.onTransport(state.transport);return result;}
     work.catch(()=>{});
     return {...result,status:'REFUSED',code:'RATIO_CAPTURE_DEADLINE',bundleId:null,original:null,input:null};
   }finally{clearTimeout(timer);}
@@ -177,8 +177,9 @@ async function captureWork({env,event,now=new Date(),fetchImpl=globalThis.fetch,
     const upload=async(name,bytes)=>{
       // Create-only: a precondition failure means an object of this exact content already exists.
       const created=await request('https://storage.googleapis.com/upload/storage/v1/b/'+RATIO_BUCKET+'/o?uploadType=media&name='+encodeURIComponent(name)+'&ifGenerationMatch=0',
-        {method:'POST',headers:{Authorization:'Bearer '+env.RATIO_STORAGE_ACCESS_TOKEN,'Content-Type':'application/json'},body:bytes},65536,false,[200,412]);
-      if(object(created)&&Object.hasOwn(created,'error'))fail('OBJECT_EXISTS');
+        {method:'POST',headers:{Authorization:'Bearer '+env.RATIO_STORAGE_ACCESS_TOKEN,'Content-Type':'application/json'},body:bytes},65536,false,[200,400,401,403,404,412]);
+      // A refusal is named by the service's own numeric code only; its message is never read.
+      if(object(created)&&Object.hasOwn(created,'error')){const n=created.error?.code;fail(n===412?'OBJECT_EXISTS':n===401?'UPLOAD_UNAUTHORIZED':n===403?'UPLOAD_FORBIDDEN':n===400?'UPLOAD_BAD_REQUEST':n===404?'UPLOAD_NOT_FOUND':'UPLOAD_REFUSED');}
       if(!object(created)||created.bucket!==RATIO_BUCKET||created.name!==name||typeof created.generation!=='string'||!/^[1-9][0-9]{0,29}$/.test(created.generation)||Number(created.size)!==bytes.length)fail('UPLOAD_RESPONSE');
       return {name,generation:created.generation,sha256:sha(bytes)};
     };
@@ -189,7 +190,10 @@ async function captureWork({env,event,now=new Date(),fetchImpl=globalThis.fetch,
   }catch(error){
     // Only fixed codes. No message, URL, status text, header or body reaches the result.
     result.status='REFUSED';result.bundleId=null;result.original=null;result.input=null;
-    result.code=state.budgetExceeded?'RATIO_CAPTURE_BUDGET':state.deadlineExceeded?'RATIO_CAPTURE_DEADLINE':error instanceof BoundedJsonError?'RATIO_CAPTURE_TRANSPORT':safeCode(error);
+    const bounded=error instanceof BoundedJsonError;
+    result.code=state.budgetExceeded?'RATIO_CAPTURE_BUDGET':state.deadlineExceeded?'RATIO_CAPTURE_DEADLINE':bounded?'RATIO_CAPTURE_TRANSPORT':safeCode(error);
+    // Value-free facts of this helper's own error class, for the log line only.
+    if(bounded&&!state.budgetExceeded&&!state.deadlineExceeded){const d=boundedJsonTransportDiagnostic(error);state.transport={phase:d?.phase||'RESPONSE',category:d?.category||'REJECTED',kind:['HTTP','TYPE','SIZE','BODY','JSON','TIMEOUT','ABORTED','CONFIG'].includes(error.code)?error.code:'OTHER'};}
     return result;
   }
 }
@@ -205,10 +209,11 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
     try{
       if(process.argv.length!==3||process.argv[2]!=='--capture'||!process.env.RUNNER_TEMP||!path.isAbsolute(process.env.RUNNER_TEMP))throw Error();
       const eventBytes=fs.readFileSync(process.env.GITHUB_EVENT_PATH);if(eventBytes.length>1024*1024)throw Error();
-      const result=await runRatioApiCapture({env:process.env,event:JSON.parse(eventBytes)});
+      let transport=null;
+      const result=await runRatioApiCapture({env:process.env,event:JSON.parse(eventBytes),onTransport:t=>{transport=t;}});
       saveRatioCapture(path.join(process.env.RUNNER_TEMP,RATIO_CAPTURE_FILE),result);
       // The log carries the stage and code only; hashes and generations stay in the runner's private file.
-      console.log(JSON.stringify({schema:result.schema,status:result.status,stage:result.stage,code:result.code,requests:result.requests}));
+      console.log(JSON.stringify({schema:result.schema,status:result.status,stage:result.stage,code:result.code,requests:result.requests,transport}));
       process.exitCode=result.status==='CAPTURED'?0:1;
     }catch{console.error('RATIO_CAPTURE_ENTRY_REFUSED');process.exitCode=1;}
   })();
