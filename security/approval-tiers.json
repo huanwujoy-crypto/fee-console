@@ -622,6 +622,8 @@
     "scripts/fee-ratio-official-source.test.mjs",
     "scripts/fee-ratio-api-source.mjs",
     "scripts/fee-ratio-api-source.test.mjs",
+    "scripts/fee-ratio-api-performance.mjs",
+    "scripts/fee-ratio-api-performance.test.mjs",
     "scripts/fee-ratio-source-probe.mjs",
     "scripts/fee-ratio-source-probe.test.mjs",
     "scripts/fee-ratio-session-view.test.mjs",
