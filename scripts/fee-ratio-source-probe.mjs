@@ -10,12 +10,16 @@
 //   4 GET  /api/v2/groups.json
 //   5 GET  /api/v3/portfolios/{view}/performance (custom-group classification)
 //   6-13 GET the same route for four custom groups x two windows (shape only)
+//   14    GET /api/v3/portfolios/{view}/holdings?consolidated=true (shape only)
+//   15-24 GET /api/v3/portfolios/{member}/holdings?consolidated=false, one per member
+//   25    GET /api/v3/portfolios/{member}/trades.json for one member (shape only)
 //
 // It writes no file, candidate, snapshot, issue or artifact, reads no ledger,
 // fee key, manager token or storage, and publishes nothing. The printed
 // result contains no amount, quantity, name, identifier, URL, header, token
 // or remote error text: only enumerated strings, booleans and counts of
-// anomalies, plus the API's own field names for the performance reports. A
+// anomalies, plus the API's own field names and enumerated codes for the
+// performance, holdings and trades routes. A
 // success means only that these requests answered and the
 // pure projection accepted the report shape at that time. It is not source
 // authentication, a reconciliation, or approval to wire or publish anything.
@@ -36,8 +40,8 @@ export const RATIO_PROBE_INPUTS=Object.freeze(['source_probe_once','source_probe
 const OFF=['ib_diagnostic_once','ib_envelope_once','source_plan_check_only','source_acceptance_once','run_reviewed_once'];
 const BLANK=['ib_diagnostic_main','ib_envelope_main','ratio_main','ratio_plan','source_from','source_target','source_main','manual_sync_completed_for','confirmed_main','recovery_main','report_kind','report_target','report_markets'];
 const off=v=>v===undefined||v===false||v==='false',blank=v=>v===undefined||v==='';
-export const RATIO_PROBE_STAGES=Object.freeze(['ADMISSION','TOKEN','VIEWS','PORTFOLIOS','GROUPS','REPORT','PROJECTION','PERFORMANCE','COMPLETE']);
-export const RATIO_PROBE_BUDGET=Object.freeze({requests:13,overallMs:300000,requestMs:30000,reportBytes:8*1024*1024});
+export const RATIO_PROBE_STAGES=Object.freeze(['ADMISSION','TOKEN','VIEWS','PORTFOLIOS','GROUPS','REPORT','PROJECTION','PERFORMANCE','INCEPTION','COMPLETE']);
+export const RATIO_PROBE_BUDGET=Object.freeze({requests:25,overallMs:300000,requestMs:30000,reportBytes:8*1024*1024});
 export const RATIO_PROBE_VIEW='All Together',RATIO_PROBE_GROUP='资产类别';
 // The four existing custom groups the performance section is read through,
 // found by exact name in the account's own group list (never by a stored id),
@@ -274,7 +278,39 @@ async function probeWork({argv,env,event,now=new Date(),fetchImpl=globalThis.fet
         }
       }
     }
-    token=null;performance.complete=good===8;
+    performance.complete=good===8;
+
+    // Where can a position's first-buy date come from? The same holdings and
+    // trades routes the fee reader already uses, here for the ten members.
+    // Only field names, enumerated codes and counts of anomalies are kept.
+    result.stage='INCEPTION';
+    const inception=facts.inception={consolidated:null,membersRead:0,memberCodes:[],holding:null,anomalies:null,classification:null,trades:null};
+    const slot=async(route,key,use)=>{
+      if(result.requests>=RATIO_PROBE_BUDGET.requests||state.deadlineExceeded||deadlineSignal.aborted)return {read:false,code:'RATIO_PROBE_BUDGET'};
+      try{return {read:true,...use(listed(await get(route,RATIO_PROBE_BUDGET.reportBytes),key))};}
+      catch(error){
+        if(state.deadlineExceeded||deadlineSignal.aborted)throw error;
+        const bounded=error instanceof BoundedJsonError;
+        return {read:false,code:bounded?'RATIO_PROBE_TRANSPORT':safeCode(error),...(bounded?{httpCode:['HTTP','TYPE','SIZE','BODY','JSON','TIMEOUT','ABORTED','CONFIG'].includes(error.code)?error.code:'OTHER'}:{})};
+      }
+    };
+    const dated=h=>object(h)&&date(h.inception_date);
+    const coverage=rows=>rows.length===0?'NO_ROWS':rows.every(dated)?'ALL':rows.some(dated)?'SOME':'NONE';
+    inception.consolidated=await slot(`/api/v3/portfolios/${viewId}/holdings?consolidated=true`,'holdings',rows=>({inceptionDates:coverage(rows),...fieldKinds(rows)}));
+    const listing=new Map(),allRows=[],codes=new Set();
+    for(const account of accounts){
+      const got=await slot(`/api/v3/portfolios/${account.id}/holdings?consolidated=false`,'holdings',rows=>{for(const h of rows){allRows.push(h);const hid=object(h)?id(h.id):null;if(hid)listing.set(account.id+'|'+hid,h);}return {};});
+      if(got.read)inception.membersRead++;else codes.add(got.code);
+    }
+    inception.memberCodes=[...codes].sort();
+    inception.holding=fieldKinds(allRows);
+    inception.anomalies={listedWithoutInceptionDate:allRows.filter(h=>!dated(h)).length,inceptionAfterTarget:allRows.filter(h=>dated(h)&&h.inception_date>d).length,listedWithoutId:allRows.filter(h=>!object(h)||!id(h.id)).length};
+    // Every position of the classification report should be found, with a date.
+    const held=(Array.isArray(report.holdings)?report.holdings:[]).map(h=>(object(h?.portfolio)?id(h.portfolio.id):null)+'|'+(object(h)?id(h.id):null));
+    inception.classification={everyPositionListed:held.every(k=>listing.has(k)),positionsNotListed:held.filter(k=>!listing.has(k)).length,listedPositionsWithoutDate:held.filter(k=>listing.has(k)&&!dated(listing.get(k))).length};
+    const enumerated=(rows,key,pattern)=>{const out=new Set();for(const r of rows){const v=object(r)?r[key]:undefined;out.add(typeof v==='string'&&pattern.test(v)?v:v===undefined?'ABSENT':'OTHER');}return [...out].sort().slice(0,40);};
+    inception.trades=await slot(`/api/v3/portfolios/${accounts[0].id}/trades.json?consolidated=false&end_date=${d}`,'trades',rows=>({hasRows:rows.length>0,descriptionCodes:enumerated(rows,'description_code',/^[A-Z][A-Z_]{0,23}$/),states:enumerated(rows,'state',/^[a-z][a-z_]{0,15}$/),transactionDates:rows.length===0?'NO_ROWS':rows.every(r=>object(r)&&date(r.transaction_date))?'ALL':'NOT_ALL',withHoldingId:rows.length===0?'NO_ROWS':rows.every(r=>object(r)&&id(r.holding_id))?'ALL':'NOT_ALL',...fieldKinds(rows)}));
+    token=null;
     result.stage='COMPLETE';result.outcome='REPORT_PROJECTED';return result;
   }catch(error){
     // Only this helper's own fixed error class and its value-free facts are
