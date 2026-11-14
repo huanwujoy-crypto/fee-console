@@ -6,7 +6,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import {nyDate} from './daily-core.mjs';
-import {SharesightIbManagerReader,IbManagerSourceError,IB_CASH_RECONCILIATION_SITES,IB_CASH_DATE_ROLES,ibSourceCashSite,ibSourceCashDateRole,IB_PAST_POINT_SITES,IB_PAST_POINT_FIELDS,ibSourcePastPoint,pastPointFields,ibBaselineBusinessHash,ibSourceFailureCode,validateIbBootstrapCoverage,validateIbManagerReportInput,IB_CAPTURE_RECHECK_DIAGNOSTIC_CODES,ibSourceCaptureRecheckDiagnostic,IB_CAPTURE_UNSTABLE_DIAGNOSTIC_CODES,ibSourceCaptureUnstableDiagnostic} from './ib-manager-source.mjs';
+import {SharesightIbManagerReader,IbManagerSourceError,IB_CASH_RECONCILIATION_SITES,IB_CASH_DATE_ROLES,ibSourceCashSite,ibSourceCashDateRole,IB_PAST_POINT_SITES,IB_PAST_POINT_FIELDS,ibSourcePastPoint,pastPointFields,ibAnchorRepricedOnly,IB_ANCHOR_REPRICED_MARKER,ibBaselineBusinessHash,ibSourceFailureCode,validateIbBootstrapCoverage,validateIbManagerReportInput,IB_CAPTURE_RECHECK_DIAGNOSTIC_CODES,ibSourceCaptureRecheckDiagnostic,IB_CAPTURE_UNSTABLE_DIAGNOSTIC_CODES,ibSourceCaptureUnstableDiagnostic} from './ib-manager-source.mjs';
 import {BoundedJsonError} from './fee-http-json.mjs';
 import {buildIbManagerReportBundle,validateIbManagerReportState,buildIbOwnerBaseline,validateIbOwnerBaselineState,buildIbManagerReturnReceipt,buildIbManagerDrawdownReceipt,createIbManagerReturnConsumer,createIbManagerDrawdownConsumer} from './ib-manager-return.mjs';
 import {prepareIbManagerReport,loadIbManagerReport,sameIbManagerData,validateIbManagerCoverage,assertIbManagerConfiguration,assertIbManagerPublication,IB_PUBLICATION_DIAGNOSTIC_PREFIX,validateIbPublicationDiagnostic} from './ib-manager-report.mjs';
@@ -85,16 +85,66 @@ test('every past-point rejection has a literal allowlisted site and the thrown e
   const first=await(await cashDateFixture({mutate:marked})).run();assert.ok(first.closingSnapshots[1].marks[2]);
   const refused=mutate=>cashDateFixture({events,target:'2026-11-03',checkpoint:first,mutate:(b,c)=>{marked(b);if(at('2026-11-02')(b))mutate(b);}}).then(f=>f.run()).then(()=>assert.fail('expected a refusal'),e=>e);
   assert.ok(await(await cashDateFixture({events,target:'2026-11-03',checkpoint:first,mutate:marked})).run());
-  const repriced=await refused(b=>{b.report.holdings[0].value+=7.31;b.report.value+=7.31;});
+  // The instrument behind a mark changed together with its value: still refused, with the categories named and never their values.
+  const repriced=await refused(b=>{b.report.holdings[0].value+=7.31;b.report.value+=7.31;b.report.holdings[0].instrument.code='SYN2';});
   assert.equal(repriced.message,'IB_SOURCE_PAST_POINT_CHANGED');
-  assert.deepEqual(ibSourcePastPoint(repriced),{site:'ANCHOR_TOTAL',fields:['totalCents','marks','markValue']});
+  assert.deepEqual(ibSourcePastPoint(repriced),{site:'ANCHOR_TOTAL',fields:['totalCents','marks','markValue','markIdentity']});
   // The total still matches but the instrument behind the mark does not: the whole-snapshot comparison refuses.
   const renamed=await refused(b=>{b.report.holdings[0].instrument.code='SYN2';});
   assert.deepEqual(ibSourcePastPoint(renamed),{site:'ANCHOR_SNAPSHOT',fields:['marks','markIdentity']});
   assert.equal(JSON.stringify(ibSourcePastPoint(repriced)).includes('731'),false);
-  assert.equal(/\d/.test(JSON.stringify(ibSourcePastPoint(repriced))),false);
   for(const other of [null,undefined,'IB_SOURCE_PAST_POINT_CHANGED',new Error('IB_SOURCE_PAST_POINT_CHANGED'),new IbManagerSourceError('PAST_POINT_CHANGED'),new IbManagerSourceError('UNSTABLE'),
     Object.assign(Object.create(IbManagerSourceError.prototype),{code:'PAST_POINT_CHANGED'})])assert.equal(ibSourcePastPoint(other),null);
+});
+test('a later valuation of the last published day is accepted only when nothing but price or FX moved',()=>{
+  const mark=(id,v,q='1000')=>({d:'2026-09-02',holdingId:id,instrumentIdentityHash:'a'.repeat(64),quantityAtoms:q,valueCents:v});
+  const snap=()=>({d:'2026-09-02',totalCents:100000,cash:{3:5000,5:7000},cashCurrency:{3:'USD',5:'CAD'},nativeCash:{5:9800},
+    positions:{2:'1000',6:'1000',8:'500'},marks:{2:mark(2,30000),6:mark(6,20000),8:null},foreignCurrencies:{8:'CAD'}});
+  const accepted=change=>{const b=snap();change(b);return ibAnchorRepricedOnly(snap(),b);};
+  // Accepted: a USD holding's value, the non-USD account's USD value, an unmarked non-USD holding (total only), or all of them.
+  for(const change of [b=>{b.marks[2].valueCents+=40;b.totalCents+=40;},b=>{b.cash[5]+=13;b.totalCents+=13;},b=>{b.totalCents+=700;},
+    b=>{b.marks[2].valueCents-=40;b.marks[6].valueCents+=5;b.cash[5]-=2;b.totalCents+=663;}])assert.equal(accepted(change),true);
+  // Refused: identical snapshots are not a repricing, and every non-valuation difference stays a changed past point.
+  for(const [name,change] of [['identical',()=>{}],['date',b=>{b.d='2026-09-03';}],['USD cash balance',b=>{b.cash[3]+=1;b.totalCents+=1;}],
+    ['native balance',b=>{b.nativeCash[5]+=1;b.cash[5]+=1;b.totalCents+=1;}],['native balance missing',b=>{delete b.nativeCash;b.cash[5]+=1;}],
+    ['quantity',b=>{b.positions[2]='1001';b.totalCents+=30;}],['mark quantity',b=>{b.marks[2].quantityAtoms='1001';b.marks[2].valueCents+=30;}],
+    ['instrument',b=>{b.marks[2].instrumentIdentityHash='b'.repeat(64);b.marks[2].valueCents+=30;}],['mark date',b=>{b.marks[2].d='2026-09-03';b.totalCents+=1;}],
+    ['mark holding',b=>{b.marks[2].holdingId=9;b.totalCents+=1;}],['mark extra field',b=>{b.marks[2].absenceEvidenceHash='c'.repeat(64);b.totalCents+=1;}],
+    ['mark lost',b=>{b.marks[2]=null;b.totalCents+=1;}],['mark gained',b=>{b.marks[8]=mark(8,100);b.totalCents+=1;}],
+    ['holding added',b=>{b.positions[9]='1';b.marks[9]=null;b.totalCents+=1;}],['holding removed',b=>{delete b.positions[6];delete b.marks[6];b.totalCents-=20000;}],
+    ['cash account added',b=>{b.cash[7]=1;b.cashCurrency[7]='USD';b.totalCents+=1;}],['cash account removed',b=>{delete b.cash[5];delete b.cashCurrency[5];delete b.nativeCash[5];b.totalCents-=7000;}],
+    ['currency',b=>{b.cashCurrency[5]='EUR';b.cash[5]+=1;}],['foreign holding currency',b=>{b.foreignCurrencies[8]='EUR';b.totalCents+=1;}],
+    ['foreign flag lost',b=>{delete b.foreignCurrencies;b.totalCents+=1;}],['extra field',b=>{b.note='x';b.totalCents+=1;}],
+    ['total not an integer',b=>{b.totalCents+=0.5;}],['total not positive',b=>{b.totalCents=0;}],['negative value',b=>{b.marks[2].valueCents=-1;}],
+    ['value not an integer',b=>{b.marks[2].valueCents+=0.5;}],['cash not an integer',b=>{b.cash[5]+=0.5;}]])assert.equal(accepted(change),false,name);
+  for(const bad of [[null,snap()],[snap(),undefined],['x',snap()],[[],snap()],[snap(),{get cash(){throw Error('PRIVATE_CANARY');}}]])assert.equal(ibAnchorRepricedOnly(...bad),false);
+});
+test('a repriced last published day keeps its published point and snapshot, and the next day carries the later valuation',async t=>{
+  const events=[{d:'2026-11-02',kind:'BUY'}],marked=b=>{if(b.report)b.report.holdings[0].instrument={id:9,code:'SYN',market_code:'NYSE',currency_code:'USD'};};
+  const first=await(await cashDateFixture({mutate:marked})).run();
+  const lines=[],original=process.stderr.write;t.after(()=>{process.stderr.write=original;});
+  process.stderr.write=(chunk,...rest)=>{if(String(chunk).startsWith('FEE_CLOUD_IB_ANCHOR_REPRICED'))lines.push(String(chunk));else return original.call(process.stderr,chunk,...rest);return true;};
+  const plain=await(await cashDateFixture({events,target:'2026-11-03',checkpoint:first,mutate:marked})).run();assert.deepEqual(lines,[]);
+  // After publication the source finalizes the holding's 2026-11-02 value: +7.31, same quantity, same cash.
+  const later=(b,c)=>{marked(b);if(b.report?.end_date==='2026-11-02'){b.report.holdings[0].value+=7.31;b.report.value+=7.31;}};
+  const f=await cashDateFixture({events,target:'2026-11-03',checkpoint:first,mutate:later}),next=await f.run();
+  process.stderr.write=original;
+  assert.deepEqual(lines,[IB_ANCHOR_REPRICED_MARKER+'\n',IB_ANCHOR_REPRICED_MARKER+'\n']);
+  // Nothing published is rewritten: every earlier point, the anchor day's point and its stored snapshot are the published ones.
+  assert.deepEqual(next.periodReturnsInput.points.slice(0,-1),first.periodReturnsInput.points);
+  assert.deepEqual(next.closingSnapshots[0],first.closingSnapshots[1]);
+  // The new day is exactly what an unrevised source gives, so the later valuation falls into this day's return only.
+  assert.deepEqual(next.periodReturnsInput,plain.periodReturnsInput);assert.deepEqual(next.closingSnapshots,plain.closingSnapshots);
+  assert.deepEqual(next.cashFlowByDate,plain.cashFlowByDate);assert.deepEqual(validateIbManagerReportInput(next,f.expected),next);
+  assert.equal(JSON.stringify(next).includes('731'),false);
+  await buildIbManagerReportBundle(next,f.expected);
+  // The accepted state is an ordinary checkpoint for the following day.
+  const following=await(await cashDateFixture({events,target:'2026-11-04',checkpoint:next,mutate:later})).run();
+  assert.deepEqual(following.periodReturnsInput.points.slice(0,-1),next.periodReturnsInput.points);
+  // Only the last published day: an older published day that moves is not re-read and cannot be accepted this way,
+  // and a first-generation checkpoint without a stored snapshot stays strict.
+  const initial=await source();
+  await assert.rejects(read(wire({mutate:b=>{if(b.report?.end_date==='2026-09-02'){b.report.holdings[0].value+=0.01;b.report.value+=0.01;}}}),{targetDate:'2026-09-03',checkpoint:initial}),/PAST_POINT_CHANGED/);
 });
 test('past-point categories separate USD cash, repriced non-USD cash, marked and unmarked holdings without any value',()=>{
   const mark=(id,v,q='1000')=>({d:'2026-09-02',holdingId:id,instrumentIdentityHash:'a'.repeat(64),quantityAtoms:q,valueCents:v});
