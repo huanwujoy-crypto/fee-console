@@ -37,6 +37,14 @@ function performanceReport(group,start,annualised){
   r.cash_accounts=r.cash_accounts.map(c=>({...c,total_gain:null,total_gain_percent:null}));
   return r;
 }
+// The `top` grouping once more with report_combined=true: the same report plus one merged row per security.
+const combinedRoute=start=>route('top',start,true).replace('&report_combined=false&','&report_combined=true&');
+function combinedReport(start,annualised){
+  const r=performanceReport('top',start,annualised),merged=new Map();
+  for(const h of r.holdings){const k=h.instrument.market_code+'|'+h.instrument.code,old=merged.get(k)||{instrument:{...h.instrument},portfolios:[],value:0,total_gain_percent:(annualised?30:3)+merged.size/8,id:null};
+    old.portfolios.push({id:h.portfolio.id,name:h.portfolio.name});old.value+=h.value;merged.set(k,old);}
+  r.report_combined=true;r.combined_holdings=[...merged.values()];return r;
+}
 function routes(edit=()=>{}){
   const b=base(),holdingsOf=a=>b.report.holdings.filter(h=>h.portfolio.id===a.id),cashOf=a=>b.report.cash_accounts.filter(c=>c.portfolio.id===a.id);
   const r=new Map([
@@ -49,7 +57,8 @@ function routes(edit=()=>{}){
     ...accounts.map(a=>[`${API}/api/v3/portfolios/${a.id}/trades.json?consolidated=false&end_date=${D}`,{trades:holdingsOf(a).map((h,i)=>({id:h.id*10,holding_id:h.id,transaction_date:'2020-03-04',description_code:i===0?'OPENING_BALANCE':'BUY',state:'confirmed'}))}]),
     ...accounts.map(a=>[`${API}/api/v2/portfolios/${a.id}/cash_accounts.json`,{cash_accounts:cashOf(a).map(c=>({id:c.id,name:c.name}))}]),
     ...b.report.cash_accounts.map(c=>[`${API}/api/v2/cash_accounts/${c.id}/cash_account_transactions.json?to=${D}`,{cash_account_transactions:[{id:c.id*10,date_time:'2019-05-06T00:00:00.000Z',amount:6}]}]),
-    ...Object.keys(GROUP_IDS).flatMap(g=>[[route(g,'2019-05-06',true),{report:performanceReport(g,'2019-05-06',true)}],[route(g,'2025-11-10',true),{report:performanceReport(g,'2025-11-10',false)}]])]);
+    ...Object.keys(GROUP_IDS).flatMap(g=>[[route(g,'2019-05-06',true),{report:performanceReport(g,'2019-05-06',true)}],[route(g,'2025-11-10',true),{report:performanceReport(g,'2025-11-10',false)}]]),
+    [combinedRoute('2019-05-06'),{report:combinedReport('2019-05-06',true)}],[combinedRoute('2025-11-10'),{report:combinedReport('2025-11-10',false)}]]);
   edit(r,b);return r;
 }
 const UPLOAD='https://storage.googleapis.com/upload/storage/v1/b/'+RATIO_BUCKET+'/o?uploadType=media&name=';
@@ -81,8 +90,8 @@ const leakFree=result=>{const text=JSON.stringify(result);for(const secret of [S
 test('one capture reads fixed routes, builds an API original with performance and pins both objects create-only',async()=>{
   const {result,calls,objects}=await run();
   assert.deepEqual([result.status,result.stage,result.code],['CAPTURED','COMPLETE',null]);
-  // token + 3 discovery + classification + 10 holdings + 10 trades + 10 cash lists + one ledger per cash account + 8 reports + 2 uploads
-  const expected=1+3+1+10+10+10+base().report.cash_accounts.length+8+2;assert.equal(result.requests,expected);assert.equal(calls.length,expected);
+  // token + 3 discovery + classification + 10 holdings + 10 trades + 10 cash lists + one ledger per cash account + 8 reports + 2 combined reports + 2 uploads
+  const expected=1+3+1+10+10+10+base().report.cash_accounts.length+8+2+2;assert.equal(result.requests,expected);assert.equal(calls.length,expected);
   assert.deepEqual(calls.filter(c=>c.method!=='GET').map(c=>[c.method,c.url.split('?')[0]]),[['POST',API+'/oauth2/token'],['POST',UPLOAD.split('?')[0]],['POST',UPLOAD.split('?')[0]]]);
   assert.equal(calls.every(c=>c.redirect==='error'),true);
   // The Sharesight token never goes to storage, and the storage token never goes to Sharesight.
@@ -154,6 +163,26 @@ test('each stage stops with its own fixed code, never retries, and never uploads
   assert.doesNotMatch(source,/child_process|method:'(?:PUT|PATCH|DELETE)'|gist\.github|api\.github/);assert.equal((source.match(/method:'POST'/g)||[]).length,2,'the token exchange and the create-only upload');
 });
 
+test('the combined reports fill the return of a security held in several accounts; without them the capture is what it was',async()=>{
+  const top=(objects,result)=>JSON.parse(objects.get(result.original.name)).performance.topHoldings;
+  const got=await run(),t=top(got.objects,got.result);
+  // GOOG is held in two member accounts and has no bucket of its own in the `top` grouping.
+  const target=t.targets.find(x=>x.category==='二级市场'&&x.members.length===2);assert.ok(target);
+  for(const [n,start,annualised] of [[0,'2019-05-06',true],[1,'2025-11-10',false]]){
+    const row=t.reports[n].rows.find(r=>r.target.name===target.name);
+    assert.equal(row.sourceSheet,'report.combined_holdings');assert.equal(row.memberEvidence.length,2);
+    assert.equal(row.returnPct,combinedReport(start,annualised).combined_holdings.find(h=>h.portfolios.length===2).total_gain_percent);
+    assert.equal(t.reports[n].additionalSources.length,1);assert.match(t.reports[n].additionalSources[0].locator,/topCombined/);
+  }
+  // The two requests are refused, missing or malformed: the capture still completes, with that one figure left empty as before.
+  for(const edit of [m=>{m.delete(combinedRoute('2019-05-06'));m.delete(combinedRoute('2025-11-10'));},m=>{m.delete(combinedRoute('2025-11-10'));},m=>{m.set(combinedRoute('2019-05-06'),{report:null});},
+    m=>{for(const s of ['2019-05-06','2025-11-10'])m.set(combinedRoute(s),{report:{...combinedReport(s,s==='2019-05-06'),combined_holdings:undefined}});}]){
+    const plain=await run(routes(edit));assert.deepEqual([plain.result.status,plain.result.stage,plain.result.code],['CAPTURED','COMPLETE',null]);
+    const p=top(plain.objects,plain.result);
+    for(const n of [0,1]){assert.equal(p.reports[n].rows.some(r=>r.target.name===target.name),false);assert.ok(p.reports[n].unavailable.some(u=>u.target.name===target.name));
+      assert.equal(JSON.stringify(p.reports[n]).includes('topCombined'),false);}
+  }
+});
 test('a scheduled capture needs no operator plan and binds its result to the derived plan of that run',async()=>{
   const at=new Date('2026-11-11T01:00:05.000Z'),s=stub(routes()),d=dispatch();
   const env={...d.env,GITHUB_EVENT_NAME:'schedule',RATIO_PLAN:'',FEE_RATIO_AUTO_ENABLED:'true',RATIO_SCHEDULE:RATIO_SCHEDULE_CRON,FEE_REPORT_MARKETS:'NYSE,NASDAQ,LSE'};delete env.GITHUB_ACTOR_ID;

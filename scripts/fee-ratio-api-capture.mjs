@@ -151,6 +151,19 @@ async function captureWork({env,event,now=new Date(),fetchImpl=globalThis.fetch,
       if(!object(got.json.report))fail('SHAPE');
       reports[group+'.'+period]={report:complete(got.json.report),sha256:got.sha256};
     }
+    // The `top` grouping once more with `report_combined=true`: its extra list gives the provider's own return
+    // for one security held in several accounts. It only ever fills a gap, so a refusal of these two requests is
+    // not a refusal of the capture: both are dropped and the result is what it was without them.
+    try{
+      for(const period of performanceCore.PERIODS){
+        const got=await getExact(performanceRoute('top',window[period],true).replace('&report_combined=false&','&report_combined=true&'));
+        if(!object(got.json.report))fail('SHAPE');
+        reports['topCombined.'+period]={report:complete(got.json.report),sha256:got.sha256};
+      }
+    }catch(error){
+      if(state.deadlineExceeded||state.budgetExceeded||deadlineSignal.aborted)throw error;
+      for(const period of performanceCore.PERIODS)delete reports['topCombined.'+period];
+    }
     token=null;
 
     // ---- build with the existing pure builders; nothing is computed here ----

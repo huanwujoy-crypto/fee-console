@@ -94,6 +94,66 @@ test('a rate is annualised only on the provider flag and a full year held; start
   assert.deepEqual([period('All Together').investmentStartDate,Object.hasOwn(period('All Together'),'investmentStartBasis')],['2018-02-03',false]);
 });
 
+// The `top` grouping read again with report_combined=true: the same report plus the provider's own row per security.
+function withCombined(c,{ids='object',edit=()=>{}}={}){
+  for(const [n,period] of ['all','oneYear'].entries()){
+    const r=structuredClone(c.reports['top.'+period].report),merged=new Map();
+    for(const h of r.holdings){const k=h.instrument.market_code+'|'+h.instrument.code,old=merged.get(k)||{instrument:{...h.instrument},portfolios:[],value:0,quantity:0,group_name:h.group_name,total_gain_percent:(period==='all'?40:4)+merged.size/8,id:null,limited:null,valid_position:null};
+      old.portfolios.push(ids==='object'?{id:h.portfolio.id,name:h.portfolio.name}:h.portfolio.id);old.value+=h.value;merged.set(k,old);}
+    r.report_combined=true;r.combined_holdings=[...merged.values()];edit(r,period);
+    c.reports['topCombined.'+period]={report:r,sha256:String(8+n).repeat(64)};
+  }
+}
+const noBucket=c=>each(c,(r,k)=>{if(k.startsWith('top.')){for(const h of r.holdings)if(h.group_name==='Top tech')h.group_name='Rest';r.sub_totals=r.sub_totals.filter(x=>x.group_name!=='Top tech');}});
+test('a security held in several accounts takes the provider\'s own combined row; nothing else changes',()=>{
+  // BBB sits in two accounts and, here, in no bucket of its own: without the combined reading it has no figure.
+  const before=core.build(capture(noBucket),{topTargets:TARGETS});
+  assert.ok(before.topHoldings.reports[0].unavailable.some(u=>u.target.name==='Invented BBB'));
+  for(const ids of ['object','bare']){
+    const p=core.build(capture(c=>{noBucket(c);withCombined(c,{ids});}),{topTargets:TARGETS});
+    for(const [n,period] of ['all','oneYear'].entries()){
+      const top=p.topHoldings.reports[n],row=top.rows.find(r=>r.target.name==='Invented BBB');
+      assert.ok(row,period);assert.equal(row.sourceSheet,'report.combined_holdings');assert.equal(row.memberEvidence.length,2);assert.deepEqual(row.memberEvidence.map(e=>e.account).sort(),[accounts[0].name,accounts[1].name].sort());
+      // The provider's figure for the merged security, taken as given: not either account's own row, nor a mean of them.
+      assert.equal(row.returnPct,capture(c=>{noBucket(c);withCombined(c);}).reports['topCombined.'+period].report.combined_holdings.find(h=>h.instrument.code==='BBB').total_gain_percent);
+      const own=report('top',period).holdings.filter(h=>h.instrument.code==='BBB').map(h=>h.total_gain_percent);assert.equal(own.length,2);assert.equal(own.includes(row.returnPct),false);assert.notEqual(row.returnPct,(own[0]+own[1])/2);
+      // One additional source per period, and it is the combined reading for every row that needs one.
+      assert.equal(top.additionalSources.length,1);assert.equal(top.additionalSources[0].locator,'api-v3-performance-custom-group topCombined.'+period);
+      assert.deepEqual([...new Set(top.rows.filter(r=>r.sourceFileId).map(r=>r.sourceFileId))],[top.additionalSources[0].apiReportId]);
+      // The fund sub-total and every single-account row are exactly what they were.
+      const same=r=>({...r,sourceFileId:undefined}),old=before.topHoldings.reports[n];
+      for(const name of ['Invented VC-A','Invented Gamma','Delta','Invented AAA','Invented CCC'])assert.deepEqual(same(top.rows.find(r=>r.target.name===name)),same(old.rows.find(r=>r.target.name===name)),name);
+      assert.equal(top.unavailable.length,old.unavailable.length-1);
+    }
+    // The viewer's own core accepts it against the same targets and shows the figure.
+    const view=createAggregateReturnsCore().build(p,{expectedAccounts:p.accounts,expectedAsOf:ASOF,topTargets:TARGETS});
+    assert.equal(Number.isFinite(view.topHoldings.items.find(i=>i.target.name==='Invented BBB').periods.all.nativePct),true);
+  }
+  // With a bucket of its own, the matching sub-total stays the figure, exactly as before; the combined row only fills a gap.
+  const withBucket=core.build(capture(),{topTargets:TARGETS}).topHoldings.reports[0],both=core.build(capture(c=>withCombined(c)),{topTargets:TARGETS}).topHoldings.reports[0];
+  for(const name of ['Invented BBB','Delta']){const a=both.rows.find(r=>r.target.name===name),b=withBucket.rows.find(r=>r.target.name===name);assert.equal(a.sourceSheet,'report.sub_totals');assert.equal(a.returnPct,b.returnPct);assert.equal(a.sourceRow,b.sourceRow);}
+  assert.equal(both.additionalSources.length,1);
+});
+test('a combined reading that is not an exact repeat, or a combined row that does not fit, changes nothing',()=>{
+  const plain=core.build(capture(noBucket),{topTargets:TARGETS});
+  const sameAsPlain=edit=>assert.deepEqual(core.build(capture(c=>{noBucket(c);withCombined(c,{edit});}),{topTargets:TARGETS}),plain);
+  // Not an exact repeat of the plain `top` report: ignored as a whole.
+  sameAsPlain(r=>{r.holdings[0].total_gain_percent+=1;});sameAsPlain(r=>{r.sub_totals[0].total_gain_percent+=1;});sameAsPlain(r=>{r.holdings[13].group_name='Elsewhere';r.sub_totals.push({group_id:9,group_name:'Elsewhere',value:1,total_gain:1,total_gain_percent:1});});
+  sameAsPlain(r=>{delete r.combined_holdings;});sameAsPlain(r=>{r.combined_holdings='x';});
+  // The row for the security does not fit: no return, two rows, an account missing or unknown, an unlisted holder, a bad shape.
+  const bbb=r=>r.combined_holdings.find(h=>h?.instrument?.code==='BBB');
+  for(const edit of [r=>{bbb(r).total_gain_percent=null;},r=>{bbb(r).total_gain_percent='7';},r=>{r.combined_holdings.push(structuredClone(bbb(r)));},r=>{bbb(r).portfolios.pop();},
+    r=>{bbb(r).portfolios.push({id:999999});},r=>{bbb(r).portfolios.push({id:accounts[4].id});},r=>{bbb(r).portfolios=[];},r=>{bbb(r).portfolios='x';},r=>{bbb(r).portfolios.push(bbb(r).portfolios[0]);},
+    r=>{bbb(r).instrument.code='OTHER';},r=>{r.combined_holdings=r.combined_holdings.filter(h=>h.instrument.code!=='BBB');},r=>{r.combined_holdings.unshift(null,7,'x');bbb(r).total_gain_percent=NaN;}]){
+    const got=core.build(capture(c=>{noBucket(c);withCombined(c,{edit});}),{topTargets:TARGETS});
+    for(const n of [0,1]){assert.equal(got.topHoldings.reports[n].rows.some(r=>r.target.name==='Invented BBB'),false);assert.ok(got.topHoldings.reports[n].unavailable.some(u=>u.target.name==='Invented BBB'&&u.reason==='native-aggregate-not-provided'));
+      assert.deepEqual(got.reports[n],plain.reports[n]);}
+  }
+  // Half a pair, or a combined entry that is not a report of the same window, is refused like any other bad report.
+  assert.throws(()=>core.build(capture(c=>{withCombined(c);delete c.reports['topCombined.oneYear'];}),{topTargets:TARGETS}),{message:'RATIO_API_PERFORMANCE_REPORT'});
+  assert.throws(()=>core.build(capture(c=>{withCombined(c);c.reports['topCombined.all'].report.start_date='2001-01-01';}),{topTargets:TARGETS}),{message:'RATIO_API_PERFORMANCE_REPORT'});
+  assert.throws(()=>core.build(capture(c=>{withCombined(c);c.reports['topCombined.all'].sha256='x';}),{topTargets:TARGETS}),{message:'RATIO_API_PERFORMANCE_REPORT'});
+});
 test('top five: one holding uses its own row, several accounts use the matching sub-total, anything else is unavailable',()=>{
   const p=core.build(capture(),{topTargets:TARGETS}),top=p.topHoldings.reports[0];
   assert.deepEqual(top.rows.map(r=>[r.target.name,r.sourceSheet,r.memberEvidence.length,Boolean(r.sourceFileId),r.unit]),[['Invented VC-A','report.holdings',1,false,'p.a.'],['Invented Gamma','report.holdings',1,false,'p.a.'],['Delta','report.sub_totals',2,true,'p.a.'],
