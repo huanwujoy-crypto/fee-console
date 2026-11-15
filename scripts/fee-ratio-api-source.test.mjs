@@ -99,6 +99,27 @@ async function apiSnapshot(){
   return {...f,facts,manager,model,snapshot,args,signed};
 }
 
+test('the ETFs the secondary ranking leaves out are ranked on their own, by the same provider type',async t=>{
+  const etf=edit=>apiOriginal(edit).built.input.exposure.summary.secondaryEtfTop5;
+  const type=(c,code,value)=>{for(const h of c.report.holdings)if(h.instrument.code===code)h.instrument.friendly_instrument_description_code=value;};
+  // The one ETF of the fixture, with its accounts and value; it is not in the stock ranking.
+  const base=apiOriginal().built.input.exposure.summary;
+  assert.deepEqual(base.secondaryEtfTop5.map(r=>r.securityCode),['TQQQ']);assert.deepEqual(Object.keys(base.secondaryEtfTop5[0]).sort(),['accounts','market','name','securityCode','valueUSD']);
+  assert.equal(base.classes[3].top5.some(r=>r.securityCode==='TQQQ'),false);
+  // A report without any ETF has an empty ranking, not a missing one.
+  assert.deepEqual(etf(c=>type(c,'TQQQ','ordinary_shares')),[]);
+  // An earlier original without types has no ETF ranking at all, exactly as it was published.
+  const raw=structuredClone(apiOriginal().raw);for(const r of raw.classification.positions)delete r.assetType;
+  const bytes=Buffer.from(JSON.stringify(raw));assert.equal(Object.hasOwn(createOfficialRatioSourceCore().build(raw,{sourceSha256:sha(bytes),sourceBytes:bytes.length}).input.exposure.summary,'secondaryEtfTop5'),false);
+  // The validating core refuses a ranking that is misplaced, overlaps the stock ranking, is unsorted or has extra fields.
+  const exposureCore=createRankedExposureCore(),view=x=>exposureCore.buildRankedExposureView(x),good=structuredClone(apiOriginal().built.input.exposure);
+  good.summary.secondaryEtfTop5.push({name:'Synthetic second ETF',securityCode:'ETF2',market:'TEST',accounts:[good.summary.accounts[0]],valueUSD:.01});
+  assert.deepEqual(view(good).groups[3].etfTop.map(r=>r.securityCode),['TQQQ','ETF2']);assert.ok(view(good).groups[3].etfTop.every(r=>r.categoryWeightPct>0&&r.portfolioWeightPct>0));
+  for(const edit of [x=>x.summary.secondaryEtfTop5.reverse(),x=>{x.summary.secondaryEtfTop5[0].extra=1;},x=>x.summary.secondaryEtfTop5.push({...x.summary.classes[3].top5[0]}),x=>{x.summary.secondaryEtfTop5[1]={...x.summary.secondaryEtfTop5[0]};},
+    x=>{x.summary.secondaryEtfTop5[0].accounts=[];},x=>{x.summary.secondaryEtfTop5[0].valueUSD=x.summary.classes[3].totalValueUSD;},x=>{x.summary.secondaryEtfTop5=null;},x=>{x.summary.secondaryEtfTop5=Array.from({length:6},(_,i)=>({...x.summary.secondaryEtfTop5[0],name:'n'+i,securityCode:'C'+i}));}]){
+    const bad=structuredClone(good);edit(bad);assert.throws(()=>view(bad));
+  }
+});
 test('only the provider\'s own asset type removes a holding from the secondary ranking',()=>{
   const top=edit=>apiOriginal(edit).built.input.exposure.summary.classes[3].top5.map(r=>r.securityCode);
   const type=(c,code,value)=>{for(const h of c.report.holdings)if(h.instrument.code===code){if(value===undefined)delete h.instrument.friendly_instrument_description_code;else h.instrument.friendly_instrument_description_code=value;}};
@@ -170,7 +191,7 @@ test('an API source signs as its own kind without a Library version, renders API
   assert.equal(result.source.kind,'complete-official-api-association');assert.equal(Object.hasOwn(result.source,'libraryVersion'),false);
   assert.deepEqual(result.source.sourceDates,{classification:'2026-11-10',exposure:'2026-11-10'});assert.equal(Object.hasOwn(result.model,'companyExposure'),false);
   const html=f.ratio.render(result.model);
-  for(const text of ['来源：Sharesight 官方 API（合并视图 All Together 分类报表）','API 响应逐行投影、账户范围与响应字节哈希已核验。','API 响应接收 2026-11-10T09:00:00.000Z','报表总额与逐行合计相差 0.00 USD','时间依据 Sharesight API 响应接收时间','持仓来源截至 2026-11-10','资产分类与持仓均截至 2026-11-10，取自同一份 API 报表','二级市场 · 持仓前五','不做ETF穿透，ETF按其自身市值列示'])assert.ok(html.includes(text),text);
+  for(const text of ['来源：Sharesight 官方 API（合并视图 All Together 分类报表）','API 响应逐行投影、账户范围与响应字节哈希已核验。','API 响应接收 2026-11-10T09:00:00.000Z','报表总额与逐行合计相差 0.00 USD','时间依据 Sharesight API 响应接收时间','持仓来源截至 2026-11-10','资产分类与持仓均截至 2026-11-10，取自同一份 API 报表','二级市场 · 股票前五','二级市场 · ETF前五','不做ETF穿透，ETF按其自身市值列示'])assert.ok(html.includes(text),text);
   assert.doesNotMatch(html,/工作簿|mtime|Library|浏览器快照|Exposure 估值|ETF Residual|Top500|公司经济敞口|undefined/);
   // Signing refuses a Library version on an API original, and any relabelling of the kind or the sealed model.
   await assert.rejects(f.snapshot.verifyOriginal({...f.args,libraryVersion:0}),/RATIO_SNAPSHOT_REFUSED/);

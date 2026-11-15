@@ -122,7 +122,7 @@ test('official stock subtotal authenticates and renders without replacing alloca
 test('top-five actual selected scopes survive original proof, encryption, authentication and reopen',async t=>{
  const f=await fixture(t,addTopReturns),reopened=await f.snapshot.verify(f.performanceSigned,f.manager,{now:f.now}),html=f.ratio.render(reopened.model);
  assert.deepEqual(reopened.model.performance.topHoldings,f.raw.performance.topHoldings);
- assert.match(html,/直接持仓收益率/);assert.match(html,/7.62%/);assert.match(html,/不包括 ETF 穿透公司敞口/);
+ assert.match(html,/收益率/);assert.doesNotMatch(html,/直接持仓收益率/);assert.match(html,/7.62%/);assert.match(html,/不包括 ETF 穿透公司敞口/);
  const fundDetails=html.match(/<li class="ratio-fund-holding"[^]*?<\/li>/g)||[];assert.ok(fundDetails.every(x=>!x.includes('ratio-returns')));
  assert.deepEqual(reopened.model.classificationSummary,f.model.classificationSummary);assert.deepEqual(reopened.model.companyExposure,f.model.companyExposure);
  for(const change of [m=>m.performance.topHoldings.reports[0].rows[0].returnPct++,m=>m.performance.topHoldings.targets[0].members[0].account='Wrong account']){const bad=structuredClone(f.model);change(bad);await assert.rejects(f.snapshot.verifyOriginal({...f.args,model:bad}));}
@@ -302,11 +302,11 @@ function presentationFixture({returns=true,reverse=false,extra=false,inline=true
    name.dataset.securityCode='SYNTH-'+category+'-'+i;name.append(new PresentationNode(null,(i+1)+'. Synthetic product '+category+'-'+i),account);row.append(name,amount,weight);body.append(row);
    let composition=null,rate=null;
    if(category===3||category===2&&i<3){composition=el('details');const list=el('ul');list.append(el('li','','Synthetic member A'),el('li','','Synthetic member B'));composition.append(el('summary','',category===3?'持仓与穿透明细':'合并持仓 · 2笔'),list);disclosures.push(composition);}
-   if(returns){const evidence=el('details',inline?'ratio-returns ratio-return-facts':'ratio-returns');evidence.append(el('summary','',inline?'详情':category===3?'直接持仓收益率':'收益率'));
+   if(returns){const evidence=el('details',inline?'ratio-returns ratio-return-facts':'ratio-returns');evidence.append(el('summary','',inline?'详情':'收益率'));
     if(inline)evidence.append(el('p','ratio-return-date-fact','全部：2020-01-02 至 2026-10-30'),el('p','ratio-return-date-fact','近一年：2025-10-30 至 2026-10-30'),el('p','ratio-return-scope-fact','Synthetic account '+category));
     else{const pair=el('div','ratio-return-pair');pair.append(el('div','ratio-return-period','All '+(7.5+category+i)+'% 原报表口径'),el('div','ratio-return-period','近12个月 '+(-2.5+i)+'% 未满一年'));evidence.append(pair);}
     rate=evidence;
-    if(inline){rate=el('div','ratio-returns-inline');const compact=el('div','ratio-return-compact');compact.append(el('span','ratio-return-compact-line','全部：'+(7.5+category+i)+'%'),el('span','ratio-return-compact-line','近一年：'+(-2.5+i)+'% 未满一年'));rate.append(el('p','ratio-return-inline-label',category===3?'直接持仓收益率':'收益率'));rate.append(compact,evidence);}disclosures.push(rate);}
+    if(inline){rate=el('div','ratio-returns-inline');const compact=el('div','ratio-return-compact');compact.append(el('span','ratio-return-compact-line','全部：'+(7.5+category+i)+'%'),el('span','ratio-return-compact-line','近一年：'+(-2.5+i)+'% 未满一年'));rate.append(el('p','ratio-return-inline-label','收益率'));rate.append(compact,evidence);}disclosures.push(rate);}
    if(reverse)disclosures.reverse();if(extra){const note=el('details','synthetic-note');note.append(el('summary','','Extra preserved note'),el('p','','Synthetic note body'));disclosures.push(note);}
    name.append(...disclosures);originals.push({section,account,composition,rate,disclosures,amount:amount.textContent,weights:weight.textContent,rateText:rate?.textContent,category});
   }
@@ -332,7 +332,7 @@ for(const mode of [{returns:true,inline:true},{returns:true,inline:true,reverse:
   for(const disclosure of o.disclosures)assert.ok(disclosure.closest('.ratio-holding-row')===card,'same nodes remain under the matching holding');
   if(o.rate){assert.equal(o.rate.classList.contains('ratio-composition'),false);if(mode.inline){
    assert.equal(o.rate.querySelector('.ratio-return-compact').parentNode,o.rate,'values stay outside the closed evidence panel');
-   assert.equal(o.rate.querySelector('.ratio-return-inline-label').textContent,o.category===3?'直接持仓收益率':'收益率');
+   assert.equal(o.rate.querySelector('.ratio-return-inline-label').textContent,'收益率');
    const facts=card.querySelector('.ratio-return-facts');assert.equal(facts.querySelector('summary').textContent,'收益率说明');
    assert.equal(facts.parentNode.className,'ratio-row-disclosures');assert.equal(facts.querySelectorAll('p').length,3);
   }else assert.equal(o.rate.textContent,o.rateText);}

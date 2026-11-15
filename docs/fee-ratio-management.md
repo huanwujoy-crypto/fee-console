@@ -150,6 +150,23 @@ five rows to fit inside the class total, labels the group `持仓前五`, and
 takes the secondary return targets from those same rows. Class totals, the
 denominators, residual disclosure and fees are unchanged.
 
+**ETF ranking (2026-11-15).** A typed API projection also carries
+`summary.secondaryEtfTop5`: the secondary class's ETFs (the provider's own asset
+type, the same test that keeps them out of the stock ranking), merged per
+security across accounts, at asset value, at most five and possibly none. The
+viewer validates it against the class total and the stock rows, shows it as
+`二级市场 · ETF前五`, and then labels the stock ranking `二级市场 · 股票前五`; a
+summary without the field keeps `持仓前五`. Return targets for those ETFs use the
+category `二级市场ETF` and follow the same rule as every other target: the
+holding's own row, or the provider's sub-total or combined row for exactly that
+security. Every top-five return is labelled `收益率`.
+
+**Evergreen lots.** An evergreen target is one product bought in dated lots. A
+provider sub-total that also covers a fully redeemed lot of the same dated name
+is still that product's figure, so the API builder accepts such a lot by that
+exact name (as the viewer core already did). Any other name in the sub-total
+still makes it unavailable.
+
 Snapshots already published with the earlier look-through basis remain
 readable and keep their company-exposure presentation; neither basis can be
 relabelled as the other. `companyExposure` is still produced and validated for

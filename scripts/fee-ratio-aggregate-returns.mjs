@@ -168,7 +168,7 @@ export function createAggregateReturnsCore(){
 
  // Only current ranked entries are eligible. The historical return scope can
  // retain sold members of the same exact product; no display-name fuzzy join.
- const topId=t=>canon([t.category,t.name]);
+ const topId=t=>canon([t.category,t.name]),ETF_TOP='二级市场ETF';
  function topTargets(exposure,companyTop=null){
   const out=[];
   const clean=m=>({account:m.account.replaceAll('&amp;','&'),market:m.market,securityCode:m.securityCode});
@@ -180,6 +180,11 @@ export function createAggregateReturnsCore(){
    const members=r.sourceHoldings?.map(clean)||r.accounts?.map(account=>clean({...r,account}));
    if(!members?.length)fail();
    out.push({category:g.name,name:r.name,members:unique(members),basis:g.name==='二级市场'?'direct-holdings-only':'fund-holding'});
+  }
+  // The secondary class's own ETF ranking, when the summary carries one.
+  if(directSecondary)for(const r of exposure.summary.secondaryEtfTop5||[]){
+   if(!r.accounts?.length)fail();
+   out.push({category:ETF_TOP,name:r.name,members:unique(r.accounts.map(account=>clean({...r,account}))),basis:'direct-holdings-only'});
   }
   if(companyTop&&!directSecondary)for(const r of companyTop){
    const members=r.constituents.filter(c=>c.product===null||c.basis==='product-asset-replacement').map(clean);
@@ -196,15 +201,17 @@ export function createAggregateReturnsCore(){
   }return null;
  }
  function buildTop(source,parent,expectedTargets=null){
-  if(!exact(source,['schema','targets','reports'])||source.schema!=='fee-console.ratio-top5-source.v1'||!Array.isArray(source.targets)||source.targets.length<15||source.targets.length>20||!Array.isArray(source.reports)||source.reports.length!==2)fail();
+  if(!exact(source,['schema','targets','reports'])||source.schema!=='fee-console.ratio-top5-source.v1'||!Array.isArray(source.targets)||source.targets.length<15||source.targets.length>25||!Array.isArray(source.reports)||source.reports.length!==2)fail();
   const targets=new Map();
   for(const t of source.targets){
-   if(!exact(t,['category','name','members','basis'])||!['PE/VC','对冲基金','常青基金','二级市场'].includes(t.category)||!text(t.name)||t.basis!==(t.category==='二级市场'?'direct-holdings-only':'fund-holding')||!Array.isArray(t.members)||!t.members.length&&t.category!=='二级市场'||targets.has(topId(t)))fail();
+   if(!exact(t,['category','name','members','basis'])||!['PE/VC','对冲基金','常青基金','二级市场',ETF_TOP].includes(t.category)||!text(t.name)||t.basis!==(t.category==='二级市场'||t.category===ETF_TOP?'direct-holdings-only':'fund-holding')||!Array.isArray(t.members)||!t.members.length&&t.category!=='二级市场'||targets.has(topId(t)))fail();
    const keys=t.members.map(m=>{if(!exact(m,['account','market','securityCode'])||![m.account,m.market,m.securityCode].every(text)||!parent.accounts.includes(m.account))fail();return memberKey(m);});
    if(new Set(keys).size!==keys.length||!same(keys,[...keys].sort((a,b)=>a.localeCompare(b))))fail();targets.set(topId(t),t);
   }
   for(const category of ['PE/VC','对冲基金','常青基金'])if(source.targets.filter(t=>t.category===category).length!==5)fail();
   const secondary=source.targets.filter(t=>t.category==='二级市场').length;if(secondary!==0&&secondary!==5)fail();
+  // The ETF ranking exists only beside the direct secondary ranking, and may be shorter than five.
+  const etfs=source.targets.filter(t=>t.category===ETF_TOP).length;if(etfs>5||etfs&&secondary!==5)fail();
   if(expectedTargets!==null&&!same(source.targets,expectedTargets))fail();
   const stockFiles=stockSourceIds(parent);
   const normalized=structuredClone(parent);delete normalized.topHoldings;
@@ -261,8 +268,7 @@ export function createAggregateReturnsCore(){
 
  function renderTop(item){
   if(!item)return '';
-  const secondary=item.target.category==='二级市场';
-  return renderInline(item,secondary?'直接持仓收益率':'收益率');
+  return renderInline(item,'收益率');
  }
 
  function select(v,s){const k=scopeKey(s);return v.items.find(x=>scopeKey(x.scope)===k)||{scope:structuredClone(s),periods:{}};}
@@ -310,5 +316,5 @@ export function createAggregateReturnsCore(){
   const note=stockScope(item.scope)?'股票市场小计只包含四个股票分类的历史成员，不含现金账户、防御资产或主题投资。':cash.includes('unknown')?'现金账户收益覆盖未获来源确认。':cash.includes('mixed')||cash.length>1?'现金收益覆盖分别保留各期原报表设置。':cash[0]==='included'?'含现金账户收益。':cash[0]==='excluded'?'未含现金账户收益。':'';
   return '<details class="ratio-returns"><summary>收益率</summary><div class="ratio-return-pair">'+rows+'</div><p class="ratio-return-scope">'+esc(accounts.join(' · '))+' · USD · Sharesight 原生口径</p><p>只显示组合或分类原生收益；已平仓计入历史，不用当前市值权重或穿透敞口重算。'+note+'</p></details>';
  }
- return {SCHEMA,build,validateInceptionBindings,select,render:renderAggregate,scopeKey,oneYearBefore,topTargets,buildTop,selectTop,renderTop,renderCompact,renderInline};
+ return {SCHEMA,build,validateInceptionBindings,select,render:renderAggregate,scopeKey,oneYearBefore,topTargets,buildTop,selectTop,renderTop,renderCompact,renderInline,datedName,ETF_TOP};
 }

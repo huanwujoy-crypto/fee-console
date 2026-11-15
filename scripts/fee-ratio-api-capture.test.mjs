@@ -102,7 +102,7 @@ test('one capture reads fixed routes, builds an API original with performance an
   const raw=JSON.parse(original),prepared=JSON.parse(input);
   assert.deepEqual([raw.schemaVersion,raw.allocation.schemaVersion,raw.allocation.source.transport,raw.performance.transport,prepared.schema],['sharesight-private-performance-v1','sharesight-api-full-v1','official-api','official-api','fee-console.ratio-sources.v3']);
   assert.deepEqual(raw.performance.reports.map(r=>[r.period,r.startDate,r.endDate]),[['all','2019-05-06',D],['oneYear','2025-11-10',D]]);
-  assert.equal(raw.performance.topHoldings.targets.length,20);assert.equal(raw.performance.inceptionEvidence.members.some(m=>m.dateKind==='holding-opening-balance'),true);
+  assert.equal(raw.performance.topHoldings.targets.length,21);assert.deepEqual(raw.performance.topHoldings.targets.filter(t=>t.category==='二级市场ETF').map(t=>[t.name.includes('TQQQ')||t.members[0].securityCode==='TQQQ',t.basis]),[[true,'direct-holdings-only']]);assert.equal(raw.performance.inceptionEvidence.members.some(m=>m.dateKind==='holding-opening-balance'),true);
   assert.equal(prepared.book.sourceSha256,sha(original));
   // What it pinned passes the same association check the publication step repeats.
   const facts=createRatioSourceCore(names=>sha(JSON.stringify(names.map(s=>s.replaceAll('&amp;','&')).sort()))).verifyBrowserSourceAssociations(raw,prepared,{scopeHash:scopeSha,now:NOW});

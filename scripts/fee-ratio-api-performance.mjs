@@ -192,7 +192,7 @@ export function createApiPerformanceCore(){
     });
 
     // ---- top five: a single holding's own row, or the top grouping's sub-total for the same instruments ----
-    const targets=structuredClone(topTargets);
+    const targets=structuredClone(topTargets),{datedName}=createAggregateReturnsCore();
     const topReports=PERIODS.map((period,index)=>{
       // One `top` source per period: the combined reading when in use (it repeats the plain one exactly), else the plain one.
       const asset=parsed['asset.'+period],top=combinedOf[period]?combinedOf[period].source:parsed['top.'+period],parent=reports[index],rows=[],unavailable=[];
@@ -209,7 +209,11 @@ export function createApiPerformanceCore(){
         }
         const instruments=new Set(target.members.map(m=>m.market+'|'+m.securityCode));
         // Several accounts: the provider's own sub-total covering exactly these instruments, sold lots included.
-        const match=top.subs.filter(s=>want.every(k=>s.keys.has(k))&&[...s.keys].every(k=>{const m=top.members.get(k).member;return instruments.has(m.market+'|'+m.securityCode);}));
+        // An evergreen fund is one product bought in dated lots. A lot that is fully redeemed is still inside the
+        // provider's sub-total for that product, under the same dated name; the viewer core already accepts it as
+        // evidence. Accept it here too, by that exact name only.
+        const sameProduct=k=>{const e=top.members.get(k),m=e.member;return instruments.has(m.market+'|'+m.securityCode)||target.category==='常青基金'&&datedName({securityCode:m.securityCode,name:e.name})===target.name;};
+        const match=top.subs.filter(s=>want.every(k=>s.keys.has(k))&&[...s.keys].every(sameProduct));
         if(match.length!==1||!finite(match[0].returnPct)){
           // No such sub-total. One security: the provider's own combined row for it, when the combined
           // reading is in use. It must be the only such row, name every account that holds it now, and cover exactly
