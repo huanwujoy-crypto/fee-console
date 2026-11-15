@@ -94,7 +94,7 @@ test('full source to manager snapshot authenticates both dates, renders distinct
  const f=await authenticated(t),result=await f.snapshot.verify(f.signed,f.manager,{now:f.now});
  assert.deepEqual(result.source.sourceDates,f.model.sourceDates);assert.equal(result.stale,false);
  const html=f.ratio.render(result.model);
- for(const text of ['资产分类截至 2026-10-29','个股穿透截至 2026-10-30','Exposure截至 2026-10-30','黄金（GLD）','已计入所属分类，不另加总','独立下载完成时间未知','二级市场 · 直接持仓前五','不做ETF穿透、不乘杠杆倍数','计算口径与合并规则'])assert.ok(html.includes(text),text);
+ for(const text of ['资产分类截至 2026-10-29','个股穿透截至 2026-10-30','Exposure截至 2026-10-30','黄金（GLD）','已计入所属分类，不另加总','独立下载完成时间未知','二级市场 · 持仓前五','不做ETF穿透、不乘杠杆倍数','计算口径与合并规则'])assert.ok(html.includes(text),text);
  assert.doesNotMatch(html,/公司经济敞口|原证券口径前五|持仓与穿透明细/);
  assert.doesNotMatch(html,/完整持仓|undefined|<details open/);
  assert.equal((html.match(/<details><summary>/g)||[]).length>=4,true);
@@ -132,7 +132,7 @@ test('secondary top five ranks actually held securities at asset value without l
  const targets=createAggregateReturnsCore().topTargets(f.built.input.exposure,[{name:'Invented company',constituents:[]}]);
  assert.equal(targets.length,20);assert.deepEqual(targets.slice(15).map(r=>[r.category,r.name,r.basis,r.members]),secondary.top5.map(r=>['二级市场',r.name,'direct-holdings-only',[{account:'IB-HK',market:r.market,securityCode:r.securityCode}]]));
  assert.equal(createAggregateReturnsCore().topTargets(legacy,[{name:'Invented company',constituents:[]}]).at(-1).name,'Invented company');
- const a=await authenticated(t),html=a.ratio.render(a.model),section=html.split('二级市场 · 直接持仓前五')[1].split('</section>')[0];
+ const a=await authenticated(t),html=a.ratio.render(a.model),section=html.split('二级市场 · 持仓前五')[1].split('</section>')[0];
  assert.deepEqual([...section.matchAll(/data-security-code="([^"]*)"/g)].map(m=>m[1]),['USSC','OTHER','GOOGL','GOOG','VST']);
  assert.doesNotMatch(html,/Vistra|Alphabet|经济敞口 USD/);
 });
@@ -383,7 +383,7 @@ test('six-category snapshot validates targets, account membership, sums and rend
  }
  const html=f.ratio.render(result.model),overview=html.split('<section class="card ratio-asset-overview')[1].split('</table>')[0];
  assert.equal((overview.match(/<tr>/g)||[]).length,7);assert.match(html,/<div class="ratio-total-summary">[^]*?总资产（USD）/);assert.doesNotMatch(overview,/<tfoot>/);assert.match(overview,/PE\/VC<small class="ratio-overview-weights">[\d.]+%／0%[^]*?class="ratio-money-precise">490\.00/);assert.match(overview,/资产分类截至 2026-10-29/);assert.doesNotMatch(overview,/2026-10-30/);
- assert.match(html,/参考目标合计100%/);assert.match(html,/二级市场 · 直接持仓前五/);assert.doesNotMatch(html,/DEF-OTHER/);assert.match(html,/不代表卖出指令/);assert.doesNotMatch(html,/NaN|Infinity|<details[^>]* open/);
+ assert.match(html,/参考目标合计100%/);assert.match(html,/二级市场 · 持仓前五/);assert.doesNotMatch(html,/直接持仓前五/);assert.doesNotMatch(html,/DEF-OTHER/);assert.match(html,/不代表卖出指令/);assert.doesNotMatch(html,/NaN|Infinity|<details[^>]* open/);
  const old=structuredClone(f.model);delete old.classificationSummary.assetAllocation;await f.ratio.validateModel(old);assert.match(f.ratio.render(old),/四类资产配置总览/);assert.doesNotMatch(f.ratio.render(old),/ratio-six-allocation/);
  const zero=sixAllocationFixture();for(const p of zero.classification.positions)if(p.sharesightCategory==='VC/PE')p.valueUSD=0;
  const z=await authenticated(t,zero);await z.ratio.validateModel(z.model);assert.match(z.ratio.render(z.model),/PE\/VC<small class="ratio-overview-weights">0\.00%／0%[^]*?class="ratio-money-precise">0\.00/);
