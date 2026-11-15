@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="管理费">
 <meta name="theme-color" content="#fcfcfb">
-<meta name="fee-console-build" content="4.9.61">
+<meta name="fee-console-build" content="4.9.62">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -1147,7 +1147,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.9.61";
+const UI_VERSION_LABEL=" · v4.9.62";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -1926,7 +1926,9 @@ function buildRankedExposureView(input) {
   // A summary projected from the Sharesight API names its own report hash and
   // never the workbook's. It exists only for the official v2 schema.
   const api=official&&object(s)&&Object.hasOwn(s,'sourceReportSHA256');
-  check(object(s) && Object.keys(s).sort().join('|') === 'accounts|asOf|classes|currency|limitations|residualETFs|source|'+(api?'sourceReportSHA256':'sourceXlsxSHA256')+'|totalValueUSD|transferStatus', 'RANKED_KEYS');
+  // Optional, official direct summaries only: the secondary class's ETFs ranked on their own.
+  const etf=official&&object(s)&&Object.hasOwn(s,'secondaryEtfTop5');
+  check(object(s) && Object.keys(s).sort().join('|') === 'accounts|asOf|classes|currency|limitations|residualETFs|'+(etf?'secondaryEtfTop5|':'')+'source|'+(api?'sourceReportSHA256':'sourceXlsxSHA256')+'|totalValueUSD|transferStatus', 'RANKED_KEYS');
   check(object(s) && s.currency === 'USD' && date(s.asOf) && amount(s.totalValueUSD) && s.totalValueUSD > 0, 'RANKED_TOTAL_DATE');
   check(input.retrievedAt === null ? input.retrievedAtBasis === null : input.retrievedAtBasis === (api?API_OBSERVED_TIME_BASIS:official?'原始官方导出文件mtime（非独立下载完成时间）':EXPOSURE_OBSERVED_TIME_BASIS), 'OBSERVED_TIME_BASIS');
   check(input.retrievedAt === null || instant(input.retrievedAt) && s.asOf <= new Date(Date.parse(input.retrievedAt) + 28800000).toISOString().slice(0, 10), 'DATE');
@@ -1962,6 +1964,17 @@ function buildRankedExposureView(input) {
       ...(r.securityCode ? {securityCode: r.securityCode, market: r.market} : {}), ...(r.accounts?{accounts:[...r.accounts]}:{}), ...(r.sourceHoldings?{sourceHoldings:structuredClone(r.sourceHoldings)}:{}), valueUsd: r.valueUSD,
       portfolioWeightPct: pct(r.valueUSD, s.totalValueUSD), categoryWeightPct: pct(r.valueUSD, g.totalValueUSD)}))};
   });
+  if(etf){
+    const rows=s.secondaryEtfTop5,g=s.classes[3],keys=Array.isArray(rows)?rows.map(r=>`${r?.securityCode}|${r?.market}`):[];
+    check(g.basis==='direct'&&Array.isArray(rows)&&rows.length<=5&&unique(keys)&&unique(rows.map(r=>r?.name))
+      &&!g.top5.some(r=>keys.includes(`${r.securityCode}|${r.market}`))
+      &&rows.every((r,n)=>object(r)&&Object.keys(r).sort().join('|')==='accounts|market|name|securityCode|valueUSD'&&[r.name,r.securityCode,r.market].every(text)&&amount(r.valueUSD)&&r.valueUSD>=0
+        &&(n===0||rows[n-1].valueUSD>=r.valueUSD)
+        &&Array.isArray(r.accounts)&&r.accounts.length>0&&r.accounts.length<=s.accounts.length&&unique(r.accounts)&&r.accounts.every(a=>s.accounts.includes(a)))
+      &&sum(rows.map(r=>r.valueUSD))+sum(g.top5.map(r=>r.valueUSD))<=g.totalValueUSD+.05, 'RANKED_ETF');
+    groups[3].etfTop=rows.map(r=>({name:r.name,securityCode:r.securityCode,market:r.market,accounts:[...r.accounts],valueUsd:r.valueUSD,
+      portfolioWeightPct:pct(r.valueUSD,s.totalValueUSD),categoryWeightPct:pct(r.valueUSD,g.totalValueUSD)}));
+  }
   const residual = s.residualETFs;
   check(object(residual) && amount(residual.valueUSD) && (official || residual.valueUSD >= 0 && residual.valueUSD <= groups[3].totalUsd)
     && ['weightTotalPct', 'weightSecondaryClassPct'].every(k => Number.isFinite(residual[k]))
@@ -2359,8 +2372,22 @@ function createOfficialRatioSourceCore(){
       top=top.sort((a,b)=>b.valueUSD-a.valueUSD||(a.name<b.name?-1:a.name>b.name?1:0)).slice(0,5);if(top.length!==5)fail();
       return {name,totalValueUSD:sum(positions30.concat(cash30).filter(r=>r.fourClass===name)),basis:i===3&&!directSecondary?LOOK_THROUGH_SECONDARY_BASIS:'direct',...(i===0?{sourceCategory:'VC/PE'}:{}),top5:top};
     });
+    // Owner request (2026-11-15): the ETFs the secondary ranking leaves out are
+    // ranked on their own, by the same provider asset type, merged per security
+    // across accounts, at asset value. Fewer than five ETFs is a shorter list.
+    let etfTop=null;
+    if(directSecondary&&typed){
+      const grouped=new Map();
+      for(const r of positions30.filter(p=>p.fourClass===names[3]&&ETF_TYPES.has(String(p.assetType).toLowerCase()))){
+        const k=key('',r.securityCode,r.market),old=grouped.get(k)||{name:r.name,securityCode:r.securityCode,market:r.market,accounts:[],valueUSD:0};
+        if(!old.accounts.includes(r.account))old.accounts.push(r.account);old.accounts.sort();
+        old.valueUSD=(cents(old.valueUSD)+cents(r.valueUSD))/100;grouped.set(k,old);
+      }
+      const values=[...grouped.values()],counts=new Map();for(const r of values)counts.set(r.name,(counts.get(r.name)||0)+1);
+      etfTop=values.map(r=>({...r,name:r.name+(counts.get(r.name)>1?' ['+r.securityCode+' · '+r.market+']':'')})).sort((a,b)=>b.valueUSD-a.valueUSD||(a.name<b.name?-1:a.name>b.name?1:0)).slice(0,5);
+    }
     const total=sum(rows),residual=sum(rows.filter(r=>r.ownership==='Residual'));
-    const exposure={schema:'xuan.sharesight-exposure-ranked.v2',summary:{asOf:e.asOf,currency:'USD',source:{provider:'Sharesight',view:'All Together',...(api?{report:'API V3 Performance',groupBy:'Custom group',show:'All holdings'}:{report:'Tools Exposure',groupBy:'No grouping',show:'Top 500'}),classification:'Investments→资产类别',url:null},totalValueUSD:total,accounts:[...raw.accounts],classes:groups,residualETFs:{valueUSD:residual,weightTotalPct:residual/total*100,weightSecondaryClassPct:residual/groups[3].totalValueUSD*100},limitations:[...raw.limitations,api?c.asOf+' 持仓与现金取自同一份Sharesight API分类报表；不含ETF穿透。':e.asOf+' Exposure分组沿用 '+c.asOf+' 资产类别标签；金额和比例分母取 '+e.asOf+' 完整Exposure原表。'],transferStatus:'按Sharesight现有记录显示；不新增或重复任何转仓和认购。',...(api?{sourceReportSHA256:raw.sources[0].sha256}:{sourceXlsxSHA256:sources.get('exposure.xlsx').sha256})},retrievedAt:e.capturedAt,retrievedAtBasis:api?'Sharesight API 响应接收时间':'原始官方导出文件mtime（非独立下载完成时间）'};
+    const exposure={schema:'xuan.sharesight-exposure-ranked.v2',summary:{asOf:e.asOf,currency:'USD',source:{provider:'Sharesight',view:'All Together',...(api?{report:'API V3 Performance',groupBy:'Custom group',show:'All holdings'}:{report:'Tools Exposure',groupBy:'No grouping',show:'Top 500'}),classification:'Investments→资产类别',url:null},totalValueUSD:total,accounts:[...raw.accounts],classes:groups,...(etfTop?{secondaryEtfTop5:etfTop}:{}),residualETFs:{valueUSD:residual,weightTotalPct:residual/total*100,weightSecondaryClassPct:residual/groups[3].totalValueUSD*100},limitations:[...raw.limitations,api?c.asOf+' 持仓与现金取自同一份Sharesight API分类报表；不含ETF穿透。':e.asOf+' Exposure分组沿用 '+c.asOf+' 资产类别标签；金额和比例分母取 '+e.asOf+' 完整Exposure原表。'],transferStatus:'按Sharesight现有记录显示；不新增或重复任何转仓和认购。',...(api?{sourceReportSHA256:raw.sources[0].sha256}:{sourceXlsxSHA256:sources.get('exposure.xlsx').sha256})},retrievedAt:e.capturedAt,retrievedAtBasis:api?'Sharesight API 响应接收时间':'原始官方导出文件mtime（非独立下载完成时间）'};
     const ibRows=positions.filter(r=>r.account==='IB-HK'),ibCash=cash.filter(r=>r.account==='IB-HK'),noahCash=cash.filter(r=>r.account==='NOAH-HK');if(!ibRows.length||!ibCash.length||!noahCash.length)fail();
     const provenance=api?{transport:'official-api',observedAtBasis:'api-response-received',classificationCapturedAt:c.capturedAt,reportTotalDeltaCents:c.reportTotalDeltaCents,fullSourceBytes:sourceBytes,fullSourceSha256:sourceSha256,transferStatus:exposure.summary.transferStatus,limitations:[...raw.limitations]}:{transport:'official-workbooks',observedAtBasis:'original-download-file-mtime',classificationCapturedAt:c.capturedAt,exposureCapturedAt:e.capturedAt,downloadCompletedAt:null,fullSourceBytes:sourceBytes,fullSourceSha256:sourceSha256,transferStatus:exposure.summary.transferStatus,limitations:[...raw.limitations]};
     const book={schema:'fee-console.ratio-sharesight-browser-book.v2',source:'Sharesight',currency:'USD',asOf:c.asOf,retrievedAt:c.capturedAt,sourceSha256,provenance,ib:{name:'IB-HK',holdings:ibRows.map(r=>({code:r.securityCode,market:r.market,group:r.sharesightCategory,valueUSD:r.valueUSD,quantity:r.quantity,name:r.name,valueBasis:api?'api-report-value':'preserved-browser-source'})),holdingsValueUSD:sum(ibRows),cashRows:ibCash.map(r=>({label:r.name,valueUSD:r.valueUSD,valueBasis:'portfolio-usd-converted'})),cashValueUSD:sum(ibCash),totalValueUSD:sum(ibRows.concat(ibCash))},noah:{name:'NOAH-HK',cashValueUSD:sum(noahCash),valueBasis:'portfolio-usd-converted'}};
@@ -2538,7 +2565,7 @@ function createAggregateReturnsCore(){
 
  // Only current ranked entries are eligible. The historical return scope can
  // retain sold members of the same exact product; no display-name fuzzy join.
- const topId=t=>canon([t.category,t.name]);
+ const topId=t=>canon([t.category,t.name]),ETF_TOP='二级市场ETF';
  function topTargets(exposure,companyTop=null){
   const out=[];
   const clean=m=>({account:m.account.replaceAll('&amp;','&'),market:m.market,securityCode:m.securityCode});
@@ -2550,6 +2577,11 @@ function createAggregateReturnsCore(){
    const members=r.sourceHoldings?.map(clean)||r.accounts?.map(account=>clean({...r,account}));
    if(!members?.length)fail();
    out.push({category:g.name,name:r.name,members:unique(members),basis:g.name==='二级市场'?'direct-holdings-only':'fund-holding'});
+  }
+  // The secondary class's own ETF ranking, when the summary carries one.
+  if(directSecondary)for(const r of exposure.summary.secondaryEtfTop5||[]){
+   if(!r.accounts?.length)fail();
+   out.push({category:ETF_TOP,name:r.name,members:unique(r.accounts.map(account=>clean({...r,account}))),basis:'direct-holdings-only'});
   }
   if(companyTop&&!directSecondary)for(const r of companyTop){
    const members=r.constituents.filter(c=>c.product===null||c.basis==='product-asset-replacement').map(clean);
@@ -2566,15 +2598,17 @@ function createAggregateReturnsCore(){
   }return null;
  }
  function buildTop(source,parent,expectedTargets=null){
-  if(!exact(source,['schema','targets','reports'])||source.schema!=='fee-console.ratio-top5-source.v1'||!Array.isArray(source.targets)||source.targets.length<15||source.targets.length>20||!Array.isArray(source.reports)||source.reports.length!==2)fail();
+  if(!exact(source,['schema','targets','reports'])||source.schema!=='fee-console.ratio-top5-source.v1'||!Array.isArray(source.targets)||source.targets.length<15||source.targets.length>25||!Array.isArray(source.reports)||source.reports.length!==2)fail();
   const targets=new Map();
   for(const t of source.targets){
-   if(!exact(t,['category','name','members','basis'])||!['PE/VC','对冲基金','常青基金','二级市场'].includes(t.category)||!text(t.name)||t.basis!==(t.category==='二级市场'?'direct-holdings-only':'fund-holding')||!Array.isArray(t.members)||!t.members.length&&t.category!=='二级市场'||targets.has(topId(t)))fail();
+   if(!exact(t,['category','name','members','basis'])||!['PE/VC','对冲基金','常青基金','二级市场',ETF_TOP].includes(t.category)||!text(t.name)||t.basis!==(t.category==='二级市场'||t.category===ETF_TOP?'direct-holdings-only':'fund-holding')||!Array.isArray(t.members)||!t.members.length&&t.category!=='二级市场'||targets.has(topId(t)))fail();
    const keys=t.members.map(m=>{if(!exact(m,['account','market','securityCode'])||![m.account,m.market,m.securityCode].every(text)||!parent.accounts.includes(m.account))fail();return memberKey(m);});
    if(new Set(keys).size!==keys.length||!same(keys,[...keys].sort((a,b)=>a.localeCompare(b))))fail();targets.set(topId(t),t);
   }
   for(const category of ['PE/VC','对冲基金','常青基金'])if(source.targets.filter(t=>t.category===category).length!==5)fail();
   const secondary=source.targets.filter(t=>t.category==='二级市场').length;if(secondary!==0&&secondary!==5)fail();
+  // The ETF ranking exists only beside the direct secondary ranking, and may be shorter than five.
+  const etfs=source.targets.filter(t=>t.category===ETF_TOP).length;if(etfs>5||etfs&&secondary!==5)fail();
   if(expectedTargets!==null&&!same(source.targets,expectedTargets))fail();
   const stockFiles=stockSourceIds(parent);
   const normalized=structuredClone(parent);delete normalized.topHoldings;
@@ -2631,8 +2665,7 @@ function createAggregateReturnsCore(){
 
  function renderTop(item){
   if(!item)return '';
-  const secondary=item.target.category==='二级市场';
-  return renderInline(item,secondary?'直接持仓收益率':'收益率');
+  return renderInline(item,'收益率');
  }
 
  function select(v,s){const k=scopeKey(s);return v.items.find(x=>scopeKey(x.scope)===k)||{scope:structuredClone(s),periods:{}};}
@@ -2680,7 +2713,7 @@ function createAggregateReturnsCore(){
   const note=stockScope(item.scope)?'股票市场小计只包含四个股票分类的历史成员，不含现金账户、防御资产或主题投资。':cash.includes('unknown')?'现金账户收益覆盖未获来源确认。':cash.includes('mixed')||cash.length>1?'现金收益覆盖分别保留各期原报表设置。':cash[0]==='included'?'含现金账户收益。':cash[0]==='excluded'?'未含现金账户收益。':'';
   return '<details class="ratio-returns"><summary>收益率</summary><div class="ratio-return-pair">'+rows+'</div><p class="ratio-return-scope">'+esc(accounts.join(' · '))+' · USD · Sharesight 原生口径</p><p>只显示组合或分类原生收益；已平仓计入历史，不用当前市值权重或穿透敞口重算。'+note+'</p></details>';
  }
- return {SCHEMA,build,validateInceptionBindings,select,render:renderAggregate,scopeKey,oneYearBefore,topTargets,buildTop,selectTop,renderTop,renderCompact,renderInline};
+ return {SCHEMA,build,validateInceptionBindings,select,render:renderAggregate,scopeKey,oneYearBefore,topTargets,buildTop,selectTop,renderTop,renderCompact,renderInline,datedName,ETF_TOP};
 }
 function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
   const companyCore=createFeeCompanyExposureCore(),returnsCore=createAggregateReturnsCore();
@@ -2938,8 +2971,8 @@ function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
     // securities at asset value. Company look-through is rendered for older
     // snapshots only; it never replaces a direct ranking.
     const directSecondary=view.groups[3].directOnly===true;
-    const groups=view.groups.map((g,i)=>'<section><h3>'+esc(g.category)+(i===3&&!directSecondary?(company?.top?' · 公司经济敞口前五':' · 原证券口径前五'):' · 持仓前五')+'</h3><p>Exposure截至 '+esc(view.valuationDate)+' · 本类资产 '+money(Math.round(g.totalUsd*100))+'</p>'+(i===3&&!directSecondary&&company?.top?companyCore.render(m.companyExposure,m.exposure,b?.sourceSha256,r=>topReturns('二级市场',r.name)):table(g.top,g.category))+'</section>').join('');
-    const companyStatus=directSecondary?'<p class="ratio-key-status">四类均按实际持有的证券或基金市值排名；二级市场前五不含ETF（ETF仍计入本类资产），不做ETF穿透、不乘杠杆倍数、不合并不同证券。</p>':company?.top?'<p class="ratio-key-status">公司经济敞口含显式杠杆，比例可能超过100%；不改变总资产、类别资产及管理费。</p>':company?companyCore.render(m.companyExposure,m.exposure,b?.sourceSha256):'<p class="ratio-key-status">旧快照仅有证券前五，未由同份完整原件重算公司排名；不猜测合并后的前五。</p>';
+    const groups=view.groups.map((g,i)=>'<section><h3>'+esc(g.category)+(i===3&&!directSecondary?(company?.top?' · 公司经济敞口前五':' · 原证券口径前五'):i===3&&g.etfTop?' · 股票前五':' · 持仓前五')+'</h3><p>Exposure截至 '+esc(view.valuationDate)+' · 本类资产 '+money(Math.round(g.totalUsd*100))+'</p>'+(i===3&&!directSecondary&&company?.top?companyCore.render(m.companyExposure,m.exposure,b?.sourceSha256,r=>topReturns('二级市场',r.name)):table(g.top,g.category))+'</section>'+(i===3&&directSecondary&&g.etfTop?'<section><h3>'+esc(g.category)+' · ETF前五</h3><p>Exposure截至 '+esc(view.valuationDate)+' · 本类资产 '+money(Math.round(g.totalUsd*100))+'</p>'+(g.etfTop.length?table(g.etfTop,returnsCore.ETF_TOP):'<p>本类暂无 ETF 持仓。</p>')+'</section>':'')).join('');
+    const companyStatus=directSecondary?'<p class="ratio-key-status">四类均按实际持有的证券或基金市值排名；'+(view.groups[3].etfTop?'二级市场按 Sharesight 资产类型分列股票前五与ETF前五（两者都计入本类资产）':'二级市场前五不含ETF（ETF仍计入本类资产）')+'，不做ETF穿透、不乘杠杆倍数、不合并不同证券。</p>':company?.top?'<p class="ratio-key-status">公司经济敞口含显式杠杆，比例可能超过100%；不改变总资产、类别资产及管理费。</p>':company?companyCore.render(m.companyExposure,m.exposure,b?.sourceSha256):'<p class="ratio-key-status">旧快照仅有证券前五，未由同份完整原件重算公司排名；不猜测合并后的前五。</p>';
     const exposure='<section class="card sharesight-exposure"><h2>All Together · 四类前五</h2>'+companyStatus+groups+'</section>';
     const stockGaps=a?targetGaps(a.totalCents,a.categories):null;
     const rows=a?a.categories.map((c,i)=>'<tr><td>'+esc(c.label)+'</td><td>'+preciseUsd(c.valueCents)+targetGap(stockGaps?.[i],'仅 IB-HK 四类股票市值合计')+'</td><td>'+(a.totalCents>0?(c.valueCents/a.totalCents*100).toFixed(2)+'%':'—')+'／'+c.targetPct+'%</td></tr>').join(''):'';
