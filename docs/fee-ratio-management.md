@@ -92,7 +92,8 @@ the performance source above. It computes no return.
 - **Cash.** The probe showed a report's own total equals its sub-totals plus
   its cash rows, and that only some cash rows carry a gain, so the total is
   labelled `included` (its existing wording already says not every cash account
-  has a gain). There is no native cash sub-total; `现金类` stays unavailable.
+  has a gain). There is no native cash sub-total; `现金类` stays unavailable. The overview
+  shows that class under the label `现金防御类`; the stored class name is unchanged.
 
 ### Capturing and publishing in one run (`publish-api`)
 
@@ -145,7 +146,7 @@ rows: an ETF or leveraged product ranks as itself, no leverage multiple is
 applied, and different securities (for example GOOG and GOOGL) stay separate.
 A new official projection declares `basis: 'direct'` on the secondary class.
 The viewer accepts that basis only for the official v2 summary, requires the
-five rows to fit inside the class total, labels the group `直接持仓前五`, and
+five rows to fit inside the class total, labels the group `持仓前五`, and
 takes the secondary return targets from those same rows. Class totals, the
 denominators, residual disclosure and fees are unchanged.
 

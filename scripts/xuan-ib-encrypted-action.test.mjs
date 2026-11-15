@@ -96,7 +96,7 @@ test('full module inventory is retained; missing CALL, orders, budget and holdin
   for(const title of ['计算口径与合并规则','现金与补仓参考说明','股票四类配置','All Together · 四类前五','覆盖范围、残余与缺项'])assert.ok(rendered.includes(title));
   assert.doesNotMatch(rendered,/挂单提醒|IB MCP|Flex快照|AvailableFunds|ETF产品前五/);assert.match(rendered,/金额未计算|预留及净预算保持未知/);assert.match(rendered,/本类资产|占总资产|占本类资产/);
   assert.match(rendered,/2.50%／10.00%/);assert.match(rendered,/Exposure 来源截至 2000-01-03/);assert.match(rendered,/管理费账务截至 1999-12-31，.*日期不同/);assert.match(rendered,/Synthetic residual coverage/);
-  assert.equal((rendered.match(/ · (?:直接持仓前五|原证券口径前五)<\/h3>/g)||[]).length,4);assert.doesNotMatch(rendered,/IB-HK 完整持仓/);assert.equal((rendered.match(/Invented \d security \d/g)||[]).length,20);
+  assert.equal((rendered.match(/ · (?:持仓前五|原证券口径前五)<\/h3>/g)||[]).length,4);assert.doesNotMatch(rendered,/IB-HK 完整持仓/);assert.equal((rendered.match(/Invented \d security \d/g)||[]).length,20);
 });
 test('ratio source, scope, classes and dates cannot be silently relabelled or widened',async()=>{
   const {core,model}=ratioFixture();
@@ -1374,7 +1374,7 @@ test('official TQQQ source survives original association, signing, authenticatio
   for(const r of raw.exposure.rows){if(r.withinETF==='INDEX.TEST')r.withinETF='TQQQ.NASDAQ';if(r.securityCode==='INDEX'){r.securityCode='TQQQ';r.market='NASDAQ';r.name=p.name;}}
  });
  const component=f.model.companyExposure.components.find(c=>c.product==='TQQQ.NASDAQ');assert.equal(component.basis,'tqqq-asset-lookthrough');assert.equal(component.valueUsd,8);
- const c=harness(f,{candidate:false});assert.equal(await c.view(),true);assert.equal(c.renderCalls,1);assert.match(c.element('ratioContent').innerHTML,/二级市场 · 直接持仓前五/);assert.doesNotMatch(c.element('ratioContent').innerHTML,/× 3|公司经济敞口/);
+ const c=harness(f,{candidate:false});assert.equal(await c.view(),true);assert.equal(c.renderCalls,1);assert.match(c.element('ratioContent').innerHTML,/二级市场 · 持仓前五/);assert.doesNotMatch(c.element('ratioContent').innerHTML,/× 3|公司经济敞口/);
  for(const edit of [m=>m.companyExposure.components.find(c=>c.product==='TQQQ.NASDAQ').basis='tqqq-leveraged-lookthrough',m=>m.companyExposure.components.find(c=>c.product==='TQQQ.NASDAQ').valueUsd*=3]){
   const model=structuredClone(f.model);edit(model);await assert.rejects(f.snapshot.verifyOriginal({...f.originalArgs,model}));
  }
