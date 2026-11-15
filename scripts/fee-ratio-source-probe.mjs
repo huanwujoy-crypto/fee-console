@@ -172,8 +172,39 @@ export function ratioPerformanceShapeFacts(report,expected){
     // Does the report's own total equal the sum of its group sub-totals, or
     // only once the cash rows are added? Decides whether the total covers cash.
     totals:{value:closure(r.value,subs.map(x=>x?.value),cash.map(x=>x?.value)),totalGain:closure(r.total_gain,subs.map(x=>x?.total_gain),cash.map(x=>x?.total_gain)),cashGainRows:cash.length===0?'NO_ROWS':cash.every(c=>typeof c?.total_gain==='number')?'ALL_NUMERIC':cash.some(c=>typeof c?.total_gain==='number')?'SOME_NUMERIC':'NONE_NUMERIC'},
+    aggregation:aggregationFacts(r,holdings,subs,cash),
     anomalies:{holdingsNotUnlimited:count(holdings,h=>h.limited!==false),holdingsWithoutGroupName:count(holdings,h=>typeof h.group_name!=='string'||!h.group_name),holdingsWithoutPortfolio:count(holdings,h=>!object(h.portfolio)||!id(h.portfolio.id))}
   };
+}
+// How does the provider turn the returns of several rows into one group return?
+// Two candidate rules are tried on the report's own groups, where the answer is
+// already known: (1) "base sum" — each row's gain divided by its own return
+// gives its capital base, and the group return is the summed gain over the
+// summed base; (2) a plain value-weighted mean of the rows' returns. A group is
+// tried only when it has at least two rows and every row's return is far enough
+// from zero for its base to be well determined. Only counts and verdicts leave.
+function aggregationFacts(r,holdings,subs,cash){
+  const num=v=>typeof v==='number'&&Number.isFinite(v),MIN=1;
+  const close=(a,b)=>Math.abs(a-b)<=Math.max(0.05,0.02*Math.abs(b));
+  const judge=(parts,target)=>{
+    if(parts.length<2||!num(target)||parts.some(x=>!num(x.gain)||!num(x.pct)||Math.abs(x.pct)<MIN))return null;
+    const gain=parts.reduce((n,x)=>n+x.gain,0),base=parts.reduce((n,x)=>n+x.gain*100/x.pct,0);
+    const value=parts.reduce((n,x)=>n+(num(x.value)?x.value:0),0),weighted=parts.reduce((n,x)=>n+(num(x.value)?x.value:0)*x.pct,0);
+    return {baseSum:base!==0&&close(100*gain/base,target),valueWeighted:value!==0&&close(weighted/value,target)};
+  };
+  const part=x=>({gain:x?.total_gain,pct:x?.total_gain_percent,value:x?.value});
+  let groups=0,tried=0,baseSum=0,valueWeighted=0,both=0;
+  for(const s of subs){
+    if(!object(s)||typeof s.group_name!=='string')continue;
+    const rows=holdings.filter(h=>object(h)&&h.group_name===s.group_name);if(rows.length<2)continue;groups++;
+    const verdict=judge(rows.map(part),s.total_gain_percent);if(!verdict)continue;tried++;
+    if(verdict.baseSum)baseSum++;if(verdict.valueWeighted)valueWeighted++;if(verdict.baseSum&&verdict.valueWeighted)both++;
+  }
+  // The report's own total against its groups plus the cash rows that carry a return.
+  const cashWithReturn=cash.filter(c=>object(c)&&num(c.total_gain)&&num(c.total_gain_percent)),total=judge([...subs,...cashWithReturn].map(part),r.total_gain_percent);
+  return {groupsOfTwoOrMore:groups,groupsTried:tried,baseSumMatches:baseSum,valueWeightedMatches:valueWeighted,bothMatch:both,
+    reportTotal:total===null?'NOT_TRIED':total.baseSum&&total.valueWeighted?'BOTH':total.baseSum?'BASE_SUM':total.valueWeighted?'VALUE_WEIGHTED':'NEITHER',
+    cashRows:{count:cash.length,withGain:cash.filter(c=>num(c?.total_gain)).length,withReturn:cashWithReturn.length,zeroValueWithoutGain:cash.filter(c=>object(c)&&!num(c.total_gain)&&c.value===0).length}};
 }
 // Which sum reproduces a report total, to the dollar: its sub-totals alone, or
 // its sub-totals plus its cash rows. Non-numeric cash rows count as zero and
@@ -287,7 +318,7 @@ async function probeWork({argv,env,event,now=new Date(),fetchImpl=globalThis.fet
           const shape=ratioPerformanceShapeFacts(complete(body.report),{start:starts[window],end:d,groupId:gid,groupName:name}),text=JSON.stringify([shape.report,shape.holding,shape.subTotal,shape.cash]);
           // The full field list is printed once; later reports say whether theirs is identical.
           if(reference===null){reference=text;performance.reports[slot]={read:true,...shape};}
-          else performance.reports[slot]={read:true,echoes:shape.echoes,grouping:shape.grouping,percentagesAnnualised:shape.percentagesAnnualised,has:shape.has,totals:shape.totals,anomalies:shape.anomalies,sameFieldsAsFirst:text===reference,...(text===reference?{}:{report:shape.report,holding:shape.holding,subTotal:shape.subTotal,cash:shape.cash})};
+          else performance.reports[slot]={read:true,echoes:shape.echoes,grouping:shape.grouping,percentagesAnnualised:shape.percentagesAnnualised,has:shape.has,totals:shape.totals,aggregation:shape.aggregation,anomalies:shape.anomalies,sameFieldsAsFirst:text===reference,...(text===reference?{}:{report:shape.report,holding:shape.holding,subTotal:shape.subTotal,cash:shape.cash})};
           good++;
         }catch(error){
           if(state.deadlineExceeded||deadlineSignal.aborted)throw error;
