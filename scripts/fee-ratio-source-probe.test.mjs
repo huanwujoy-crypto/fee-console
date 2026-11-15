@@ -255,6 +255,28 @@ test('the combined-holdings stage says whether one security in several accounts 
   assert.equal(denied.stage,'COMPLETE');assert.deepEqual([denied.facts.combined.read,denied.facts.combined.code,denied.facts.combined.httpCode],[false,'RATIO_PROBE_TRANSPORT','HTTP']);
   for(const r of [merged,denied]){const text=JSON.stringify(r);for(const secret of ['Invented','1234.5','1.35','13.5','SYN0'])assert.equal(text.includes(secret),false,secret);}
 });
+test('aggregation facts tell which rule reproduces a group return, from counts and verdicts only',()=>{
+  const expected={start:'2025-11-10',end:TARGET,groupId:'88',groupName:RATIO_PROBE_GROUP};
+  const row=(group,gain,pct,value)=>({id:1,group_name:group,total_gain:gain,total_gain_percent:pct,value,limited:false,portfolio:{id:1}});
+  const facts=r=>ratioPerformanceShapeFacts({start_date:'2025-11-10',end_date:TARGET,include_sales:true,currency:{code:'USD'},custom_group:{id:88,name:RATIO_PROBE_GROUP},percentages_annualised:false,...r},expected).aggregation;
+  // Group A: bases 1000 and 4000, gains 100 and 200 -> base-sum 6.00%; a value-weighted mean would give 7.50%.
+  // Group B: equal values and bases, so both rules agree. Group C: one row (not tried). Group D: a near-zero return (not tried).
+  const holdings=[row('A',100,10,2000),row('A',200,5,2000),row('B',50,5,1000),row('B',30,3,1000),row('C',9,9,100),row('D',1,0.2,500),row('D',40,8,500)];
+  const subs=(a,b)=>[{group_name:'A',total_gain:300,total_gain_percent:a,value:4000},{group_name:'B',total_gain:80,total_gain_percent:b,value:2000},{group_name:'C',total_gain:9,total_gain_percent:9,value:100},{group_name:'D',total_gain:41,total_gain_percent:4,value:1000}];
+  const cash=[{id:7,value:500,total_gain:5,total_gain_percent:1},{id:8,value:0,total_gain:null,total_gain_percent:null},{id:9,value:40,total_gain:null,total_gain_percent:null},{id:10,value:300,total_gain:3,total_gain_percent:null}];
+  const base=facts({holdings,sub_totals:subs(6,4),cash_accounts:cash,total_gain_percent:5.06});
+  assert.deepEqual(base,{groupsOfTwoOrMore:3,groupsTried:2,baseSumMatches:2,valueWeightedMatches:1,bothMatch:1,reportTotal:'BASE_SUM',cashRows:{count:4,withGain:2,withReturn:1,zeroValueWithoutGain:1}});
+  // The provider follows the value-weighted mean instead, or neither rule.
+  assert.deepEqual([facts({holdings,sub_totals:subs(7.5,4),cash_accounts:[]}).baseSumMatches,facts({holdings,sub_totals:subs(7.5,4),cash_accounts:[]}).valueWeightedMatches],[1,2]);
+  const neither=facts({holdings,sub_totals:subs(20,20),cash_accounts:[],total_gain_percent:99});assert.deepEqual([neither.groupsTried,neither.baseSumMatches,neither.valueWeightedMatches,neither.reportTotal],[2,0,0,'NEITHER']);
+  // Nothing testable: no group return, a non-numeric row, or fewer than two parts.
+  assert.deepEqual(facts({holdings:[],sub_totals:[],cash_accounts:[]}),{groupsOfTwoOrMore:0,groupsTried:0,baseSumMatches:0,valueWeightedMatches:0,bothMatch:0,reportTotal:'NOT_TRIED',cashRows:{count:0,withGain:0,withReturn:0,zeroValueWithoutGain:0}});
+  assert.equal(facts({holdings:[row('A',100,10,1),row('A','x',5,1)],sub_totals:[{group_name:'A',total_gain_percent:6}],cash_accounts:[]}).groupsTried,0);
+  assert.equal(facts({holdings:'x',sub_totals:null,cash_accounts:7}).groupsTried,0);
+  // No amount or return of the report can appear: every leaf is a small count or a fixed word.
+  const leaves=v=>typeof v==='object'?Object.values(v).flatMap(leaves):[v];
+  for(const v of leaves(base))assert.ok(Number.isSafeInteger(v)&&v>=0&&v<=4||['BASE_SUM','VALUE_WEIGHTED','BOTH','NEITHER','NOT_TRIED'].includes(v),String(v));
+});
 test('budget, shape facts and the dispatch workflow stay fixed and read-only',()=>{
   assert.deepEqual(RATIO_PROBE_BUDGET,{requests:64,overallMs:300000,requestMs:30000,reportBytes:8388608});
   assert.deepEqual(RATIO_PROBE_STAGES,['ADMISSION','TOKEN','VIEWS','PORTFOLIOS','GROUPS','REPORT','PROJECTION','PERFORMANCE','COMBINED','INCEPTION','CASH','COMPLETE']);
