@@ -167,6 +167,16 @@ test('top five: one holding uses its own row, several accounts use the matching 
   const mixed=core.build(capture(c=>each(c,(r,k)=>{if(k.startsWith('top.'))r.holdings[13].group_name='Top tech';})),{topTargets:TARGETS});
   assert.equal(mixed.topHoldings.reports[0].rows.some(r=>r.target.name==='Invented BBB'),false);
   assert.ok(mixed.topHoldings.reports[0].unavailable.some(u=>u.target.name==='Invented BBB'&&u.reason==='native-aggregate-not-provided'));
+  // An evergreen fund's redeemed lot sits in the same provider sub-total under the same dated name, with a code no
+  // current holding has. The sub-total is still that fund's figure; a lot of any other name in it is not.
+  const lot=name=>c=>each(c,(r,k)=>{r.holdings[7].instrument={code:name,market_code:'PRIVATE',name:'Invented '+name};
+    if(k.startsWith('top.'))r.holdings[7].group_name='Top evergreen';
+    if(k.startsWith('income.')){r.holdings[7].group_name='Bucket R';r.sub_totals=r.sub_totals.filter(s=>s.group_name!=='Bucket Z');}});
+  const redeemed=core.build(capture(lot('地产-2019-06-Delta')),{topTargets:TARGETS}).topHoldings.reports[0],delta=redeemed.rows.find(r=>r.target.name==='Delta');
+  assert.deepEqual([delta.sourceSheet,delta.memberEvidence.length,delta.returnPct],['report.sub_totals',3,top.rows[2].returnPct]);
+  assert.deepEqual(delta.memberEvidence.map(e=>e.securityCode).sort(),['地产-2019-06-Delta','地产-2021-01-Delta','地产-2021-01-Delta']);
+  const other=core.build(capture(lot('地产-2019-06-Epsilon')),{topTargets:TARGETS}).topHoldings.reports[0];
+  assert.equal(other.rows.some(r=>r.target.name==='Delta'),false);assert.ok(other.unavailable.some(u=>u.target.name==='Delta'));
   // Without targets there is no top-five section at all.
   assert.equal(Object.hasOwn(build(),'topHoldings'),false);
 });

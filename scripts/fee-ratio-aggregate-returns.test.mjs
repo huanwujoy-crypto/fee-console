@@ -239,7 +239,7 @@ test('stock-only supplemental source cannot be reused by top-five or its annuali
 });
 test('top-five has exactly twenty selected scopes and two native periods, no percent arithmetic',()=>{
  const s=topFixture(),before=structuredClone(s),v=topBuild(s);assert.deepEqual(s,before);assert.equal(v.topHoldings.items.length,20);
- const last=v.topHoldings.items.at(-1),h=c.renderTop(last);assert.match(h,/直接持仓收益率/);assert.match(h,/19.25%/);assert.match(h,/不包括 ETF 穿透/);assert.doesNotMatch(h,/38.50%|57.75%|未满一年|未确认/);
+ const last=v.topHoldings.items.at(-1),h=c.renderTop(last);assert.match(h,/收益率/);assert.doesNotMatch(h,/直接持仓收益率/);assert.match(h,/19.25%/);assert.match(h,/不包括 ETF 穿透/);assert.doesNotMatch(h,/38.50%|57.75%|未满一年|未确认/);
  assert.equal(c.selectTop(v,{category:'二级市场',name:'二级市场 Synthetic 4'}),last);
 });
 test('top-five exact target and current member binding refuses a sixth item, missing or changed account',()=>{

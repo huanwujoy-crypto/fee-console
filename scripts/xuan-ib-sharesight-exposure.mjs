@@ -38,7 +38,9 @@ function buildRankedExposureView(input) {
   // A summary projected from the Sharesight API names its own report hash and
   // never the workbook's. It exists only for the official v2 schema.
   const api=official&&object(s)&&Object.hasOwn(s,'sourceReportSHA256');
-  check(object(s) && Object.keys(s).sort().join('|') === 'accounts|asOf|classes|currency|limitations|residualETFs|source|'+(api?'sourceReportSHA256':'sourceXlsxSHA256')+'|totalValueUSD|transferStatus', 'RANKED_KEYS');
+  // Optional, official direct summaries only: the secondary class's ETFs ranked on their own.
+  const etf=official&&object(s)&&Object.hasOwn(s,'secondaryEtfTop5');
+  check(object(s) && Object.keys(s).sort().join('|') === 'accounts|asOf|classes|currency|limitations|residualETFs|'+(etf?'secondaryEtfTop5|':'')+'source|'+(api?'sourceReportSHA256':'sourceXlsxSHA256')+'|totalValueUSD|transferStatus', 'RANKED_KEYS');
   check(object(s) && s.currency === 'USD' && date(s.asOf) && amount(s.totalValueUSD) && s.totalValueUSD > 0, 'RANKED_TOTAL_DATE');
   check(input.retrievedAt === null ? input.retrievedAtBasis === null : input.retrievedAtBasis === (api?API_OBSERVED_TIME_BASIS:official?'原始官方导出文件mtime（非独立下载完成时间）':EXPOSURE_OBSERVED_TIME_BASIS), 'OBSERVED_TIME_BASIS');
   check(input.retrievedAt === null || instant(input.retrievedAt) && s.asOf <= new Date(Date.parse(input.retrievedAt) + 28800000).toISOString().slice(0, 10), 'DATE');
@@ -74,6 +76,17 @@ function buildRankedExposureView(input) {
       ...(r.securityCode ? {securityCode: r.securityCode, market: r.market} : {}), ...(r.accounts?{accounts:[...r.accounts]}:{}), ...(r.sourceHoldings?{sourceHoldings:structuredClone(r.sourceHoldings)}:{}), valueUsd: r.valueUSD,
       portfolioWeightPct: pct(r.valueUSD, s.totalValueUSD), categoryWeightPct: pct(r.valueUSD, g.totalValueUSD)}))};
   });
+  if(etf){
+    const rows=s.secondaryEtfTop5,g=s.classes[3],keys=Array.isArray(rows)?rows.map(r=>`${r?.securityCode}|${r?.market}`):[];
+    check(g.basis==='direct'&&Array.isArray(rows)&&rows.length<=5&&unique(keys)&&unique(rows.map(r=>r?.name))
+      &&!g.top5.some(r=>keys.includes(`${r.securityCode}|${r.market}`))
+      &&rows.every((r,n)=>object(r)&&Object.keys(r).sort().join('|')==='accounts|market|name|securityCode|valueUSD'&&[r.name,r.securityCode,r.market].every(text)&&amount(r.valueUSD)&&r.valueUSD>=0
+        &&(n===0||rows[n-1].valueUSD>=r.valueUSD)
+        &&Array.isArray(r.accounts)&&r.accounts.length>0&&r.accounts.length<=s.accounts.length&&unique(r.accounts)&&r.accounts.every(a=>s.accounts.includes(a)))
+      &&sum(rows.map(r=>r.valueUSD))+sum(g.top5.map(r=>r.valueUSD))<=g.totalValueUSD+.05, 'RANKED_ETF');
+    groups[3].etfTop=rows.map(r=>({name:r.name,securityCode:r.securityCode,market:r.market,accounts:[...r.accounts],valueUsd:r.valueUSD,
+      portfolioWeightPct:pct(r.valueUSD,s.totalValueUSD),categoryWeightPct:pct(r.valueUSD,g.totalValueUSD)}));
+  }
   const residual = s.residualETFs;
   check(object(residual) && amount(residual.valueUSD) && (official || residual.valueUSD >= 0 && residual.valueUSD <= groups[3].totalUsd)
     && ['weightTotalPct', 'weightSecondaryClassPct'].every(k => Number.isFinite(residual[k]))
