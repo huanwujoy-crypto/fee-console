@@ -83,6 +83,22 @@ schedule branch beside the unchanged owner dispatch.
   manually for that day. The fee report's own 11:30 and 14:00 slots are
   unaffected, and `ratio` jobs never count as fee source attempts.
 
+### Ratio on the automatic daily dispatch (owner decision, 2026-11-15)
+
+GitHub delivers the `0 1 * * *` slot hours late, so the owner's own punctual
+clock dispatches the daily fee report at 09:00 Hong Kong with
+`report_kind: automatic-daily`. The ratio now follows that same dispatch.
+
+- Same opt-in (`FEE_RATIO_AUTO_ENABLED`), same target rule, same derived
+  `publish-api` plan with `fee: null`, same `continue-on-error`, same jobs. No
+  job, input, run title, secret or credential is added.
+- Admission: the owner's dispatch on `main`, first attempt, with
+  `report_kind: automatic-daily` and every other input at its default. A plan,
+  a pinned main or any other input refuses; such a dispatch is the manual
+  route or nothing.
+- The late schedule slot still arrives. It finds the snapshot already at the
+  target date and leaves it untouched, so the day is still published once.
+
 ### Fee-first gate
 
 **The handoff is optional (owner decision, 2026-11-14).** A publish plan may

@@ -221,7 +221,19 @@ export function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
     if(performance?.topHoldings)returnsCore.buildTop(m.performance.topHoldings,m.performance,returnsCore.topTargets(m.exposure,m.companyExposure?companyCore.validate(m.companyExposure,m.exposure,m.book?.sourceSha256).top:null));
     const topReturns=(category,name)=>returnsCore.renderTop(returnsCore.selectTop(performance,{category,name}));
     const returns=(name,parent=null)=>performance?returnsCore.renderInline(returnsCore.select(performance,{type:parent?'fund-strategy':name==='All Together'?'portfolio':'classification',name,parent})):'';
-    const compactReturns=name=>performance?returnsCore.renderCompact(returnsCore.select(performance,{type:name==='All Together'?'portfolio':'classification',name,parent:null}),{showAmount:name==='All Together',amountCurrency:name!=='All Together'}):'';
+    // 现金类 is the 防御资产 holdings plus the cash accounts, and the provider reports no return covering both.
+    // Owner decision 2026-11-15: when that is so, show the 防御资产 figure it does report, and say what it leaves out.
+    // Nothing is derived or combined here.
+    const compactReturns=name=>{
+      if(!performance)return '';
+      const shown=item=>Object.values(item.periods).some(p=>Number.isFinite(p?.nativePct));
+      const item=returnsCore.select(performance,{type:name==='All Together'?'portfolio':'classification',name,parent:null});
+      if(name==='现金类'&&!shown(item)){
+        const part=returnsCore.select(performance,{type:'classification',name:'防御资产',parent:null});
+        if(shown(part))return returnsCore.renderCompact(part)+'<small class="ratio-return-part-note">仅防御资产，不含现金账户</small>';
+      }
+      return returnsCore.renderCompact(item,{showAmount:name==='All Together',amountCurrency:name!=='All Together'});
+    };
     const benchmarkCount=performance?Math.max(0,...Object.values(returnsCore.select(performance,{type:'portfolio',name:'All Together',parent:null}).periods).map(p=>p.benchmarkMemberCount||0)):0;
     const overviewView=classification?{valuationDate:classification.asOf,portfolioTotalUsd:classification.totalValueUSD,groups:classification.classes.map(g=>({category:g.name,totalUsd:g.totalValueUSD}))}:view;
     const delta=overviewView.groups.reduce((n,g)=>n+g.totalUsd,0)-overviewView.portfolioTotalUsd;

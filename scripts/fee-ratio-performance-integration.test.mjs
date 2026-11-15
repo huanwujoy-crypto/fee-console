@@ -411,6 +411,20 @@ test('total assets have their own hierarchy and preserve official amounts and ab
  assert.equal((html.match(/class="ratio-return-amount"/g)||[]).length,2);assert.deepEqual(m,before);
  delete m.performance.reports[0].rows[0].returnAmountUSD;assert.match(total(core.render(m)),/>收益 —<\/span>/);
 });
+test('cash class shows the provider figure for its holdings part, labelled, only when it has none of its own',()=>{
+ const row=(html,name)=>table(html,'ratio-overview-table').split('<tr').find(r=>r.includes('>'+name+'<'))||'';
+ const part=(m,name,pcts)=>{m.performance.reports.forEach((r,i)=>{const x={...structuredClone(r.rows[0]),scope:{type:'classification',name,parent:null},returnPct:pcts[i],sourceRow:r.rows.length+2};delete x.returnAmountUSD;r.rows.push(x);});return m;};
+ const note='仅防御资产，不含现金账户';
+ // Without any figure the row stays empty and unlabelled.
+ const none=core.render(addPerformance(model()));assert.ok(row(none,'现金类'));assert.equal(none.includes(note),false);
+ // The holdings part's own figures are shown as they are, with the label, and no amount.
+ const m=part(addPerformance(model()),'防御资产',[3.21,-0.45]),before=structuredClone(m),html=core.render(m),cash=row(html,'现金类');
+ assert.match(cash,/3\.21%/);assert.match(cash,/-0\.45%/);assert.equal(cash.split(note).length-1,1);assert.equal(html.split(note).length-1,1);assert.doesNotMatch(cash,/ratio-return-amount/);assert.deepEqual(m,before);
+ for(const name of assetNames.filter(n=>n!=='现金类'))assert.equal(row(html,name).includes(note),false,name);
+ // A figure the provider reports for the whole class wins, and then nothing is labelled.
+ const own=core.render(part(part(addPerformance(model()),'防御资产',[3.21,-0.45]),'现金类',[9.87,6.54]));
+ assert.match(row(own,'现金类'),/9\.87%/);assert.doesNotMatch(row(own,'现金类'),/3\.21%/);assert.equal(own.includes(note),false);
+});
 test('fund metrics name current value and class weight and do not hide date or missing returns',()=>{
  const html=core.render(addPerformance(model())),fund=html.split('<section class="card ratio-fund-distribution">')[1];
  assert.match(fund,/<small>当前市值（USD）<\/small>/);assert.match(fund,/<small>占比<\/small>/);

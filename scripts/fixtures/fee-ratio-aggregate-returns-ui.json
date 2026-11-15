@@ -1,7 +1,7 @@
 {
   "schema": "fee-console.ratio-aggregate-ui-stage.v1",
   "priorSha256": "e98b04d9f95353596410cf1f6c7a1f06a3072dca9d6211a5f390afcb6fa2b194",
-  "nextSha256": "dfdf5086a4b0c3628db58133ab0b917f39c36d001af9656878f0eca3075cd136",
+  "nextSha256": "2fd732fc9f4018b45713a743fd16eee7a1fac169c1fa831c54e6ea0bb0844e01",
   "regions": [
     {
       "prior": ".ratio-fund-distribution{margin-bottom:10px}.ratio-fund-distribution h2{margin-bottom:4px}.ratio-fund-distribution>p{font-size:11px;color:var(--ink-2);margin:0 0 8px}.ratio-distribution-row{margin:8px 0}.ratio-distribution-label{display:flex;justify-content:space-between;gap:12px;font-size:12px;line-height:1.5}.ratio-distribution-label span{min-width:0;overflow-wrap:anywhere}.ratio-distribution-label strong{flex-shrink:0;font-variant-numeric:tabular-nums}.ratio-distribution-track{height:6px;background:var(--line);border-radius:4px;overflow:hidden;margin-top:4px}.ratio-distribution-track i{display:block;height:100%;background:var(--accent,#4d8ec9);border-radius:4px}.ratio-fund-distribution details{font-size:11px;color:var(--ink-2);margin-top:10px}\n</style>\n",
@@ -777,8 +777,24 @@
     {
       "prior": "    note.className='ratio-explanation ratio-fund-notes';\n    summary.textContent='\u8bf4\u660e '+number;note.append(summary);\n    for(const [i,p] of paragraphs.entries()){\n",
       "next": "    note.className='ratio-explanation ratio-fund-notes';\n    for(const [i,p] of paragraphs.entries()){\n"
+    },
+    {
+      "prior": "<meta name=\"fee-console-build\" content=\"4.9.59\">\n",
+      "next": "<meta name=\"fee-console-build\" content=\"4.9.60\">\n"
+    },
+    {
+      "prior": ".ratio-return-pair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.ratio-return-period{display:flex;flex-direction:column;gap:5px;min-width:0}.ratio-return-period small{font-size:12px;line-height:1.4;overflow-wrap:anywhere}.ratio-return-badge{display:inline-block;color:var(--muted,#555)}.ratio-returns{margin:6px 0 10px}.ratio-returns p{font-size:12px;line-height:1.4;overflow-wrap:anywhere}.ratio-performance-class{margin:12px 0}@media(max-width:420px){.ratio-return-pair{grid-template-columns:1fr}}\n",
+      "next": ".ratio-return-pair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.ratio-return-period{display:flex;flex-direction:column;gap:5px;min-width:0}.ratio-return-period small{font-size:12px;line-height:1.4;overflow-wrap:anywhere}.ratio-return-badge{display:inline-block;color:var(--muted,#555)}.ratio-return-part-note{display:block;margin-top:4px;font-size:11px;line-height:1.4;color:var(--ink-muted);overflow-wrap:anywhere}.ratio-returns{margin:6px 0 10px}.ratio-returns p{font-size:12px;line-height:1.4;overflow-wrap:anywhere}.ratio-performance-class{margin:12px 0}@media(max-width:420px){.ratio-return-pair{grid-template-columns:1fr}}\n"
+    },
+    {
+      "prior": "const UI_VERSION_LABEL=\" \u00b7 v4.9.59\";\n",
+      "next": "const UI_VERSION_LABEL=\" \u00b7 v4.9.60\";\n"
+    },
+    {
+      "prior": "    const compactReturns=name=>performance?returnsCore.renderCompact(returnsCore.select(performance,{type:name==='All Together'?'portfolio':'classification',name,parent:null}),{showAmount:name==='All Together',amountCurrency:name!=='All Together'}):'';\n",
+      "next": "    // \u73b0\u91d1\u7c7b is the \u9632\u5fa1\u8d44\u4ea7 holdings plus the cash accounts, and the provider reports no return covering both.\n    // Owner decision 2026-11-15: when that is so, show the \u9632\u5fa1\u8d44\u4ea7 figure it does report, and say what it leaves out.\n    // Nothing is derived or combined here.\n    const compactReturns=name=>{\n      if(!performance)return '';\n      const shown=item=>Object.values(item.periods).some(p=>Number.isFinite(p?.nativePct));\n      const item=returnsCore.select(performance,{type:name==='All Together'?'portfolio':'classification',name,parent:null});\n      if(name==='\u73b0\u91d1\u7c7b'&&!shown(item)){\n        const part=returnsCore.select(performance,{type:'classification',name:'\u9632\u5fa1\u8d44\u4ea7',parent:null});\n        if(shown(part))return returnsCore.renderCompact(part)+'<small class=\"ratio-return-part-note\">\u4ec5\u9632\u5fa1\u8d44\u4ea7\uff0c\u4e0d\u542b\u73b0\u91d1\u8d26\u6237</small>';\n      }\n      return returnsCore.renderCompact(item,{showAmount:name==='All Together',amountCurrency:name!=='All Together'});\n    };\n"
     }
   ],
-  "supportSha256": "bea95319d2ba4c2dab5364cfc2710ceb8b7b49e4ecd9f07ff20e177044f8da3a",
-  "supportRegionCount": 184
+  "supportSha256": "dfdf5086a4b0c3628db58133ab0b917f39c36d001af9656878f0eca3075cd136",
+  "supportRegionCount": 188
 }

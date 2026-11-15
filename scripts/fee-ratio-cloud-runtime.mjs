@@ -63,6 +63,10 @@ export function ratioScheduledAdmission(env,event,now=new Date()){
     // The slot is the workflow's own `github.event.schedule`; an event file that names a slot must agree.
     ||env.RATIO_SCHEDULE!==RATIO_SCHEDULE_CRON||!event||typeof event!=='object'||Array.isArray(event)||event.schedule!==undefined&&event.schedule!==RATIO_SCHEDULE_CRON
     ||event.inputs!==undefined&&event.inputs!==null||!Number.isFinite(ms))fail();
+  return ratioDailyPlan(env,ms);
+}
+// The target and plan shared by both unattended triggers.
+function ratioDailyPlan(env,ms){
   const markets=String(env.FEE_REPORT_MARKETS||'').split(',');
   if(!markets.length||markets.some(m=>!/^[A-Z_]{2,40}$/.test(m)))fail();
   const asOf=new Date(Date.parse(hkDay(ms)+'T00:00:00Z')-86400000).toISOString().slice(0,10);
@@ -73,9 +77,27 @@ export function ratioScheduledAdmission(env,event,now=new Date()){
   validateRatioCloudPlan(plan);
   return {scheduled:true,due:true,asOf,plan,planText:JSON.stringify(plan)};
 }
-// One admission for both steps of a run: the owner's dispatch, or the schedule.
+// Automatic daily dispatch (owner decision 2026-11-15): GitHub delivers the
+// schedule slot hours late, so the owner's own punctual clock dispatches the
+// daily fee report with `report_kind: automatic-daily`. The ratio follows that
+// same dispatch under the same opt-in, target rule and derived plan as the
+// schedule slot. The dispatch must be the owner's and carry nothing else: any
+// other input, a plan or a pinned main refuses, so this can never be steered.
+export function ratioAutomaticAdmission(env,event,now=new Date()){
+  const ms=now instanceof Date?now.getTime():NaN,i=event?.inputs,off=v=>v===undefined||v===false||v==='false',blank=v=>v===undefined||v==='';
+  const bools=['ib_envelope_once','ib_diagnostic_once','run_reviewed_once','source_plan_check_only','source_acceptance_once','source_probe_once'];
+  const strings=['ib_envelope_main','ib_diagnostic_main','report_target','report_markets','manual_sync_completed_for','confirmed_main','recovery_main','ratio_main','ratio_plan','source_from','source_target','source_main','source_probe_main','source_probe_target'];
+  if(env.GITHUB_ACTIONS!=='true'||env.GITHUB_EVENT_NAME!=='workflow_dispatch'||env.GITHUB_RUN_ATTEMPT!=='1'||env.GITHUB_REF!=='refs/heads/main'||env.GITHUB_REPOSITORY!==REPO
+    ||env.GITHUB_ACTOR_ID!==String(RATIO_OWNER)||!/^[a-f0-9]{40}$/.test(env.GITHUB_SHA||'')||env.FEE_RATIO_AUTO_ENABLED!=='true'||(env.RATIO_PLAN!==undefined&&env.RATIO_PLAN!=='')
+    ||(env.RATIO_SCHEDULE!==undefined&&env.RATIO_SCHEDULE!=='')||event?.sender?.id!==RATIO_OWNER||event?.repository?.full_name!==REPO||event.schedule!==undefined
+    ||!i||typeof i!=='object'||Array.isArray(i)||i.report_kind!=='automatic-daily'||Object.keys(i).some(k=>!['report_kind',...bools,...strings].includes(k))
+    ||!bools.every(k=>off(i[k]))||!strings.every(k=>blank(i[k]))||!Number.isFinite(ms))fail();
+  return ratioDailyPlan(env,ms);
+}
+// One admission for both steps of a run: the owner's dispatch, the schedule, or the automatic daily dispatch.
 export function ratioRunAdmission(env,event,now=new Date()){
   if(env?.GITHUB_EVENT_NAME==='schedule')return ratioScheduledAdmission(env,event,now);
+  if(env?.GITHUB_EVENT_NAME==='workflow_dispatch'&&event?.inputs?.report_kind==='automatic-daily')return ratioAutomaticAdmission(env,event,now);
   const plan=ratioAdmission(env,event);return {scheduled:false,due:true,asOf:plan.asOf??null,plan,planText:env.RATIO_PLAN};
 }
 
