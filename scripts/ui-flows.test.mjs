@@ -619,6 +619,8 @@ test("overview jump chips point at existing sections and never touch the address
   const spy = html.slice(html.indexOf("function syncJumpChips(){"), html.indexOf("/* ratio-presentation:v1:end */"));
   assert.match(spy, /aria-current/);
   assert.doesNotMatch(spy, /location|history\.|\.hash/);
+  // Changing tab starts the new tab at its top instead of at the previous tab's scroll position.
+  assert.match(html, /s\.id===b\.dataset\.p\)\);globalThis\.scrollTo\?\.\(0,0\);renderRatioManagement\(\);/);
   // The access key travels in the fragment, so the chips scroll by script instead of linking to "#section".
   assert.doesNotMatch(nav[1], /href=/);
   const start = html.indexOf("// Overview: a chip scrolls to its section."), end = html.indexOf("/* ratio-presentation:v1:end */", start);
