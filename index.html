@@ -10,7 +10,7 @@
 <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAABzUlEQVR42u3bsQ2AMAwAwczDhEzKOqGlCBIgBdnxRT+BfU0Kt20/pGHNCASH4BAcgkNwCA7BITgEh+CQ4BAcgkNwCA7BITgEh+AQHBIcgkNwCA7BITgEh+AQHIJDgkNwCA7BITgEh+AQHIJDcAgOCQ7BITgEh+AQHIJDcOi2/vjBwUQyJXAEkhHNBxyxZITyAQcccMABxwIy4viAAw444IADDjjggAMOOOCAAw444IBDcAgOwQEHHHDAAQcccMABBxxwwAEHHHAIDudocDDxeWFwOEeDg4z3a4MDDjjggKMOjh82BwcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAGHQ1Y4HLLCERPH1IHCkRjH7JnCAQcccMBRB8cam4MDDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAQxWDQ3AIDsEhOFQNR/eSfG7hgAMOOOCAAw444PCq4ZCvrOAQHIJDgkNwCA7BITgEh+AQHIJDcEhwCA7BITgEh+AQHIJDcAgOwSHBITgEh+AQHIJDcAgOwSE4pEsnhtvC417hqCsAAAAASUVORK5CYII=">
-<meta name="fee-console-build" content="4.10.1">
+<meta name="fee-console-build" content="4.10.2">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -22,6 +22,10 @@ body{margin:0;background:var(--plane);color:var(--ink-1);font-family:system-ui,-
 .wrap{max-width:820px;margin:0 auto;padding:max(14px,env(safe-area-inset-top)) max(14px,env(safe-area-inset-right)) 90px max(14px,env(safe-area-inset-left))}
 header.top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}
 header.top>.row{flex-shrink:0}#btnRefresh{white-space:nowrap}
+/* overview-shell:v1 — the subtitle gets the full width; a sticky row of chips jumps between the sections. */
+header.top{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:10px;row-gap:2px}header.top>div:first-child{display:contents}header.top h1{grid-column:1;grid-row:1}header.top>.row{grid-column:2;grid-row:1;justify-content:flex-end}header.top .sub{grid-column:1/-1;grid-row:2}
+.home-jump{position:sticky;top:env(safe-area-inset-top);z-index:40;display:flex;gap:6px;padding:6px 0 8px;margin:-4px 0 6px;background:var(--plane);box-shadow:0 calc(-1*env(safe-area-inset-top)) 0 var(--plane)}.home-jump button{flex:1 1 0;border:1px solid var(--border);background:var(--surface-1);color:var(--ink-2);border-radius:999px;padding:7px 4px;font-size:13px;font-family:inherit;cursor:pointer;white-space:nowrap}.home-jump button:active{background:var(--chip);color:var(--ink-1)}
+#p-home .card,#p-home .kpis{scroll-margin-top:calc(54px + env(safe-area-inset-top))}
 h1{font-size:19px;margin:0}
 .sub{color:var(--ink-2);font-size:12px}
 .btn{background:var(--surface-1);color:var(--ink-1);border:1px solid var(--border);border-radius:10px;padding:9px 14px;font-size:15px;cursor:pointer;font-family:inherit}
@@ -363,10 +367,11 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
 </section>
 
 <section class="pane on" id="p-home">
+  <nav class="home-jump" aria-label="本页快速跳转"><button type="button" data-jump="kpis">资产</button><button type="button" data-jump="trendDetails">走势</button><button type="button" data-jump="monthsBox">月度</button><button type="button" data-jump="balBox">应付</button></nav>
   <div id="gateBox"></div>
   <div class="kpis" id="kpis"></div>
   <div class="card">
-    <details class="trend" id="trendDetails"><summary><span class="trend-title">近期走势</span><span class="trend-note">最近12个月</span></summary>
+    <details class="trend" id="trendDetails" open><summary><span class="trend-title">近期走势</span><span class="trend-note">最近12个月</span></summary>
       <div class="trend-body">
         <div class="chart-block"><h3>累计毛收益 <span class="small" id="chartAsOf"></span></h3><div class="legend"><span><i style="background:var(--series-1)"></i>累计毛收益（月末）</span><span><i style="background:var(--series-2)"></i>高水位线</span></div><div id="chart1"></div></div>
         <div class="chart-block"><h3>各月费用</h3><div class="legend"><span><i style="background:var(--series-1)"></i>管理费</span><span><i style="background:var(--series-2)"></i>Carry</span></div><div id="chart2"></div></div>
@@ -1161,7 +1166,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.10.1";
+const UI_VERSION_LABEL=" · v4.10.2";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -3504,6 +3509,11 @@ if(typeof document!=='undefined'&&typeof document.addEventListener==='function')
   const chip=event.target?.closest?.('.ratio-rank-chip'),grid=chip?.closest('.ratio-exposure-grid');if(!grid)return;
   for(const other of grid.querySelectorAll('.ratio-rank-chip'))other.setAttribute('aria-selected',String(other===chip));
   for(const group of grid.children)if(group.tagName==='SECTION'){if(group.getAttribute('data-rank')===chip.getAttribute('data-rank'))group.removeAttribute('hidden');else group.setAttribute('hidden','');}
+});
+// Overview: a chip scrolls to its section. It never touches the address fragment, which carries the access key.
+if(typeof document!=='undefined'&&typeof document.addEventListener==='function')document.addEventListener('click',event=>{
+  const chip=event.target?.closest?.('[data-jump]'),target=chip&&document.getElementById(chip.getAttribute('data-jump'));if(!target)return;
+  (target.closest('.card')||target).scrollIntoView({behavior:'smooth',block:'start'});
 });
 /* ratio-presentation:v1:end */
 const ratioExposureCore=createRankedExposureCore(),ratioCore=createFeeRatioCore(ratioExposureCore);

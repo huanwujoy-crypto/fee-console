@@ -605,3 +605,19 @@ test("new type metadata does not reintroduce growth/value fee holds", () => {
   assert.equal(uiHealth(assetPoint({stock:200})).hold,true,"NAV consistency gate remains");
   assert.equal(uiHealth({d:"2026-10-29",cash:10,other:5,stock:100,growth:100}).hold,true,"legacy behavior remains");
 });
+
+test("overview jump chips point at existing sections and never touch the address fragment", () => {
+  const nav = html.match(/<nav class="home-jump"[^>]*>([\s\S]*?)<\/nav>/);
+  assert.ok(nav, "the overview has its jump row");
+  const targets = [...nav[1].matchAll(/<button type="button" data-jump="([\w-]+)">([^<]+)<\/button>/g)].map(m => [m[1], m[2]]);
+  assert.deepEqual(targets, [["kpis", "资产"], ["trendDetails", "走势"], ["monthsBox", "月度"], ["balBox", "应付"]]);
+  for (const [id] of targets) assert.equal(html.split(`id="${id}"`).length, 2, id);
+  // The access key travels in the fragment, so the chips scroll by script instead of linking to "#section".
+  assert.doesNotMatch(nav[1], /href=/);
+  const start = html.indexOf("// Overview: a chip scrolls to its section."), end = html.indexOf("/* ratio-presentation:v1:end */", start);
+  assert.ok(start > 0 && end > start);
+  const handler = html.slice(start, end);
+  assert.match(handler, /scrollIntoView\(/);
+  assert.doesNotMatch(handler, /location|history\.|\.hash/);
+  assert.match(html, /<details class="trend" id="trendDetails" open>/);
+});
