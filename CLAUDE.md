@@ -323,10 +323,9 @@ publication. A historical Saturday layout preview keeps its original dates,
 must be explicitly labeled as a preview, and is not a fresh run or a replacement
 for the newer trusted latest pair.
 
-The owner subsequently requested publishing that historical display for phone
-acceptance. See `claude/xuan-ib-historical-layout-20260906.md`: the isolated
-source-bound archive is now permitted through reviewed maintenance, with a
-navigation link only. It is still not a new run or a replacement latest pair.
+The owner subsequently had that historical display published for phone
+acceptance, and on 2026-11-17 decided to withdraw it: the archive page, its
+renderer and its record were removed from the tree. Do not republish it.
 
 ## Weekly Sharesight cadence (owner confirmed 2026-09-06)
 
