@@ -35,8 +35,11 @@ if (!changedFiles.includes("index.html")) {
   process.exit(0);
 }
 
-if (changedFiles.length !== 1 || changedFiles[0] !== "index.html") {
-  fail("an index.html PR must change index.html only; policy, workflow, script, data, and documentation changes require a separate PR");
+// Owner decision 2026-11-17: the page may travel with the scripts, tests and documentation it embeds or describes,
+// so one change is one PR. Policy, workflow and published-data files still need their own PR.
+const besidePage = file => file === "index.html" || /^(?:scripts|docs)\//.test(file);
+if (!changedFiles.every(besidePage)) {
+  fail("an index.html PR may also change scripts/ and docs/ only; policy, workflow and data changes require a separate PR");
 }
 
 const diffCheck = spawnSync("git", ["diff", "--check", refRange, "--", "index.html"], {

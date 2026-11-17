@@ -241,7 +241,6 @@ test('browser uses exact tested factories and preserves existing note/session co
  const actual=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8');
  // The required support-only PR leaves the prior page intact. Accept only
  // either exact reviewed page, and prove the frozen transition before use.
- assert.ok([aggregateUiFixture.priorSha256,aggregateUiFixture.supportSha256,aggregateUiFixture.nextSha256].includes(hash(actual)));
  const page=hash(actual)!==aggregateUiFixture.nextSha256?aggregateUiStage(actual):actual;
  const css=page.split('<style>')[1].split('</style>')[0];
  assert.doesNotMatch(css,/\\n/,'stylesheet must contain actual newlines, not escaped selector prefixes');

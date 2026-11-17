@@ -54,6 +54,30 @@ test("passes a non-UI PR without applying the UI allowlist", () => {
   assert.equal(result.status, 0, result.stderr);
 });
 
+test("allows the page together with the scripts and documentation it embeds or describes", () => {
+  const cwd = makeCase(dir => {
+    fs.writeFileSync(path.join(dir, "index.html"), safeHtml("after"));
+    fs.mkdirSync(path.join(dir, "scripts"));fs.mkdirSync(path.join(dir, "docs"));
+    fs.writeFileSync(path.join(dir, "scripts", "core.mjs"), "export const core = 1;\n");
+    fs.writeFileSync(path.join(dir, "docs", "note.md"), "note\n");
+  });
+  const result = run(cwd);
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test("still rejects the page bundled with policy or workflow files", () => {
+  for (const file of ["security/ui-risk-baseline.json", ".github/workflows/x.yml", "data.json"]) {
+    const cwd = makeCase(dir => {
+      fs.writeFileSync(path.join(dir, "index.html"), safeHtml("after"));
+      fs.mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
+      fs.writeFileSync(path.join(dir, file), "{}\n");
+    });
+    const result = run(cwd);
+    assert.notEqual(result.status, 0, file);
+    assert.match(result.stderr, /may also change scripts\/ and docs\/ only/);
+  }
+});
+
 test("rejects an index.html change bundled with another file", () => {
   const cwd = makeCase(dir => {
     fs.writeFileSync(path.join(dir, "index.html"), safeHtml("after"));
@@ -61,7 +85,7 @@ test("rejects an index.html change bundled with another file", () => {
   });
   const result = run(cwd);
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /must change index\.html only/);
+  assert.match(result.stderr, /may also change scripts\/ and docs\/ only/);
 });
 
 test("rejects a new outbound origin", () => {

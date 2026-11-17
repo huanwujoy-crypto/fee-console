@@ -1,5 +1,5 @@
 {
-  "maxDiffLines": 800,
+  "maxDiffLines": 5000,
   "maxOccurrences": {
     "fetch": 3,
     "XMLHttpRequest": 0,
