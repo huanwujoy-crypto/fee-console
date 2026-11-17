@@ -321,13 +321,20 @@ function actualPresentation(f){
  return new Function('document','ratioHoldingDisplayName','foldRatioFundNotes',page.slice(page.indexOf('function arrangeRatioRowDetails('),page.indexOf('function foldRatioFundNotes('))+page.slice(start,end)+'\nreturn styleRatioReport;')(f.document,s=>s,()=>{});
 }
 for(const mode of [{returns:true,inline:true},{returns:true,inline:true,reverse:true,extra:true},{returns:true,inline:false},{returns:false}])test('card styling preserves direct returns, disclosures and native values '+JSON.stringify(mode),()=>{
- const f=presentationFixture(mode),style=actualPresentation(f);style(f.root);
+ const f=presentationFixture(mode),style=actualPresentation(f);
+ // One row is shown by code and carries its full name as a title, as the stock and ETF rankings do.
+ f.originals[15].section.querySelector('td').setAttribute('title','Synthetic full company name');
+ style(f.root);
  const cards=f.exposure.querySelectorAll('.ratio-holding-row');assert.equal(cards.length,20);
  // One ranking is shown at a time: a chip per ranking, the first selected, the others hidden but still in the page.
  const chips=f.exposure.querySelectorAll('.ratio-rank-chip'),groups=f.exposure.querySelector('.ratio-exposure-grid').children.filter(n=>n.tagName==='SECTION');
  assert.deepEqual(chips.map(c=>[c.textContent,c.getAttribute('data-rank'),c.getAttribute('aria-selected')]),[['PE/VC','0','true'],['对冲基金','1','false'],['常青基金','2','false'],['二级市场','3','false']]);
  assert.deepEqual(groups.map(g=>[g.getAttribute('data-rank'),g.getAttribute('hidden')]),[['0',null],['1',''],['2',''],['3','']]);
  assert.equal(f.exposure.querySelector('.ratio-exposure-grid').classList.contains('ratio-rank-switch'),true);
+ // Only that row gets a tap target and a hidden full-name line; every other row is unchanged.
+ const taps=f.exposure.querySelectorAll('.ratio-holding-tap'),names=f.exposure.querySelectorAll('.ratio-holding-fullname');
+ assert.equal(taps.length,1);assert.deepEqual(names.map(n=>[n.textContent,n.getAttribute('hidden')]),[['Synthetic full company name','']]);
+ assert.equal(taps[0].getAttribute('aria-expanded'),'false');assert.equal(names[0].closest('.ratio-holding-row'),taps[0].closest('.ratio-holding-row'));
  assert.equal(f.exposure.querySelectorAll('.ratio-returns').length,mode.returns?20:0);
  assert.equal(f.exposure.querySelectorAll('.ratio-return-period').length,mode.returns&&!mode.inline?40:0);
  assert.equal(f.exposure.querySelectorAll('.ratio-return-date-fact').length,mode.returns&&mode.inline?40:0);
