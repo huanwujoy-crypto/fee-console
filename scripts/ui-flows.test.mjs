@@ -630,3 +630,85 @@ test("overview jump chips point at existing sections and never touch the address
   assert.doesNotMatch(handler, /location|history\.|\.hash/);
   assert.match(html, /<details class="trend" id="trendDetails" open>/);
 });
+
+// note-tidy:v1 — the asset-allocation notes are reworded on display only.
+const noteTidySource = html.slice(html.indexOf("const RATIO_NOTE_RULES=["), html.indexOf("/* ratio-presentation:v1:end */"));
+const { simplifyRatioNoteText, tidyRatioNotes } = new Function(`${noteTidySource}\nreturn {simplifyRatioNoteText,tidyRatioNotes};`)();
+
+test("known note sentences are reworded and keep their own figures and dates", () => {
+  assert.equal(simplifyRatioNoteText("组合参考目标：35%（占总资产）；各策略的参考目标未设置。"), "本类参考目标：占总资产 35%。");
+  assert.equal(simplifyRatioNoteText("按 Sharesight 原始持仓名称首字段分类。上方百分比分母仅为常青基金市值，不叠加穿透。"), "按 Sharesight 持仓名称的第一段分类；百分比是占常青基金市值的比例。");
+  assert.equal(simplifyRatioNoteText("本类合计 USD 1,540.25 · 占比合计100.00%。明细按账户及市值降序列出，同分类、同账户、年月后完整名称相同的持仓合并合计；不同账户和不同份额名称分别列出。"), "本类合计 USD 1,540.25；同一账户里同名的持仓合并显示。");
+  assert.equal(simplifyRatioNoteText("黄金（GLD）：USD 12.50；已计入所属分类，不另加总。"), "黄金（GLD）：USD 12.50，已计入所属分类。");
+  assert.equal(simplifyRatioNoteText("Sharesight IB-HK 账面现金：USD 6.00"), "IB-HK 现金：USD 6.00");
+  assert.equal(simplifyRatioNoteText("账面现金池：USD 12.00"), "现金合计：USD 12.00");
+  assert.equal(simplifyRatioNoteText("生成 2026-11-10T10:00:00.000Z · 管理费账务截至 2026-11-09，两者日期不同"), "生成于 2026-11-10 10:00（UTC） · 管理费账务截至 2026-11-09，两者日期不同");
+  assert.equal(simplifyRatioNoteText("比例管理 · 周报 · 报告目标 2026-11-10 · 非实时"), "资产配置 · 周报 · 报告目标 2026-11-10 · 非实时");
+  assert.equal(simplifyRatioNoteText("总资产收益含 2 项程序取值模拟基准；资产配置已排除它们，口径不同。"), "总资产的收益率含 2 项只作对照的模拟基准；市值和占比已不含它们。");
+  assert.equal(simplifyRatioNoteText("API 响应接收 2026-11-10T09:00:00.000Z。报表总额与逐行合计相差 0.03 USD，按逐行合计列示。"), "报表总额与逐行相加相差 0.03 USD，本页按逐行相加。");
+  assert.equal(simplifyRatioNoteText("现金类资产：BIL USD 10.00 · SGOV USD 5.00；不默认出售。"), "现金类资产：BIL USD 10.00 · SGOV USD 5.00。");
+});
+
+test("repeated or empty note sentences are left out, and a warning is never hidden", () => {
+  for (const dropped of [
+    "EXUS · EIMI · USSC：补仓金额未计算。USSC 的10%仅为原补仓预算参考，不是持仓目标。",
+    "成交后投影未计算；没有完整订单证据时，内部风控保持未知。",
+    "现金类资产：本次完整分类来源未见非零项；不默认出售。",
+    "API 响应接收 2026-11-10T09:00:00.000Z。报表总额与逐行合计相差 0.00 USD，按逐行合计列示。",
+    "2026-11-10 持仓与现金取自同一份Sharesight API分类报表；不含ETF穿透。",
+    "预算／资本承诺未核实，未生成可执行补仓金额。",
+    "按Sharesight现有记录显示；不新增或重复任何转仓和认购。",
+    "持仓估值 2026-11-10；读取 2026-11-10T09:00:00.000Z；时间依据 Sharesight API 响应接收时间。",
+  ]) assert.equal(simplifyRatioNoteText(dropped), "", dropped);
+  // The warnings that can follow the boilerplate survive it.
+  assert.equal(simplifyRatioNoteText("预算／资本承诺未核实，未生成可执行补仓金额。完整来源尚未通过本机核验。来源转仓尚未核销，保留原账面持仓。"), "完整来源尚未通过本机核验。来源转仓尚未核销，保留原账面持仓。");
+  // Anything not on the list is shown exactly as published.
+  for (const kept of [
+    "来源：Sharesight 官方 API（合并视图 All Together 分类报表） · 资产分类截至 2026-11-10。原始全量证据尚未接入本机核验，仅供私密预览，不能作为正式发布来源。",
+    "A new warning nobody has listed yet.",
+    "总资产收益含 2 项程序取值模拟基准；此历史快照的资产总额保留原口径。",
+  ]) assert.equal(simplifyRatioNoteText(kept), null, kept);
+});
+
+test("tidying the report rewrites listed lines, keeps unknown ones and marks an annualised value", () => {
+  class N {
+    constructor(tag, cls = "", text = "") { this.tagName = tag; this.className = cls; this.children = []; this.parentNode = null; this.own = text; this.attrs = {}; }
+    get classList() { const n = this; return { contains: c => n.className.split(" ").includes(c), add: c => { n.className = (n.className + " " + c).trim(); } }; }
+    get textContent() { return this.children.length ? this.children.map(c => c.textContent).join("") : this.own; }
+    set textContent(v) { for (const c of this.children) c.parentNode = null; this.children = []; this.own = String(v); }
+    append(...nodes) { for (const n of nodes) { n.parentNode = this; this.children.push(n); } return this; }
+    remove() { const p = this.parentNode; if (p) p.children = p.children.filter(c => c !== this); this.parentNode = null; }
+    setAttribute(k, v) { this.attrs[k] = v; }
+    is(token) { return token.startsWith(".") ? this.classList.contains(token.slice(1)) : this.tagName === token.toUpperCase(); }
+    all() { return this.children.flatMap(c => [c, ...c.all()]); }
+    querySelectorAll(selector) {
+      const tokens = selector.split(" ");
+      return this.all().filter(n => { if (!n.is(tokens.at(-1))) return false; let up = n.parentNode; for (const t of tokens.slice(0, -1).reverse()) { while (up && up !== this && !up.is(t)) up = up.parentNode; if (!up || up === this) return false; up = up.parentNode; } return true; });
+    }
+    querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
+  }
+  const line = text => new N("P").append(new N("SPAN", "ratio-note-number", "4.1"), new N("SPAN", "ratio-note-text", text));
+  const fold = (title, ...lines) => new N("DETAILS", "ratio-explanation").append(new N("SUMMARY", "", title), ...lines);
+  const cash = fold("说明 4 · 现金与补仓参考说明", line("Sharesight IB-HK 账面现金：USD 6.00"), line("成交后投影未计算；没有完整订单证据时，内部风控保持未知。"), line("A new warning nobody has listed yet."));
+  const emptied = fold("说明 3 · 覆盖范围、残余与缺项", line("没有完整订单来源，不生成成交后投影或可执行预算；不恢复券商／Flex／邮件读取。"));
+  const badge = new N("SMALL", "", "年化"), other = new N("SMALL", "", "未满一年");
+  const returns = new N("SPAN", "ratio-return-compact-line").append(new N("STRONG", "", "8.25%"), badge, other);
+  const evergreen = new N("SECTION", "ratio-fund-distribution").append(new N("H2", "", "常青基金"), new N("SPAN", "ratio-distribution-name", "二级"), new N("SECTION", "ratio-distribution-category").append(new N("H3", "", "二级 · 12.50%")));
+  const hedge = new N("SECTION", "ratio-fund-distribution").append(new N("H2", "", "对冲基金"), new N("SPAN", "ratio-distribution-name", "二级"));
+  const report = new N("DIV", "ratio-report").append(returns, evergreen, hedge, emptied, cash);
+  tidyRatioNotes(report);
+  assert.deepEqual(cash.children.map(c => c.textContent), ["现金", "•IB-HK 现金：USD 6.00", "•A new warning nobody has listed yet."]);
+  assert.equal(emptied.parentNode, null, "a fold left with no lines is removed");
+  assert.equal(badge.textContent, "*"); assert.equal(badge.attrs.title, "年化收益率"); assert.equal(other.textContent, "未满一年");
+  assert.equal(returns.children[0].textContent, "8.25%", "the value itself is untouched");
+  assert.equal(evergreen.children[1].textContent, "私募二级 Secondary"); assert.equal(evergreen.children[2].children[0].textContent, "私募二级 Secondary · 12.50%");
+  assert.equal(hedge.children[1].textContent, "二级", "only the evergreen module is renamed");
+});
+
+test("a history that lies within one year names that year on the first chip", () => {
+  const returnWindows = new Function(`${html.slice(html.indexOf("function returnWindows(st){"), html.indexOf("/* compact-comparison-tables:end */"))}\nreturn returnWindows;`)();
+  const months = list => ({ rows: list.map(ym => ({ ym })) });
+  assert.deepEqual(returnWindows(months(["2026-07", "2026-08", "2026-09", "2026-10", "2026-11"])).map(w => w.label), ["全部（今年）", "近3个月", "本月"]);
+  assert.deepEqual(returnWindows(months(["2025-11", "2025-12", "2026-01", "2026-02", "2026-03", "2026-04"])).map(w => w.label), ["全部", "今年", "近3个月", "本月"]);
+  assert.match(html, /\.return-windows button\[aria-selected="true"\]\{background:var\(--chip\);border-color:var\(--series-1\)/);
+});

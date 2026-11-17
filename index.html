@@ -10,7 +10,7 @@
 <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAABzUlEQVR42u3bsQ2AMAwAwczDhEzKOqGlCBIgBdnxRT+BfU0Kt20/pGHNCASH4BAcgkNwCA7BITgEh+CQ4BAcgkNwCA7BITgEh+AQHBIcgkNwCA7BITgEh+AQHIJDgkNwCA7BITgEh+AQHIJDcAgOCQ7BITgEh+AQHIJDcOi2/vjBwUQyJXAEkhHNBxyxZITyAQcccMABxwIy4viAAw444IADDjjggAMOOOCAAw444IBDcAgOwQEHHHDAAQcccMABBxxwwAEHHHAIDudocDDxeWFwOEeDg4z3a4MDDjjggKMOjh82BwcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAGHQ1Y4HLLCERPH1IHCkRjH7JnCAQcccMBRB8cam4MDDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAQxWDQ3AIDsEhOFQNR/eSfG7hgAMOOOCAAw444PCq4ZCvrOAQHIJDgkNwCA7BITgEh+AQHIJDcEhwCA7BITgEh+AQHIJDcAgOwSHBITgEh+AQHIJDcAgOwSE4pEsnhtvC417hqCsAAAAASUVORK5CYII=">
-<meta name="fee-console-build" content="4.10.5">
+<meta name="fee-console-build" content="4.10.6">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -27,7 +27,7 @@ header.top{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:10px
 .home-jump{position:sticky;top:env(safe-area-inset-top);z-index:40;display:flex;gap:6px;padding:6px 0 8px;margin:-4px 0 6px;background:var(--plane);box-shadow:0 calc(-1*env(safe-area-inset-top)) 0 var(--plane)}.home-jump button{flex:1 1 0;border:1px solid var(--border);background:var(--surface-1);color:var(--ink-2);border-radius:999px;padding:7px 4px;font-size:13px;font-family:inherit;cursor:pointer;white-space:nowrap}.home-jump button:active{background:var(--chip);color:var(--ink-1)}.home-jump{overflow-x:auto;scrollbar-width:none}.home-jump::-webkit-scrollbar{display:none}.home-jump button{flex:1 0 auto;transition:background .15s,color .15s}.home-jump button[aria-current="true"]{background:var(--series-1);border-color:transparent;color:#fff;font-weight:600}
 /* jump-spy:v1 — a jumped-to section lands just below the sticky chips. */
 #kpis,#returnsCard,#p-home>.card,.ratio-report>section.card{scroll-margin-top:calc(54px + env(safe-area-inset-top))}.ratio-report>.home-jump button{font-size:12.5px;padding:7px 6px}
-.return-windows{display:flex;gap:6px;margin:6px 0 4px}.return-windows button{flex:1 1 0;border:1px solid var(--border);background:var(--surface-1);color:var(--ink-2);border-radius:999px;padding:6px 4px;font-size:13px;font-family:inherit;cursor:pointer;white-space:nowrap}.return-windows button[aria-selected="true"]{background:var(--series-1);border-color:transparent;color:#fff;font-weight:600}.return-window-note{margin:2px 0 6px}
+.return-windows{display:flex;gap:6px;margin:6px 0 4px}.return-windows button{flex:1 1 0;border:1px solid var(--border);background:var(--surface-1);color:var(--ink-2);border-radius:9px;padding:8px 4px;font-size:13px;font-family:inherit;cursor:pointer;white-space:nowrap}.return-windows button[aria-selected="true"]{background:var(--chip);border-color:var(--series-1);color:var(--ink-1);font-weight:600}.ratio-return-compact-line small.ratio-return-annual{margin-left:1px;font-size:11px}.return-window-note{margin:2px 0 6px}
 #p-home .card,#p-home .kpis{scroll-margin-top:calc(54px + env(safe-area-inset-top))}
 h1{font-size:19px;margin:0}
 .sub{color:var(--ink-2);font-size:12px}
@@ -1169,7 +1169,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.10.5";
+const UI_VERSION_LABEL=" · v4.10.6";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -3505,15 +3505,17 @@ function styleRatioReport(root){
   arrangeRatioRowDetails(report);
   // Owner request 2026-11-17: shorter module titles and one sticky chip per module, like the first tab.
   // Display only; the rendered report keeps its own titles underneath, so nothing published changes.
-  const shortTitles={'资产配置总览':'总览','股票四类配置':'IB 投资','常青基金分布':'常青基金','对冲基金分布':'对冲基金','All Together · 四类前五':'四类前五'};
+  // The first module's chip stays 总览; its card is titled by what it shows, so the two do not repeat each other.
+  const shortTitles={'资产配置总览':'总览','股票四类配置':'IB 投资','常青基金分布':'常青基金','对冲基金分布':'对冲基金','All Together · 四类前五':'四类前五'},cardTitles={'资产配置总览':'六类资产'};
   const jump=make('nav','home-jump');jump.setAttribute('aria-label','本页快速跳转');
   for(const section of direct(report,'SECTION')){
     const title=direct(section,'H2')[0],label=title&&shortTitles[title.textContent];if(!label)continue;
     const id='ratioModule'+jump.children.length,chip=make('button');
-    title.textContent=label;section.setAttribute('id',id);
+    title.textContent=cardTitles[title.textContent]||label;section.setAttribute('id',id);
     chip.setAttribute('type','button');chip.setAttribute('data-jump',id);chip.setAttribute('aria-current',String(!jump.children.length));chip.textContent=label;jump.append(chip);
   }
   if(jump.children.length>1)report.insertBefore(jump,report.firstChild);
+  if(typeof tidyRatioNotes==='function')tidyRatioNotes(report);
   report.classList.add('ratio-styled');
   // The report arrives after the tab is shown and no scroll event follows, so light the right chip once now.
   if(typeof requestAnimationFrame==='function')requestAnimationFrame(()=>{try{syncJumpChips();}catch{}});
@@ -3551,6 +3553,84 @@ if(typeof document!=='undefined'&&typeof document.addEventListener==='function')
   const chip=event.target?.closest?.('[data-return-window]'),box=chip&&document.getElementById('returnComparison');if(!box||!_returnState)return;
   _returnWindow=chip.getAttribute('data-return-window');box.outerHTML=renderReturnComparison(_returnState);
 });
+// note-tidy:v1 — owner request 2026-11-17: shorter, plainer notes. Display only. A sentence of the rendered report that
+// is listed here is reworded, or left out when it repeats another note or says only that something was not computed.
+// A sentence that is not listed is shown exactly as published, so a new warning can never be hidden by this list.
+const RATIO_NOTE_RULES=[
+  [/^收益沿用 Sharesight 对应范围的官方原值[\s\S]*$/,'收益率和收益金额取自 Sharesight，已卖出的持仓也计入。'],
+  [/^仅凭官方证据标注年化[\s\S]*$/,'带 * 的是年化收益率；标“未满一年”的是实际收益率；“—”表示暂无数据，不是 0%。'],
+  [/^股票前五只显示直接持仓收益[\s\S]*$/,'股票前五只算直接持有的部分，不含 ETF 里的间接持仓，也不乘杠杆倍数。起止日期见各行的“收益率说明”。'],
+  [/^总资产收益含 (\d+) 项程序取值模拟基准；资产配置已排除它们，口径不同。$/,'总资产的收益率含 $1 项只作对照的模拟基准；市值和占比已不含它们。'],
+  [/^六类互斥，按同日直接资产市值归类。[\s\S]*$/,'六类互不重叠，按当日市值归类：股票市场＝美国底仓、美国科技、非美发达、新兴市场；现金防御类＝现金账户＋防御资产；主题投资单列。'],
+  [/^Citi-HK & 地产四期中的 QQQ／SPY 仅作基准取值[\s\S]*$/,'Citi-HK 和地产四期里的 QQQ／SPY 只作对照基准，不算投资资产。'],
+  [/^参考目标合计100%。[\s\S]*$/,'参考目标合计 100%。市值下方括号是与目标的差额：正数表示低于目标，负数表示高于目标；只作比较，不是买卖指令。'],
+  [/^(黄金（GLD）：[^；]+)；已计入所属分类，不另加总。$/,'$1，已计入所属分类。'],
+  [/^(收益截至 [^；]+)；收益口径见本页统一说明。$/,'$1。'],
+  [/^此范围含股票、防御和主题投资，不等于上方股票市场子集；现金收益沿用原报表设置。$/,'范围：股票、防御和主题投资，比上方的“股票市场”大。'],
+  [/^按 Sharesight 原始持仓名称首字段分类。上方百分比分母仅为(.+?)市值，不叠加穿透。$/,'按 Sharesight 持仓名称的第一段分类；百分比是占$1市值的比例。'],
+  [/^组合参考目标：(\d+(?:\.\d+)?)%（占总资产）；各策略的参考目标未设置。$/,'本类参考目标：占总资产 $1%。'],
+  [/^组合参考目标：未设置；各策略的参考目标未设置。$/,''],
+  [/^本类合计 (USD [\d,.]+) · (?:占比合计100\.00%|市值为零，占比均为0\.00%)。明细按账户及市值降序列出[\s\S]*$/,'本类合计 $1；同一账户里同名的持仓合并显示。'],
+  [/^黄金占比的分母为同日All Together分类来源总资产[\s\S]*$/,'常青基金先把同名基金合并，再排前五。'],
+  [/^指定Citi账户的QQQ／SPY仅作基准取值，不计入投资资产、占比分母和穿透；原始资料及基准用途保留。$/,''],
+  [/^下方四类前五沿用原排名分组：二级市场为前三类以外全部资产，含现金，与上方六类中的股票市场范围不同。二级市场前五与其余三类一致[\s\S]*$/,'四类前五里的“二级市场”指 PE/VC、对冲基金、常青基金以外的全部资产（含现金），范围比“股票市场”大。同一证券在多个账户里的持仓合并排名。'],
+  [/^ETF和杠杆产品按其自身实际市值列示，不穿透到底层公司，也不乘杠杆倍数。$/,'ETF 和杠杆产品按自身市值列示，不拆到底层公司，也不乘杠杆倍数。'],
+  [/^管理费仍为嘉信＋Webull；[\s\S]*$/,'本页只看资产配置，不影响管理费；管理费仍只按嘉信＋Webull 计算。'],
+  [/^比例管理 · ([\s\S]+)$/,'资产配置 · $1'],
+  [/^资产分类与持仓均截至 \S+，取自同一份 API 报表；管理费保持原日期。$/,''],
+  [/^账户、持仓、现金及分类均以 Sharesight 记录为准；不读取券商、Flex 或邮件。$/,'全部数据取自 Sharesight，不读取券商或邮件。'],
+  [/^持仓估值 \d{4}-\d{2}-\d{2}；读取 [\s\S]*$/,''],
+  [/^生成 (\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})[\d:.]*Z([\s\S]*)$/,'生成于 $1 $2（UTC）$3'],
+  [/^来源：Sharesight 官方 API（合并视图 All Together 分类报表） · 资产分类截至 \S+。API 响应逐行投影、账户范围与响应字节哈希已核验。$/,''],
+  [/^API 响应接收 \S+。报表总额与逐行合计相差 0\.00 USD，按逐行合计列示。$/,''],
+  [/^API 响应接收 \S+。报表总额与逐行合计相差 ([\d.]+) USD，按逐行合计列示。$/,'报表总额与逐行相加相差 $1 USD，本页按逐行相加。'],
+  [/^仅证明原时点开放持仓，不含闭仓／交易历史，不证明未来IB流量；不做ETF穿透，ETF按其自身市值列示。$/,'只含当前持有的资产和现金，不含已卖出的持仓和交易记录。'],
+  [/^报表估值日不是各私募基金的 NAV 日；未取得逐项 NAV 日期时保持未知。$/,'私募基金的净值日期可能早于本页的估值日。'],
+  [/^Sharesight API 分类报表仅含当前直接持仓与现金；不含ETF穿透、闭仓和交易历史。$/,''],
+  [/^\S+ 持仓与现金取自同一份Sharesight API分类报表；不含ETF穿透。$/,''],
+  [/^CALL／资本承诺字段尚无已验收的 Sharesight 读取契约；预留和净预算保持未知。$/,'未包含资本承诺（CALL）和预留资金。'],
+  [/^没有完整订单来源，不生成成交后投影或可执行预算；不恢复券商／Flex／邮件读取。$/,''],
+  [/^All Together 十账户用于比例管理，不扩大原管理费计费组合。$/,''],
+  [/^Sharesight (\S+) 账面现金：([\s\S]+)$/,'$1 现金：$2'],
+  [/^账面现金池：([\s\S]+)$/,'现金合计：$1'],
+  [/^CALL 原额／50%预留／净规划预算：未取得；账面余额不等于实时购买力。$/,'账面现金不等于实时可动用的资金。'],
+  [/^EXUS · EIMI · USSC：补仓金额未计算。[\s\S]*$/,''],
+  [/^现金类资产：(?:本次完整分类来源未见非零项|未取得)；不默认出售。$/,''],
+  [/^现金类资产：([\s\S]+)；不默认出售。$/,'现金类资产：$1。'],
+  [/^成交后投影未计算；没有完整订单证据时，内部风控保持未知。$/,''],
+  [/^预算／资本承诺未核实，未生成可执行补仓金额。([\s\S]*)$/,'$1'],
+  [/^按Sharesight现有记录显示；不新增或重复任何转仓和认购。$/,'']
+];
+// Returns the reworded sentence, '' to leave it out, or null when the sentence is not on the list.
+function simplifyRatioNoteText(text){
+  const source=String(text).trim();
+  for(const [pattern,replacement] of RATIO_NOTE_RULES)if(pattern.test(source))return source.replace(pattern,replacement).trim();
+  return null;
+}
+function tidyRatioNotes(report){
+  const rewrite=(holder,body=holder)=>{const next=simplifyRatioNoteText(body.textContent);if(next==='')holder.remove();else if(next!==null)body.textContent=next;};
+  for(const item of Array.from(report.querySelectorAll('.ratio-return-note-list li')))rewrite(item);
+  for(const line of Array.from(report.querySelectorAll('.ratio-secondary-return-supplement p')))if(line.parentNode?.classList?.contains('ratio-secondary-return-supplement'))rewrite(line);
+  for(const line of Array.from(report.querySelectorAll('.ratio-explanation p'))){
+    const label=line.querySelector('.ratio-note-number'),body=line.querySelector('.ratio-note-text');
+    if(!label||!body)continue;
+    label.textContent='•';rewrite(line,body);
+  }
+  const titles={'说明 1 · 计算口径与合并规则':'计算方法','说明 2 · 来源日期与核验记录':'数据来源与日期','说明 3 · 覆盖范围、残余与缺项':'未包含的内容','说明 4 · 现金与补仓参考说明':'现金','说明 7':'分类说明'};
+  for(const note of Array.from(report.querySelectorAll('.ratio-explanation'))){
+    const summary=Array.from(note.children).find(n=>n.tagName==='SUMMARY');
+    if(summary&&titles[summary.textContent])summary.textContent=titles[summary.textContent];
+    if(!note.querySelector('p'))note.remove();
+  }
+  // A footnote mark instead of the word, explained once in 收益说明; the value itself is untouched.
+  for(const badge of Array.from(report.querySelectorAll('.ratio-return-compact-line small')))if(badge.textContent==='年化'){badge.textContent='*';badge.setAttribute('title','年化收益率');badge.classList.add('ratio-return-annual');}
+  for(const section of Array.from(report.querySelectorAll('.ratio-fund-distribution'))){
+    const title=Array.from(section.children).find(n=>n.tagName==='H2')?.textContent;
+    if(title!=='常青基金'&&title!=='常青基金分布')continue;
+    for(const name of Array.from(section.querySelectorAll('.ratio-distribution-name')))if(name.textContent==='二级')name.textContent='私募二级 Secondary';
+    for(const head of Array.from(section.querySelectorAll('.ratio-distribution-category h3')))if(head.textContent.startsWith('二级 · '))head.textContent='私募二级 Secondary'+head.textContent.slice(2);
+  }
+}
 /* ratio-presentation:v1:end */
 const ratioExposureCore=createRankedExposureCore(),ratioCore=createFeeRatioCore(ratioExposureCore);
 const RATIO_RECIPIENT_FILE="fee-console-ratio-recipient.json";
@@ -4459,6 +4539,7 @@ function returnWindows(st){
   if(months.length<2)return all;
   const year=months.at(-1).ym.slice(0,4),seen=new Set([months.length]);
   for(const w of [{key:"ytd",label:"今年",rows:months.filter(r=>r.ym.startsWith(year))},{key:"m3",label:"近3个月",rows:months.slice(-3)},{key:"month",label:"本月",rows:months.slice(-1)}]){
+    if(w.key==="ytd"&&w.rows.length===months.length)all[0].label="全部（今年）";
     if(!w.rows.length||seen.has(w.rows.length))continue;seen.add(w.rows.length);all.push(w);
   }
   return all;
