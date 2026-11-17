@@ -100,12 +100,27 @@ test('public period gate success alone is never validated financial execution',(
   const f=executionFixture();f.jobs.jobs[0].name='produce';
   f.jobs.jobs.push({name:'period',run_id:f.run.id,head_sha:f.run.head_sha,status:'completed',conclusion:'success',steps:[{name:'Plan weekly or final monthly coverage without financial credentials',status:'completed',conclusion:'success'}]});f.jobs.total_count=2;
   assert.equal(isValidatedProducer(f.run,f.jobs),true);
-  for(const change of [x=>x.jobs.jobs[0].conclusion='skipped',x=>x.jobs.jobs[1].steps[0].conclusion='skipped',x=>x.jobs.jobs[1].head_sha='b'.repeat(40),x=>x.jobs.jobs[0].name='period',x=>x.jobs.jobs[1].name='unrelated']){
+  for(const change of [x=>x.jobs.jobs[0].conclusion='skipped',x=>x.jobs.jobs[1].conclusion='skipped',x=>x.jobs.jobs[1].conclusion='failure',x=>x.jobs.jobs[1].head_sha='b'.repeat(40),x=>x.jobs.jobs[0].name='period',x=>x.jobs.jobs[1].name='unrelated']){
     const x=structuredClone(f);change(x);assert.equal(isValidatedProducer(x.run,x.jobs),false);
   }
 });
 
-test('actual supervisor never auto-closes from unrelated publication and honors historical execution reset', () => {
+test('the current producer run shape is recognised: named producing job among skipped gates and diagnostics',()=>{
+  const f=executionFixture(),id=f.run.id,sha=f.run.head_sha,job=(name,conclusion,steps=[])=>({name,run_id:id,head_sha:sha,status:'completed',conclusion,steps});
+  const produce={...f.jobs.jobs[0],name:'Produce daily 2026-11-16'};
+  const jobs=()=>({jobs:[job('ratio-preflight','success'),job('period','success',[{name:'Plan daily coverage and month-end archive without financial credentials',status:'completed',conclusion:'success'}]),
+    job('Fee source probe','skipped'),job('IB diagnostic 2026-11-06','skipped'),job('once-admit','skipped'),structuredClone(produce),job('once-finish','skipped'),job('ratio','success')]});
+  const shaped=change=>{const j=jobs();change?.(j);j.total_count=j.jobs.length;return isValidatedProducer(f.run,j);};
+  assert.equal(shaped(),true);
+  // A day that was not due or already published runs no producing job: that is not a validated execution.
+  assert.equal(shaped(j=>{j.jobs[5].conclusion='skipped';}),false);
+  // Any failed job, a missing gate, a second producing job, an unnamed producer or a skipped step is refused.
+  for(const change of [j=>{j.jobs[7].conclusion='failure';},j=>{j.jobs[1].conclusion='skipped';},j=>{j.jobs.splice(1,1);},
+    j=>{j.jobs.push({...structuredClone(produce),name:'Produce weekly 2026-11-13'});},j=>{j.jobs[5].name='Produce something';},
+    j=>{j.jobs[5].steps[1].conclusion='skipped';},j=>{j.jobs[5].status='in_progress';},j=>{j.jobs[0].run_id=1;}])assert.equal(shaped(change),false);
+});
+
+test('actual supervisor closes its issue only after a validated execution, and a new failure posts a comment that notifies', () => {
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'fee-supervisor-test-'));
   try {
     for(const scenario of ['skip','validated','failure-after-recovery','failure-after-skip','timed-out']) {
@@ -131,8 +146,13 @@ globalThis.fetch=async(url,init={})=>{
       const observed=JSON.parse(fs.readFileSync(out));
       assert.doesNotMatch(result.stdout,/HEALTHY/);
       assert.equal(observed.jobs.length,scenario==='timed-out'?0:1);
-      assert.equal(observed.mutations.length,['failure-after-skip','timed-out'].includes(scenario)?1:0);
-      assert.ok(observed.mutations.every(m=>m.body.state!=='closed'));
+      // Escalating on an open issue edits its body and adds a comment (only the comment notifies). A validated
+      // execution with nothing failed since comments and closes. A skipped run closes nothing.
+      assert.equal(observed.mutations.length,['failure-after-skip','timed-out','validated'].includes(scenario)?2:0,scenario);
+      const closed=observed.mutations.filter(m=>m.body.state==='closed');
+      assert.equal(closed.length,scenario==='validated'?1:0,scenario);
+      if(scenario==='validated'){assert.match(result.stdout,/FEE_SUPERVISOR_RECOVERED/);assert.match(observed.mutations[0].body.body,/自动发布已恢复/);assert.equal(observed.mutations[0].method,'POST');}
+      if(['failure-after-skip','timed-out'].includes(scenario)){assert.deepEqual(observed.mutations.map(m=>m.method),['PATCH','POST']);assert.match(observed.mutations[1].body.body,/@huanwujoy-crypto/);assert.match(observed.mutations[1].body.body,/Failures in a row: 2/);}
       if(scenario==='failure-after-recovery')assert.match(result.stdout,/WAITING failures=1/);
       if(['failure-after-skip','timed-out'].includes(scenario))assert.match(result.stdout,/ESCALATED failures=2/);
     }
@@ -142,6 +162,7 @@ globalThis.fetch=async(url,init={})=>{
 test("diagnostic issue is amount-free and forbids direct ledger repair", () => {
   const body = diagnosticBody([run("failure", 3), run("failure", 2)]);
   assert.match(body, /Codex repair candidate only/);
+  assert.match(body, /^@huanwujoy-crypto /);
   assert.match(body, /Do not edit the formal encrypted ledger/);
   assert.match(body, /https:\/\/github\.test\/runs\/3/);
   assert.doesNotMatch(body, /\$[0-9]/);

@@ -9,6 +9,9 @@ import { boundedJson } from './fee-http-json.mjs';
 const ISSUE_TITLE = "[fee-cloud] producer needs Codex diagnosis";
 const ALLOWED_EVENTS = new Set(["schedule", "workflow_dispatch"]);
 const FAILED_CONCLUSIONS = new Set(['failure', 'timed_out']);
+// The mention is what makes GitHub notify the owner by e-mail and in the app. Amount-free by construction.
+const OWNER_NOTICE = "@huanwujoy-crypto 自动发布连续失败，页面可能没有更新。请在 Claude 的 fee-console 会话里说“今天没有更新”，由助手排查。";
+const RECOVERED_COMMENT = "自动发布已恢复：最近一次运行完成了计算并生成了待上线数据，此后没有新的失败。本工单自动关闭。";
 
 // These fixed reviewed jobs have no writer. Their outcomes are neither production
 // failure nor recovery evidence. Titles alone cannot suppress production alerts.
@@ -35,6 +38,8 @@ export function diagnosticBody(runs) {
   const failures = runs.filter(run => run && !isIbReadOnlyDiagnostic(run) && FAILED_CONCLUSIONS.has(run.conclusion) && ALLOWED_EVENTS.has(run.event)).slice(0, 5);
   const lines = failures.map(run => `- ${run.created_at}: ${run.html_url}`);
   return [
+    OWNER_NOTICE,
+    "",
     "The deterministic fee cloud producer failed at least twice consecutively.",
     "",
     "This is a Codex repair candidate only. Reproduce the failure, preserve fail-closed behavior, add a regression test, and open a reviewed pull request. Do not edit the formal encrypted ledger, data.json, the economic Gist, investor shares, or production secrets directly.",
@@ -59,23 +64,26 @@ async function api(path, token, init = {}) {
   }, { timeoutMs: 15_000, maxBytes: 8 * 1024 * 1024, statuses: [200, 201, 204] });
 }
 
-// This proves only the producer's own executed phases. It cannot attest that
-// this run's candidate was promoted; automatic repair closure remains disabled.
+// This proves only the producer's own executed phases, not that the candidate was promoted. Since the
+// workflow gained its gates and diagnostics a normal run has a dozen jobs, most of them skipped, and the
+// producing job is named for its report ("Produce daily 2026-11-16"). Accept that shape: every job of
+// the run finished as success or skipped, the public period gate succeeded when there is more than one
+// job, and exactly one producing job ran both the calculation and the signing step.
+const PRODUCE_JOB = /^Produce (?:daily|weekly|monthly) \d{4}-\d{2}-\d{2}$/;
 export function isValidatedProducer(run, jobs) {
   if (run?.status !== 'completed' || run.conclusion !== 'success' || !ALLOWED_EVENTS.has(run.event)
       || run.head_branch !== 'main' || !Number.isSafeInteger(run.id) || run.id <= 0
-      || !/^[a-f0-9]{40}$/.test(run.head_sha || '') || ![1,2].includes(jobs?.total_count)
+      || !/^[a-f0-9]{40}$/.test(run.head_sha || '') || !Number.isSafeInteger(jobs?.total_count)
+      || jobs.total_count < 1 || jobs.total_count > 100
       || !Array.isArray(jobs.jobs) || jobs.jobs.length !== jobs.total_count) return false;
-  const valid=job=>job?.run_id===run.id&&job.head_sha===run.head_sha&&job.status==='completed'&&job.conclusion==='success'&&Array.isArray(job.steps);
-  if(!jobs.jobs.every(valid))return false;
-  const job=jobs.total_count===1?jobs.jobs[0]:jobs.jobs.find(job=>job.name==='produce');
-  if(!job)return false;
-  if(jobs.total_count===2){
-    const gates=jobs.jobs.filter(job=>job.name==='period');
-    if(gates.length!==1||gates[0].steps.filter(step=>step.name==='Plan weekly or final monthly coverage without financial credentials'&&step.status==='completed'&&step.conclusion==='success').length!==1)return false;
-  }
+  const own=job=>job?.run_id===run.id&&job.head_sha===run.head_sha&&job.status==='completed'&&['success','skipped'].includes(job.conclusion);
+  if(!jobs.jobs.every(own))return false;
+  const ran=job=>job.conclusion==='success'&&Array.isArray(job.steps);
+  if(jobs.total_count>1&&jobs.jobs.filter(job=>job.name==='period'&&ran(job)).length!==1)return false;
+  const produced=jobs.jobs.filter(job=>ran(job)&&(jobs.total_count===1||job.name==='produce'||PRODUCE_JOB.test(job.name||'')));
+  if(produced.length!==1)return false;
   return ['Read, calculate and validate the encrypted candidate', 'Create a signed owner candidate']
-    .every(name => job.steps.filter(step => step.name === name && step.status === 'completed'
+    .every(name => produced[0].steps.filter(step => step.name === name && step.status === 'completed'
       && step.conclusion === 'success').length === 1);
 }
 
@@ -99,11 +107,22 @@ async function main() {
       if (run.producerValidated) break;
     } catch { console.log('FEE_SUPERVISOR_EXECUTION_UNVERIFIED'); }
   }
-  // A window-matching health timestamp cannot bind publication to this run.
-  // Keep existing issues open until a separately reviewed run-bound receipt is
-  // available. No unrelated local publication may automatically clear a fault.
-  if (issue) console.log('FEE_SUPERVISOR_RECOVERY_UNVERIFIED');
   const count = consecutiveFailures(runs);
+  // Owner decision 2026-11-17: an open issue must not outlive the fault, because a stale one silently
+  // absorbs the next alert. When the newest production run is a validated producer execution and nothing
+  // has failed since, say so and close. A run that merely skipped (not due, already published) proves
+  // nothing and leaves the issue open.
+  if (issue && count === 0 && runs.some(run => run?.producerValidated === true)) {
+    await api(`/repos/${owner}/${name}/issues/${issue.number}/comments`, token, {
+      method: "POST", body: JSON.stringify({ body: RECOVERED_COMMENT }),
+    });
+    await api(`/repos/${owner}/${name}/issues/${issue.number}`, token, {
+      method: "PATCH", body: JSON.stringify({ state: "closed", state_reason: "completed" }),
+    });
+    console.log('FEE_SUPERVISOR_RECOVERED');
+    return;
+  }
+  if (issue) console.log('FEE_SUPERVISOR_RECOVERY_UNVERIFIED');
   if (count < 2) {
     console.log(`FEE_SUPERVISOR_WAITING failures=${count}`);
     return;
@@ -112,6 +131,10 @@ async function main() {
   if (issue) {
     await api(`/repos/${owner}/${name}/issues/${issue.number}`, token, {
       method: "PATCH", body: JSON.stringify({ body }),
+    });
+    // Editing a body notifies nobody; a comment does.
+    await api(`/repos/${owner}/${name}/issues/${issue.number}/comments`, token, {
+      method: "POST", body: JSON.stringify({ body: `${OWNER_NOTICE}\n\nFailures in a row: ${count}.` }),
     });
   } else {
     await api(`/repos/${owner}/${name}/issues`, token, {
