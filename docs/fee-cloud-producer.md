@@ -27,11 +27,13 @@ return/drawdown must reach that target before the single candidate can publish.
 Jenny does not become part of the management-fee calculation.
 
 An already published target skips even the legacy same-period Jenny recheck.
-A pending candidate waits. Any previous source-job entry for that target stops
-automatic re-entry, including failure, cancellation, timeout and shadow entry;
-unknown attempt metadata also stops. The ordinary two-attempt ceiling is retained
-as historical accounting, not permission for an automatic retry. A separately
-approved recovery is necessary after a financial attempt. Global concurrency and
+A pending candidate waits. Since 2026-11-17 (owner decision) a scheduled slot
+may try a target once more after exactly one earlier source-job entry for it has
+ended without a publication: a failed attempt writes nothing, so the retry cannot
+duplicate or half-write a day. The two-attempt ceiling still holds, a run still
+in progress still waits, and unknown attempt metadata still stops. A manual sync
+confirmation still starts a target once only. After two attempts a separately
+approved recovery is necessary. Global concurrency and
 the frozen main check preserve the existing race guards. Before credentials,
 the job verifies the scheduled event, first attempt, current target and main.
 

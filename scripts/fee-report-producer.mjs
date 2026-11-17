@@ -1161,10 +1161,11 @@ export async function reportPublicationPreflight({now=new Date(),plan=null,revie
     const budget=await readSourceAttempts({plan:next,now,currentRunId});
     if(!budget||!Number.isSafeInteger(budget.attempts)||budget.attempts<0||typeof budget.inProgress!=='boolean')throw Error();
     if(budget.inProgress||budget.attempts>=2)return {schema:'fee-console.report-preflight.v1',outcome:'waiting',reasonCode:budget.inProgress?'REPORT_SOURCE_RUN_IN_PROGRESS':'REPORT_SOURCE_ATTEMPT_BUDGET_EXHAUSTED',plan:next,mainSha:state.mainSha};
-    // Repeated sync confirmations and later clocks are fallbacks for an
-    // unstarted target, not permission to retry after financial entry. Keep
-    // the ordinary 2-attempt accounting; explicit recovery is checked above.
-    if((scheduledDaily||reviewedSyncDate!==null)&&budget.attempts!==0)return {schema:'fee-console.report-preflight.v1',outcome:'waiting',reasonCode:'REPORT_DAILY_SOURCE_ALREADY_ATTEMPTED',plan:next,mainSha:state.mainSha};
+    // Owner decision 2026-11-17: a failed scheduled attempt writes nothing, so a
+    // later scheduled slot of the same day may try once more, inside the same
+    // 2-attempt budget enforced above. A published or pending target never
+    // reaches this point. A manual sync confirmation still starts a day once.
+    if(reviewedSyncDate!==null&&budget.attempts!==0)return {schema:'fee-console.report-preflight.v1',outcome:'waiting',reasonCode:'REPORT_DAILY_SOURCE_ALREADY_ATTEMPTED',plan:next,mainSha:state.mainSha};
   }catch(error){return {schema:'fee-console.report-preflight.v1',outcome:'waiting',reasonCode:'REPORT_SOURCE_ATTEMPT_METADATA_UNVERIFIED',metadataCode:periodMetadataError(error),plan:next,mainSha:state.mainSha};}
   return {schema:'fee-console.report-preflight.v1',outcome:'produce',plan:next,mainSha:state.mainSha};
 }

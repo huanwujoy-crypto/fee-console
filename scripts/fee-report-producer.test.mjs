@@ -409,13 +409,16 @@ test('automatic daily accepts GitHub default fields but cannot override prefligh
  assert.equal(scheduledDailyContext({mode:'preflight'},{...f,readEvent:()=>f.event}),true);
  assert.throws(()=>scheduledDailyContext({mode:'preflight','report-target':'2026-11-03'},{...f,readEvent:()=>f.event}),/DAILY_SCOPE/);
 });
-test('clock request passes the real automatic admission and retains attempted-source refusal',async()=>{
+test('clock request passes the real automatic admission; a failed first attempt may be tried once more, never a third time',async()=>{
  const result=spawnSync('python3',['-c',"import json; from runtime import Github\nclass H:\n def request(self,url,**kw):\n  print(json.dumps(kw['body'])); return 204,None\nGithub(http=H(),read_token=lambda:'synthetic-only').dispatch()"],{cwd:new URL('../cloud/fee-clock/',import.meta.url),encoding:'utf8',env:{PATH:process.env.PATH,PYTHONDONTWRITEBYTECODE:'1'}});
  assert.equal(result.status,0,result.stderr);const body=JSON.parse(result.stdout),f=automaticDailyFixture();assert.equal(body.ref,'main');f.event.inputs=body.inputs;
  const automatic=scheduledDailyContext({mode:'preflight'},{...f,readEvent:()=>f.event});
  const prior=state(dailyReportPlan('2026-11-02',['NYSE','NASDAQ']),'2026-11-03T03:47:41Z');
- const outcome=await dailyPublicationPreflight({scheduledDaily:automatic,now:f.now,markets:['NYSE','NASDAQ'],ibEnabled:true,runAttempt:'1',readState:async()=>prior,readSourceAttempts:async()=>({attempts:1,inProgress:false})});
- assert.equal(outcome.reasonCode,'REPORT_DAILY_SOURCE_ALREADY_ATTEMPTED');
+ const check=budget=>dailyPublicationPreflight({scheduledDaily:automatic,now:f.now,markets:['NYSE','NASDAQ'],ibEnabled:true,runAttempt:'1',readState:async()=>prior,readSourceAttempts:async()=>budget});
+ assert.equal((await check({attempts:0,inProgress:false})).outcome,'produce');
+ assert.equal((await check({attempts:1,inProgress:false})).outcome,'produce');
+ assert.equal((await check({attempts:1,inProgress:true})).reasonCode,'REPORT_SOURCE_RUN_IN_PROGRESS');
+ assert.equal((await check({attempts:2,inProgress:false})).reasonCode,'REPORT_SOURCE_ATTEMPT_BUDGET_EXHAUSTED');
 });
 test('actual workflow admits only the opted-in automatic period path and propagates context before finance',()=>{
  const wf=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8');
@@ -444,7 +447,9 @@ test('Nov4 daily09:00 and11:30 share one target; waiting, failed, pending and pu
  }
  const now=new Date('2026-11-04T11:30:00+08:00');
  assert.equal((await dailyPublicationPreflight({...args,now:new Date('2026-11-04T08:59:59+08:00'),readState:()=>assert.fail('early check must be public-only and not consume a source attempt')})).outcome,'waiting');
- for(const [budget,reason] of [[{attempts:1,inProgress:false},'REPORT_DAILY_SOURCE_ALREADY_ATTEMPTED'],[{attempts:2,inProgress:false},'REPORT_SOURCE_ATTEMPT_BUDGET_EXHAUSTED'],[{attempts:0,inProgress:true},'REPORT_SOURCE_RUN_IN_PROGRESS']])assert.equal((await dailyPublicationPreflight({...args,now,readSourceAttempts:async()=>budget})).reasonCode,reason);
+ for(const [budget,reason] of [[{attempts:2,inProgress:false},'REPORT_SOURCE_ATTEMPT_BUDGET_EXHAUSTED'],[{attempts:0,inProgress:true},'REPORT_SOURCE_RUN_IN_PROGRESS']])assert.equal((await dailyPublicationPreflight({...args,now,readSourceAttempts:async()=>budget})).reasonCode,reason);
+ // One failed scheduled attempt leaves one more.
+ assert.equal((await dailyPublicationPreflight({...args,now,readSourceAttempts:async()=>({attempts:1,inProgress:false})})).outcome,'produce');
  assert.equal((await dailyPublicationPreflight({...args,now,readSourceAttempts:async()=>{throw Error('private-canary');}})).reasonCode,'REPORT_SOURCE_ATTEMPT_METADATA_UNVERIFIED');
  assert.equal((await dailyPublicationPreflight({...args,now,runAttempt:'2'})).reasonCode,'REPORT_SOURCE_RERUN_NOT_ALLOWED');
  assert.equal((await dailyPublicationPreflight({...args,now,readState:async()=>({...prior,pending:true}),readSourceAttempts:()=>assert.fail('pending candidate must wait')})).outcome,'candidate-pending');
@@ -797,7 +802,9 @@ test('completed-sync start and clock share attempts; failure, cancellation or un
  const args={targetDate:target,reviewedSyncDate:target,markets,now,ibEnabled:true,runAttempt:'1',readState:async()=>prior};
  for(const [budget,reason] of [[{attempts:1,inProgress:false},'REPORT_DAILY_SOURCE_ALREADY_ATTEMPTED'],[{attempts:2,inProgress:false},'REPORT_SOURCE_ATTEMPT_BUDGET_EXHAUSTED'],[{attempts:0,inProgress:true},'REPORT_SOURCE_RUN_IN_PROGRESS']]){
   assert.equal((await dailyPublicationPreflight({...args,readSourceAttempts:async()=>budget})).reasonCode,reason);
-  assert.equal((await dailyPublicationPreflight({...args,targetDate:null,reviewedSyncDate:null,scheduledDaily:true,now:new Date('2026-11-06T09:00:00+08:00'),readSourceAttempts:async()=>budget})).reasonCode,reason);
+  // The scheduled route differs only after exactly one failed attempt: it may try once more.
+  const scheduled=await dailyPublicationPreflight({...args,targetDate:null,reviewedSyncDate:null,scheduledDaily:true,now:new Date('2026-11-06T09:00:00+08:00'),readSourceAttempts:async()=>budget});
+  if(budget.attempts===1&&!budget.inProgress)assert.equal(scheduled.outcome,'produce');else assert.equal(scheduled.reasonCode,reason);
  }
  assert.equal((await dailyPublicationPreflight({...args,readSourceAttempts:async()=>{throw Error('synthetic unavailable');}})).reasonCode,'REPORT_SOURCE_ATTEMPT_METADATA_UNVERIFIED');
  assert.equal((await dailyPublicationPreflight({...args,readState:async()=>({...prior,pending:true}),readSourceAttempts:()=>assert.fail('pending candidate reserves target')})).outcome,'candidate-pending');
