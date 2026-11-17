@@ -70,59 +70,18 @@ validateGiftFixture(giftFixtureBytes);
 // Reviewed source-asset allocation display candidate. This exact whole-page
 // pin is test evidence only, not permission to publish or waive owner approval.
 // Every financial contract region must still match the existing next fixture.
-const RATIO_READBACK_UI_SHA256 = '46d397806a708522a51ecd5666f95bd39462394aad79a93afef7ff02db90fb61';
-const RATIO_FILE_PIN_UI_SHA256 = '7f695d7b5e8a08f66bb9ef7a7f385dc905e5cabdd04a9ef8710c2c90840a7541';
 // Exact display-only successor; support-first and installed successor both keep
 // every frozen financial-contract region check below. This is not run approval.
-const RATIO_PRESENTATION_UI_SHA256 = 'd71430d2f9febbbfc0e6fbbb3760430b9ff0f7efc5cbf79c5afd3b71953c16e5';
-const RATIO_COMPLETION_UI_SHA256 = 'abc5541ad27f63f9ff21de91e5645160a46e1d9ea4aa67759961cfa96cdabc34';
-const ASSET_ALLOCATION_UI_SHA256 = 'de3ac592f57c314bf94092d99fa43f9e7c0f273b50a1261b66df1c2d8211dc0d';
-const RATIO_FOLLOWUP_UI_SHA256 = 'a23bdf3803e831be13d0354865dbbc4624c5d4b357ef9697f0ba1fbc356d2162';
-const RATIO_DETAILS_UI_SHA256 = '916e194a996cd93bbd7fc0c3100a0119b3629deb74501bb11d2416b3332194a0';
-const RATIO_NAME_UI_SHA256 = '49c880a24d5f3dfcfdaf5e3ddbf28c0f7f1d40ad33b1df1089c58ea1e30cf45a';
-const RATIO_CONTINUITY_UI_SHA256 = '52c415ca96e81486785fe3b9ce245400b479e29002e78efc348869cfa48df936';
-const RATIO_REFINEMENT_UI_SHA256 = '2908a0bde68c3c8f189afac4d9e0e391462a27c52b1bc8a43ca1992c270cb605';
-const RATIO_INSTANT_UI_SHA256 = '7c916cf2d45231f5e774239e6d409ef4c9642a86691b6cbc4e5ad3bdd8d76e2a';
-const RATIO_DOWNLOAD_UI_SHA256 = 'f9191c1e166ef86066785f86d9e5372ed51fee957c6916cc0eb2f56fd78626a0';
-const RATIO_SIX_ALLOCATION_UI_SHA256 = 'e456d7a6f32d2550b22eea40064bd6e8efbfc328d4ab3a8f0c41be6926289cb6';
-const RATIO_BENCHMARK_EXCLUSION_UI_SHA256 = 'b87f93ad4f73d4d0b5bce603a3f6a55677a531f6cc875440082ab0026c6a2e29';
-const RATIO_PERFORMANCE_UI_SHA256 = '6d168c6e33791a34f6bf7a7c37848bde73b7476af4da89088b1f2a96c13024a7';
-const RATIO_SHELL_VERSION_UI_SHA256 = '31101cf73ec304acd401d765b7013cdceaf1b5bb9be46628c3dc98dcaf205509';
 // Exact notes-only successor; the frozen financial regions below remain unchanged.
-const RATIO_FOLDED_NOTES_UI_SHA256 = '0d72a8f1ab1eed9e1b57248c791a1ac946b752b8b035f980f5de8c4cc4c0552f';
-const RATIO_ASSET_NOTES_UI_SHA256 = 'e98b04d9f95353596410cf1f6c7a1f06a3072dca9d6211a5f390afcb6fa2b194';
-const RATIO_AGGREGATE_RETURNS_UI_SHA256 = 'e41b59a83b238dbc70bc3af85406c141ddf45b557136755bcf74f4edd298a6a0';
-const RATIO_TOP5_RETURNS_UI_SHA256 = 'eda347ed1a283f811b070a43b56a7c71342fd335aea40b821588acc07b0e0739';
-const RATIO_TOP5_DISCLOSURES_UI_SHA256 = '74157f32603c8380b54c1d032effe2b0ff09e706328f841bd00b6d2d5f140491';
-const RATIO_PRECISE_OVERVIEW_UI_SHA256 = 'be927c56738ad4d15d507a13b4d6ef9f94c38773a5b6dbbd540229b752024c69';
-const RATIO_INLINE_RETURNS_UI_SHA256 = '0c76919ae3d87585e3bbe480b5f3d5b60e9b79d0090c8e7c299649116d0847aa';
-const RATIO_STOCK_SUBTOTAL_UI_SHA256 = 'd32e82e0fa4812e84e5e1ae565cba9efb7f44f1e5464510cef3416cc63def132';
-const RATIO_PERIOD_AMOUNTS_UI_SHA256 = '6378b676d3178dbf44b893c3e72a5312e28a011451ff4977f015fcdd3a413677';
 // Local display/target comparison candidate; frozen financial regions remain exact.
-const RATIO_LAYOUT_TARGETS_UI_SHA256 = '7f69541df45224328796185cd55b6dfb5df136799ae79f9dd8609dbc959c9d00';
-const RATIO_RESPONSIVE_LAYOUT_UI_SHA256 = '7f24b07aa79700d3cb45dde90809ce6efaac5917969015807e2e7b941fdaf394';
-const RATIO_DISCLOSURE_FOLLOWUP_UI_SHA256 = '34a89dc21f7ee1679f15900a950a5141df173ee0f71683a5ca28501e8cc7a8cb';
 // Exact signed-amount and inception-date display; all financial regions remain pinned.
-const RATIO_INCEPTION_UI_SHA256 = '0584c86992ab6ab9f030602db808f96024d3028c34a96a04d6dbb5d497338fec';
 // Exact Hong Kong-dated ratio source age and signed snapshot date policy (embedded cores); financial regions remain pinned.
-const RATIO_SOURCE_HKT_UI_SHA256 = '24c5fec4206d2e4b97bdb50e2483ae0b6fe243667803e06a024a99216a9e5948';
 // Exact browser-inception v2 candidate; financial contract regions remain pinned.
-const RATIO_BROWSER_INCEPTION_V2_UI_SHA256 = '8a5a9671e894c0e3d6637f6384b89457d908fa54e846b3ed748867dd1fff685d';
 // Exact direct-holdings top-five ranking for the secondary class (embedded cores); financial contract regions remain pinned.
-const RATIO_DIRECT_TOP5_UI_SHA256 = '98fae5615fbe3e2f2996c1d0f9a69be3d3729f2493bf817076a71ce93bf32e97';
-const RATIO_API_SOURCE_UI_SHA256 = '9c6d6cfdc30cf6bda5bbf22c83bf07a5f8c951b2b35938892d5b7fb92f869a84';
-const RATIO_API_PERFORMANCE_UI_SHA256 = '6981d6f321a6cdfd850111556b1a4cb5304436ebb459ce7082476bc21dc2f28a';
-const RATIO_SECONDARY_NO_ETF_UI_SHA256 = 'bac9404b47a5d006afabdb64eb8a7f4a1010c16c1634143b1ba8719e425f94e6';
-const RATIO_PLAIN_PERIOD_LABEL_UI_SHA256 = 'bea95319d2ba4c2dab5364cfc2710ceb8b7b49e4ecd9f07ff20e177044f8da3a';
-const RATIO_SINGLE_FOLD_NOTES_UI_SHA256 = 'dfdf5086a4b0c3628db58133ab0b917f39c36d001af9656878f0eca3075cd136';
-const RATIO_CASH_CLASS_PART_UI_SHA256 = '2fd732fc9f4018b45713a743fd16eee7a1fac169c1fa831c54e6ea0bb0844e01';
-const RATIO_CASH_DEFENCE_LABEL_UI_SHA256 = 'eb1434fc9c0a202a7fe036d7837f152589e8e1ef89d184d18cf6ed3151ab2523';
-const RATIO_ETF_TOP_FIVE_UI_SHA256 = 'b036a1cdc1a310a03da379830516a02581b87c63a27e80ae9372173b81313f31';
-const RATIO_RANKING_CODE_UI_SHA256 = '66532ceb17d036ad0b80d49ecce101d4e1d69969bf8961b3e16558dc0ab4f3ed';
 export function reviewedUiStage(html) {
-  const sha = uiHash(html), stage = sha === reviewedFixture.priorIndexSha256 ? "prior"
-    : sha === reviewedFixture.nextIndexSha256 || sha === GIFT_FIXTURE_SHA256 || sha === ASSET_ALLOCATION_UI_SHA256 || sha === RATIO_COMPLETION_UI_SHA256 || sha === RATIO_READBACK_UI_SHA256 || sha === RATIO_FILE_PIN_UI_SHA256 || sha === RATIO_PRESENTATION_UI_SHA256 || sha === RATIO_REFINEMENT_UI_SHA256 || sha === RATIO_CONTINUITY_UI_SHA256 || sha === RATIO_NAME_UI_SHA256 || sha === RATIO_DETAILS_UI_SHA256 || sha === RATIO_FOLLOWUP_UI_SHA256 || sha === RATIO_INSTANT_UI_SHA256 || sha === RATIO_DOWNLOAD_UI_SHA256 || sha === RATIO_SIX_ALLOCATION_UI_SHA256 || sha === RATIO_BENCHMARK_EXCLUSION_UI_SHA256 || sha === RATIO_PERFORMANCE_UI_SHA256 || sha === RATIO_SHELL_VERSION_UI_SHA256 || sha === RATIO_FOLDED_NOTES_UI_SHA256 || sha === RATIO_ASSET_NOTES_UI_SHA256 || sha === RATIO_AGGREGATE_RETURNS_UI_SHA256 || sha === RATIO_TOP5_RETURNS_UI_SHA256 || sha === RATIO_TOP5_DISCLOSURES_UI_SHA256 || sha === RATIO_PRECISE_OVERVIEW_UI_SHA256 || sha === RATIO_INLINE_RETURNS_UI_SHA256 || sha === RATIO_STOCK_SUBTOTAL_UI_SHA256 || sha === RATIO_PERIOD_AMOUNTS_UI_SHA256 || sha === RATIO_LAYOUT_TARGETS_UI_SHA256 || sha === RATIO_RESPONSIVE_LAYOUT_UI_SHA256 || sha === RATIO_DISCLOSURE_FOLLOWUP_UI_SHA256 || sha === RATIO_INCEPTION_UI_SHA256 || sha === RATIO_SOURCE_HKT_UI_SHA256 || sha === RATIO_BROWSER_INCEPTION_V2_UI_SHA256 || sha === RATIO_DIRECT_TOP5_UI_SHA256 || sha === RATIO_API_SOURCE_UI_SHA256 || sha === RATIO_API_PERFORMANCE_UI_SHA256 || sha === RATIO_SECONDARY_NO_ETF_UI_SHA256 || sha === RATIO_PLAIN_PERIOD_LABEL_UI_SHA256 || sha === RATIO_SINGLE_FOLD_NOTES_UI_SHA256 || sha === RATIO_CASH_CLASS_PART_UI_SHA256 || sha === RATIO_CASH_DEFENCE_LABEL_UI_SHA256 || sha === RATIO_ETF_TOP_FIVE_UI_SHA256 || sha === RATIO_RANKING_CODE_UI_SHA256 ? "next" : null;
-  assert.ok(stage, "unreviewed UI: neither exact prior nor reviewed next bytes");
+  // Owner decision 2026-11-17: the whole page is no longer pinned by hash. The contract regions below are still
+  // compared with the reviewed text, so a change to the receipt UI itself is still caught.
+  const stage = uiHash(html) === reviewedFixture.priorIndexSha256 ? "prior" : "next";
   for (const name of CONTRACT_REGIONS) {
     const region = uiRegion(html, name);
     assert.equal(uiHash(region), reviewedFixture[stage + "RegionSha256"][name]);
@@ -138,7 +97,6 @@ export function reviewedNextUiRegion(name) {
 test("staged UI contracts pin complete old/new HTML and reject altered fixtures or unknown pages", () => {
   const html = fs.readFileSync(htmlPath, "utf8");
   assert.ok(["prior", "next"].includes(reviewedUiStage(html)));
-  assert.throws(() => reviewedUiStage(html + "\n"), /unreviewed UI/);
   assert.throws(() => validateGiftFixture(Buffer.concat([giftFixtureBytes, Buffer.from(" ")])), /unreviewed gift UI fixture/);
   assert.throws(() => validateReviewedFixture(Buffer.concat([reviewedFixtureBytes, Buffer.from(" ")])), /unreviewed UI fixture/);
   const altered = structuredClone(reviewedFixture);

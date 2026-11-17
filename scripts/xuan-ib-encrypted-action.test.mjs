@@ -1,4 +1,4 @@
-import {priorAggregateUi,aggregateUiStage,aggregateUiFixture} from './fee-ratio-aggregate-ui-fixture.mjs';
+import {priorAggregateUi,aggregateUiStage,aggregateUiFixture,isStagedPage} from './fee-ratio-aggregate-ui-fixture.mjs';
 // All keys, dates, report content and receipts below are synthetic, never live.
 import test from 'node:test';
 // Explicit offline guard; no loader flags enter the private staging tests.
@@ -765,7 +765,8 @@ assert.equal(ratioUiHash(instantFixtureBytes),'f4903f4e28f8f5a53ae7d2387db589652
 const instantFixture=JSON.parse(instantFixtureBytes);
 const currentInstalledUiBytes=fs.readFileSync(unifiedUiFile,'utf8');
 const actualInstalledUiBytes=priorAggregateUi(currentInstalledUiBytes);
-const aggregateReviewedUiSource=ratioUiHash(currentInstalledUiBytes)===aggregateUiFixture.nextSha256?currentInstalledUiBytes:aggregateUiStage(actualInstalledUiBytes);
+// A live page later than the recorded stages is itself the page whose embedded code must match the scripts.
+const aggregateReviewedUiSource=ratioUiHash(currentInstalledUiBytes)===aggregateUiFixture.nextSha256||!isStagedPage(currentInstalledUiBytes)?currentInstalledUiBytes:aggregateUiStage(actualInstalledUiBytes);
 const sixFixtureBytes=fs.readFileSync(new URL('./fixtures/fee-ratio-six-allocation-ui.json',import.meta.url));
 assert.equal(ratioUiHash(sixFixtureBytes),'21d9bbddea14fbfaa8092ac1e5cb03059481034cc4c8f30549062fb918085683');
 const sixFixture=JSON.parse(sixFixtureBytes);

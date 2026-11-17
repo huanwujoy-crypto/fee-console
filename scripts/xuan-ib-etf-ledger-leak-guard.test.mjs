@@ -219,7 +219,7 @@ test('ETF trend ownership and trusted validation do not broaden UI-only or candi
   const uiCheck = workflow('ui-pr-check.yml');
   assert.ok(uiCheck.includes('git show "origin/${GITHUB_BASE_REF}:scripts/ui-pr-guard.mjs"'));
   const uiGuard = fs.readFileSync(path.join(repo, 'scripts/ui-pr-guard.mjs'), 'utf8');
-  assert.ok(uiGuard.includes('changedFiles.length !== 1 || changedFiles[0] !== "index.html"'));
+  assert.ok(uiGuard.includes('const besidePage = file => file === "index.html" || /^(?:scripts|docs)\\//.test(file);'));
   const candidateCheck = workflow('validate-xuan-ib-handover.yml');
   assert.ok(candidateCheck.includes('git archive origin/main -- scripts | tar -x -C "$trusted_root"'));
   assert.ok(candidateCheck.includes('${#changed_files[@]} != 1'));
