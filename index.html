@@ -10,7 +10,7 @@
 <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAABzUlEQVR42u3bsQ2AMAwAwczDhEzKOqGlCBIgBdnxRT+BfU0Kt20/pGHNCASH4BAcgkNwCA7BITgEh+CQ4BAcgkNwCA7BITgEh+AQHBIcgkNwCA7BITgEh+AQHIJDgkNwCA7BITgEh+AQHIJDcAgOCQ7BITgEh+AQHIJDcOi2/vjBwUQyJXAEkhHNBxyxZITyAQcccMABxwIy4viAAw444IADDjjggAMOOOCAAw444IBDcAgOwQEHHHDAAQcccMABBxxwwAEHHHAIDudocDDxeWFwOEeDg4z3a4MDDjjggKMOjh82BwcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAGHQ1Y4HLLCERPH1IHCkRjH7JnCAQcccMBRB8cam4MDDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAQxWDQ3AIDsEhOFQNR/eSfG7hgAMOOOCAAw444PCq4ZCvrOAQHIJDgkNwCA7BITgEh+AQHIJDcEhwCA7BITgEh+AQHIJDcAgOwSHBITgEh+AQHIJDcAgOwSE4pEsnhtvC417hqCsAAAAASUVORK5CYII=">
-<meta name="fee-console-build" content="4.10.2">
+<meta name="fee-console-build" content="4.10.3">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -25,6 +25,7 @@ header.top>.row{flex-shrink:0}#btnRefresh{white-space:nowrap}
 /* overview-shell:v1 — the subtitle gets the full width; a sticky row of chips jumps between the sections. */
 header.top{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:10px;row-gap:2px}header.top>div:first-child{display:contents}header.top h1{grid-column:1;grid-row:1}header.top>.row{grid-column:2;grid-row:1;justify-content:flex-end}header.top .sub{grid-column:1/-1;grid-row:2}
 .home-jump{position:sticky;top:env(safe-area-inset-top);z-index:40;display:flex;gap:6px;padding:6px 0 8px;margin:-4px 0 6px;background:var(--plane);box-shadow:0 calc(-1*env(safe-area-inset-top)) 0 var(--plane)}.home-jump button{flex:1 1 0;border:1px solid var(--border);background:var(--surface-1);color:var(--ink-2);border-radius:999px;padding:7px 4px;font-size:13px;font-family:inherit;cursor:pointer;white-space:nowrap}.home-jump button:active{background:var(--chip);color:var(--ink-1)}
+.return-windows{display:flex;gap:6px;margin:6px 0 4px}.return-windows button{flex:1 1 0;border:1px solid var(--border);background:var(--surface-1);color:var(--ink-2);border-radius:999px;padding:6px 4px;font-size:13px;font-family:inherit;cursor:pointer;white-space:nowrap}.return-windows button[aria-selected="true"]{background:var(--series-1);border-color:transparent;color:#fff;font-weight:600}.return-window-note{margin:2px 0 6px}
 #p-home .card,#p-home .kpis{scroll-margin-top:calc(54px + env(safe-area-inset-top))}
 h1{font-size:19px;margin:0}
 .sub{color:var(--ink-2);font-size:12px}
@@ -1166,7 +1167,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.10.2";
+const UI_VERSION_LABEL=" · v4.10.3";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -3515,6 +3516,11 @@ if(typeof document!=='undefined'&&typeof document.addEventListener==='function')
   const chip=event.target?.closest?.('[data-jump]'),target=chip&&document.getElementById(chip.getAttribute('data-jump'));if(!target)return;
   (target.closest('.card')||target).scrollIntoView({behavior:'smooth',block:'start'});
 });
+// Overview: a window chip redraws only the comparison table, from the state the last full render used.
+if(typeof document!=='undefined'&&typeof document.addEventListener==='function')document.addEventListener('click',event=>{
+  const chip=event.target?.closest?.('[data-return-window]'),box=chip&&document.getElementById('returnComparison');if(!box||!_returnState)return;
+  _returnWindow=chip.getAttribute('data-return-window');box.outerHTML=renderReturnComparison(_returnState);
+});
 /* ratio-presentation:v1:end */
 const ratioExposureCore=createRankedExposureCore(),ratioCore=createFeeRatioCore(ratioExposureCore);
 const RATIO_RECIPIENT_FILE="fee-console-ratio-recipient.json";
@@ -4396,12 +4402,36 @@ function ibManagerReturnNote(view){
 const DRAWDOWN_METHOD_NOTE="按剔除外部出入金影响的日末单位净值（TWR）曲线计算，含期初单位净值；SPY / QQQ 沿用税后分红再投资口径。下跌历时为高点至低点的日期差；恢复历时从低点起算。Modified Dietz 是期间收益率，不单独计算回撤。未核实表示资料不足。";
 function renderReturnComparison(st){
   const ib=st.ibManager,ibReady=ib?.state==="verified";
+  // return-window:v1 — a shorter window is the monthly TWR already shown in 月度明细, linked month by month.
+  // The default (全部) shows the receipt totals exactly as before; nothing here feeds fees or any stored value.
+  const windows=returnWindows(st),chosen=windows.some(w=>w.key===_returnWindow)?_returnWindow:"all",sub=chosen==="all"?null:windows.find(w=>w.key===chosen).rows;
+  const linked=pick=>sub?linkedReturn(sub.map(pick)):undefined;
   const row=(key,label,method,detail,value,tag="")=>`<tr data-return-series="${key}"><td><span class="scenario">${label}</span>${tag?`<span class="tag">${tag}</span>`:""}</td><td><span class="metric-method">${method}</span><span class="tag">${detail}</span></td><td><b class="metric-value ${sgn(value)}">${pct(value)}</b></td></tr>`;
-  const rows=row("actual","管理方","TWR","管理能力",st.twrG)+row("investor","出资方","Modified Dietz","日末资金流模型",st.mwrD)+`<tr data-return-series="ib" data-return-state="${ibReady?"verified":"pending"}"><td><span class="scenario">Jenny's IB</span></td><td><span class="metric-method">TWR</span><span class="tag">管理能力</span></td><td><b class="metric-value ${ibReady?sgn(ib.value):""}">${ibReady?pct(ib.value):"待核对"}</b>${ibReady?"":`<span class="tag">未纳入</span>`}</td></tr>`+st.bench.map(b=>{
+  const ibValue=sub?(ibReady?linkedReturn(sub.map(r=>ib.byMonth?.[r.ym])):null):ib?.value,ibShown=ibReady&&(!sub||ibValue!==null);
+  const rows=row("actual","管理方","TWR","管理能力",sub?linked(r=>r.rG):st.twrG)+row("investor","出资方","Modified Dietz","日末资金流模型",sub?null:st.mwrD,sub?"仅全部期间":"")+`<tr data-return-series="ib" data-return-state="${ibReady?"verified":"pending"}"><td><span class="scenario">Jenny's IB</span></td><td><span class="metric-method">TWR</span><span class="tag">管理能力</span></td><td><b class="metric-value ${ibShown?sgn(ibValue):""}">${ibShown?pct(ibValue):ibReady?"—":"待核对"}</b>${ibReady?"":`<span class="tag">未纳入</span>`}</td></tr>`+st.bench.map(b=>{
     const known=b.k==="spy"||b.k==="qqq",label=known?b.k.toUpperCase():esc(b.name);
-    return row(esc(b.k),label,known?"含息 ETF TWR":"TWR",known?"股息税后":"旧欧洲收盘口径",b.twr,st.benchmarkPending?`截至 ${st.benchAsOf}`:"同期");
+    return row(esc(b.k),label,known?"含息 ETF TWR":"TWR",known?"股息税后":"旧欧洲收盘口径",sub?linked(r=>r.rB?.[b.k]):b.twr,st.benchmarkPending?`截至 ${st.benchAsOf}`:"同期");
   }).join("");
-  return `<div class="bench-title">收益率对比</div><div class="bench-table-wrap"><table class="bench-table metric-table" aria-label="收益率对比，TWR 与 Modified Dietz 口径不同"><thead><tr><th scope="col">项目</th><th scope="col">口径</th><th scope="col">收益率</th></tr></thead><tbody>${rows}</tbody></table></div><div class="small">${esc(ibManagerReturnNote(ib))}</div>`;
+  const chips=windows.length>1?`<div class="return-windows" role="tablist" aria-label="收益率对比期间">${windows.map(w=>`<button type="button" role="tab" data-return-window="${w.key}" aria-selected="${w.key===chosen}">${w.label}</button>`).join("")}</div>`:"";
+  const span=sub?`<div class="small return-window-note">${esc(sub[0].from)} → ${esc(sub.at(-1).to)} · 由月度 TWR 逐月连乘；缺任一月则显示 —</div>`:"";
+  return `<div id="returnComparison"><div class="bench-title">收益率对比</div>${chips}${span}<div class="bench-table-wrap"><table class="bench-table metric-table" aria-label="收益率对比，TWR 与 Modified Dietz 口径不同"><thead><tr><th scope="col">项目</th><th scope="col">口径</th><th scope="col">收益率</th></tr></thead><tbody>${rows}</tbody></table></div><div class="small">${esc(ibManagerReturnNote(ib))}</div></div>`;
+}
+let _returnWindow="all",_returnState=null;
+// Linking monthly time-weighted returns is exact for a TWR; a missing or impossible month makes the window unknown.
+function linkedReturn(values){
+  if(!values.length)return null;
+  let index=1;for(const value of values){if(typeof value!=="number"||!Number.isFinite(value)||value<=-1)return null;index*=1+value;}
+  return index-1;
+}
+// Windows are whole receipt months (the newest may be in progress). One that would repeat a longer window is left out.
+function returnWindows(st){
+  const months=Array.isArray(st.rows)?st.rows.filter(r=>r&&typeof r.ym==="string"):[],all=[{key:"all",label:"全部",rows:months}];
+  if(months.length<2)return all;
+  const year=months.at(-1).ym.slice(0,4),seen=new Set([months.length]);
+  for(const w of [{key:"ytd",label:"今年",rows:months.filter(r=>r.ym.startsWith(year))},{key:"m3",label:"近3个月",rows:months.slice(-3)},{key:"month",label:"本月",rows:months.slice(-1)}]){
+    if(!w.rows.length||seen.has(w.rows.length))continue;seen.add(w.rows.length);all.push(w);
+  }
+  return all;
 }
 /* compact-comparison-tables:end */
 function renderDrawdowns(feeView,ibDrawdown){
@@ -4657,7 +4687,7 @@ function assetMixView(lp,nav){
 }
 /* asset-allocation-view:end */
 function renderKPIs(feeView,st,B,G){
-  G=G||{hold:false,holdReasons:[]};
+  G=G||{hold:false,holdReasons:[]};_returnState=st;
   const lp=st.lastPt;const showAnn=st.spanDays>365;
   const benchExplainOpen=document.getElementById("benchExplain")?.open===true;
   const gateBox=document.getElementById("gateBox");

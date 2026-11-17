@@ -74,7 +74,7 @@ test('requested display names are consistent across comparison, monthly details 
   const file=process.env.FEE_LEDGER_TEST_INDEX||new URL('../index.html',import.meta.url),html=fs.readFileSync(file,'utf8');
   if(!html.includes('/* return-display-names:manager-jenny-ib:v1 */'))return;
   assert.doesNotMatch(html,/组合毛|>IB<(?:\/span>|br>)/);
-  assert.match(html,/row\("actual","管理方","TWR","管理能力",st\.twrG\)/);
+  assert.match(html,/row\("actual","管理方","TWR","管理能力",sub\?linked\(r=>r\.rG\):st\.twrG\)/);
   assert.match(html,/<span class="scenario">Jenny's IB<\/span>/);
   assert.match(html,/<th scope="col">管理方<br>TWR<\/th>/);
   assert.match(html,/<th scope="col">Jenny's IB<br>TWR<small>管理能力<\/small><\/th>/);
@@ -127,4 +127,37 @@ test('daily path integrity, calendar, return binding and common period fail clos
   const changed=feeView(ret);changed.asOf='2026-09-03';assert.equal((await consumer.project(dd,ret,changed)).state,'pending');
   const file=process.env.FEE_LEDGER_TEST_INDEX||new URL('../index.html',import.meta.url),html=fs.readFileSync(file,'utf8'),start='/* ib-manager-drawdown-consumer:start */',end='/* ib-manager-drawdown-consumer:end */';
   if(html.includes(start))assert.equal(html.slice(html.indexOf(start)+start.length,html.indexOf(end)).trim(),createIbManagerDrawdownConsumer.toString());
+});
+
+test('a shorter comparison window links the monthly TWR already shown; the default view is untouched',()=>{
+  const html=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8'),box={};vm.createContext(box);
+  vm.runInContext(`const esc=v=>String(v??'');const pct=v=>v==null||!isFinite(v)?'—':(v>0?'+':'')+(v*100).toFixed(2)+'%';const sgn=v=>v>0?'pos':v<0?'neg':'';const ibManagerReturnNote=()=>'';`,box);
+  vm.runInContext(html.slice(html.indexOf('function renderReturnComparison('),html.indexOf('/* compact-comparison-tables:end */')),box);
+  const month=(ym,rG,spy,qqq,ib)=>({ym,from:ym+'-01',to:ym+'-28',rG,rB:spy===undefined?{}:{spy,qqq},ib});
+  const rows=[month('2025-11',.10,.05,.02,.01),month('2025-12',-.05,.01,.03,.02),month('2026-01',.02,.04,-.01,.03),month('2026-02',.03,-.02,.05,-.04),month('2026-03',.01,.03,.01,.05)];
+  const st={twrG:.9,mwrD:.8,rows,bench:[{k:'spy',twr:.7},{k:'qqq',twr:.6}],ibManager:{state:'verified',value:.5,byMonth:Object.fromEntries(rows.map(r=>[r.ym,r.ib]))}},before=structuredClone(st);
+  const cell=(out,key)=>out.match(new RegExp('<tr data-return-series="'+key+'"[^]*?</tr>'))[0].match(/<b class="metric-value[^"]*">([^<]*)<\/b>/)[1];
+  const view=key=>{vm.runInContext('_returnWindow='+JSON.stringify(key),box);return box.renderReturnComparison(st);};
+  // Default: the receipt totals, exactly as before, plus the chips. 今年 (3 months) repeats 近3个月, so only one is offered.
+  const all=view('all');
+  assert.deepEqual(['actual','investor','ib','spy','qqq'].map(k=>cell(all,k)),['+90.00%','+80.00%','+50.00%','+70.00%','+60.00%']);
+  assert.deepEqual([...all.matchAll(/data-return-window="(\w+)" aria-selected="(\w+)">([^<]+)</g)].map(m=>m.slice(1)),[['all','true','全部'],['ytd','false','今年'],['month','false','本月']]);
+  assert.doesNotMatch(all,/return-window-note/);
+  // 今年 = Jan..Mar linked: (1.02)(1.03)(1.01)-1, and the same for each benchmark and for Jenny's IB.
+  const ytd=view('ytd'),link=v=>{const x=v.reduce((a,b)=>a*(1+b),1)-1;return (x>0?'+':'')+(x*100).toFixed(2)+'%';};
+  assert.deepEqual(['actual','ib','spy','qqq'].map(k=>cell(ytd,k)),[link([.02,.03,.01]),link([.03,-.04,.05]),link([.04,-.02,.03]),link([-.01,.05,.01])]);
+  // Modified Dietz cannot be linked from months: it is withheld and says why.
+  assert.equal(cell(ytd,'investor'),'—');assert.match(ytd.match(/<tr data-return-series="investor"[^]*?<\/tr>/)[0],/仅全部期间/);
+  assert.match(ytd,/2026-01-01 → 2026-03-28 · 由月度 TWR 逐月连乘/);assert.match(ytd,/data-return-window="ytd" aria-selected="true"/);
+  assert.equal(cell(view('month'),'actual'),'+1.00%');
+  // A month without a benchmark figure, or an impossible one, makes that window unknown rather than a partial product.
+  st.rows[3].rB={};assert.equal(cell(view('ytd'),'spy'),'—');assert.equal(cell(view('ytd'),'actual'),link([.02,.03,.01]));
+  st.rows[3].rG=-1;assert.equal(cell(view('ytd'),'actual'),'—');st.rows[3]=before.rows[3];
+  // A window that is not on offer falls back to 全部; one month of history offers no chips at all; nothing is mutated.
+  assert.equal(cell(view('m3'),'actual'),'+90.00%');
+  assert.deepEqual(st,before);
+  const single={...st,rows:rows.slice(-1)};assert.doesNotMatch(box.renderReturnComparison(single),/return-windows/);
+  const none={...st};delete none.rows;vm.runInContext('_returnWindow="ytd"',box);assert.equal(cell(box.renderReturnComparison(none),'actual'),'+90.00%');
+  // Pending Jenny's IB stays 待核对 in every window.
+  vm.runInContext('_returnWindow="ytd"',box);assert.match(box.renderReturnComparison({...st,ibManager:{state:'pending',value:null,byMonth:{}}}).match(/<tr data-return-series="ib"[^]*?<\/tr>/)[0],/待核对/);
 });
