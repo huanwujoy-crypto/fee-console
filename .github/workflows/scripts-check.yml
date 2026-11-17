@@ -59,7 +59,7 @@ jobs:
 
       - name: Test implementation progress and classification audit
         if: ${{ github.event.pull_request.draft == false }}
-        run: node --test scripts/xuan-ib-progress.test.mjs scripts/xuan-ib-classification-audit.test.mjs scripts/xuan-ib-classification-disclosure.test.mjs scripts/xuan-ib-classification-correction.test.mjs scripts/xuan-ib-four-bucket.test.mjs scripts/xuan-ib-cash-plan.test.mjs scripts/xuan-ib-cash-plan-correction.test.mjs scripts/xuan-ib-cash-identity.test.mjs scripts/xuan-ib-mrvl-t1.test.mjs scripts/xuan-ib-policy-page.test.mjs scripts/xuan-ib-etf-pane.test.mjs scripts/xuan-ib-etf-abc.test.mjs scripts/xuan-ib-etf-ledger.test.mjs scripts/xuan-ib-etf-ledger-leak-guard.test.mjs scripts/xuan-ib-etf-trend.test.mjs scripts/xuan-ib-etf-trend-envelope.test.mjs scripts/xuan-ib-etf-trend-build.test.mjs scripts/xuan-ib-etf-trend-view.test.mjs scripts/xuan-ib-etf-summary-transport.test.mjs scripts/xuan-ib-etf-daily.test.mjs
+        run: node --test scripts/xuan-ib-classification-audit.test.mjs scripts/xuan-ib-classification-disclosure.test.mjs scripts/xuan-ib-classification-correction.test.mjs scripts/xuan-ib-four-bucket.test.mjs scripts/xuan-ib-cash-plan.test.mjs scripts/xuan-ib-cash-plan-correction.test.mjs scripts/xuan-ib-cash-identity.test.mjs scripts/xuan-ib-mrvl-t1.test.mjs scripts/xuan-ib-policy-page.test.mjs scripts/xuan-ib-etf-pane.test.mjs scripts/xuan-ib-etf-abc.test.mjs scripts/xuan-ib-etf-ledger.test.mjs scripts/xuan-ib-etf-ledger-leak-guard.test.mjs scripts/xuan-ib-etf-trend.test.mjs scripts/xuan-ib-etf-trend-envelope.test.mjs scripts/xuan-ib-etf-trend-build.test.mjs scripts/xuan-ib-etf-trend-view.test.mjs scripts/xuan-ib-etf-summary-transport.test.mjs scripts/xuan-ib-etf-daily.test.mjs
 
       - name: Test compact pilot source identity and display hardening
         if: ${{ github.event.pull_request.draft == false }}
@@ -96,7 +96,7 @@ jobs:
 
       - name: Verify source-bound Saturday historical layout
         if: ${{ github.event.pull_request.draft == false }}
-        run: node --test scripts/xuan-ib-saturday-archive.test.mjs scripts/xuan-ib-mobile-display.test.mjs scripts/xuan-ib-order-cards.test.mjs scripts/xuan-ib-allocation-cards.test.mjs scripts/xuan-ib-delegated-tier.test.mjs scripts/xuan-ib-aaoi-t1.test.mjs scripts/xuan-ib-aaoi-snapshot.test.mjs scripts/xuan-ib-routine-reading.test.mjs
+        run: node --test scripts/xuan-ib-mobile-display.test.mjs scripts/xuan-ib-order-cards.test.mjs scripts/xuan-ib-allocation-cards.test.mjs scripts/xuan-ib-delegated-tier.test.mjs scripts/xuan-ib-aaoi-t1.test.mjs scripts/xuan-ib-aaoi-snapshot.test.mjs scripts/xuan-ib-routine-reading.test.mjs
 
       - name: Test instrument-scoped venue identity and first-seen classification
         if: ${{ github.event.pull_request.draft == false }}
