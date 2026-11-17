@@ -609,9 +609,16 @@ test("new type metadata does not reintroduce growth/value fee holds", () => {
 test("overview jump chips point at existing sections and never touch the address fragment", () => {
   const nav = html.match(/<nav class="home-jump"[^>]*>([\s\S]*?)<\/nav>/);
   assert.ok(nav, "the overview has its jump row");
-  const targets = [...nav[1].matchAll(/<button type="button" data-jump="([\w-]+)">([^<]+)<\/button>/g)].map(m => [m[1], m[2]]);
-  assert.deepEqual(targets, [["kpis", "资产"], ["trendDetails", "走势"], ["monthsBox", "月度"], ["balBox", "应付"]]);
-  for (const [id] of targets) assert.equal(html.split(`id="${id}"`).length, 2, id);
+  const targets = [...nav[1].matchAll(/<button type="button" data-jump="([\w-]+)"(?: aria-current="true")?>([^<]+)<\/button>/g)].map(m => [m[1], m[2]]);
+  assert.deepEqual(targets, [["kpis", "总览"], ["returnsCard", "收益"], ["trendDetails", "走势"], ["monthsBox", "月度"], ["balBox", "应付"]]);
+  // The returns card is written by both the verified and the pending branch of one template.
+  for (const [id] of targets) assert.equal(html.split(`id="${id}"`).length, id === "returnsCard" ? 3 : 2, id);
+  assert.match(html, /<button data-p="p-home" class="on">管理人<\/button>/);
+  assert.match(html, /id="ratioTab" hidden>资产配置<\/button>/);
+  // The lit chip follows the scroll position; it reads layout only and never navigates.
+  const spy = html.slice(html.indexOf("function syncJumpChips(){"), html.indexOf("/* ratio-presentation:v1:end */"));
+  assert.match(spy, /aria-current/);
+  assert.doesNotMatch(spy, /location|history\.|\.hash/);
   // The access key travels in the fragment, so the chips scroll by script instead of linking to "#section".
   assert.doesNotMatch(nav[1], /href=/);
   const start = html.indexOf("// Overview: a chip scrolls to its section."), end = html.indexOf("/* ratio-presentation:v1:end */", start);

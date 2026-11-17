@@ -294,7 +294,7 @@ class PresentationNode {
 function presentationFixture({returns=true,reverse=false,extra=false,inline=true}={}){
  const el=(tag,cls='',text='')=>{const n=new PresentationNode(tag);n.className=cls;n.textContent=text;return n;};
  const root=el('div'),report=el('div','ratio-report'),overview=el('section','ratio-asset-overview'),exposure=el('section','sharesight-exposure'),originals=[];
- root.append(report);report.append(overview,exposure);overview.append(el('h2','','Synthetic overview'));exposure.append(el('h2','','Synthetic top twenty'));
+ root.append(report);report.append(overview,exposure);overview.append(el('h2','','资产配置总览'));exposure.append(el('h2','','All Together · 四类前五'));
  const overviewNotes=el('div','ratio-overview-disclosures');overviewNotes.append(el('details','ratio-overview-return-notes','Synthetic return explanation'),el('details','ratio-asset-notes','Synthetic account detail'));overview.append(overviewNotes);
  for(const [category,group]of ['PE/VC','对冲基金','常青基金','二级市场'].entries()){
   const section=el('section'),table=el('table'),head=el('thead'),hrow=el('tr'),body=el('tbody');
@@ -331,6 +331,11 @@ for(const mode of [{returns:true,inline:true},{returns:true,inline:true,reverse:
  assert.deepEqual(chips.map(c=>[c.textContent,c.getAttribute('data-rank'),c.getAttribute('aria-selected')]),[['PE/VC','0','true'],['对冲基金','1','false'],['常青基金','2','false'],['二级市场','3','false']]);
  assert.deepEqual(groups.map(g=>[g.getAttribute('data-rank'),g.getAttribute('hidden')]),[['0',null],['1',''],['2',''],['3','']]);
  assert.equal(f.exposure.querySelector('.ratio-exposure-grid').classList.contains('ratio-rank-switch'),true);
+ // Each titled module gets a short title, an id and one jump chip; the first chip starts lit.
+ const jump=f.root.querySelector('.home-jump'),jumps=jump?jump.children:[];
+ assert.ok(jumps.length>1);assert.deepEqual(jumps.map(c=>c.getAttribute('aria-current')),jumps.map((_,i)=>String(i===0)));
+ assert.equal(jumps.at(-1).textContent,'四类前五');assert.equal(f.exposure.getAttribute('id'),jumps.at(-1).getAttribute('data-jump'));
+ assert.equal(f.exposure.children.find(n=>n.tagName==='H2').textContent,'四类前五');
  // Only that row gets a tap target and a hidden full-name line; every other row is unchanged.
  const taps=f.exposure.querySelectorAll('.ratio-holding-tap'),names=f.exposure.querySelectorAll('.ratio-holding-fullname');
  assert.equal(taps.length,1);assert.deepEqual(names.map(n=>[n.textContent,n.getAttribute('hidden')]),[['Synthetic full company name','']]);
