@@ -8,14 +8,15 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="管理费">
 <meta name="theme-color" content="#fcfcfb">
-<meta name="fee-console-build" content="4.9.63">
+<link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAABzUlEQVR42u3bsQ2AMAwAwczDhEzKOqGlCBIgBdnxRT+BfU0Kt20/pGHNCASH4BAcgkNwCA7BITgEh+CQ4BAcgkNwCA7BITgEh+AQHBIcgkNwCA7BITgEh+AQHIJDgkNwCA7BITgEh+AQHIJDcAgOCQ7BITgEh+AQHIJDcOi2/vjBwUQyJXAEkhHNBxyxZITyAQcccMABxwIy4viAAw444IADDjjggAMOOOCAAw444IBDcAgOwQEHHHDAAQcccMABBxxwwAEHHHAIDudocDDxeWFwOEeDg4z3a4MDDjjggKMOjh82BwcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAGHQ1Y4HLLCERPH1IHCkRjH7JnCAQcccMBRB8cam4MDDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAQxWDQ3AIDsEhOFQNR/eSfG7hgAMOOOCAAw444PCq4ZCvrOAQHIJDgkNwCA7BITgEh+AQHIJDcEhwCA7BITgEh+AQHIJDcAgOwSHBITgEh+AQHIJDcAgOwSE4pEsnhtvC417hqCsAAAAASUVORK5CYII=">
+<meta name="fee-console-build" content="4.10.0">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
 :root[data-theme="dark"]{color-scheme:dark;--surface-1:#1a1a19;--plane:#0d0d0d;--ink-1:#fff;--ink-2:#c3c2b7;--ink-muted:#898781;--grid:#2c2c2a;--axis:#383835;--border:rgba(255,255,255,.10);--series-1:#3987e5;--series-2:#d95926;--good-text:#0ca30c;--critical:#d03b3b;--chip:#262624;--lockbg:rgba(255,255,255,.04)}
 *{box-sizing:border-box}
 body{margin:0;background:var(--plane);color:var(--ink-1);font-family:system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;font-size:15px;line-height:1.5}
-.wrap{max-width:820px;margin:0 auto;padding:14px 14px 90px}
+.wrap{max-width:820px;margin:0 auto;padding:max(14px,env(safe-area-inset-top)) max(14px,env(safe-area-inset-right)) 90px max(14px,env(safe-area-inset-left))}
 header.top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}
 header.top>.row{flex-shrink:0}#btnRefresh{white-space:nowrap}
 h1{font-size:19px;margin:0}
@@ -108,6 +109,9 @@ nav.tabs{display:flex;gap:2px;border-bottom:1px solid var(--border);margin-botto
 nav.tabs button{flex:1;background:none;border:none;border-bottom:2px solid transparent;color:var(--ink-2);padding:10px 4px;font-size:15px;cursor:pointer;font-family:inherit;margin-bottom:-1px}
 nav.tabs button.on{color:var(--ink-1);border-bottom-color:var(--series-1);font-weight:600}
 nav.tabs.hidden{display:none}
+nav.tabs button{white-space:nowrap}
+/* phone-shell:v1 — the tab bar sits at the bottom, within thumb reach and clear of the home indicator. */
+@media(max-width:600px){nav.tabs{position:fixed;left:0;right:0;bottom:0;z-index:150;margin:0;gap:0;padding:0 max(4px,env(safe-area-inset-right)) env(safe-area-inset-bottom) max(4px,env(safe-area-inset-left));background:var(--surface-1);border-top:1px solid var(--border);border-bottom:none}nav.tabs button{border-bottom:none;border-top:2px solid transparent;margin:-1px 0 0;padding:11px 2px 10px;font-size:13px}nav.tabs button.on{border-top-color:var(--series-1);border-bottom-color:transparent}.wrap{padding-bottom:calc(84px + env(safe-area-inset-bottom))}.toast{bottom:calc(74px + env(safe-area-inset-bottom))}}
 section.pane{display:none} section.pane.on{display:block}
 .card{background:var(--surface-1);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:12px}
 .card h2{font-size:15px;margin:0 0 4px}
@@ -128,6 +132,12 @@ section.pane{display:none} section.pane.on{display:block}
 .ratio-exposure-grid,.ratio-plan-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 .ratio-exposure-grid{margin:12px 0;align-items:start}.ratio-exposure-grid>section{min-width:0;border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--plane)}
 .ratio-exposure-grid h3{font-size:13px;margin:0 0 4px;overflow-wrap:anywhere}
+/* ratio-interaction:v1 — one ranking at a time, chosen by a chip; a bar for the six classes. Display only. */
+.ratio-exposure-grid.ratio-rank-switch{grid-template-columns:minmax(0,1fr)}.ratio-exposure-grid>section[hidden]{display:none}
+.ratio-rank-chips{display:flex;gap:6px;overflow-x:auto;padding:2px 0 4px;scrollbar-width:none}.ratio-rank-chips::-webkit-scrollbar{display:none}
+.ratio-rank-chip{flex:1 0 auto;text-align:center;border:1px solid var(--border);background:var(--surface-1);color:var(--ink-2);border-radius:999px;padding:8px 8px;font-size:13px;font-family:inherit;cursor:pointer;white-space:nowrap}.ratio-rank-chip[aria-selected="true"]{background:var(--series-1);border-color:transparent;color:#fff;font-weight:600}
+.ratio-alloc-bar{display:flex;height:12px;border-radius:6px;overflow:hidden;margin:10px 0 6px;background:var(--grid)}.ratio-alloc-seg{min-width:2px}.ratio-alloc-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:baseline}
+.ratio-alloc-c0{background:#2a78d6}.ratio-alloc-c1{background:#eb6834}.ratio-alloc-c2{background:#1f9d8b}.ratio-alloc-c3{background:#7a5cd6}.ratio-alloc-c4{background:#b8a038}.ratio-alloc-c5{background:#d0506e}
 .ratio-holding-list{margin-top:8px}.ratio-holding-row{padding:9px 0;border-top:1px solid var(--grid)}
 .ratio-holding-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;font-size:12px;font-variant-numeric:tabular-nums}
 .ratio-holding-name{min-width:0;font-weight:600;overflow-wrap:anywhere}.ratio-holding-amount{flex:none;white-space:nowrap;font-weight:600}
@@ -1147,7 +1157,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.9.63";
+const UI_VERSION_LABEL=" · v4.10.0";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -3438,6 +3448,30 @@ function styleRatioReport(root){
   }
   const coverage=direct(exposure,'DETAILS')[0];
   exposure.insertBefore(groups,coverage||null);
+  // Owner request 2026-11-17: show one ranking at a time, chosen by a chip, instead of one long scroll.
+  // Display only: every ranking stays in the page exactly as rendered; the others are merely hidden.
+  const ranked=direct(groups,'SECTION');
+  if(ranked.length>1){
+    const chips=make('div','ratio-rank-chips');chips.setAttribute('role','tablist');
+    for(const [i,group] of ranked.entries()){
+      const parts=(direct(group,'H3')[0]?.textContent||'').split(' · '),chip=make('button','ratio-rank-chip');
+      chip.setAttribute('type','button');chip.setAttribute('role','tab');chip.setAttribute('data-rank',String(i));chip.setAttribute('aria-selected',String(i===0));
+      chip.textContent=['股票前五','ETF前五'].includes(parts[1])?parts[1].replace('前五',''):parts[0]||String(i+1);
+      group.setAttribute('data-rank',String(i));if(i)group.setAttribute('hidden','');chips.append(chip);
+    }
+    groups.classList.add('ratio-rank-switch');groups.insertBefore(chips,groups.firstChild);
+  }
+  // A bar of the six classes from the percentages already shown in the table; nothing is recalculated.
+  const allocation=overview.querySelector('.ratio-overview-table'),allocationRows=Array.from(allocation?.tBodies?.[0]?.rows||[]);
+  const shares=allocationRows.map(row=>Number.parseFloat(row.cells[0]?.querySelector('.ratio-overview-weights')?.textContent));
+  if(allocationRows.length>1&&allocationRows.length<=6&&shares.every(n=>Number.isFinite(n)&&n>=0)&&shares.some(n=>n>0)){
+    const bar=make('div','ratio-alloc-bar');bar.setAttribute('role','img');bar.setAttribute('aria-label','各类资产当前占比');
+    for(const [i,row] of allocationRows.entries()){
+      const segment=make('span','ratio-alloc-seg ratio-alloc-c'+i),dot=make('span','ratio-alloc-dot ratio-alloc-c'+i);
+      segment.setAttribute('style','flex:'+shares[i]+' 0 0');bar.append(segment);row.cells[0].insertBefore(dot,row.cells[0].firstChild);
+    }
+    allocation.parentNode.insertBefore(bar,allocation);
+  }
   const noteNumbers={'计算口径与合并规则':'1','来源日期与核验记录':'2','覆盖范围、残余与缺项':'3','现金与补仓参考说明':'4'};
   for(const note of direct(report,'DETAILS')){
     const summary=direct(note,'SUMMARY')[0],number=noteNumbers[summary?.textContent];
@@ -3453,6 +3487,12 @@ function styleRatioReport(root){
   arrangeRatioRowDetails(report);
   report.classList.add('ratio-styled');
 }
+// One delegated listener for the ranking chips, so a view restored from the session cache keeps working.
+if(typeof document!=='undefined'&&typeof document.addEventListener==='function')document.addEventListener('click',event=>{
+  const chip=event.target?.closest?.('.ratio-rank-chip'),grid=chip?.closest('.ratio-exposure-grid');if(!grid)return;
+  for(const other of grid.querySelectorAll('.ratio-rank-chip'))other.setAttribute('aria-selected',String(other===chip));
+  for(const group of grid.children)if(group.tagName==='SECTION'){if(group.getAttribute('data-rank')===chip.getAttribute('data-rank'))group.removeAttribute('hidden');else group.setAttribute('hidden','');}
+});
 /* ratio-presentation:v1:end */
 const ratioExposureCore=createRankedExposureCore(),ratioCore=createFeeRatioCore(ratioExposureCore);
 const RATIO_RECIPIENT_FILE="fee-console-ratio-recipient.json";

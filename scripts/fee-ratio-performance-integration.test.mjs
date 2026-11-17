@@ -268,7 +268,10 @@ test('local private handoff deeply freezes returns and stages a candidate with t
 // Minimal DOM with normal move semantics. Exercise the actual browser card
 // transformation after rendering, rather than checking pre-transform HTML.
 class PresentationNode {
- constructor(tag=null,text=''){this.tagName=tag?.toUpperCase();this.nodeType=tag?1:3;this.data=text;this.childNodes=[];this.parentNode=null;this.className='';this.dataset={};this.title='';}
+ constructor(tag=null,text=''){this.tagName=tag?.toUpperCase();this.nodeType=tag?1:3;this.data=text;this.childNodes=[];this.parentNode=null;this.className='';this.dataset={};this.title='';this.attributes={};}
+ setAttribute(k,v){this.attributes[k]=String(v);}
+ getAttribute(k){return Object.hasOwn(this.attributes,k)?this.attributes[k]:null;}
+ removeAttribute(k){delete this.attributes[k];}
  get children(){return this.childNodes.filter(n=>n.nodeType===1);}
  get firstChild(){return this.childNodes[0]||null;}
  get lastElementChild(){return this.children.at(-1)||null;}
@@ -320,6 +323,11 @@ function actualPresentation(f){
 for(const mode of [{returns:true,inline:true},{returns:true,inline:true,reverse:true,extra:true},{returns:true,inline:false},{returns:false}])test('card styling preserves direct returns, disclosures and native values '+JSON.stringify(mode),()=>{
  const f=presentationFixture(mode),style=actualPresentation(f);style(f.root);
  const cards=f.exposure.querySelectorAll('.ratio-holding-row');assert.equal(cards.length,20);
+ // One ranking is shown at a time: a chip per ranking, the first selected, the others hidden but still in the page.
+ const chips=f.exposure.querySelectorAll('.ratio-rank-chip'),groups=f.exposure.querySelector('.ratio-exposure-grid').children.filter(n=>n.tagName==='SECTION');
+ assert.deepEqual(chips.map(c=>[c.textContent,c.getAttribute('data-rank'),c.getAttribute('aria-selected')]),[['PE/VC','0','true'],['对冲基金','1','false'],['常青基金','2','false'],['二级市场','3','false']]);
+ assert.deepEqual(groups.map(g=>[g.getAttribute('data-rank'),g.getAttribute('hidden')]),[['0',null],['1',''],['2',''],['3','']]);
+ assert.equal(f.exposure.querySelector('.ratio-exposure-grid').classList.contains('ratio-rank-switch'),true);
  assert.equal(f.exposure.querySelectorAll('.ratio-returns').length,mode.returns?20:0);
  assert.equal(f.exposure.querySelectorAll('.ratio-return-period').length,mode.returns&&!mode.inline?40:0);
  assert.equal(f.exposure.querySelectorAll('.ratio-return-date-fact').length,mode.returns&&mode.inline?40:0);
