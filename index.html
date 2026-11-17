@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="light">
+<html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -7,13 +7,16 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="管理费">
-<meta name="theme-color" content="#fcfcfb">
+<meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAABzUlEQVR42u3bsQ2AMAwAwczDhEzKOqGlCBIgBdnxRT+BfU0Kt20/pGHNCASH4BAcgkNwCA7BITgEh+CQ4BAcgkNwCA7BITgEh+AQHBIcgkNwCA7BITgEh+AQHIJDgkNwCA7BITgEh+AQHIJDcAgOCQ7BITgEh+AQHIJDcOi2/vjBwUQyJXAEkhHNBxyxZITyAQcccMABxwIy4viAAw444IADDjjggAMOOOCAAw444IBDcAgOwQEHHHDAAQcccMABBxxwwAEHHHAIDudocDDxeWFwOEeDg4z3a4MDDjjggKMOjh82BwcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAGHQ1Y4HLLCERPH1IHCkRjH7JnCAQcccMBRB8cam4MDDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAQxWDQ3AIDsEhOFQNR/eSfG7hgAMOOOCAAw444PCq4ZCvrOAQHIJDgkNwCA7BITgEh+AQHIJDcEhwCA7BITgEh+AQHIJDcAgOwSHBITgEh+AQHIJDcAgOwSE4pEsnhtvC417hqCsAAAAASUVORK5CYII=">
-<meta name="fee-console-build" content="4.10.0">
+<meta name="fee-console-build" content="4.10.1">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
 :root[data-theme="dark"]{color-scheme:dark;--surface-1:#1a1a19;--plane:#0d0d0d;--ink-1:#fff;--ink-2:#c3c2b7;--ink-muted:#898781;--grid:#2c2c2a;--axis:#383835;--border:rgba(255,255,255,.10);--series-1:#3987e5;--series-2:#d95926;--good-text:#0ca30c;--critical:#d03b3b;--chip:#262624;--lockbg:rgba(255,255,255,.04)}
+/* dark-mode:v1 — follow the device setting; an explicit data-theme still wins. */
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;--surface-1:#1a1a19;--plane:#0d0d0d;--ink-1:#fff;--ink-2:#c3c2b7;--ink-muted:#898781;--grid:#2c2c2a;--axis:#383835;--border:rgba(255,255,255,.10);--series-1:#3987e5;--series-2:#d95926;--good-text:#0ca30c;--critical:#d03b3b;--chip:#262624;--lockbg:rgba(255,255,255,.04)}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--plane);color:var(--ink-1);font-family:system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;font-size:15px;line-height:1.5}
 .wrap{max-width:820px;margin:0 auto;padding:max(14px,env(safe-area-inset-top)) max(14px,env(safe-area-inset-right)) 90px max(14px,env(safe-area-inset-left))}
@@ -119,7 +122,7 @@ section.pane{display:none} section.pane.on{display:block}
 /* ratio-presentation:v1 — display only; the reviewed model/crypto factories stay unchanged. */
 #p-ratio{min-width:0}#p-ratio .card,#p-ratio details,#p-ratio code{min-width:0;overflow-wrap:anywhere}
 #p-ratio p{font-size:12px;color:var(--ink-2);line-height:1.6;margin:6px 0}
-#p-ratio .ratio-intro{padding:10px 12px}#ratioNotice{color:var(--ink-1)!important;font-weight:600}
+#p-ratio .ratio-intro{padding:8px 12px}#p-ratio .ratio-intro h2{display:none}#p-ratio .ratio-intro p{margin:0;font-size:12px}#ratioNotice{color:var(--ink-1)!important;font-weight:600}
 .ratio-gold{display:flex;flex-wrap:wrap;gap:2px 12px}.ratio-gold span{display:block}
 .ratio-report-meta{margin:4px 0}.ratio-report-meta p{display:flex;gap:8px;margin:6px 0!important}
 .ratio-asset-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:12px 0}
@@ -136,6 +139,7 @@ section.pane{display:none} section.pane.on{display:block}
 .ratio-exposure-grid.ratio-rank-switch{grid-template-columns:minmax(0,1fr)}.ratio-exposure-grid>section[hidden]{display:none}
 .ratio-rank-chips{display:flex;gap:6px;overflow-x:auto;padding:2px 0 4px;scrollbar-width:none}.ratio-rank-chips::-webkit-scrollbar{display:none}
 .ratio-rank-chip{flex:1 0 auto;text-align:center;border:1px solid var(--border);background:var(--surface-1);color:var(--ink-2);border-radius:999px;padding:8px 8px;font-size:13px;font-family:inherit;cursor:pointer;white-space:nowrap}.ratio-rank-chip[aria-selected="true"]{background:var(--series-1);border-color:transparent;color:#fff;font-weight:600}
+.ratio-holding-tap{cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px;text-decoration-color:var(--ink-muted)}.ratio-holding-fullname{display:block;font-size:12px;color:var(--ink-2);margin-top:2px;overflow-wrap:anywhere}.ratio-holding-fullname[hidden]{display:none}
 .ratio-alloc-bar{display:flex;height:12px;border-radius:6px;overflow:hidden;margin:10px 0 6px;background:var(--grid)}.ratio-alloc-seg{min-width:2px}.ratio-alloc-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:baseline}
 .ratio-alloc-c0{background:#2a78d6}.ratio-alloc-c1{background:#eb6834}.ratio-alloc-c2{background:#1f9d8b}.ratio-alloc-c3{background:#7a5cd6}.ratio-alloc-c4{background:#b8a038}.ratio-alloc-c5{background:#d0506e}
 .ratio-holding-list{margin-top:8px}.ratio-holding-row{padding:9px 0;border-top:1px solid var(--grid)}
@@ -1157,7 +1161,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.10.0";
+const UI_VERSION_LABEL=" · v4.10.1";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -3417,6 +3421,12 @@ function styleRatioReport(root){
         const card=make('article','ratio-holding-row'),head=make('div','ratio-holding-head'),name=make('span','ratio-holding-name'),amount=make('span','ratio-holding-amount');
         name.textContent=(ranked?ranked[1]:'')+(ratioHoldingDisplayName(sourceName,nameCell.dataset.securityCode)||sourceName);name.title=sourceName;
         amount.textContent=amountCell.textContent;head.append(name,amount);card.append(head);
+        // A row shown by its code keeps the full name one tap away (a hover title does not exist on a phone).
+        const fullName=nameCell.getAttribute('title');
+        if(fullName&&fullName!==sourceName){
+          const line=make('span','ratio-holding-fullname');line.textContent=fullName;line.setAttribute('hidden','');card.append(line);
+          name.classList.add('ratio-holding-tap');name.setAttribute('role','button');name.setAttribute('tabindex','0');name.setAttribute('aria-expanded','false');
+        }
         const accounts=nameCell.querySelector('.ratio-holding-accounts');if(accounts)card.append(accounts);
         const weights=make('dl','ratio-holding-weights'),values=weightCell.textContent.split('／'),weightLabels=labels[2].split('／');
         for(let i=0;i<2;i++){
@@ -3489,6 +3499,8 @@ function styleRatioReport(root){
 }
 // One delegated listener for the ranking chips, so a view restored from the session cache keeps working.
 if(typeof document!=='undefined'&&typeof document.addEventListener==='function')document.addEventListener('click',event=>{
+  const tap=event.target?.closest?.('.ratio-holding-tap'),line=tap?.closest('.ratio-holding-row')?.querySelector('.ratio-holding-fullname');
+  if(line){const show=line.hasAttribute('hidden');if(show)line.removeAttribute('hidden');else line.setAttribute('hidden','');tap.setAttribute('aria-expanded',String(show));return;}
   const chip=event.target?.closest?.('.ratio-rank-chip'),grid=chip?.closest('.ratio-exposure-grid');if(!grid)return;
   for(const other of grid.querySelectorAll('.ratio-rank-chip'))other.setAttribute('aria-selected',String(other===chip));
   for(const group of grid.children)if(group.tagName==='SECTION'){if(group.getAttribute('data-rank')===chip.getAttribute('data-rank'))group.removeAttribute('hidden');else group.setAttribute('hidden','');}
