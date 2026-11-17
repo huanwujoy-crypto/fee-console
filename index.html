@@ -10,7 +10,7 @@
 <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAABzUlEQVR42u3bsQ2AMAwAwczDhEzKOqGlCBIgBdnxRT+BfU0Kt20/pGHNCASH4BAcgkNwCA7BITgEh+CQ4BAcgkNwCA7BITgEh+AQHBIcgkNwCA7BITgEh+AQHIJDgkNwCA7BITgEh+AQHIJDcAgOCQ7BITgEh+AQHIJDcOi2/vjBwUQyJXAEkhHNBxyxZITyAQcccMABxwIy4viAAw444IADDjjggAMOOOCAAw444IBDcAgOwQEHHHDAAQcccMABBxxwwAEHHHAIDudocDDxeWFwOEeDg4z3a4MDDjjggKMOjh82BwcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAGHQ1Y4HLLCERPH1IHCkRjH7JnCAQcccMBRB8cam4MDDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAQxWDQ3AIDsEhOFQNR/eSfG7hgAMOOOCAAw444PCq4ZCvrOAQHIJDgkNwCA7BITgEh+AQHIJDcEhwCA7BITgEh+AQHIJDcAgOwSHBITgEh+AQHIJDcAgOwSE4pEsnhtvC417hqCsAAAAASUVORK5CYII=">
-<meta name="fee-console-build" content="4.10.3">
+<meta name="fee-console-build" content="4.10.4">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -24,7 +24,9 @@ header.top{display:flex;align-items:center;justify-content:space-between;gap:10p
 header.top>.row{flex-shrink:0}#btnRefresh{white-space:nowrap}
 /* overview-shell:v1 — the subtitle gets the full width; a sticky row of chips jumps between the sections. */
 header.top{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:10px;row-gap:2px}header.top>div:first-child{display:contents}header.top h1{grid-column:1;grid-row:1}header.top>.row{grid-column:2;grid-row:1;justify-content:flex-end}header.top .sub{grid-column:1/-1;grid-row:2}
-.home-jump{position:sticky;top:env(safe-area-inset-top);z-index:40;display:flex;gap:6px;padding:6px 0 8px;margin:-4px 0 6px;background:var(--plane);box-shadow:0 calc(-1*env(safe-area-inset-top)) 0 var(--plane)}.home-jump button{flex:1 1 0;border:1px solid var(--border);background:var(--surface-1);color:var(--ink-2);border-radius:999px;padding:7px 4px;font-size:13px;font-family:inherit;cursor:pointer;white-space:nowrap}.home-jump button:active{background:var(--chip);color:var(--ink-1)}
+.home-jump{position:sticky;top:env(safe-area-inset-top);z-index:40;display:flex;gap:6px;padding:6px 0 8px;margin:-4px 0 6px;background:var(--plane);box-shadow:0 calc(-1*env(safe-area-inset-top)) 0 var(--plane)}.home-jump button{flex:1 1 0;border:1px solid var(--border);background:var(--surface-1);color:var(--ink-2);border-radius:999px;padding:7px 4px;font-size:13px;font-family:inherit;cursor:pointer;white-space:nowrap}.home-jump button:active{background:var(--chip);color:var(--ink-1)}.home-jump{overflow-x:auto;scrollbar-width:none}.home-jump::-webkit-scrollbar{display:none}.home-jump button{flex:1 0 auto;transition:background .15s,color .15s}.home-jump button[aria-current="true"]{background:var(--series-1);border-color:transparent;color:#fff;font-weight:600}
+/* jump-spy:v1 — a jumped-to section lands just below the sticky chips. */
+#kpis,#returnsCard,#p-home>.card,.ratio-report>section.card{scroll-margin-top:calc(54px + env(safe-area-inset-top))}.ratio-report>.home-jump button{font-size:12.5px;padding:7px 6px}
 .return-windows{display:flex;gap:6px;margin:6px 0 4px}.return-windows button{flex:1 1 0;border:1px solid var(--border);background:var(--surface-1);color:var(--ink-2);border-radius:999px;padding:6px 4px;font-size:13px;font-family:inherit;cursor:pointer;white-space:nowrap}.return-windows button[aria-selected="true"]{background:var(--series-1);border-color:transparent;color:#fff;font-weight:600}.return-window-note{margin:2px 0 6px}
 #p-home .card,#p-home .kpis{scroll-margin-top:calc(54px + env(safe-area-inset-top))}
 h1{font-size:19px;margin:0}
@@ -143,7 +145,7 @@ section.pane{display:none} section.pane.on{display:block}
 /* ratio-interaction:v1 — one ranking at a time, chosen by a chip; a bar for the six classes. Display only. */
 .ratio-exposure-grid.ratio-rank-switch{grid-template-columns:minmax(0,1fr)}.ratio-exposure-grid>section[hidden]{display:none}
 .ratio-rank-chips{display:flex;gap:6px;overflow-x:auto;padding:2px 0 4px;scrollbar-width:none}.ratio-rank-chips::-webkit-scrollbar{display:none}
-.ratio-rank-chip{flex:1 0 auto;text-align:center;border:1px solid var(--border);background:var(--surface-1);color:var(--ink-2);border-radius:999px;padding:8px 8px;font-size:13px;font-family:inherit;cursor:pointer;white-space:nowrap}.ratio-rank-chip[aria-selected="true"]{background:var(--series-1);border-color:transparent;color:#fff;font-weight:600}
+.ratio-rank-chip{flex:1 0 auto;text-align:center;border:1px solid var(--border);background:var(--surface-1);color:var(--ink-2);border-radius:999px;padding:8px 8px;font-size:13px;font-family:inherit;cursor:pointer;white-space:nowrap}.ratio-rank-chip[aria-selected="true"]{background:var(--chip);border-color:var(--series-1);color:var(--ink-1);font-weight:600}
 .ratio-holding-tap{cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px;text-decoration-color:var(--ink-muted)}.ratio-holding-fullname{display:block;font-size:12px;color:var(--ink-2);margin-top:2px;overflow-wrap:anywhere}.ratio-holding-fullname[hidden]{display:none}
 .ratio-alloc-bar{display:flex;height:12px;border-radius:6px;overflow:hidden;margin:10px 0 6px;background:var(--grid)}.ratio-alloc-seg{min-width:2px}.ratio-alloc-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:baseline}
 .ratio-alloc-c0{background:#2a78d6}.ratio-alloc-c1{background:#eb6834}.ratio-alloc-c2{background:#1f9d8b}.ratio-alloc-c3{background:#7a5cd6}.ratio-alloc-c4{background:#b8a038}.ratio-alloc-c5{background:#d0506e}
@@ -327,15 +329,15 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
 
 <p id="navigationStatus" class="hint" role="status">正在核验访问权限…</p>
 <nav class="tabs" id="tabs" hidden>
-  <button data-p="p-home" class="on">总览</button>
+  <button data-p="p-home" class="on">管理人</button>
   <button data-p="p-investors">投资人</button>
   <button data-p="p-fee" class="mgr">付款</button>
   <button data-p="p-set" class="mgr">设置</button>
-  <button data-p="p-ratio" class="mgr" id="ratioTab" hidden>比例管理</button>
+  <button data-p="p-ratio" class="mgr" id="ratioTab" hidden>资产配置</button>
 </nav>
 
 <section class="pane mgr" id="p-ratio" hidden>
-  <div class="card ratio-intro"><h2>比例管理</h2><p>管理人专用 · Sharesight · 非实时</p>
+  <div class="card ratio-intro"><h2>资产配置</h2><p>管理人专用 · Sharesight · 非实时</p>
     <p id="ratioNotice" role="status">核验管理人身份后读取。</p>
   </div><div id="ratioContent"></div>
   <div class="card ratio-tools"><h2>管理人工具</h2>
@@ -368,7 +370,7 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
 </section>
 
 <section class="pane on" id="p-home">
-  <nav class="home-jump" aria-label="本页快速跳转"><button type="button" data-jump="kpis">资产</button><button type="button" data-jump="trendDetails">走势</button><button type="button" data-jump="monthsBox">月度</button><button type="button" data-jump="balBox">应付</button></nav>
+  <nav class="home-jump" aria-label="本页快速跳转"><button type="button" data-jump="kpis" aria-current="true">总览</button><button type="button" data-jump="returnsCard">收益</button><button type="button" data-jump="trendDetails">走势</button><button type="button" data-jump="monthsBox">月度</button><button type="button" data-jump="balBox">应付</button></nav>
   <div id="gateBox"></div>
   <div class="kpis" id="kpis"></div>
   <div class="card">
@@ -1167,7 +1169,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.10.3";
+const UI_VERSION_LABEL=" · v4.10.4";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -3501,6 +3503,17 @@ function styleRatioReport(root){
   }
   foldRatioFundNotes(report);
   arrangeRatioRowDetails(report);
+  // Owner request 2026-11-17: shorter module titles and one sticky chip per module, like the first tab.
+  // Display only; the rendered report keeps its own titles underneath, so nothing published changes.
+  const shortTitles={'资产配置总览':'总览','股票四类配置':'IB 投资','常青基金分布':'常青基金','对冲基金分布':'对冲基金','All Together · 四类前五':'四类前五'};
+  const jump=make('nav','home-jump');jump.setAttribute('aria-label','本页快速跳转');
+  for(const section of direct(report,'SECTION')){
+    const title=direct(section,'H2')[0],label=title&&shortTitles[title.textContent];if(!label)continue;
+    const id='ratioModule'+jump.children.length,chip=make('button');
+    title.textContent=label;section.setAttribute('id',id);
+    chip.setAttribute('type','button');chip.setAttribute('data-jump',id);chip.setAttribute('aria-current',String(!jump.children.length));chip.textContent=label;jump.append(chip);
+  }
+  if(jump.children.length>1)report.insertBefore(jump,report.firstChild);
   report.classList.add('ratio-styled');
 }
 // One delegated listener for the ranking chips, so a view restored from the session cache keeps working.
@@ -3516,6 +3529,21 @@ if(typeof document!=='undefined'&&typeof document.addEventListener==='function')
   const chip=event.target?.closest?.('[data-jump]'),target=chip&&document.getElementById(chip.getAttribute('data-jump'));if(!target)return;
   (target.closest('.card')||target).scrollIntoView({behavior:'smooth',block:'start'});
 });
+// jump-spy:v1 — while the page scrolls, light the chip of the section now under the sticky bar.
+function syncJumpChips(){
+  for(const bar of document.querySelectorAll('.home-jump')){
+    if(!bar.offsetParent)continue;
+    const chips=Array.from(bar.querySelectorAll('[data-jump]')),line=bar.getBoundingClientRect().bottom+24;let current=chips[0];
+    for(const chip of chips){const target=document.getElementById(chip.getAttribute('data-jump')),box=target&&(target.closest('.card')||target);if(box&&box.getBoundingClientRect().top<=line)current=chip;}
+    if(window.innerHeight+window.scrollY>=document.documentElement.scrollHeight-4)current=chips.at(-1);
+    for(const chip of chips)if(chip.getAttribute('aria-current')!==String(chip===current)){chip.setAttribute('aria-current',String(chip===current));if(chip===current)chip.scrollIntoView?.({block:'nearest',inline:'nearest'});}
+  }
+}
+if(typeof window!=='undefined'&&typeof window.addEventListener==='function'&&typeof document.querySelectorAll==='function'){
+  let queued=false;const run=()=>{queued=false;try{syncJumpChips();}catch{}};
+  const queue=()=>{if(queued)return;queued=true;(typeof requestAnimationFrame==='function'?requestAnimationFrame:setTimeout)(run);};
+  window.addEventListener('scroll',queue,{passive:true});window.addEventListener('resize',queue,{passive:true});
+}
 // Overview: a window chip redraws only the comparison table, from the state the last full render used.
 if(typeof document!=='undefined'&&typeof document.addEventListener==='function')document.addEventListener('click',event=>{
   const chip=event.target?.closest?.('[data-return-window]'),box=chip&&document.getElementById('returnComparison');if(!box||!_returnState)return;
@@ -3585,7 +3613,7 @@ async function renderRatioManagement(){
   }});
   const ok=await _ratioController.show(envelope,async()=>{if(!await verifyRatioCapabilityNow())throw Error("RATIO_MANAGER_REFUSED");return ratioCore.deriveManager(cfg(K.gid),cfg(K.key),cfg(K.tok));});
   if(ticket!==_ratioTicket||!ratioAuthorized()||who!==ratioIdentity())return;
-  if(ok){clearTimeout(_ratioExpiry);_ratioExpiry=setTimeout(()=>{clearRatioManagement(false);notice.textContent="管理人查看已锁定，请重新打开比例管理核验。";},RATIO_SESSION_MS);}
+  if(ok){clearTimeout(_ratioExpiry);_ratioExpiry=setTimeout(()=>{clearRatioManagement(false);notice.textContent="管理人查看已锁定，请重新打开资产配置核验。";},RATIO_SESSION_MS);}
   _ratioLastEnvelope=ok?envelope:null;notice.textContent=ok?(_ratioPreview?"本机候选预览，尚未发布。":"已解锁管理人专用快照；来源日期与缺项见下方。"):"比例密文未通过管理人核验；未显示旧内容。";
 }
 async function previewRatioRecipient(event){
@@ -3751,7 +3779,7 @@ function showCurrentRatioSnapshot(read,guard=()=>{}){
   if(typeof styleRatioReport==='function')styleRatioReport(document.getElementById('ratioContent'));
   const {source,stale}=read.result,notice=document.getElementById('ratioNotice');
   notice.textContent=(source.sourceDates?'资产分类截至 '+source.sourceDates.classification+' · 个股穿透截至 '+source.sourceDates.exposure:'来源截至 '+source.asOf)+' · '+(stale?'历史快照（待更新）':'已核验')+'；管理费日期独立。';
-  clearTimeout(_ratioExpiry);_ratioExpiry=setTimeout(()=>{clearRatioManagement();notice.textContent='管理人查看已锁定，请重新打开比例管理核验。';},RATIO_SESSION_MS);
+  clearTimeout(_ratioExpiry);_ratioExpiry=setTimeout(()=>{clearRatioManagement();notice.textContent='管理人查看已锁定，请重新打开资产配置核验。';},RATIO_SESSION_MS);
 }
 async function renderIndependentRatio(){
   if(!ratioAuthorized()||!document.getElementById('p-ratio').classList.contains('on'))return false;
@@ -4713,14 +4741,14 @@ function renderKPIs(feeView,st,B,G){
   </ol><div class="note">${st.benchAsOf?`基准收益截至 ${st.benchAsOf}${st.benchPriceAsOf&&st.benchPriceAsOf!==st.benchAsOf?`；最近收盘日 ${st.benchPriceAsOf}`:""}。${benchmarkPendingLabel?` ${benchmarkPendingLabel}。`:""}${verifiedClosureLabel?`<br>${verifiedClosureLabel}`:""}<br>`:""}${showAnn?`年化：管理方 TWR ${pct(ann(st.twrG,st.spanDays))}${st.bench.map(b=>` · ${b.name} ${pct(ann(b.twr,benchmarkDayDiff(feeView.start,st.benchAsOf)+1))}`).join("")}`:"满一年后仅对 TWR 与基准显示年化"}${st.bench.some(b=>b.k==="cspx"||b.k==="eqac")?`<br>⚠ SPY / QQQ 数据尚未完整覆盖，暂回放旧欧洲收盘口径；这一过渡值不用于判断跑赢跑输。`:""}</div></div></details>`;
   const assetCard=`<div class="kpi wide"><div class="lab">当前总资产 <span class="small">${lp?("· 数据日 "+lp.d):"· 尚无数据"}</span></div><div class="val">${lp?usd(st.nav,0):"—"}</div>${acctLine}${topHoldingsView(lp,st.nav)}${mix}`;
   if(feeView.state!=="verified"){
-    document.getElementById("kpis").innerHTML=`${assetCard}<div class="note">${feeView.message}</div></div><div class="kpi"><div class="lab">出资方 · 累计净收益</div><div class="receipt-pending">${feeView.message}</div></div><div class="kpi"><div class="lab">管理方 · 应付费用</div><div class="receipt-pending">${feeView.message}</div></div><div class="kpi wide"><div class="bench-title">收益率对比</div><div class="receipt-pending">${feeView.message}</div>${renderDrawdowns(feeView,st?.ibDrawdown)}${benchmarkMethod}</div>`;return;
+    document.getElementById("kpis").innerHTML=`${assetCard}<div class="note">${feeView.message}</div></div><div class="kpi"><div class="lab">出资方 · 累计净收益</div><div class="receipt-pending">${feeView.message}</div></div><div class="kpi"><div class="lab">管理方 · 应付费用</div><div class="receipt-pending">${feeView.message}</div></div><div class="kpi wide" id="returnsCard"><div class="bench-title">收益率对比</div><div class="receipt-pending">${feeView.message}</div>${renderDrawdowns(feeView,st?.ibDrawdown)}${benchmarkMethod}</div>`;return;
   }
   document.getElementById("kpis").innerHTML=`
   ${assetCard}
     <div class="note">${st.live?`本月毛收益 <b class="${sgn(st.live.pnl)}">${usd(st.live.pnl,0)}</b> · ${feeView.status.provisional?"暂计":"本月"}费用 <b class="amt">${usd(st.live.fees,0)}</b>（管理费 ${fmt(st.live.mgmt,0)} + Carry ${fmt(st.live.carry,0)}）`:"本月暂无数据（美股收盘后自动更新）"}${feeView.status.provisional?`<br>含暂估数据，费用非最终结算。${feeView.status.provisionalCodes?.includes("owner-estimated-cash-date")?"现金记账日采用用户推定，待正式结单／Fund Records 核对。":""}${feeView.status.provisionalCodes?.includes("owner-notification-cash-date")?"按用户选择的到账通知日记账；券商实际入账日待核。扣减栏含预扣税及代收费，属于投资跟踪口径。":""}`:""}</div></div>  <div class="kpi"><div class="lab">出资方 · 累计净收益</div><div class="val ${sgn(st.net)}">${usd(st.net,0)}</div>
     <div class="note">毛收益 ${usd(st.gross,0)} − 费用 ${usd(st.feesAll,0)}</div></div>
   <div class="kpi"><div class="lab">管理方 · 应付费用</div><div class="val${G.hold?" hold":""}">${G.hold?"暂不可用":usd(B.due,0)}</div>
-    <div class="note">${G.hold?"见上方警告，解决后才会给出金额":`累计费用 ${usd(B.accrued,0)} − 已付 ${usd(B.paid,0)}`}</div></div>  <div class="kpi wide"><div class="lab">统计期间：${returnPeriodLabel(feeView.start,feeView.asOf)||"未核实"}</div>
+    <div class="note">${G.hold?"见上方警告，解决后才会给出金额":`累计费用 ${usd(B.accrued,0)} − 已付 ${usd(B.paid,0)}`}</div></div>  <div class="kpi wide" id="returnsCard"><div class="lab">统计期间：${returnPeriodLabel(feeView.start,feeView.asOf)||"未核实"}</div>
     ${renderReturnComparison(st)}
     ${renderDrawdowns(feeView,st?.ibDrawdown)}${benchmarkTable}${benchmarkMethod}</div>`;}function renderChart1(feeView,st){
   const box=document.getElementById("chart1");if(feeView.state!=="verified"){document.getElementById("chartAsOf").textContent="";box.innerHTML=`<div class="receipt-pending">${feeView.message}</div>`;return;}
