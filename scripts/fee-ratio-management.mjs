@@ -63,7 +63,7 @@ export function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
         for(const [i,g]of a.groups.entries()){
           if(!exact(g,['name','valueCents','targetPct','accounts'])||g.name!==labels[i]||g.targetPct!==targets[i]||!cents(g.valueCents)||!Array.isArray(g.accounts)||g.accounts.length>accounts.size)fail();
           const seen=new Set();let total=0,prior=Infinity;
-          for(const r of g.accounts){if(!exact(r,['name','valueCents'])||!accounts.has(r.name)||seen.has(r.name)||!cents(r.valueCents)||r.valueCents>prior)fail();seen.add(r.name);total+=r.valueCents;prior=r.valueCents;}
+          for(const r of g.accounts){if(!exact(r,['name','valueCents'])||!accounts.has(r.name)||seen.has(r.name)||!cents(Math.abs(r.valueCents))||r.valueCents>prior)fail();seen.add(r.name);total+=r.valueCents;prior=r.valueCents;}
           if(!Number.isSafeInteger(total)||total!==g.valueCents||i<3&&g.valueCents!==Math.round(c.classes[i].totalValueUSD*100))fail();
         }
         if(a.groups.reduce((n,g)=>n+g.valueCents,0)!==a.totalCents||a.groups.slice(3).reduce((n,g)=>n+g.valueCents,0)!==Math.round(c.classes[3].totalValueUSD*100))fail();

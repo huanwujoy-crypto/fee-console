@@ -129,7 +129,7 @@ export function createOfficialRatioSourceCore(){
     if(!Array.isArray(c.positions)||!Array.isArray(c.cashAccounts)||c.positions.length+c.cashAccounts.length!==c.canonicalDataRows||!Array.isArray(e.rows)||e.rows.length!==e.canonicalDataRows||e.rows.length>100000)fail();
     }
     const accounts=new Set(raw.accounts),positions=[],cash=[],byKey=new Map(),cashByKey=new Map(),sourceRows=new Set();
-    const common=r=>{if(!accounts.has(r.account)||!text(r.name)||!Number.isSafeInteger(r.sourceRow)||r.sourceRow<1||sourceRows.has(r.sourceRow)||!text(r.sharesightCategory)||cents(r.valueUSD)<0)fail();sourceRows.add(r.sourceRow);};
+    const common=r=>{if(!accounts.has(r.account)||!text(r.name)||!Number.isSafeInteger(r.sourceRow)||r.sourceRow<1||sourceRows.has(r.sourceRow)||!text(r.sharesightCategory)||cents(r.valueUSD)<0&&r.sharesightCategory!=='Cash Accounts')fail();sourceRows.add(r.sourceRow);};
     // An API original carries the provider's own asset type per position.
     // Either every position declares it or none does (an earlier original).
     const typed=api&&c.positions.length>0&&c.positions.some(r=>Object.hasOwn(r||{},'assetType'));
@@ -148,7 +148,7 @@ export function createOfficialRatioSourceCore(){
       if(!exact(r,['sourceRow','account','securityCode','market','name','withinETF','ownership','valueUSD','sourcePercentage'])||!accounts.has(r.account)||!text(r.name)||!Number.isSafeInteger(r.sourceRow)||r.sourceRow<1||ids.has(r.sourceRow)||!(r.sourcePercentage===null||typeof r.sourcePercentage==='number'&&Number.isFinite(r.sourcePercentage)))fail();ids.add(r.sourceRow);cents(r.valueUSD);
       let owner;
       if(r.ownership==='Cash'){
-        if(r.securityCode!==null||r.market!==null||r.withinETF!==null||!cashByKey.has(key(r.account,r.name,'cash'))||r.valueUSD<0)fail();
+        if(r.securityCode!==null||r.market!==null||r.withinETF!==null||!cashByKey.has(key(r.account,r.name,'cash')))fail();
         cash30.push({...r,fourClass:'二级市场'});allRows.push({...r,fourClass:'二级市场'});continue;
       }
       if(!['Direct','Underlying','Residual'].includes(r.ownership)||!text(r.securityCode)||!text(r.market))fail();

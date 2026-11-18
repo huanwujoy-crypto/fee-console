@@ -72,7 +72,7 @@ test('every refusal names the stage that stopped it',()=>{
   refused(c=>{const h=structuredClone(c.report.holdings[15]);h.id=9999;c.report.holdings.push(h);},'HOLDING_DUPLICATE');
   refused(c=>c.report.cash_accounts[1].id=c.report.cash_accounts[0].id,'CASH');refused(c=>c.report.cash_accounts[0].name='','CASH');
   refused(c=>c.report.cash_accounts[0].portfolio.id=999,'CASH_ACCOUNT');
-  refused(c=>c.report.cash_accounts[0].value=-0.01,'CASH_VALUE');refused(c=>c.report.cash_accounts[0].value=NaN,'CASH_VALUE');
+  refused(c=>c.report.cash_accounts[0].value=NaN,'CASH_VALUE');
   refused(c=>{const x=structuredClone(c.report.cash_accounts[0]);x.id=9998;c.report.cash_accounts.push(x);},'CASH_DUPLICATE');
   assert.deepEqual([...core.CODES].sort(),[...new Set(core.CODES)].sort());
 });
@@ -87,8 +87,8 @@ function apiOriginal(edit=()=>{}){
   const scope=sha(JSON.stringify([...raw.accounts].sort())),exposure={...createRankedExposureCore(),ALL_TOGETHER_SCOPE_SHA256:scope};
   return {p,raw,bytes,built,scope,exposure,ratio:createFeeRatioCore(exposure,crypto.webcrypto),source:createRatioSourceCore(()=>scope)};
 }
-async function apiSnapshot(){
-  const f=apiOriginal(),facts=f.source.verifyBrowserSourceAssociations(f.raw,f.built.input,{scopeHash:f.scope,now:NOW});
+async function apiSnapshot(edit){
+  const f=apiOriginal(edit),facts=f.source.verifyBrowserSourceAssociations(f.raw,f.built.input,{scopeHash:f.scope,now:NOW});
   const manager=await f.ratio.deriveSnapshotManager('0'.repeat(32),Buffer.alloc(32,7).toString('base64url'),'synthetic-manager-token-not-real-123');
   const model=await buildRatioModel(f.built.input,{kind:'snapshot',targetDate:f.built.input.exposure.summary.asOf,feeAccountingThrough:null,now:NOW,viewCore:f.ratio,previewOnly:true});
   model.book.browserEvidence={...model.book.browserEvidence,integrity:'verified-original-api-association',associationId:'c'.repeat(64),managerScopeId:manager.recipient.scopeId,migrationPending:false,classificationDeltaCents:0,exposureDeltaCents:0};
@@ -273,4 +273,14 @@ test('an API original with performance signs as the API kind and its signed date
   await assert.rejects(snapshot.verifyOriginal({...args,libraryVersion:0}),/RATIO_SNAPSHOT_REFUSED/);
   // The sealed model cannot pair an API book with workbook-labelled performance.
   const relabelled=structuredClone(model);delete relabelled.performance.transport;await assert.rejects(f.ratio.validateModel(relabelled));
+});
+// Owner 2026-11-18: one account now carries a margin balance, so its cash is negative and stays that way.
+test('a negative cash balance in one account is carried as given, from the report to the rendered page',async()=>{
+  const margin=c=>{const a=c.accounts[5];c.report.cash_accounts.push({id:7999,key:7999,name:'Synthetic margin cash',source:'manual',value:-3,currency:{code:'USD'},portfolio:{id:a.id,consolidated:false,name:a.name}});c.report.value=Math.round(c.report.value*100-300)/100;};
+  const c=syntheticCapture();margin(c);const p=core.project(c);
+  assert.deepEqual(p.cashAccounts.map(r=>r.valueUSD),[6,6,-3]);
+  const f=await apiSnapshot(margin),result=await f.snapshot.verify(f.signed,f.manager,{now:NOW}),html=f.ratio.render(result.model);
+  assert.match(html,/<span>Synthetic 3<\/span><span>USD -3\.00<\/span>/);assert.doesNotMatch(html,/NaN|undefined/);
+  // A value that is not a number is still refused.
+  refused(x=>x.report.cash_accounts[0].value=NaN,'CASH_VALUE');
 });
