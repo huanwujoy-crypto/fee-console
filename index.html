@@ -10,7 +10,7 @@
 <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAABzUlEQVR42u3bsQ2AMAwAwczDhEzKOqGlCBIgBdnxRT+BfU0Kt20/pGHNCASH4BAcgkNwCA7BITgEh+CQ4BAcgkNwCA7BITgEh+AQHBIcgkNwCA7BITgEh+AQHIJDgkNwCA7BITgEh+AQHIJDcAgOCQ7BITgEh+AQHIJDcOi2/vjBwUQyJXAEkhHNBxyxZITyAQcccMABxwIy4viAAw444IADDjjggAMOOOCAAw444IBDcAgOwQEHHHDAAQcccMABBxxwwAEHHHAIDudocDDxeWFwOEeDg4z3a4MDDjjggKMOjh82BwcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAGHQ1Y4HLLCERPH1IHCkRjH7JnCAQcccMBRB8cam4MDDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAQxWDQ3AIDsEhOFQNR/eSfG7hgAMOOOCAAw444PCq4ZCvrOAQHIJDgkNwCA7BITgEh+AQHIJDcEhwCA7BITgEh+AQHIJDcAgOwSHBITgEh+AQHIJDcAgOwSE4pEsnhtvC417hqCsAAAAASUVORK5CYII=">
-<meta name="fee-console-build" content="4.10.11">
+<meta name="fee-console-build" content="4.10.12">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -1181,7 +1181,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.10.11";
+const UI_VERSION_LABEL=" · v4.10.12";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -4773,17 +4773,21 @@ function fundValueChart(points,id){
 }
 /* fund-investor-render:end */
 /* risk-desk:start */
-// Manager-only what-if tool. Reads the reporting-only `riskBook` of the latest
+// What-if tool shown to every viewer. Reads the reporting-only `riskBook` of the latest
 // daily point; never feeds NAV, returns, flows or fee calculations, and writes
 // nothing. Directional: every figure is an approximation for planning.
 const RISK_LEVERAGED={TQQQ:["QQQ",3],QLD:["QQQ",2],UPRO:["SPY",3],SPXL:["SPY",3],SSO:["SPY",2],SOXL:["SOXX",3],TECL:["XLK",3],NVDL:["NVDA",2],NVDU:["NVDA",2],NVDX:["NVDA",2],GGLL:["GOOG/GOOGL",2],TSLL:["TSLA",2],AVGX:["AVGO",2],AVL:["AVGO",2],VSTL:["VST",2],MSFU:["MSFT",2],AMZU:["AMZN",2],METU:["META",2],AAPU:["AAPL",2],PLTU:["PLTR",2],MSTU:["MSTR",2],MSTX:["MSTR",2],CONL:["COIN",2]};
+// Rough sensitivity of each underlying to the S&P 500 (a 1% index move ~ beta%). Long-run approximations for
+// direction only; anything not listed is treated as 1 and named on the card.
+const RISK_BETA={SPY:1,VOO:1,IVV:1,QQQ:1.2,XLK:1.25,SOXX:1.6,SMH:1.6,NVDA:1.9,GOOGL:1.1,AVGO:1.5,VST:1.4,TSLA:2,AMZN:1.3,META:1.3,MSFT:1,AAPL:1.2,PLTR:2,MSTR:2.5,COIN:2.5,AMD:1.9,TSM:1.3,TSEM:1.4,SIVEF:1.5,MU:1.6,MRVL:1.8,ORCL:1.3,NFLX:1.2,CEG:1.3,AAOI:2.5,BE:2.5,BRKB:.7,LLY:.5,JPM:1.1,COST:.8,GLD:.1,IAU:.1,TLT:.1,SGOV:0,BIL:0,IBIT:1.5};
+function riskDeskBeta(under){const k=under==="GOOG/GOOGL"?"GOOGL":under.replace(/[.\/-]/g,"");return Object.hasOwn(RISK_BETA,k)?RISK_BETA[k]:null;}
 function riskDeskModel(lp,accountDefs,params){
   const book=lp?.riskBook,p=params||{};
   if(!book||book.schemaVersion!==1||!book.accounts||typeof book.accounts!=="object"||!Array.isArray(accountDefs)||!accountDefs.length
     ||Object.keys(book.accounts).length!==accountDefs.length)return null;
   const clamp=(v,lo,hi,d)=>Number.isFinite(Number(v))?Math.min(hi,Math.max(lo,Number(v))):d;
   const maint=clamp(p.maint,.25,1,.4),levMaint=clamp(p.levMaint,.25,1,.66),rate=clamp(p.rate,0,.3,.0475),shock=clamp(p.shock,-.6,.3,0);
-  const accounts=[];let nav=0,gross=0,exposure=0,borrowed=0;const unders=new Map();
+  const accounts=[];let nav=0,gross=0,exposure=0,borrowed=0,betaExposure=0;const unders=new Map();
   for(const def of accountDefs){
     const a=book.accounts[def.id],net=Number(lp[def.id]);
     if(!a||typeof a!=="object"||!Number.isFinite(net)||net<0||typeof a.cash!=="number"||!Number.isFinite(a.cash)
@@ -4793,8 +4797,9 @@ function riskDeskModel(lp,accountDefs,params){
       if(!h||typeof h.ticker!=="string"||!/^[A-Z0-9][A-Z0-9./^-]{0,31}$/.test(h.ticker)||typeof h.value!=="number"||!Number.isFinite(h.value)||h.value<=0)return null;
       const lev=Object.hasOwn(RISK_LEVERAGED,h.ticker)?RISK_LEVERAGED[h.ticker]:null;
       const under=lev?lev[0]:(h.ticker==="GOOG"||h.ticker==="GOOGL")?"GOOG/GOOGL":h.ticker,mult=lev?lev[1]:1;
-      rows.push({ticker:h.ticker,value:h.value,under,mult});held+=h.value;
-      const u=unders.get(under)||{under,direct:0,levered:0,exposure:0,products:[]};
+      const known=riskDeskBeta(under),beta=known??1;
+      rows.push({ticker:h.ticker,value:h.value,under,mult,beta});held+=h.value;betaExposure+=h.value*mult*beta;
+      const u=unders.get(under)||{under,direct:0,levered:0,exposure:0,products:[],beta,betaKnown:known!=null};
       if(lev){u.levered+=h.value;if(!u.products.includes(h.ticker+" "+mult+"×"))u.products.push(h.ticker+" "+mult+"×");}else u.direct+=h.value;
       u.exposure+=h.value*mult;unders.set(under,u);exposure+=h.value*mult;
     }
@@ -4803,8 +4808,9 @@ function riskDeskModel(lp,accountDefs,params){
   }
   if(!(nav>0))return null;
   const list=[...unders.values()].sort((a,b)=>b.exposure-a.exposure||(a.under<b.under?-1:1)).map(u=>({...u,weight:u.exposure/nav}));
-  const scope=p.scope&&p.scope!=="all"&&unders.has(p.scope)?p.scope:"all";
-  const move=(row,s,sc)=>sc==="all"||row.under===sc?Math.max(-1,row.mult*s):0;
+  // "spx": the slider is the S&P 500 and each underlying moves by its beta. "all": every underlying moves alike.
+  const scope=p.scope==="spx"?"spx":p.scope&&p.scope!=="all"&&unders.has(p.scope)?p.scope:"all";
+  const move=(row,s,sc)=>sc==="spx"?Math.max(-1,row.mult*row.beta*s):sc==="all"||row.under===sc?Math.max(-1,row.mult*s):0;
   const need=row=>row.mult>1?levMaint:maint;
   // Equity less the maintenance requirement; never decreasing in `s`.
   const excess=(acct,s,sc)=>acct.rows.reduce((sum,row)=>{const m=move(row,s,sc);return sum+row.value*(m-(1+m)*need(row));},acct.net);
@@ -4817,19 +4823,18 @@ function riskDeskModel(lp,accountDefs,params){
     const acctPnl=acct.rows.reduce((sum,row)=>sum+row.value*move(row,shock,scope),0);pnl+=acctPnl;
     if(!(acct.cash<0))continue;
     const now=excess(acct,0,"all"),after=excess(acct,shock,scope);
-    let callDrop=null;
-    if(now<0)callDrop=0;
-    else if(excess(acct,-1,"all")<0){let lo=-1,hi=0;for(let i=0;i<50;i++){const mid=(lo+hi)/2;if(excess(acct,mid,"all")<0)lo=mid;else hi=mid;}callDrop=-hi;}
+    const dropTo=sc=>{if(now<0)return 0;if(!(excess(acct,-1,sc)<0))return null;let lo=-1,hi=0;for(let i=0;i<50;i++){const mid=(lo+hi)/2;if(excess(acct,mid,sc)<0)lo=mid;else hi=mid;}return -hi;};
+    const callDrop=dropTo("all"),callDropSpx=dropTo("spx");
     let fix=null;
     if(after<0){
-      const gap=initial(acct,shock,scope)-(acct.net+acctPnl),drop=Math.max(0,-shock),hit=acct.rows.filter(row=>scope==="all"||row.under===scope);
+      const gap=initial(acct,shock,scope)-(acct.net+acctPnl),drop=Math.max(0,-shock),hit=acct.rows.filter(row=>scope==="all"||scope==="spx"||row.under===scope);
       const levMult=hit.reduce((m,row)=>Math.max(m,row.mult),1),per=k=>{const n=initNeed(k),d=Math.min(1,k*drop);return n+(1-n)*d;};
       fix={deposit:gap,sellPlain:hit.some(row=>row.mult===1)?gap/per(1):null,sellLevered:levMult>1?gap/per(levMult):null,levMult};
     }
     margin.push({id:acct.id,name:acct.name,net:acct.net,loan:-acct.cash,held:acct.held,leverage:acct.net>0?acct.held/acct.net:null,
-      excessNow:now,equityAfter:acct.net+acctPnl,requiredAfter:acct.net+acctPnl-after,initialAfter:initial(acct,shock,scope),excessAfter:after,callDrop,fix});
+      excessNow:now,equityAfter:acct.net+acctPnl,requiredAfter:acct.net+acctPnl-after,initialAfter:initial(acct,shock,scope),excessAfter:after,callDrop,callDropSpx,fix});
   }
-  return {nav,gross,exposure,borrowed,bookLeverage:gross/nav,economicLeverage:exposure/nav,unders:list,maint,levMaint,rate,shock,scope,
+  return {nav,gross,exposure,borrowed,bookLeverage:gross/nav,economicLeverage:exposure/nav,spxBeta:betaExposure/nav,unknownBeta:list.filter(u=>!u.betaKnown).map(u=>u.under),unders:list,maint,levMaint,rate,shock,scope,
     scenario:{pnl,pnlPct:pnl/nav,navAfter:nav+pnl},margin,
     interest:{annual:borrowed*rate,monthly:borrowed*rate/12,pctNav:borrowed*rate/nav}};
 }
@@ -4856,23 +4861,26 @@ function riskDeskView(lp,accountDefs,params){
   const m=riskDeskModel(lp,accountDefs,params);
   if(!m)return `<h2>风险模拟 · 融资与杠杆</h2><p class="hint">风险明细会随下一次每日发布自动带入，届时这里显示融资额、杠杆敞口和情景模拟。</p>`;
   const pc=(v,d=1)=>(v*100).toFixed(d)+"%",x=v=>v==null?"—":v.toFixed(2)+"×";
-  const drops=m.margin.map(a=>a.callDrop).filter(v=>v!=null),drop=drops.length?Math.min(...drops):null;
-  const dropTone=drop==null?"risk-ok":drop<.15?"risk-bad":drop<.3?"risk-warn":"risk-ok";
-  const dropText=!m.margin.length?"无融资":drop==null?"不会触发":drop===0?"已触发":"再跌 "+pc(drop);
+  const least=key=>{const v=m.margin.map(a=>a[key]).filter(v=>v!=null);return v.length?Math.min(...v):null;};
+  const drop=least("callDropSpx"),even=least("callDrop");
+  const dropTone=drop==null?"risk-ok":drop<.1?"risk-bad":drop<.2?"risk-warn":"risk-ok";
+  const dropText=!m.margin.length?"无融资":drop==null?"不会触发":drop===0?"已触发":"标普跌 "+pc(drop);
+  const evenText=!m.margin.length?"各账户现金均不为负":even==null?"各标的同跌也不会触发":even===0?"已低于维持保证金":"各标的同跌则为 "+pc(even);
   const tile=(lab,v,s,cls="")=>`<div class="risk-tile"><div class="lab">${lab}</div><div class="v ${cls}">${v}</div><div class="s">${s}</div></div>`;
   const tiles=tile("融资额",usd(m.borrowed,0),m.margin.length?m.margin.map(a=>esc(a.name)+" 账户杠杆 "+x(a.leverage)).join(" · "):"各账户现金均不为负")
-    +tile("距追缴",dropText,"全部证券同步下跌时",dropTone)
+    +tile("距追缴",dropText,evenText,dropTone)
     +tile("账面杠杆",x(m.bookLeverage),"证券市值 ÷ 净资产")
     +tile("实际杠杆",x(m.economicLeverage),"杠杆产品按倍数折算");
   const shown=m.unders.filter((u,i)=>i<6||u.levered>0);
-  const rows=shown.map(u=>`<tr><td>${esc(u.under)}${u.products.length?`<span class="risk-lev">${esc(u.products.join("、"))}</span>`:""}</td><td>${u.direct?usd(u.direct,0):"—"}</td><td>${u.levered?usd(u.levered,0):"—"}</td><td><b>${usd(u.exposure,0)}</b><span class="risk-weight">占净资产 ${pc(u.weight)}</span></td></tr>`).join("");
-  const options=`<option value="all"${m.scope==="all"?" selected":""}>全部证券</option>`+m.unders.slice(0,20).map(u=>`<option value="${esc(u.under)}"${m.scope===u.under?" selected":""}>只有 ${esc(u.under)}${u.levered?"（含杠杆产品）":""}</option>`).join("");
+  const rows=shown.map(u=>`<tr><td>${esc(u.under)}<span class="risk-weight">敏感度 ${u.beta.toFixed(1)}${u.betaKnown?"":"（默认）"}</span>${u.products.length?`<span class="risk-lev">${esc(u.products.join("、"))}</span>`:""}</td><td>${u.direct?usd(u.direct,0):"—"}</td><td>${u.levered?usd(u.levered,0):"—"}</td><td><b>${usd(u.exposure,0)}</b><span class="risk-weight">占净资产 ${pc(u.weight)}</span></td></tr>`).join("");
+  const options=`<option value="spx"${m.scope==="spx"?" selected":""}>标普500 指数</option><option value="all"${m.scope==="all"?" selected":""}>全部标的同幅</option>`+m.unders.slice(0,20).map(u=>`<option value="${esc(u.under)}"${m.scope===u.under?" selected":""}>只有 ${esc(u.under)}${u.levered?"（含杠杆产品）":""}</option>`).join("");
   const pctVal=Math.round(m.shock*100);
   return `<div class="risk-head"><h2>风险模拟 · 融资与杠杆</h2><span class="small">数据日 ${esc(lp.d)}</span></div>
 <div class="risk-tiles">${tiles}</div>
 <div class="risk-sub">等效敞口（杠杆产品折算后）</div>
 <div class="risk-table-wrap"><table class="risk-table"><thead><tr><th>标的</th><th>直接持有</th><th>杠杆产品</th><th>等效敞口</th></tr></thead><tbody>${rows}</tbody></table></div>
 <div class="risk-sub">情景模拟</div>
+<p class="hint">按各标的对标普500的敏感度折算，标普500 每变动 1%，组合约变动 ${m.spxBeta.toFixed(1)}%。</p>
 <div class="risk-ctl"><label for="riskScope">谁在涨跌</label><select id="riskScope">${options}</select></div>
 <div class="risk-ctl"><label for="riskShock">涨跌幅</label><output id="riskShockLabel" for="riskShock">${pctVal>0?"+":""}${pctVal}%</output></div>
 <input class="risk-range" id="riskShock" type="range" min="-60" max="30" step="1" value="${pctVal}" aria-label="涨跌幅（百分比）">
@@ -4890,7 +4898,8 @@ function riskDeskView(lp,accountDefs,params){
 <li>被追缴后，Webull 要求把净值补回到初始保证金（高于维持保证金），补救金额按此计算：普通证券的初始比例按维持的 1/0.8、杠杆产品按维持的 1/0.9 估算，与当日 App 的初始保证金总额一致。逾期或行情剧烈时，Webull 可不经通知强制平仓。</li>
 <li>利息按 Webull 香港公布的美元融资年利率 4.75% 预填；实际按日历日、一年 360 天计息，每月扣收，利率可不经通知调整。</li>
 <li>Webull 在净值跌到维持保证金之前还有一道"保证金预警"线（当日约为维持保证金的 1.09 倍），会更早提示。</li>
-<li>"全部证券"情景假设所有标的同幅涨跌，不区分各自波动大小；未列入杠杆产品表的代码按 1 倍处理。</li>
+<li>"标普500 指数"情景：各标的按"标普涨跌 × 敏感度"变动，杠杆产品再乘倍数。敏感度是写在页面里的长期粗略值（见上表各行），不是实时计算；科技股领跌时实际跌幅可能明显更大。${m.unknownBeta.length?"未列入敏感度表、按 1.0 处理："+esc(m.unknownBeta.join("、"))+"。":""}</li>
+<li>"全部标的同幅"情景假设所有标的涨跌相同，不区分各自波动大小；未列入杠杆产品表的代码按 1 倍处理。</li>
 <li>这是方向性估算，不是券商的追缴通知，也不是投资建议。</li></ol></div></details>`;
 }
 function riskDeskInterest(m){
@@ -4900,7 +4909,7 @@ function riskDeskInterest(m){
 let _riskParams=null,_riskPoint=null;
 function riskDeskParams(){
   if(_riskParams)return _riskParams;
-  _riskParams={shock:0,scope:"all",maint:.4,levMaint:.66,rate:.0475};
+  _riskParams={shock:0,scope:"spx",maint:.4,levMaint:.66,rate:.0475};
   try{const saved=JSON.parse(store?.getItem("fee-risk-desk-v2")||"null");if(saved&&typeof saved==="object"){if(Number.isFinite(saved.maint))_riskParams.maint=saved.maint;if(Number.isFinite(saved.levMaint))_riskParams.levMaint=saved.levMaint;if(Number.isFinite(saved.rate))_riskParams.rate=saved.rate;}}catch(_){}
   return _riskParams;
 }
