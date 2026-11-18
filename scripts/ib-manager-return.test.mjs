@@ -245,4 +245,7 @@ test('the risk desk folds leveraged products into their underlying and finds the
     c=>{c.riskBook.accounts.webull.cash='x';},c=>{c.riskBook.accounts.webull.holdings[0].value=-1;},c=>{c.riskBook.accounts.webull.holdings[0].ticker='<b>';},c=>{c.webull=NaN;},c=>{c.schwab=0;c.webull=0;}]){
     const c=structuredClone(lp);change(c);assert.equal(box.riskDeskModel(c,defs,{}),null);assert.match(box.riskDeskView(c,defs,{}),/下一次每日发布自动带入/);
   }
+  // The card is for every viewer of the page, read-only links included: it must not depend on the manager token.
+  const render=html.slice(html.indexOf('function renderRiskDesk(st){'),html.indexOf('function riskDeskInput(event){'));
+  assert.ok(render.includes('show=!!lp;'));assert.ok(!render.includes('isMgr'));
 });
