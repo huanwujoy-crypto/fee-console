@@ -96,8 +96,8 @@ test('reviewed synchronized daily entry uses the same v2 shape and waits for the
   assert.equal(reportPlanReadiness(winter,new Date('2026-11-24T05:14:59+08:00')).reasonCode,'SOURCE_DAY_NOT_CLOSED');
   assert.equal(reportPlanReadiness(winter,new Date('2026-11-24T05:15:00+08:00')).state,'due');
   const winterOrdinary=dailyReportPlan('2026-11-23',markets);
-  assert.equal(reportPlanReadiness(winterOrdinary,new Date('2026-11-24T08:29:59+08:00')).reasonCode,'REPORT_NOT_DUE');
-  assert.equal(reportPlanReadiness(winterOrdinary,new Date('2026-11-24T08:30:00+08:00')).state,'due');
+  assert.equal(reportPlanReadiness(winterOrdinary,new Date('2026-11-24T07:59:59+08:00')).reasonCode,'REPORT_NOT_DUE');
+  assert.equal(reportPlanReadiness(winterOrdinary,new Date('2026-11-24T08:00:00+08:00')).state,'due');
   for(const reviewedSyncDate of ['',true,'2026-10-27','invalid'])assert.throws(()=>dailyReportPlan(target,markets,{reviewedSyncDate}));
   for(const change of [{scheduledAt:'2026-10-29T01:00:00+08:00'},{syncCompleted:true},{priceThrough:'2026-10-27'}])assert.equal(validateReportPlan({...reviewed,...change}),false);
   assert.throws(()=>dailyReportPlan('2026-11-01',markets,{reviewedSyncDate:'2026-11-01'}),/CALENDAR_SCOPE_UNVERIFIED/);

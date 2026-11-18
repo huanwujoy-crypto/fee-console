@@ -266,3 +266,10 @@ The clock accepts the 08:30/08:35 Hong Kong slot beside the earlier 09:00/09:05
 slot, and the deployment plan names `30 8 * * 2-6` and `35 8 * * 2-6`. The move
 takes effect only after the image is rebuilt from this code and the two existing
 Scheduler jobs are edited; until then the 09:00 slot keeps working.
+
+## 08:00 start (owner request 2026-11-19)
+
+The clock also accepts the 08:00/08:05 Hong Kong slot, and the deployment plan
+names `0 8 * * 2-6` and `5 8 * * 2-6`. As before, the move takes effect only
+after the image is rebuilt from this code and the two existing Scheduler jobs
+are edited; until then the 08:30 slot keeps working.

@@ -9,7 +9,7 @@ class DeploymentTests(unittest.TestCase):
 
     def test_only_two_requested_slots_and_oauth_job_invocation(self):
         rows = self.plan['schedulerJobs']
-        self.assertEqual([x['schedule'] for x in rows], ['30 8 * * 2-6', '35 8 * * 2-6'])
+        self.assertEqual([x['schedule'] for x in rows], ['0 8 * * 2-6', '5 8 * * 2-6'])
         for row in rows:
             self.assertEqual(row['timeZone'], 'Asia/Hong_Kong')
             self.assertEqual(row['retryConfig'], {'retryCount': 0, 'maxRetryDuration': '0s'})

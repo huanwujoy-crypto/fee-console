@@ -334,6 +334,17 @@ class ClockTests(unittest.TestCase):
             with self.subTest(mode=mode, now=now):
                 with self.assertRaises(ClockError): plan(mode, now)
 
+    def test_eight_o_clock_slot_is_accepted_beside_the_later_slots(self):
+        early = NOW - timedelta(minutes=60)
+        self.assertTrue(plan('launch', early)['action'])
+        self.assertTrue(plan('check-start', early + timedelta(minutes=5))['action'])
+        self.assertTrue(plan('launch', NOW - timedelta(minutes=30))['action'])
+        self.assertTrue(plan('launch', NOW)['action'])
+        for mode, now in (('launch', early - timedelta(seconds=1)), ('launch', early + timedelta(minutes=5)),
+                          ('check-start', early), ('check-start', early + timedelta(minutes=10))):
+            with self.subTest(mode=mode, now=now):
+                with self.assertRaises(ClockError): plan(mode, now)
+
     def test_wrong_and_early_slots_fail_closed(self):
         for mode, now in (('launch', NOW - timedelta(seconds=1)), ('check-start', NOW),
                           ('launch', CHECK), ('check-start', CHECK + timedelta(minutes=5))):
