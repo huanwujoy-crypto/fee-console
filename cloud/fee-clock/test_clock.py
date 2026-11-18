@@ -324,6 +324,16 @@ class ClockTests(unittest.TestCase):
     def test_holiday_stays_original_weekday_not_invented_calendar(self):
         self.assertEqual(target_date(datetime(2026, 12, 26, 2, tzinfo=timezone.utc)), '2026-12-25')
 
+    def test_half_past_eight_slot_is_accepted_beside_the_nine_o_clock_slot(self):
+        early = NOW - timedelta(minutes=30)
+        self.assertTrue(plan('launch', early)['action'])
+        self.assertTrue(plan('check-start', early + timedelta(minutes=5))['action'])
+        self.assertTrue(plan('launch', NOW)['action'])
+        for mode, now in (('launch', early - timedelta(seconds=1)), ('launch', early + timedelta(minutes=5)),
+                          ('check-start', early), ('check-start', early + timedelta(minutes=10))):
+            with self.subTest(mode=mode, now=now):
+                with self.assertRaises(ClockError): plan(mode, now)
+
     def test_wrong_and_early_slots_fail_closed(self):
         for mode, now in (('launch', NOW - timedelta(seconds=1)), ('check-start', NOW),
                           ('launch', CHECK), ('check-start', CHECK + timedelta(minutes=5))):

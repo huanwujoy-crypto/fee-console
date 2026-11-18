@@ -1,5 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {marketSession,sessionUnion,monthlyArchivesBetween,planDailyFirstAttempt,nextSameDayCheck,sameDaySourceDecision} from './fee-market-calendar.mjs';
+import {marketSession,sessionUnion,monthlyArchivesBetween,planDailyFirstAttempt,nextSameDayCheck,sameDaySourceDecision,ordinaryDailyStartTime,ordinaryDailyScheduledAt} from './fee-market-calendar.mjs';
 const venues=['NYSE','NASDAQ','LSE','SIX','EURONEXT_AMSTERDAM'];
 const plan=(now,lastPublished='2026-10-26',scope=venues)=>planDailyFirstAttempt({now,lastPublished,venues:scope});
 test('09:00 is not source completion and no financial work is scheduled before10:30',()=>{const p=plan('2026-10-28T09:00:00+08:00');assert.equal(p.state,'not-due');assert.equal(p.publicationReady,false);});
@@ -121,4 +121,14 @@ test('09:00 keeps historical dates, unchanged follow-ups and source admission gu
  assert.equal(plan('2026-12-01T13:00:00+08:00','2026-11-29').state,'calendar-ready');
  assert.equal(plan('2026-11-03T09:00:00+08:00','2026-10-30').reason,'BEFORE_1000');
  assert.equal(plan('2026-10-31T09:00:00+08:00','2026-10-29').reason,'BEFORE_1030');
+});
+test('08:30 start applies from the 2026-11-18 target; earlier targets keep 09:00',()=>{
+ assert.equal(ordinaryDailyStartTime('2026-11-17'),'09:00');assert.equal(ordinaryDailyStartTime('2026-11-18'),'08:30');
+ assert.equal(ordinaryDailyScheduledAt('2026-11-18'),'2026-11-19T08:30:00+08:00');
+ const early=plan('2026-11-19T08:29:59+08:00','2026-11-17',['NYSE','NASDAQ']);
+ assert.equal(early.state,'not-due');assert.equal(early.reason,'BEFORE_0830');
+ const p=plan('2026-11-19T08:30:00+08:00','2026-11-17',['NYSE','NASDAQ']);
+ assert.equal(p.target,'2026-11-18');assert.equal(p.state,'calendar-ready');
+ assert.equal(nextSameDayCheck(p,'2026-11-19T08:30:00+08:00'),'2026-11-19T11:30:00+08:00');
+ assert.equal(plan('2026-11-18T08:30:00+08:00','2026-11-16',['NYSE','NASDAQ']).reason,'BEFORE_0900');
 });

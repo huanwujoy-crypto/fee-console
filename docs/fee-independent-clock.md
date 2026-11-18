@@ -259,3 +259,10 @@ Offline validation command:
 `python3 -m unittest discover -s cloud/fee-clock -p 'test_*.py' -v`.
 Tests inject only synthetic HTTP/metadata/credential strings; no live production
 or financial route is invoked by the test suite.
+
+## 08:30 start (owner request 2026-11-18)
+
+The clock accepts the 08:30/08:35 Hong Kong slot beside the earlier 09:00/09:05
+slot, and the deployment plan names `30 8 * * 2-6` and `35 8 * * 2-6`. The move
+takes effect only after the image is rebuilt from this code and the two existing
+Scheduler jobs are edited; until then the 09:00 slot keeps working.
