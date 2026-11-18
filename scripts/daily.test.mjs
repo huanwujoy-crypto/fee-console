@@ -515,6 +515,20 @@ test("blocks a growth/value split that does not reconcile to stock", () => {
   assert.match(r.stderr, /growth\/value split is incomplete/);
 });
 
+// Owner 2026-11-18: one managed account carries a lasting margin balance.
+test("accepts a negative cash split that still reconciles, and keeps stock and other non-negative", () => {
+  const dir = tmp();
+  const r = run(dir, { cash: "-10000", stock: "727543.81" });
+  assert.equal(r.status, 0, r.stderr);
+  const point = readPayload(dir).daily.at(-1);
+  assert.equal(point.cash, -10000); assert.equal(point.stock, 727543.81);
+  for (const over of [{ stock: "-1", cash: "717544.81" }, { other: "-1", cash: "263698.83" }]) {
+    const bad = run(tmp(), over);
+    assert.notEqual(bad.status, 0);
+    assert.match(bad.stderr, /--(stock|other) must be zero or greater/);
+  }
+});
+
 test("blocks a negative style bucket", () => {
   const dir = tmp();
   const r = run(dir, { growth: "-1", value: "453846.98" });
