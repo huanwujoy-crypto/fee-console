@@ -2829,3 +2829,32 @@ test('a period source failure is visible as a value-free diagnostic through prod
   scenario({latest:'2026-11-06',failDate:'2026-11-07',failRound:1,kind:'http'},'FEE_CLOUD_HTTP_REJECTED',null);
  });
 });
+// Owner 2026-11-18: a hand-synced Webull buy used a note wording no grammar knew, and four trade debits were
+// read as unexplained withdrawals. The association now rests on the named trade's own figures, not on wording.
+test('a Webull cash row naming one same-day trade is that trade\'s cash only when the figures agree to the cent', async () => {
+  const {isTradePointerCash} = await import('./fee-trade-cash-evidence.mjs');
+  const trade = {id: 9001, portfolio_id: 1350094, transaction_date: '2026-11-17', state: 'confirmed', description_code: 'BUY',
+    instrument: {code: 'TQQQ', currency_code: 'USD'}, brokerage_currency_code: 'USD', price_currency_code: 'USD', holding_id: 77,
+    quantity: 10, price: 5.12, brokerage: 0, value: 51.2};
+  const row = {id: 1, amount: -51.2, trade_id: null, holding_id: null, payout_id: null, cash_account_transaction_type: {name: 'WITHDRAWAL'},
+    description: 'Webull TQQQ BUY10@5.12 debit51.20 fee0; NOT external funding. Trade9001. Actual2026-11-18HKT; effective2026-11-17. key=webull.manual|10205226|2026-11-17T11:13:00-05:00|BUY|TQQQ|10|5.12|cash'};
+  const base = {account: 'webull', portfolioId: 1350094, targetDate: '2026-11-17', trades: [trade], cashRows: [row], row};
+  assert.equal(isTradePointerCash(base), true);
+  // Any other wording works as long as the pointer and the figures hold; a fee is added on a buy.
+  const fee = {...trade, brokerage: 1.5, value: 52.7};
+  assert.equal(isTradePointerCash({...base, trades: [fee], row: {...row, amount: -52.7, description: 'Webull TQQQ BUY something else; NOT external funding; Trade9001'}, cashRows: [row]}), true);
+  const sale = {...trade, description_code: 'SELL', brokerage: 1.5, value: -49.7};
+  const credit = {...row, amount: 49.7, cash_account_transaction_type: {name: 'DEPOSIT'}, description: 'Webull TQQQ SELL net; NOT external funding. Trade9001.'};
+  assert.equal(isTradePointerCash({...base, trades: [sale], row: credit, cashRows: [credit]}), true);
+  const refused = [
+    {row: {...row, amount: -51.21}}, {row: {...row, amount: 51.2}}, {trades: [{...trade, value: 51.3}]}, {trades: [{...trade, price: 5.13}]},
+    {trades: [{...trade, state: 'unconfirmed'}]}, {trades: [{...trade, transaction_date: '2026-11-16'}]}, {trades: [{...trade, portfolio_id: 2}]},
+    {trades: [{...trade, instrument: {code: 'QQQ', currency_code: 'USD'}}]}, {trades: [{...trade, description_code: 'SELL'}]}, {trades: []}, {trades: [trade, {...trade}]},
+    {cashRows: [row, {...row, id: 2}]}, {account: 'schwab'}, {portfolioId: 2}, {targetDate: '2026-11-18'},
+    {row: {...row, cash_account_transaction_type: {name: 'DEPOSIT'}}}, {row: {...row, payout_id: 5}}, {row: {...row, trade_id: 9002}},
+    {row: {...row, description: row.description.replace('NOT external funding', 'external funding')}},
+    {row: {...row, description: row.description.replace('Trade9001.', 'Trade9001. Trade9002.')}},
+    {row: {...row, description: row.description.replace('Trade9001.', '')}}, {row: {...row, description: 'TQQQ BUY; NOT external funding. Trade9001.'}},
+  ];
+  for (const [i, over] of refused.entries()) assert.equal(isTradePointerCash({...base, ...over}), false, 'case ' + i);
+});

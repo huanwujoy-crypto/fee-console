@@ -12,7 +12,7 @@ import {validateManagementRegistry} from './fee-management-exemption.mjs';
 import {SHARESIGHT_REFERENCE_SCHEMA,normalizeSharesightReference,classifyFlow} from './daily-core.mjs';
 
 import {SOURCE_CAPTURE_UNSTABLE_CODES,lexicalRecordsSha256,lexicalRecordEquivalent} from './fee-source-lexical.mjs';
-import {isSharesightDeclaredTradeCash,resolveFundRecordsTradeCashEvidence} from './fee-trade-cash-evidence.mjs';
+import {isSharesightDeclaredTradeCash,isTradePointerCash,resolveFundRecordsTradeCashEvidence} from './fee-trade-cash-evidence.mjs';
 export {isControlledWebullNetProceeds} from './fee-trade-cash-evidence.mjs';
 
 const API = "https://api.sharesight.com";
@@ -706,7 +706,8 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
         tradeId: row.trade_id == null ? null : id(row.trade_id),
         holdingId: row.holding_id == null ? null : id(row.holding_id),
         foreignIdentifier,
-        ...(legacyControlledWebullPrincipal || isSharesightDeclaredTradeCash({account,portfolioId:expected.portfolioId,row,targetDate}) ? { evidence: "internal_trade" } : {}),
+        ...(legacyControlledWebullPrincipal || isSharesightDeclaredTradeCash({account,portfolioId:expected.portfolioId,row,targetDate})
+          || isTradePointerCash({account,portfolioId:expected.portfolioId,row,targetDate,trades,cashRows:Object.values(cashTransactions).flatMap(p=>rows(p,'cash_account_transactions'))}) ? { evidence: "internal_trade" } : {}),
         ...(fundRecordsTradeEvidence.get(row.id) || {}),
         ...(incomeEvidence.get(row.id) || {}),
       };

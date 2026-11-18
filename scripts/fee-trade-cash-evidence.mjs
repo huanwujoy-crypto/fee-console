@@ -263,6 +263,44 @@ function declaredCompactCash(row,text){
  if((2n*numerator+denominator)/(2n*denominator)!==gross)return false;
  return buy?native===gross+fee:net!==null&&net>0n&&gross-fee===net&&native===net;
 }
+// Wording-independent association (owner 2026-11-18). Each new note format used to need its own
+// grammar above. This one trusts no wording beyond the pointer: the row must name exactly one
+// confirmed same-day trade of this portfolio, no other cash row may name that trade, and the row's
+// amount must be that trade's own cash to the cent (quantity x price, plus the fee on a buy, less it
+// on a sale), which must also be the value Sharesight holds for the trade.
+const TRADE_POINTER_RE=/\bTrade([1-9]\d{0,14})(?!\d)/g;
+const pointerOf=row=>{
+ const text=typeof row?.description==='string'?row.description:'';
+ if(text.length>2000||/[\r\n]/.test(text)||!/\bNOT external funding\b/.test(text))return null;
+ const found=[...text.matchAll(TRADE_POINTER_RE)];
+ return found.length===1?found[0][1]:null;
+};
+export function isTradePointerCash({account,portfolioId,row,targetDate,trades,cashRows}){
+ try{
+  if(account!=='webull'||portfolioId!==CLOUD_ACCOUNTS.webull.portfolioId||!Array.isArray(trades)||!Array.isArray(cashRows))return false;
+  const pointer=pointerOf(row);if(pointer===null)return false;
+  const head=/^Webull ([A-Z0-9][A-Z0-9./^-]{0,31}) (BUY|SELL)/.exec(row.description);if(!head)return false;
+  const matched=trades.filter(t=>sameId(pointer,t?.id));
+  if(matched.length!==1||cashRows.filter(r=>pointerOf(r)===pointer).length!==1)return false;
+  const trade=matched[0],buy=head[2]==='BUY';
+  if(trade.portfolio_id!==portfolioId||trade.transaction_date!==targetDate||trade.state!=='confirmed'
+   ||trade.description_code!==head[2]||trade.instrument?.code!==head[1]||trade.instrument?.currency_code!=='USD'
+   ||trade.brokerage_currency_code!=='USD'
+   ||!(trade.price_currency_code==='USD'||trade.price_currency_code==null)
+   ||!Number.isSafeInteger(trade.holding_id)||trade.holding_id<=0
+   ||!finite(trade.quantity)||trade.quantity<=0||!finite(trade.price)||trade.price<=0
+   ||!finite(trade.brokerage)||trade.brokerage<0||!finite(trade.value)||!finite(row.amount)
+   ||row.payout_id!=null||row.trade_id!=null&&!sameId(row.trade_id,trade.id)
+   ||row.holding_id!=null&&!sameId(row.holding_id,trade.holding_id)
+   ||row.cash_account_transaction_type?.name!==(buy?'WITHDRAWAL':'DEPOSIT'))return false;
+  const q=rational(String(trade.quantity)),p=rational(String(trade.price));
+  const fee=fundMoney(trade.brokerage),value=fundMoney(trade.value),cash=fundMoney(row.amount);
+  if(!q||!p||[fee,value,cash].some(x=>x===null))return false;
+  const numerator=q.n*p.n*100n,denominator=q.d*p.d,gross=(2n*numerator+denominator)/(2n*denominator);
+  const net=buy?gross+fee:gross-fee;
+  return net>0n&&cash===(buy?-net:net)&&value===(buy?net:-net);
+ }catch{return false;}
+}
 export function isSharesightDeclaredTradeCash({account,portfolioId,row,targetDate}){
  if(account!=='webull'||portfolioId!==CLOUD_ACCOUNTS.webull.portfolioId||row.payout_id!=null
    ||String(row.date_time||'').slice(0,10)!==targetDate
