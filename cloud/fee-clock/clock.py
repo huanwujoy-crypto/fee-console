@@ -97,10 +97,11 @@ def plan(mode, now, confirmation=None):
     if hk.weekday() not in (1, 2, 3, 4, 5):
         return {**result, 'action': False}
     minute = hk.hour * 60 + hk.minute
-    # 08:30 from 2026-11-18 (owner request). The earlier 09:00 slot stays
-    # valid so the Scheduler time can move, or move back, without a rebuild.
+    # 08:30 from 2026-11-18, 08:00 from 2026-11-19 (owner requests). The
+    # earlier slots stay valid so the Scheduler time can move, or move back,
+    # without a rebuild.
     offset = 0 if mode == 'launch' else 5
-    if not any(start + offset <= minute < start + offset + 5 for start in (510, 540)):
+    if not any(start + offset <= minute < start + offset + 5 for start in (480, 510, 540)):
         fail('OUTSIDE_WINDOW')
     midnight = hk.replace(hour=0, minute=0, second=0, microsecond=0)
     return {**result, 'action': True, 'from': stamp(midnight),

@@ -44,7 +44,8 @@ const local=(now,zone)=>new Intl.DateTimeFormat('en-CA',{timeZone:zone,year:'num
 // The consumed November 2 acceptance and earlier reports keep their old times.
 // Owner request 2026-11-18: the three account syncs are normally finished by
 // 07:30, so the start moves to 08:30 from the November 18 target onward.
-export function ordinaryDailyStartTime(target){const d=date(target);return d>='2026-11-18'?'08:30':d>='2026-11-03'?'09:00':d>='2026-11-02'?'10:00':'10:30';}
+// Owner request 2026-11-19: 08:00 from the November 19 target onward.
+export function ordinaryDailyStartTime(target){const d=date(target);return d>='2026-11-19'?'08:00':d>='2026-11-18'?'08:30':d>='2026-11-03'?'09:00':d>='2026-11-02'?'10:00':'10:30';}
 export function ordinaryDailyScheduledAt(target){return add(target,1)+'T'+ordinaryDailyStartTime(target)+':00+08:00';}
 const within=d=>d>=calendarCoverage.from&&d<=calendarCoverage.through;
 export function marketSession(d,venue){

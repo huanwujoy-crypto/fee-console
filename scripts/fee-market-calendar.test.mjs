@@ -132,3 +132,13 @@ test('08:30 start applies from the 2026-11-18 target; earlier targets keep 09:00
  assert.equal(nextSameDayCheck(p,'2026-11-19T08:30:00+08:00'),'2026-11-19T11:30:00+08:00');
  assert.equal(plan('2026-11-18T08:30:00+08:00','2026-11-16',['NYSE','NASDAQ']).reason,'BEFORE_0900');
 });
+test('08:00 start applies from the 2026-11-19 target; the 2026-11-18 target keeps 08:30',()=>{
+ assert.equal(ordinaryDailyStartTime('2026-11-18'),'08:30');assert.equal(ordinaryDailyStartTime('2026-11-19'),'08:00');
+ assert.equal(ordinaryDailyScheduledAt('2026-11-19'),'2026-11-20T08:00:00+08:00');
+ const early=plan('2026-11-20T07:59:59+08:00','2026-11-18',['NYSE','NASDAQ']);
+ assert.equal(early.state,'not-due');assert.equal(early.reason,'BEFORE_0800');
+ const p=plan('2026-11-20T08:00:00+08:00','2026-11-18',['NYSE','NASDAQ']);
+ assert.equal(p.target,'2026-11-19');assert.equal(p.state,'calendar-ready');
+ assert.equal(nextSameDayCheck(p,'2026-11-20T08:00:00+08:00'),'2026-11-20T11:30:00+08:00');
+ assert.equal(plan('2026-11-19T08:00:00+08:00','2026-11-17',['NYSE','NASDAQ']).reason,'BEFORE_0830');
+});

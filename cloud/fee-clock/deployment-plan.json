@@ -104,7 +104,7 @@
   "schedulerJobs": [
     {
       "name": "projects/family-portfolio-gateway/locations/asia-east2/jobs/fee-clock-launch-1000",
-      "schedule": "30 8 * * 2-6",
+      "schedule": "0 8 * * 2-6",
       "timeZone": "Asia/Hong_Kong",
       "attemptDeadline": "30s",
       "retryConfig": {
@@ -126,7 +126,7 @@
     },
     {
       "name": "projects/family-portfolio-gateway/locations/asia-east2/jobs/fee-clock-check-start-1005",
-      "schedule": "35 8 * * 2-6",
+      "schedule": "5 8 * * 2-6",
       "timeZone": "Asia/Hong_Kong",
       "attemptDeadline": "30s",
       "retryConfig": {

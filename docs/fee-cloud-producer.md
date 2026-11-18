@@ -18,7 +18,7 @@ before the original producer only after the accepted Jenny native checkpoint
 and `IB_MANAGER_BASELINE_SHA256` are in place. The old benchmark stays disabled.
 Do not activate merely because this code or the frozen display attachment exists.
 
-Scheduled sessions begin at HKT08:30 from the 2026-11-18 target (HKT09:00 before); the original11:30 and14:00 slots are fallbacks
+Scheduled sessions begin at HKT08:00 from the 2026-11-19 target (HKT08:30 for 2026-11-18, HKT09:00 before); the original11:30 and14:00 slots are fallbacks
 for a target that has not entered financial processing. The target is the prior
 Hong Kong calendar date, with the existing market calendar, actual accounting
 cutoffs and month-end completion checks. No completed-sync assertion is invented.
