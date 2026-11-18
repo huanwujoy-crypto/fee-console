@@ -89,6 +89,36 @@ export function summarizeTopHoldings(input, limit = 3, exposureMappings = []) {
     .slice(0, limit);
 }
 
+/** Per-account cash and holdings for the manager's risk simulator on the page.
+ * Reporting only: never read by NAV, flows, returns or fee calculations. It
+ * returns null instead of throwing, so an unusable input only leaves the field
+ * out of the daily point and can never stop the day's report.
+ */
+export function summarizeRiskBook(input, acctCash) {
+  try {
+    if (!input || !Array.isArray(input.portfolios) || input.portfolios.length !== 2) return null;
+    const accounts = {}, cents = n => Math.round(n * 100) / 100;
+    for (const p of input.portfolios) {
+      if (!p || !Object.hasOwn(STYLE_ACCOUNTS, p.account) || Object.hasOwn(accounts, p.account)
+          || !Array.isArray(p.holdings) || p.holdings.length > 1000) return null;
+      const cash = acctCash?.[p.account];
+      if (typeof cash !== 'number' || !Number.isFinite(cash) || Math.abs(cash) > 1e12) return null;
+      const totals = new Map();
+      for (const h of p.holdings) {
+        if (typeof h?.ticker !== 'string' || !/^[A-Z0-9][A-Z0-9./^-]{0,31}$/.test(h.ticker)
+            || typeof h.valueUsd !== 'number' || !Number.isFinite(h.valueUsd)
+            || h.valueUsd < 0 || h.valueUsd > 1e12) return null;
+        totals.set(h.ticker, (totals.get(h.ticker) || 0) + h.valueUsd);
+      }
+      accounts[p.account] = { cash: cents(cash), holdings: [...totals.entries()]
+        .map(([ticker, value]) => ({ ticker, value: cents(value) }))
+        .filter(row => row.value > 0)
+        .sort((a, b) => b.value - a.value || (a.ticker < b.ticker ? -1 : a.ticker > b.ticker ? 1 : 0)) };
+    }
+    return { schemaVersion: 1, accounts };
+  } catch { return null; }
+}
+
 function validateEntry(e, saved = false) {
   exact(e, saved ? [...ENTRY_KEYS, 'id'] : ENTRY_KEYS);
   identity(e);

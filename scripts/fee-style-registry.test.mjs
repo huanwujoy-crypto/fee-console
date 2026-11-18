@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { resolveStyle, resolveAssetAllocation, readStyleInput, summarizeTopHoldings } from './fee-style-registry.mjs';
+import { resolveStyle, resolveAssetAllocation, readStyleInput, summarizeTopHoldings, summarizeRiskBook } from './fee-style-registry.mjs';
 
 const fixture = () => ({
   date: '2026-09-06', sourceDates: { schwab: '2026-09-04', webull: '2026-09-04' }, stock: 300,
@@ -363,4 +363,23 @@ for (const [name, change, code] of [
   ['SGOV remains outside this legacy securities aggregate', f=>f.input.portfolios[0].holdings[0].ticker='SGOV', 'IDENTITY'],
 ]) test(`source asset mode still blocks ${name}`, () => {
   const f=assetFixture(); change(f); assert.throws(()=>resolveAssetAllocation(f), new RegExp('STYLE_'+code));
+});
+
+test('the risk book keeps each account\'s cash and holdings, and leaves itself out instead of failing', () => {
+  const input = { portfolios: [
+    { account: 'schwab', holdings: [{ ticker: 'AAA', valueUsd: 100.004 }, { ticker: 'BBB', valueUsd: 250 }, { ticker: 'AAA', valueUsd: 50 }, { ticker: 'ZERO', valueUsd: 0 }] },
+    { account: 'webull', holdings: [{ ticker: 'TQQQ', valueUsd: 75 }, { ticker: 'AAA', valueUsd: 75 }] } ] };
+  assert.deepEqual(summarizeRiskBook(input, { schwab: 12.345, webull: -300 }), { schemaVersion: 1, accounts: {
+    schwab: { cash: 12.35, holdings: [{ ticker: 'BBB', value: 250 }, { ticker: 'AAA', value: 150 }] },
+    webull: { cash: -300, holdings: [{ ticker: 'AAA', value: 75 }, { ticker: 'TQQQ', value: 75 }] } } });
+  const bad = change => { const copy = structuredClone(input); change(copy); return copy; };
+  for (const [book, cash] of [
+    [input, { schwab: 1 }], [input, undefined], [input, { schwab: 1, webull: NaN }], [input, { schwab: '1', webull: 2 }],
+    [null, { schwab: 1, webull: 2 }], [bad(c => c.portfolios.pop()), { schwab: 1, webull: 2 }],
+    [bad(c => { c.portfolios[1].account = 'schwab'; }), { schwab: 1, webull: 2 }],
+    [bad(c => { c.portfolios[1].account = 'other'; }), { schwab: 1, webull: 2 }],
+    [bad(c => { c.portfolios[0].holdings[0].valueUsd = -1; }), { schwab: 1, webull: 2 }],
+    [bad(c => { c.portfolios[0].holdings[0].ticker = 'bad ticker'; }), { schwab: 1, webull: 2 }],
+    [bad(c => { c.portfolios[0].holdings = null; }), { schwab: 1, webull: 2 }],
+  ]) assert.equal(summarizeRiskBook(book, cash), null);
 });

@@ -196,3 +196,47 @@ test('the holdings list shows up to five rows with their total; three-row histor
   assert.equal(box.topHoldingsView({stock:900,topHoldings:[...five,{ticker:'F',value:10}]},1000),'');
   assert.equal(box.topHoldingsView({stock:500,topHoldings:five},1000),'');
 });
+
+test('the risk desk folds leveraged products into their underlying and finds the margin-call distance',()=>{
+  const html=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8'),box={};vm.createContext(box);
+  vm.runInContext(`const esc=v=>String(v??'');const usd=(v,d=2)=>(v<0?'-$':'$')+Math.abs(Number(v)).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});`,box);
+  vm.runInContext(html.slice(html.indexOf('/* risk-desk:start */'),html.indexOf('/* risk-desk:end */'))+';globalThis.riskDeskModel=riskDeskModel;globalThis.riskDeskView=riskDeskView;',box);
+  const defs=[{id:'schwab',name:'Schwab'},{id:'webull',name:'Webull'}],near=(a,b)=>assert.ok(Math.abs(a-b)<1e-6,`${a} vs ${b}`);
+  const lp={d:'2026-11-18',schwab:600000,webull:400000,riskBook:{schemaVersion:1,accounts:{
+    schwab:{cash:20000,holdings:[{ticker:'GOOG',value:300000},{ticker:'AVGO',value:280000}]},
+    webull:{cash:-200000,holdings:[{ticker:'VST',value:200000},{ticker:'TQQQ',value:150000},{ticker:'NVDL',value:100000},{ticker:'GGLL',value:80000},{ticker:'VSTL',value:70000}]}}}};
+  const m=box.riskDeskModel(lp,defs,{shock:-.2});
+  near(m.nav,1000000);near(m.gross,1180000);near(m.exposure,1730000);near(m.borrowed,200000);near(m.economicLeverage,1.73);
+  assert.deepEqual(JSON.parse(JSON.stringify(m.unders.map(u=>[u.under,u.direct,u.levered,u.exposure]))),
+    [['GOOG/GOOGL',300000,80000,460000],['QQQ',0,150000,450000],['VST',200000,70000,340000],['AVGO',280000,0,280000],['NVDA',0,100000,200000]]);
+  // Every security down 20%: 3x and 2x products fall 60% and 40%.
+  near(m.scenario.pnl,-346000);assert.equal(m.margin.length,1);
+  const w=m.margin[0];near(w.loan,200000);near(w.leverage,1.5);near(w.equityAfter,170000);near(w.requiredAfter,160000);near(w.excessAfter,10000);assert.equal(w.fix,null);
+  // The reported distance is exactly where equity meets the requirement.
+  near(w.excessNow,112500);
+  const at=box.riskDeskModel(lp,defs,{shock:-w.callDrop}).margin[0];assert.ok(Math.abs(at.excessAfter)<1e-3);assert.ok(w.callDrop>.2&&w.callDrop<.23);
+  // A shortfall is closed by each offered remedy.
+  const deep=box.riskDeskModel(lp,defs,{shock:-.3}).margin[0];near(deep.fix.deposit,41250);near(deep.fix.sellPlain,41250/.475);near(deep.fix.sellLevered,41250/.975);assert.equal(deep.fix.levMult,3);
+  const after=change=>{const c=structuredClone(lp);change(c);return box.riskDeskModel(c,defs,{shock:-.3}).margin[0].excessAfter;};
+  assert.ok(Math.abs(after(c=>{c.webull+=41250;c.riskBook.accounts.webull.cash+=41250;}))<1e-6);
+  assert.ok(Math.abs(after(c=>{const s=41250/.475;c.riskBook.accounts.webull.holdings[0].value-=s;c.riskBook.accounts.webull.cash+=s;}))<1e-6);
+  assert.ok(Math.abs(after(c=>{const s=41250/.975;c.riskBook.accounts.webull.holdings[1].value-=s;c.riskBook.accounts.webull.cash+=s;}))<1e-6);
+  // One underlying only: its leveraged product moves with it, nothing else does.
+  const one=box.riskDeskModel(lp,defs,{shock:-.5,scope:'VST'});near(one.scenario.pnl,-170000);assert.equal(one.scope,'VST');
+  assert.equal(box.riskDeskModel(lp,defs,{shock:-.5,scope:'NOPE'}).scope,'all');
+  // A product never loses more than its value; the shock and the assumptions are bounded.
+  near(box.riskDeskModel(lp,defs,{shock:-.6}).scenario.pnl,-(580000*.6+200000*.6+150000+250000+0));
+  const bounded=box.riskDeskModel(lp,defs,{shock:-9,maint:.01,rate:9});near(bounded.shock,-.6);near(bounded.maint,.25);near(bounded.rate,.3);
+  near(m.interest.annual,12000);
+  // No financing: no margin account, and the text says so.
+  const cashOnly=structuredClone(lp);cashOnly.riskBook.accounts.webull.cash=5000;
+  const none=box.riskDeskModel(cashOnly,defs,{shock:-.3});assert.equal(none.margin.length,0);near(none.borrowed,0);
+  const text=out=>out.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim();
+  assert.match(text(box.riskDeskView(cashOnly,defs,{})),/距追缴 无融资/);
+  assert.match(text(box.riskDeskView(lp,defs,{shock:-.3})),/融资额 \$200,000 Webull 账户杠杆 1\.50× 距追缴 再跌 22\.0%.*保证金缺口 \$41,250.*入金或还款 \$41,250 现在减持普通股票约 \$86,842 现在减持 3 倍杠杆产品约 \$42,308/);
+  // Anything unusable shows the waiting note rather than a figure.
+  for(const change of [c=>{delete c.riskBook;},c=>{c.riskBook.schemaVersion=2;},c=>{delete c.riskBook.accounts.schwab;},c=>{c.riskBook.accounts.extra={cash:0,holdings:[]};},
+    c=>{c.riskBook.accounts.webull.cash='x';},c=>{c.riskBook.accounts.webull.holdings[0].value=-1;},c=>{c.riskBook.accounts.webull.holdings[0].ticker='<b>';},c=>{c.webull=NaN;},c=>{c.schwab=0;c.webull=0;}]){
+    const c=structuredClone(lp);change(c);assert.equal(box.riskDeskModel(c,defs,{}),null);assert.match(box.riskDeskView(c,defs,{}),/下一次每日发布自动带入/);
+  }
+});
