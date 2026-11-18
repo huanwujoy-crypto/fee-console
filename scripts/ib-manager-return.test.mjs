@@ -239,12 +239,24 @@ test('the risk desk folds leveraged products into their underlying and finds the
   const none=box.riskDeskModel(cashOnly,defs,{shock:-.3});assert.equal(none.margin.length,0);near(none.borrowed,0);
   const text=out=>out.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim();
   assert.match(text(box.riskDeskView(cashOnly,defs,{})),/距追缴 无融资/);
-  assert.match(text(box.riskDeskView(lp,defs,{...P,shock:-.3})),/融资额 \$200,000 Webull 账户杠杆 1\.50× 距追缴 再跌 20\.\d%.*保证金缺口 \$49,000.*入金或还款 \$65,417 现在减持普通股票约 \$126,104 现在减持 3 倍杠杆产品约 \$67,672/);
+  assert.match(text(box.riskDeskView(lp,defs,{...P,shock:-.3})),/融资额 \$200,000 Webull 账户杠杆 1\.50× 距追缴 标普跌 1\d\.\d% 各标的同跌则为 20\.\d%.*保证金缺口 \$49,000.*入金或还款 \$65,417 现在减持普通股票约 \$126,104 现在减持 3 倍杠杆产品约 \$67,672/);
   // Anything unusable shows the waiting note rather than a figure.
   for(const change of [c=>{delete c.riskBook;},c=>{c.riskBook.schemaVersion=2;},c=>{delete c.riskBook.accounts.schwab;},c=>{c.riskBook.accounts.extra={cash:0,holdings:[]};},
     c=>{c.riskBook.accounts.webull.cash='x';},c=>{c.riskBook.accounts.webull.holdings[0].value=-1;},c=>{c.riskBook.accounts.webull.holdings[0].ticker='<b>';},c=>{c.webull=NaN;},c=>{c.schwab=0;c.webull=0;}]){
     const c=structuredClone(lp);change(c);assert.equal(box.riskDeskModel(c,defs,{}),null);assert.match(box.riskDeskView(c,defs,{}),/下一次每日发布自动带入/);
   }
+  // S&P 500 scenario: each underlying moves by its beta, leveraged products by beta times the multiple, floored at -100%.
+  const sp=box.riskDeskModel(lp,defs,{...P,shock:-.1,scope:'spx'});assert.equal(sp.scope,'spx');
+  near(sp.spxBeta,(300000*1.1+280000*1.5+200000*1.4+150000*3*1.2+100000*2*1.9+80000*2*1.1+70000*2*1.4)/1000000);near(sp.scenario.pnl,-232200);
+  assert.deepEqual([...sp.unknownBeta],[]);
+  const sw=sp.margin[0];assert.ok(sw.callDropSpx>0&&sw.callDropSpx<sw.callDrop);
+  assert.ok(Math.abs(box.riskDeskModel(lp,defs,{...P,shock:-sw.callDropSpx,scope:'spx'}).margin[0].excessAfter)<1e-3);
+  near(box.riskDeskModel(lp,defs,{shock:-.5,scope:'spx'}).scenario.pnl,-(300000*.55+280000*.75+200000*.7+150000+100000+80000+70000));
+  const odd=structuredClone(lp);odd.riskBook.accounts.schwab.holdings.push({ticker:'ZZZQ',value:1000},{ticker:'BRK/B',value:1000});
+  const om=box.riskDeskModel(odd,defs,{shock:-.1,scope:'spx'});assert.deepEqual([...om.unknownBeta],['ZZZQ']);
+  near(om.scenario.pnl-sp.scenario.pnl,-(1000*.1+1000*.07));
+  const spView=text(box.riskDeskView(odd,defs,{scope:'spx'}));assert.match(spView,/标普500 每变动 1%，组合约变动 2\.3%/);assert.match(spView,/按 1\.0 处理：ZZZQ。/);
+  assert.match(box.riskDeskView(lp,defs,{scope:'spx'}),/<option value="spx" selected>标普500 指数<\/option>/);
   // The card is for every viewer of the page, read-only links included: it must not depend on the manager token.
   const render=html.slice(html.indexOf('function renderRiskDesk(st){'),html.indexOf('function riskDeskInput(event){'));
   assert.ok(render.includes('show=!!lp;'));assert.ok(!render.includes('isMgr'));
