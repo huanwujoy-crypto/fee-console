@@ -10,7 +10,7 @@
 <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAABzUlEQVR42u3bsQ2AMAwAwczDhEzKOqGlCBIgBdnxRT+BfU0Kt20/pGHNCASH4BAcgkNwCA7BITgEh+CQ4BAcgkNwCA7BITgEh+AQHBIcgkNwCA7BITgEh+AQHIJDgkNwCA7BITgEh+AQHIJDcAgOCQ7BITgEh+AQHIJDcOi2/vjBwUQyJXAEkhHNBxyxZITyAQcccMABxwIy4viAAw444IADDjjggAMOOOCAAw444IBDcAgOwQEHHHDAAQcccMABBxxwwAEHHHAIDudocDDxeWFwOEeDg4z3a4MDDjjggKMOjh82BwcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAGHQ1Y4HLLCERPH1IHCkRjH7JnCAQcccMBRB8cam4MDDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAQxWDQ3AIDsEhOFQNR/eSfG7hgAMOOOCAAw444PCq4ZCvrOAQHIJDgkNwCA7BITgEh+AQHIJDcEhwCA7BITgEh+AQHIJDcAgOwSHBITgEh+AQHIJDcAgOwSE4pEsnhtvC417hqCsAAAAASUVORK5CYII=">
-<meta name="fee-console-build" content="4.10.9">
+<meta name="fee-console-build" content="4.10.10">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -1181,7 +1181,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.10.9";
+const UI_VERSION_LABEL=" · v4.10.10";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -4782,7 +4782,7 @@ function riskDeskModel(lp,accountDefs,params){
   if(!book||book.schemaVersion!==1||!book.accounts||typeof book.accounts!=="object"||!Array.isArray(accountDefs)||!accountDefs.length
     ||Object.keys(book.accounts).length!==accountDefs.length)return null;
   const clamp=(v,lo,hi,d)=>Number.isFinite(Number(v))?Math.min(hi,Math.max(lo,Number(v))):d;
-  const maint=clamp(p.maint,.25,1,.25),rate=clamp(p.rate,0,.3,.06),shock=clamp(p.shock,-.6,.3,0);
+  const maint=clamp(p.maint,.25,1,.4),levMaint=clamp(p.levMaint,.25,1,.66),rate=clamp(p.rate,0,.3,.0475),shock=clamp(p.shock,-.6,.3,0);
   const accounts=[];let nav=0,gross=0,exposure=0,borrowed=0;const unders=new Map();
   for(const def of accountDefs){
     const a=book.accounts[def.id],net=Number(lp[def.id]);
@@ -4805,9 +4805,12 @@ function riskDeskModel(lp,accountDefs,params){
   const list=[...unders.values()].sort((a,b)=>b.exposure-a.exposure||(a.under<b.under?-1:1)).map(u=>({...u,weight:u.exposure/nav}));
   const scope=p.scope&&p.scope!=="all"&&unders.has(p.scope)?p.scope:"all";
   const move=(row,s,sc)=>sc==="all"||row.under===sc?Math.max(-1,row.mult*s):0;
-  const need=row=>Math.min(1,maint*row.mult);
+  const need=row=>row.mult>1?levMaint:maint;
   // Equity less the maintenance requirement; never decreasing in `s`.
   const excess=(acct,s,sc)=>acct.rows.reduce((sum,row)=>{const m=move(row,s,sc);return sum+row.value*(m-(1+m)*need(row));},acct.net);
+  // A margin call asks for equity back at the initial requirement, which sits above maintenance.
+  const initNeed=k=>Math.min(1,k>1?levMaint/.9:maint/.8);
+  const initial=(acct,s,sc)=>acct.rows.reduce((sum,row)=>sum+row.value*(1+move(row,s,sc))*initNeed(row.mult),0);
   let pnl=0;
   const margin=[];
   for(const acct of accounts){
@@ -4819,14 +4822,14 @@ function riskDeskModel(lp,accountDefs,params){
     else if(excess(acct,-1,"all")<0){let lo=-1,hi=0;for(let i=0;i<50;i++){const mid=(lo+hi)/2;if(excess(acct,mid,"all")<0)lo=mid;else hi=mid;}callDrop=-hi;}
     let fix=null;
     if(after<0){
-      const gap=-after,drop=Math.max(0,-shock),hit=acct.rows.filter(row=>scope==="all"||row.under===scope);
-      const levMult=hit.reduce((m,row)=>Math.max(m,row.mult),1),per=k=>{const n=Math.min(1,maint*k),d=Math.min(1,k*drop);return n+(1-n)*d;};
+      const gap=initial(acct,shock,scope)-(acct.net+acctPnl),drop=Math.max(0,-shock),hit=acct.rows.filter(row=>scope==="all"||row.under===scope);
+      const levMult=hit.reduce((m,row)=>Math.max(m,row.mult),1),per=k=>{const n=initNeed(k),d=Math.min(1,k*drop);return n+(1-n)*d;};
       fix={deposit:gap,sellPlain:hit.some(row=>row.mult===1)?gap/per(1):null,sellLevered:levMult>1?gap/per(levMult):null,levMult};
     }
     margin.push({id:acct.id,name:acct.name,net:acct.net,loan:-acct.cash,held:acct.held,leverage:acct.net>0?acct.held/acct.net:null,
-      excessNow:now,equityAfter:acct.net+acctPnl,requiredAfter:acct.net+acctPnl-after,excessAfter:after,callDrop,fix});
+      excessNow:now,equityAfter:acct.net+acctPnl,requiredAfter:acct.net+acctPnl-after,initialAfter:initial(acct,shock,scope),excessAfter:after,callDrop,fix});
   }
-  return {nav,gross,exposure,borrowed,bookLeverage:gross/nav,economicLeverage:exposure/nav,unders:list,maint,rate,shock,scope,
+  return {nav,gross,exposure,borrowed,bookLeverage:gross/nav,economicLeverage:exposure/nav,unders:list,maint,levMaint,rate,shock,scope,
     scenario:{pnl,pnlPct:pnl/nav,navAfter:nav+pnl},margin,
     interest:{annual:borrowed*rate,monthly:borrowed*rate/12,pctNav:borrowed*rate/nav}};
 }
@@ -4844,7 +4847,7 @@ function riskDeskOutput(m){
     const ways=[`入金或还款 <b>${usd(a.fix.deposit,0)}</b>`];
     if(a.fix.sellPlain!=null)ways.push(`现在减持普通股票约 <b>${usd(a.fix.sellPlain,0)}</b>`);
     if(a.fix.sellLevered!=null)ways.push(`现在减持 ${a.fix.levMult} 倍杠杆产品约 <b>${usd(a.fix.sellLevered,0)}</b>`);
-    out+=`<div class="risk-status risk-bad" role="status"><b>${esc(a.name)}：这个情景下会被追缴。</b>要撑过它，任选其一：<ul>${ways.map(w=>`<li>${w}</li>`).join("")}</ul></div>`;
+    out+=`<div class="risk-status risk-bad" role="status"><b>${esc(a.name)}：这个情景下会被追缴。</b>Webull 要求补回到初始保证金，任选其一：<ul>${ways.map(w=>`<li>${w}</li>`).join("")}</ul></div>`;
   }
   if(!m.margin.length)out+=`<p class="risk-status" role="status">当前没有账户在融资，不存在追缴风险；上面只反映市值变化。</p>`;
   return out;
@@ -4876,13 +4879,17 @@ function riskDeskView(lp,accountDefs,params){
 <div class="risk-chips">${[-10,-20,-30,-50,0].map(v=>`<button type="button" data-risk-shock="${v}">${v===0?"复位":v+"%"}</button>`).join("")}</div>
 <div id="riskOut" aria-live="polite">${riskDeskOutput(m)}</div>
 <div class="risk-sub">假设（可改）</div>
-<div class="risk-ctl"><label for="riskMaint">普通证券维持保证金率</label><span class="risk-num"><input id="riskMaint" type="number" inputmode="decimal" min="25" max="100" step="5" value="${Math.round(m.maint*100)}">%</span></div>
+<div class="risk-ctl"><label for="riskMaint">普通证券维持保证金率</label><span class="risk-num"><input id="riskMaint" type="number" inputmode="decimal" min="25" max="100" step="1" value="${Math.round(m.maint*100)}">%</span></div>
+<div class="risk-ctl"><label for="riskLevMaint">杠杆产品维持保证金率</label><span class="risk-num"><input id="riskLevMaint" type="number" inputmode="decimal" min="25" max="100" step="1" value="${Math.round(m.levMaint*100)}">%</span></div>
 <div class="risk-ctl"><label for="riskRate">融资年利率</label><span class="risk-num"><input id="riskRate" type="number" inputmode="decimal" min="0" max="30" step="0.25" value="${+(m.rate*100).toFixed(2)}">%</span></div>
 <div id="riskInterest" class="hint">${riskDeskInterest(m)}</div>
 <details class="expl"><summary>算法与局限</summary><div class="hint"><ol class="bench-points">
 <li>数据来自每日发布时的各账户现金与持仓；现金为负即融资额。只用于模拟，不参与净值、收益和费用计算。</li>
 <li>杠杆产品按"标的涨跌 × 倍数"的单日近似计算，最多跌到零；连续多日的实际结果会偏离这个倍数。</li>
-<li>维持保证金要求＝各持仓市值 × 保证金率；杠杆产品的保证金率按"普通证券保证金率 × 倍数"估算（最高 100%）。券商的实际要求可能更高，以券商为准。</li>
+<li>维持保证金要求＝各持仓市值 × 保证金率。Webull 香港对每只证券各定比例且可随时调整；这里用两个平均值代替：普通证券 40%（按其公开规则：美股最多融资 50%，维持约为初始的 0.8 倍），杠杆产品 66%（按 2026-11-18 App 内 Risk Level 页的账户维持保证金总额反推）。以 App 为准，持仓结构变化后请对照 App 调整。</li>
+<li>被追缴后，Webull 要求把净值补回到初始保证金（高于维持保证金），补救金额按此计算：普通证券的初始比例按维持的 1/0.8、杠杆产品按维持的 1/0.9 估算，与当日 App 的初始保证金总额一致。逾期或行情剧烈时，Webull 可不经通知强制平仓。</li>
+<li>利息按 Webull 香港公布的美元融资年利率 4.75% 预填；实际按日历日、一年 360 天计息，每月扣收，利率可不经通知调整。</li>
+<li>Webull 在净值跌到维持保证金之前还有一道"保证金预警"线（当日约为维持保证金的 1.09 倍），会更早提示。</li>
 <li>"全部证券"情景假设所有标的同幅涨跌，不区分各自波动大小；未列入杠杆产品表的代码按 1 倍处理。</li>
 <li>这是方向性估算，不是券商的追缴通知，也不是投资建议。</li></ol></div></details>`;
 }
@@ -4893,8 +4900,8 @@ function riskDeskInterest(m){
 let _riskParams=null,_riskPoint=null;
 function riskDeskParams(){
   if(_riskParams)return _riskParams;
-  _riskParams={shock:0,scope:"all",maint:.25,rate:.06};
-  try{const saved=JSON.parse(store?.getItem("fee-risk-desk-v1")||"null");if(saved&&typeof saved==="object"){if(Number.isFinite(saved.maint))_riskParams.maint=saved.maint;if(Number.isFinite(saved.rate))_riskParams.rate=saved.rate;}}catch(_){}
+  _riskParams={shock:0,scope:"all",maint:.4,levMaint:.66,rate:.0475};
+  try{const saved=JSON.parse(store?.getItem("fee-risk-desk-v2")||"null");if(saved&&typeof saved==="object"){if(Number.isFinite(saved.maint))_riskParams.maint=saved.maint;if(Number.isFinite(saved.levMaint))_riskParams.levMaint=saved.levMaint;if(Number.isFinite(saved.rate))_riskParams.rate=saved.rate;}}catch(_){}
   return _riskParams;
 }
 function renderRiskDesk(st){
@@ -4917,10 +4924,11 @@ function riskDeskInput(event){
   else if(t.id==="riskShock")p.shock=Number(t.value)/100;
   else if(t.id==="riskScope")p.scope=t.value;
   else if(t.id==="riskMaint"){if(t.value==="")return;p.maint=Number(t.value)/100;}
+  else if(t.id==="riskLevMaint"){if(t.value==="")return;p.levMaint=Number(t.value)/100;}
   else if(t.id==="riskRate"){if(t.value==="")return;p.rate=Number(t.value)/100;}
   else return;
   const m=riskDeskModel(_riskPoint,DB.accounts,p);if(!m)return;
-  if(t.id==="riskMaint"||t.id==="riskRate"){try{store?.setItem("fee-risk-desk-v1",JSON.stringify({maint:m.maint,rate:m.rate}));}catch(_){}}
+  if(t.id==="riskMaint"||t.id==="riskLevMaint"||t.id==="riskRate"){try{store?.setItem("fee-risk-desk-v2",JSON.stringify({maint:m.maint,levMaint:m.levMaint,rate:m.rate}));}catch(_){}}
   const pctVal=Math.round(m.shock*100),range=document.getElementById("riskShock");
   if(range&&quick)range.value=String(pctVal);
   document.getElementById("riskShockLabel").textContent=(pctVal>0?"+":"")+pctVal+"%";
