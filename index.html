@@ -10,7 +10,7 @@
 <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAABzUlEQVR42u3bsQ2AMAwAwczDhEzKOqGlCBIgBdnxRT+BfU0Kt20/pGHNCASH4BAcgkNwCA7BITgEh+CQ4BAcgkNwCA7BITgEh+AQHBIcgkNwCA7BITgEh+AQHIJDgkNwCA7BITgEh+AQHIJDcAgOCQ7BITgEh+AQHIJDcOi2/vjBwUQyJXAEkhHNBxyxZITyAQcccMABxwIy4viAAw444IADDjjggAMOOOCAAw444IBDcAgOwQEHHHDAAQcccMABBxxwwAEHHHAIDudocDDxeWFwOEeDg4z3a4MDDjjggKMOjh82BwcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAGHQ1Y4HLLCERPH1IHCkRjH7JnCAQcccMBRB8cam4MDDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAQxWDQ3AIDsEhOFQNR/eSfG7hgAMOOOCAAw444PCq4ZCvrOAQHIJDgkNwCA7BITgEh+AQHIJDcEhwCA7BITgEh+AQHIJDcAgOwSHBITgEh+AQHIJDcAgOwSE4pEsnhtvC417hqCsAAAAASUVORK5CYII=">
-<meta name="fee-console-build" content="4.10.8">
+<meta name="fee-console-build" content="4.10.9">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -58,6 +58,16 @@ h1{font-size:19px;margin:0}
 .top-holdings-rank{color:var(--ink-muted)}.top-holdings-ticker{font-weight:650;overflow-wrap:anywhere}.top-holdings-value{font-weight:600;white-space:nowrap}.top-holdings-weight{min-width:43px;text-align:right;color:var(--ink-2);white-space:nowrap}
 .top-holdings-total{margin-top:2px;padding-top:5px;border-top:1px dashed var(--grid)}.top-holdings-total .top-holdings-ticker{font-weight:600;color:var(--ink-2)}
 .top-holdings+.mix{border-top:0;margin-top:2px;padding-top:4px}
+.risk-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px}.risk-tiles{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 0 2px}
+.risk-tile{min-width:0;border:1px solid var(--border);border-radius:10px;padding:8px 10px;background:var(--plane)}.risk-tile .lab{font-size:11px;color:var(--ink-2)}.risk-tile .v{font-size:18px;font-weight:650;font-variant-numeric:tabular-nums;line-height:1.35}.risk-tile .s{font-size:11px;color:var(--ink-muted);overflow-wrap:anywhere}
+.risk-sub{font-size:12px;font-weight:600;color:var(--ink-2);margin:16px 0 6px}.risk-table-wrap{overflow-x:auto}.risk-table{width:100%;border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums}
+.risk-table th{font-weight:500;font-size:11px;color:var(--ink-2);text-align:right;padding:4px 0 4px 8px;white-space:nowrap}.risk-table td{text-align:right;padding:7px 0 7px 8px;border-top:1px solid var(--grid);white-space:nowrap}.risk-table th:first-child,.risk-table td:first-child{text-align:left;padding-left:0;white-space:normal}
+.risk-weight{display:block;font-size:10px;color:var(--ink-muted)}.risk-lev{display:block;width:fit-content;margin-top:2px;padding:0 6px;border-radius:999px;background:var(--chip);font-size:10px;color:var(--ink-2)}
+.risk-ctl{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:8px 0;font-size:13px}.risk-ctl label{color:var(--ink-2)}.risk-ctl output{font-size:18px;font-weight:650;font-variant-numeric:tabular-nums}
+.risk-ctl select,.risk-num input{font-family:inherit;font-size:16px;color:var(--ink-1);background:var(--surface-1);border:1px solid var(--border);border-radius:8px;padding:7px 8px}.risk-ctl select{min-width:0;max-width:62%}.risk-num{white-space:nowrap;color:var(--ink-2)}.risk-num input{width:76px;text-align:right;margin-right:4px}
+.risk-range{display:block;width:100%;height:36px;margin:0;accent-color:var(--series-1)}.risk-chips{display:flex;gap:6px;margin:2px 0 10px}.risk-chips button{flex:1 1 0;border:1px solid var(--border);background:var(--surface-1);color:var(--ink-2);border-radius:9px;padding:8px 2px;font-size:13px;font-family:inherit;cursor:pointer}.risk-chips button:active{background:var(--chip);color:var(--ink-1)}
+.risk-status{border-radius:10px;border:1px solid var(--border);padding:9px 12px;margin:8px 0 0;font-size:13px;line-height:1.55}.risk-status ul{margin:4px 0 0;padding-left:18px}.risk-status li,.risk-status li b{color:var(--ink-1)}div.risk-status.risk-bad{border-color:var(--critical);background:rgba(208,59,59,.07)}
+.risk-ok{color:var(--good-text)}.risk-warn{color:var(--series-2)}.risk-bad{color:var(--critical)}#riskDesk[hidden]{display:none}
 .rr{display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding:5px 0;font-size:14px}
 .rr span{color:var(--ink-2)}
 .rr b{font-size:19px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
@@ -374,6 +384,7 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
   <nav class="home-jump" aria-label="本页快速跳转"><button type="button" data-jump="kpis" aria-current="true">总览</button><button type="button" data-jump="returnsCard">收益</button><button type="button" data-jump="trendDetails">走势</button><button type="button" data-jump="monthsBox">月度</button><button type="button" data-jump="balBox">应付</button></nav>
   <div id="gateBox"></div>
   <div class="kpis" id="kpis"></div>
+  <div class="card" id="riskDesk" hidden></div>
   <div class="card">
     <details class="trend" id="trendDetails" open><summary><span class="trend-title">近期走势</span><span class="trend-note">最近12个月</span></summary>
       <div class="trend-body">
@@ -1170,7 +1181,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.10.8";
+const UI_VERSION_LABEL=" · v4.10.9";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -4638,7 +4649,7 @@ async function render(){
   const feeSummary=feeView.state==="verified"?` · 起算 ${feeView.start} · ${feeView.managementRatePpm/10000}% / ${feeView.carryRatePpm/10000}%`:` · ${feeView.message}`;
   document.getElementById("subTitle").textContent=`${DB.accounts.map(a=>a.name).join(" + ")}${feeSummary}${SHELL_BUILD?` · v${SHELL_BUILD}`:UI_VERSION_LABEL}`+(isMgr()?"":" · 只读");
   renderReportPublication(reportView);
-  renderKPIs(feeView,st,B,G);renderChart1(feeView,st);renderChart2(feeView,st);renderChart3(feeView,st);renderMonths(feeView,st);renderBal(feeView,st,B,G);if(isMgr()){renderFees(feeView,st,B,G);renderSettings();renderFlows();}
+  renderKPIs(feeView,st,B,G);renderChart1(feeView,st);renderChart2(feeView,st);renderChart3(feeView,st);renderMonths(feeView,st);renderBal(feeView,st,B,G);renderRiskDesk(st);if(isMgr()){renderFees(feeView,st,B,G);renderSettings();renderFlows();}
   renderGiftRegistryStatus(documentsAuthorized,feeView.state==='verified',feeView.asOf);
   renderRatioManagement();renderInvestors(fundProfile,feeView);renderInvestorFundArchive(fundProfile,fundArchive);if(documentsAuthorized)renderFundDocuments(fundDocuments);renderSetup();renderA2hs();renderLedgerControls();renderStyleRegistryDiagnostic(documentsAuthorized);
 }
@@ -4761,6 +4772,162 @@ function fundValueChart(points,id){
   return `<svg class="fund-chart" viewBox="0 0 600 206" role="img" aria-label="${esc(id)} 费用前份额市值从 ${esc(points[0].date)} 的 ${usd(values[0],2)} 变化至 ${esc(points.at(-1).date)} 的 ${usd(values.at(-1),2)}"><text x="12" y="19" font-size="13" fill="var(--ink-2)">${usd(max,0)}</text><line x1="12" x2="588" y1="172" y2="172" stroke="var(--grid)"/><path d="${path}" fill="none" stroke="var(--series-1)" stroke-width="3"/><circle cx="588" cy="${y(values.at(-1)).toFixed(2)}" r="4" fill="var(--series-1)"/><text x="12" y="199" font-size="12" fill="var(--ink-2)">${esc(points[0].date)}</text><text x="588" y="199" text-anchor="end" font-size="12" fill="var(--ink-2)">${esc(points.at(-1).date)}</text></svg>`;
 }
 /* fund-investor-render:end */
+/* risk-desk:start */
+// Manager-only what-if tool. Reads the reporting-only `riskBook` of the latest
+// daily point; never feeds NAV, returns, flows or fee calculations, and writes
+// nothing. Directional: every figure is an approximation for planning.
+const RISK_LEVERAGED={TQQQ:["QQQ",3],QLD:["QQQ",2],UPRO:["SPY",3],SPXL:["SPY",3],SSO:["SPY",2],SOXL:["SOXX",3],TECL:["XLK",3],NVDL:["NVDA",2],NVDU:["NVDA",2],NVDX:["NVDA",2],GGLL:["GOOG/GOOGL",2],TSLL:["TSLA",2],AVGX:["AVGO",2],AVL:["AVGO",2],VSTL:["VST",2],MSFU:["MSFT",2],AMZU:["AMZN",2],METU:["META",2],AAPU:["AAPL",2],PLTU:["PLTR",2],MSTU:["MSTR",2],MSTX:["MSTR",2],CONL:["COIN",2]};
+function riskDeskModel(lp,accountDefs,params){
+  const book=lp?.riskBook,p=params||{};
+  if(!book||book.schemaVersion!==1||!book.accounts||typeof book.accounts!=="object"||!Array.isArray(accountDefs)||!accountDefs.length
+    ||Object.keys(book.accounts).length!==accountDefs.length)return null;
+  const clamp=(v,lo,hi,d)=>Number.isFinite(Number(v))?Math.min(hi,Math.max(lo,Number(v))):d;
+  const maint=clamp(p.maint,.25,1,.25),rate=clamp(p.rate,0,.3,.06),shock=clamp(p.shock,-.6,.3,0);
+  const accounts=[];let nav=0,gross=0,exposure=0,borrowed=0;const unders=new Map();
+  for(const def of accountDefs){
+    const a=book.accounts[def.id],net=Number(lp[def.id]);
+    if(!a||typeof a!=="object"||!Number.isFinite(net)||net<0||typeof a.cash!=="number"||!Number.isFinite(a.cash)
+      ||!Array.isArray(a.holdings)||a.holdings.length>1000)return null;
+    const rows=[];let held=0;
+    for(const h of a.holdings){
+      if(!h||typeof h.ticker!=="string"||!/^[A-Z0-9][A-Z0-9./^-]{0,31}$/.test(h.ticker)||typeof h.value!=="number"||!Number.isFinite(h.value)||h.value<=0)return null;
+      const lev=Object.hasOwn(RISK_LEVERAGED,h.ticker)?RISK_LEVERAGED[h.ticker]:null;
+      const under=lev?lev[0]:(h.ticker==="GOOG"||h.ticker==="GOOGL")?"GOOG/GOOGL":h.ticker,mult=lev?lev[1]:1;
+      rows.push({ticker:h.ticker,value:h.value,under,mult});held+=h.value;
+      const u=unders.get(under)||{under,direct:0,levered:0,exposure:0,products:[]};
+      if(lev){u.levered+=h.value;if(!u.products.includes(h.ticker+" "+mult+"×"))u.products.push(h.ticker+" "+mult+"×");}else u.direct+=h.value;
+      u.exposure+=h.value*mult;unders.set(under,u);exposure+=h.value*mult;
+    }
+    accounts.push({id:def.id,name:String(def.name??def.id),net,cash:a.cash,held,rows});
+    nav+=net;gross+=held;borrowed+=Math.max(0,-a.cash);
+  }
+  if(!(nav>0))return null;
+  const list=[...unders.values()].sort((a,b)=>b.exposure-a.exposure||(a.under<b.under?-1:1)).map(u=>({...u,weight:u.exposure/nav}));
+  const scope=p.scope&&p.scope!=="all"&&unders.has(p.scope)?p.scope:"all";
+  const move=(row,s,sc)=>sc==="all"||row.under===sc?Math.max(-1,row.mult*s):0;
+  const need=row=>Math.min(1,maint*row.mult);
+  // Equity less the maintenance requirement; never decreasing in `s`.
+  const excess=(acct,s,sc)=>acct.rows.reduce((sum,row)=>{const m=move(row,s,sc);return sum+row.value*(m-(1+m)*need(row));},acct.net);
+  let pnl=0;
+  const margin=[];
+  for(const acct of accounts){
+    const acctPnl=acct.rows.reduce((sum,row)=>sum+row.value*move(row,shock,scope),0);pnl+=acctPnl;
+    if(!(acct.cash<0))continue;
+    const now=excess(acct,0,"all"),after=excess(acct,shock,scope);
+    let callDrop=null;
+    if(now<0)callDrop=0;
+    else if(excess(acct,-1,"all")<0){let lo=-1,hi=0;for(let i=0;i<50;i++){const mid=(lo+hi)/2;if(excess(acct,mid,"all")<0)lo=mid;else hi=mid;}callDrop=-hi;}
+    let fix=null;
+    if(after<0){
+      const gap=-after,drop=Math.max(0,-shock),hit=acct.rows.filter(row=>scope==="all"||row.under===scope);
+      const levMult=hit.reduce((m,row)=>Math.max(m,row.mult),1),per=k=>{const n=Math.min(1,maint*k),d=Math.min(1,k*drop);return n+(1-n)*d;};
+      fix={deposit:gap,sellPlain:hit.some(row=>row.mult===1)?gap/per(1):null,sellLevered:levMult>1?gap/per(levMult):null,levMult};
+    }
+    margin.push({id:acct.id,name:acct.name,net:acct.net,loan:-acct.cash,held:acct.held,leverage:acct.net>0?acct.held/acct.net:null,
+      excessNow:now,equityAfter:acct.net+acctPnl,requiredAfter:acct.net+acctPnl-after,excessAfter:after,callDrop,fix});
+  }
+  return {nav,gross,exposure,borrowed,bookLeverage:gross/nav,economicLeverage:exposure/nav,unders:list,maint,rate,shock,scope,
+    scenario:{pnl,pnlPct:pnl/nav,navAfter:nav+pnl},margin,
+    interest:{annual:borrowed*rate,monthly:borrowed*rate/12,pctNav:borrowed*rate/nav}};
+}
+function riskDeskOutput(m){
+  const pc=(v,d=1)=>(v*100).toFixed(d)+"%",signed=v=>(v>0?"+":"")+usd(v,0);
+  const tone=m.scenario.pnl<0?"risk-bad":m.scenario.pnl>0?"risk-ok":"";
+  let out=`<div class="res"><div class="line"><span>组合盈亏</span><b class="${tone}">${signed(m.scenario.pnl)}（${(m.scenario.pnlPct>0?"+":"")+pc(m.scenario.pnlPct)}）</b></div><div class="line"><span>模拟后净资产</span><b>${usd(m.scenario.navAfter,0)}</b></div>`;
+  for(const a of m.margin){
+    out+=`<div class="line tot"><span>${esc(a.name)} 净值</span><b>${usd(a.equityAfter,0)}</b></div><div class="line"><span>维持保证金要求</span><b>${usd(a.requiredAfter,0)}</b></div>`
+      +(a.excessAfter>=0?`<div class="line"><span>剩余缓冲</span><b class="risk-ok">${usd(a.excessAfter,0)}</b></div>`:`<div class="line"><span>保证金缺口</span><b class="risk-bad">${usd(-a.excessAfter,0)}</b></div>`);
+  }
+  out+="</div>";
+  for(const a of m.margin){
+    if(!a.fix){out+=`<p class="risk-status risk-ok" role="status">${esc(a.name)}：这个情景下不会被追缴。</p>`;continue;}
+    const ways=[`入金或还款 <b>${usd(a.fix.deposit,0)}</b>`];
+    if(a.fix.sellPlain!=null)ways.push(`现在减持普通股票约 <b>${usd(a.fix.sellPlain,0)}</b>`);
+    if(a.fix.sellLevered!=null)ways.push(`现在减持 ${a.fix.levMult} 倍杠杆产品约 <b>${usd(a.fix.sellLevered,0)}</b>`);
+    out+=`<div class="risk-status risk-bad" role="status"><b>${esc(a.name)}：这个情景下会被追缴。</b>要撑过它，任选其一：<ul>${ways.map(w=>`<li>${w}</li>`).join("")}</ul></div>`;
+  }
+  if(!m.margin.length)out+=`<p class="risk-status" role="status">当前没有账户在融资，不存在追缴风险；上面只反映市值变化。</p>`;
+  return out;
+}
+function riskDeskView(lp,accountDefs,params){
+  const m=riskDeskModel(lp,accountDefs,params);
+  if(!m)return `<h2>风险模拟 · 融资与杠杆</h2><p class="hint">风险明细会随下一次每日发布自动带入，届时这里显示融资额、杠杆敞口和情景模拟。</p>`;
+  const pc=(v,d=1)=>(v*100).toFixed(d)+"%",x=v=>v==null?"—":v.toFixed(2)+"×";
+  const drops=m.margin.map(a=>a.callDrop).filter(v=>v!=null),drop=drops.length?Math.min(...drops):null;
+  const dropTone=drop==null?"risk-ok":drop<.15?"risk-bad":drop<.3?"risk-warn":"risk-ok";
+  const dropText=!m.margin.length?"无融资":drop==null?"不会触发":drop===0?"已触发":"再跌 "+pc(drop);
+  const tile=(lab,v,s,cls="")=>`<div class="risk-tile"><div class="lab">${lab}</div><div class="v ${cls}">${v}</div><div class="s">${s}</div></div>`;
+  const tiles=tile("融资额",usd(m.borrowed,0),m.margin.length?m.margin.map(a=>esc(a.name)+" 账户杠杆 "+x(a.leverage)).join(" · "):"各账户现金均不为负")
+    +tile("距追缴",dropText,"全部证券同步下跌时",dropTone)
+    +tile("账面杠杆",x(m.bookLeverage),"证券市值 ÷ 净资产")
+    +tile("实际杠杆",x(m.economicLeverage),"杠杆产品按倍数折算");
+  const shown=m.unders.filter((u,i)=>i<6||u.levered>0);
+  const rows=shown.map(u=>`<tr><td>${esc(u.under)}${u.products.length?`<span class="risk-lev">${esc(u.products.join("、"))}</span>`:""}</td><td>${u.direct?usd(u.direct,0):"—"}</td><td>${u.levered?usd(u.levered,0):"—"}</td><td><b>${usd(u.exposure,0)}</b><span class="risk-weight">占净资产 ${pc(u.weight)}</span></td></tr>`).join("");
+  const options=`<option value="all"${m.scope==="all"?" selected":""}>全部证券</option>`+m.unders.slice(0,20).map(u=>`<option value="${esc(u.under)}"${m.scope===u.under?" selected":""}>只有 ${esc(u.under)}${u.levered?"（含杠杆产品）":""}</option>`).join("");
+  const pctVal=Math.round(m.shock*100);
+  return `<div class="risk-head"><h2>风险模拟 · 融资与杠杆</h2><span class="small">数据日 ${esc(lp.d)}</span></div>
+<div class="risk-tiles">${tiles}</div>
+<div class="risk-sub">等效敞口（杠杆产品折算后）</div>
+<div class="risk-table-wrap"><table class="risk-table"><thead><tr><th>标的</th><th>直接持有</th><th>杠杆产品</th><th>等效敞口</th></tr></thead><tbody>${rows}</tbody></table></div>
+<div class="risk-sub">情景模拟</div>
+<div class="risk-ctl"><label for="riskScope">谁在涨跌</label><select id="riskScope">${options}</select></div>
+<div class="risk-ctl"><label for="riskShock">涨跌幅</label><output id="riskShockLabel" for="riskShock">${pctVal>0?"+":""}${pctVal}%</output></div>
+<input class="risk-range" id="riskShock" type="range" min="-60" max="30" step="1" value="${pctVal}" aria-label="涨跌幅（百分比）">
+<div class="risk-chips">${[-10,-20,-30,-50,0].map(v=>`<button type="button" data-risk-shock="${v}">${v===0?"复位":v+"%"}</button>`).join("")}</div>
+<div id="riskOut" aria-live="polite">${riskDeskOutput(m)}</div>
+<div class="risk-sub">假设（可改）</div>
+<div class="risk-ctl"><label for="riskMaint">普通证券维持保证金率</label><span class="risk-num"><input id="riskMaint" type="number" inputmode="decimal" min="25" max="100" step="5" value="${Math.round(m.maint*100)}">%</span></div>
+<div class="risk-ctl"><label for="riskRate">融资年利率</label><span class="risk-num"><input id="riskRate" type="number" inputmode="decimal" min="0" max="30" step="0.25" value="${+(m.rate*100).toFixed(2)}">%</span></div>
+<div id="riskInterest" class="hint">${riskDeskInterest(m)}</div>
+<details class="expl"><summary>算法与局限</summary><div class="hint"><ol class="bench-points">
+<li>数据来自每日发布时的各账户现金与持仓；现金为负即融资额。只用于模拟，不参与净值、收益和费用计算。</li>
+<li>杠杆产品按"标的涨跌 × 倍数"的单日近似计算，最多跌到零；连续多日的实际结果会偏离这个倍数。</li>
+<li>维持保证金要求＝各持仓市值 × 保证金率；杠杆产品的保证金率按"普通证券保证金率 × 倍数"估算（最高 100%）。券商的实际要求可能更高，以券商为准。</li>
+<li>"全部证券"情景假设所有标的同幅涨跌，不区分各自波动大小；未列入杠杆产品表的代码按 1 倍处理。</li>
+<li>这是方向性估算，不是券商的追缴通知，也不是投资建议。</li></ol></div></details>`;
+}
+function riskDeskInterest(m){
+  return m.borrowed>0?`按此利率，融资 ${usd(m.borrowed,0)} 每年利息约 ${usd(m.interest.annual,0)}（每月约 ${usd(m.interest.monthly,0)}），相当于净资产的 ${(m.interest.pctNav*100).toFixed(2)}%。`:"当前没有融资，不产生利息。";
+}
+/* risk-desk:end */
+let _riskParams=null,_riskPoint=null;
+function riskDeskParams(){
+  if(_riskParams)return _riskParams;
+  _riskParams={shock:0,scope:"all",maint:.25,rate:.06};
+  try{const saved=JSON.parse(store?.getItem("fee-risk-desk-v1")||"null");if(saved&&typeof saved==="object"){if(Number.isFinite(saved.maint))_riskParams.maint=saved.maint;if(Number.isFinite(saved.rate))_riskParams.rate=saved.rate;}}catch(_){}
+  return _riskParams;
+}
+function renderRiskDesk(st){
+  const box=document.getElementById("riskDesk"),jump=document.querySelector("#p-home>.home-jump");if(!box)return;
+  const lp=st?.lastPt,show=isMgr()&&!!lp;
+  box.hidden=!show;
+  let chip=jump?.querySelector('[data-jump="riskDesk"]');
+  if(show&&jump&&!chip){chip=document.createElement("button");chip.type="button";chip.setAttribute("data-jump","riskDesk");chip.setAttribute("aria-current","false");chip.textContent="风险";jump.querySelector('[data-jump="returnsCard"]')?.before(chip);}
+  if(!show){chip?.remove();box.innerHTML="";_riskPoint=null;return;}
+  _riskPoint=lp;
+  // Keep the controls (and the finger on the slider) in place across background refreshes.
+  if(box.dataset.day===String(lp.d)&&box.contains(document.activeElement))return;
+  box.dataset.day=String(lp.d);box.innerHTML=riskDeskView(lp,DB.accounts,riskDeskParams());
+}
+function riskDeskInput(event){
+  const box=document.getElementById("riskDesk"),t=event.target;if(!box||!_riskPoint||!t)return;
+  const p=riskDeskParams(),quick=event.type==="click"?t.closest?.("[data-risk-shock]"):null;
+  if(quick)p.shock=Number(quick.getAttribute("data-risk-shock"))/100;
+  else if(event.type==="click")return;
+  else if(t.id==="riskShock")p.shock=Number(t.value)/100;
+  else if(t.id==="riskScope")p.scope=t.value;
+  else if(t.id==="riskMaint"){if(t.value==="")return;p.maint=Number(t.value)/100;}
+  else if(t.id==="riskRate"){if(t.value==="")return;p.rate=Number(t.value)/100;}
+  else return;
+  const m=riskDeskModel(_riskPoint,DB.accounts,p);if(!m)return;
+  if(t.id==="riskMaint"||t.id==="riskRate"){try{store?.setItem("fee-risk-desk-v1",JSON.stringify({maint:m.maint,rate:m.rate}));}catch(_){}}
+  const pctVal=Math.round(m.shock*100),range=document.getElementById("riskShock");
+  if(range&&quick)range.value=String(pctVal);
+  document.getElementById("riskShockLabel").textContent=(pctVal>0?"+":"")+pctVal+"%";
+  document.getElementById("riskOut").innerHTML=riskDeskOutput(m);
+  document.getElementById("riskInterest").textContent=riskDeskInterest(m);
+}
+document.addEventListener("input",riskDeskInput);document.addEventListener("change",riskDeskInput);document.addEventListener("click",riskDeskInput);
 /* top-holdings-view:start */
 function topHoldingsView(lp,nav){
   const rows=lp?.topHoldings,stock=Number(lp?.stock),total=Number(nav);

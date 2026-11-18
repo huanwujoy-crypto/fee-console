@@ -625,13 +625,15 @@ export function reconcileFlows(existingAuto, existingUnresolved, incoming,{refer
  * `prov` is only written when the day is an approximation, so a calibrated
  * weekend rewrite produces a clean point and a small diff.
  */
-export function buildPoint({ date, accounts, splits, styleSplits = {}, assetAllocation, topHoldings, bench = {}, benchDiv = {}, benchDate = null, benchState = null, provisional = [], calibrated = false }) {
+export function buildPoint({ date, accounts, splits, styleSplits = {}, assetAllocation, topHoldings, riskBook, bench = {}, benchDiv = {}, benchDate = null, benchState = null, provisional = [], calibrated = false }) {
   const point = { d: date };
   for (const a of ACCOUNTS) point[a] = accounts[a];
   for (const s of SPLITS) point[s] = splits[s];
   for (const s of [...STYLE_SPLITS, "gold"]) if (styleSplits[s] !== undefined) point[s] = styleSplits[s];
   if (assetAllocation !== undefined) point.assetAllocation = normalizeAssetAllocation(assetAllocation, splits.stock);
   if (Array.isArray(topHoldings)) point.topHoldings = topHoldings.map(row => ({ ticker: row.ticker, value: row.value }));
+  // Reporting only (the page's risk simulator); never an input to any calculation.
+  if (riskBook && typeof riskBook === 'object') point.riskBook = structuredClone(riskBook);
   for (const k of [...BENCH_KEYS, ...BENCH_LEGACY_KEYS]) if (bench[k] !== undefined) point[k] = bench[k];
   if (BENCH_KEYS.every(k => bench[k] !== undefined) && isIsoDate(benchDate)) {
     point.bd = benchDate;

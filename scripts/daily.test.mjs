@@ -2072,6 +2072,15 @@ test("a dividend without its price is refused, and a negative one too", () => {
   assert.ok(negative.benchmarkErrors.some(e => /--spyd must be a number of zero or greater/.test(e)), negative.benchmarkErrors.join("; "));
 });
 
+test("buildPoint carries the reporting-only risk book as its own copy, and only when one is given", () => {
+  const base = { date: "2026-11-18", accounts: { schwab: 1, webull: 2 }, splits: { cash: -1, stock: 4, other: 0 } };
+  const riskBook = { schemaVersion: 1, accounts: { schwab: { cash: 1, holdings: [] }, webull: { cash: -2, holdings: [{ ticker: "AAA", value: 4 }] } } };
+  const point = buildPoint({ ...base, riskBook });
+  assert.deepEqual(point.riskBook, riskBook);
+  assert.notEqual(point.riskBook, riskBook);
+  assert.equal(Object.hasOwn(buildPoint(base), "riskBook"), false);
+  assert.equal(Object.hasOwn(buildPoint({ ...base, riskBook: null }), "riskBook"), false);
+});
 test("buildPoint omits prov when nothing is provisional", () => {
   const clean = buildPoint({ date: "2026-08-19", accounts: { schwab: 1, webull: 2 },
     splits: { cash: 3, stock: 0, other: 0 }, provisional: [] });
