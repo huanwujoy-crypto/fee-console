@@ -647,10 +647,11 @@ export function reportHistoricalRecoveryManifest({contractId='ib-source-revision
   if(!scope?.contractId)fail('RECOVERY_SCOPE');
   return Object.freeze(recoveryFileManifest(scope).map(f=>Object.freeze({...f})));
 }
-export async function readPeriodSourceAttempts({plan,now,currentRunId=null,recoveryMain=null,recoveryRelease=null,actionsToken=process.env.FEE_REPORT_ACTIONS_TOKEN,fetchImpl=globalThis.fetch,assertAdmissionActive=null}={}){
+export async function readPeriodSourceAttempts({plan,now,currentRunId=null,countHead=null,recoveryMain=null,recoveryRelease=null,actionsToken=process.env.FEE_REPORT_ACTIONS_TOKEN,fetchImpl=globalThis.fetch,assertAdmissionActive=null}={}){
   if(!validateReportPlan(plan)||!Number.isFinite(now?.getTime()))fail('SOURCE_ATTEMPT_METADATA');
   if(assertAdmissionActive!==null&&typeof assertAdmissionActive!=='function')fail('RECOVERY_METADATA');
   if(recoveryMain!==null&&!/^[a-f0-9]{40}$/.test(recoveryMain))fail('RECOVERY_METADATA');
+  if(countHead!==null&&(!/^[a-f0-9]{40}$/.test(countHead)||recoveryMain!==null))fail('SOURCE_ATTEMPT_METADATA');
   const scope=recoveryScope(plan.accountingThrough,recoveryRelease);
   if(scope?.admissionModel==='sync-cycle-v1'||scope?.purpose!==undefined)fail('RECOVERY_SCOPE');
   if(recoveryRelease!==null&&(recoveryMain===null||recoveryRelease.mainSha!==recoveryMain||!scope))fail('RECOVERY_METADATA');
@@ -729,6 +730,10 @@ export async function readPeriodSourceAttempts({plan,now,currentRunId=null,recov
       if(j.status==='completed'&&typeof j.conclusion!=='string')fail('SOURCE_ATTEMPT_METADATA');
       if(j.started_at!==null&&(!Number.isFinite(Date.parse(j.started_at))||Date.parse(j.started_at)<Date.parse(r.created_at)||Date.parse(j.started_at)>now.getTime()+300000))fail('SOURCE_ATTEMPT_METADATA');
       if(j.status!=='completed')inProgress=true;
+      // Owner decision 2026-11-18: the budget guards against re-reading one day
+      // with the same code. A finished attempt made on earlier code does not
+      // count against the current main; a running one always blocks.
+      if(countHead!==null&&j.status==='completed'&&r.head_sha!==countHead)continue;
       if(j.started_at!==null||j.status!=='completed'){
         attempts++;
         if(evidence)evidence.entries.push({runId:r.id,jobId:j.id,head:r.head_sha,attempt:r.run_attempt,event:r.event,runStatus:r.status,runConclusion:r.conclusion,name:j.name,status:j.status,conclusion:j.conclusion});
@@ -1158,7 +1163,8 @@ export async function reportPublicationPreflight({now=new Date(),plan=null,revie
     return {schema:'fee-console.report-preflight.v1',outcome:'produce',plan:next,mainSha:state.mainSha};
   }
   try{
-    const budget=await readSourceAttempts({plan:next,now,currentRunId});
+    // A manual sync confirmation keeps the stricter whole-day count.
+    const budget=await readSourceAttempts({plan:next,now,currentRunId,...(reviewedSyncDate===null?{countHead:state.mainSha}:{})});
     if(!budget||!Number.isSafeInteger(budget.attempts)||budget.attempts<0||typeof budget.inProgress!=='boolean')throw Error();
     if(budget.inProgress||budget.attempts>=2)return {schema:'fee-console.report-preflight.v1',outcome:'waiting',reasonCode:budget.inProgress?'REPORT_SOURCE_RUN_IN_PROGRESS':'REPORT_SOURCE_ATTEMPT_BUDGET_EXHAUSTED',plan:next,mainSha:state.mainSha};
     // Owner decision 2026-11-17: a failed scheduled attempt writes nothing, so a
