@@ -91,7 +91,7 @@ export function createApiRatioSourceCore(){
       if(!cid||cashIds.has(cid)||!text(c.name))fail('CASH');
       cashIds.add(cid);
       const account=member(c.portfolio,'CASH_ACCOUNT'),value=cents(c.value);
-      if(value===null||value<0)fail('CASH_VALUE');
+      if(value===null)fail('CASH_VALUE');
       const key=JSON.stringify([account,c.name]);
       if(cashKeys.has(key))fail('CASH_DUPLICATE');
       cashKeys.add(key);observed.add(account);cashCents+=value;
