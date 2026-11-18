@@ -167,7 +167,9 @@ export function validateInputs(input) {
     const v = splits[s];
     if (v === undefined || v === null) { errors.push(`missing --${s} (pass 0 when the bucket is empty)`); continue; }
     if (!Number.isFinite(v)) errors.push(`--${s} must be a finite number`);
-    else if (v < 0) errors.push(`--${s} must be zero or greater`);
+    // Cash may be negative: an account with a margin balance owes cash. The
+    // split still has to reconcile to the account totals below.
+    else if (v < 0 && s !== "cash") errors.push(`--${s} must be zero or greater`);
   }
 
   const stylePresent = STYLE_SPLITS.filter(s => styleSplits[s] !== undefined && styleSplits[s] !== null);
@@ -783,7 +785,7 @@ export function buildLatestStatus({ daily, previousStatus, previousUnresolved, .
       || previousStatus.notes.some(note => typeof note !== "string")
       || previousStatus.unresolvedCount !== previousUnresolved.length
       || ACCOUNTS.some(a => !Number.isFinite(latest[a]) || latest[a] <= 0)
-      || SPLITS.some(s => !Number.isFinite(latest[s]) || latest[s] < 0)
+      || SPLITS.some(s => !Number.isFinite(latest[s]) || (latest[s] < 0 && s !== "cash"))
       || (latest.prov !== undefined && latest.prov !== 1)) reject();
   const splitDelta = ACCOUNTS.reduce((sum, a) => sum + latest[a], 0)
     - SPLITS.reduce((sum, s) => sum + latest[s], 0);
