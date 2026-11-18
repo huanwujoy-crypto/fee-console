@@ -146,8 +146,8 @@ test('a shorter comparison window links the monthly TWR already shown; the defau
   // 今年 = Jan..Mar linked: (1.02)(1.03)(1.01)-1, and the same for each benchmark and for Jenny's IB.
   const ytd=view('ytd'),link=v=>{const x=v.reduce((a,b)=>a*(1+b),1)-1;return (x>0?'+':'')+(x*100).toFixed(2)+'%';};
   assert.deepEqual(['actual','ib','spy','qqq'].map(k=>cell(ytd,k)),[link([.02,.03,.01]),link([.03,-.04,.05]),link([.04,-.02,.03]),link([-.01,.05,.01])]);
-  // Modified Dietz cannot be linked from months: it is withheld and says why.
-  assert.equal(cell(ytd,'investor'),'—');assert.match(ytd.match(/<tr data-return-series="investor"[^]*?<\/tr>/)[0],/仅全部期间/);
+  // Modified Dietz is not linked from months. These rows carry no flow figures, so the window shows — (see the next test).
+  assert.equal(cell(ytd,'investor'),'—');assert.doesNotMatch(ytd,/仅全部期间/);
   assert.match(ytd,/2026-01-01 → 2026-03-28 · 由月度 TWR 逐月连乘/);assert.match(ytd,/data-return-window="ytd" aria-selected="true"/);
   assert.equal(cell(view('month'),'actual'),'+1.00%');
   // A month without a benchmark figure, or an impossible one, makes that window unknown rather than a partial product.
@@ -160,4 +160,39 @@ test('a shorter comparison window links the monthly TWR already shown; the defau
   const none={...st};delete none.rows;vm.runInContext('_returnWindow="ytd"',box);assert.equal(cell(box.renderReturnComparison(none),'actual'),'+90.00%');
   // Pending Jenny's IB stays 待核对 in every window.
   vm.runInContext('_returnWindow="ytd"',box);assert.match(box.renderReturnComparison({...st,ibManager:{state:'pending',value:null,byMonth:{}}}).match(/<tr data-return-series="ib"[^]*?<\/tr>/)[0],/待核对/);
+});
+
+// Owner 2026-11-18: the investor row was empty in the shorter windows.
+test('Modified Dietz for a window is rebuilt from each month\'s own denominator and equals the direct calculation',()=>{
+  const html=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8'),box={};vm.createContext(box);
+  vm.runInContext(`const esc=v=>String(v??'');const pct=v=>v==null||!isFinite(v)?'—':(v>0?'+':'')+(v*100).toFixed(2)+'%';const sgn=v=>v>0?'pos':v<0?'neg':'';const ibManagerReturnNote=()=>'';`,box);
+  vm.runInContext(html.slice(html.indexOf('function renderReturnComparison('),html.indexOf('/* compact-comparison-tables:end */')),box);
+  const days=(a,b)=>Math.round((Date.parse(b)-Date.parse(a))/864e5)+1;
+  // A month built the way fee-engine.mjs builds it: opening plus each flow weighted by the days left after it.
+  const month=(from,to,open,flows,close,fees)=>{const d=days(from,to);let den=open,flow=0;for(const [date,amount] of flows){den+=amount*((d-days(from,date))/d);flow+=amount;}
+    return {ym:from.slice(0,7),from,to,days:d,openT:open,closeT:close,flowT:flow,den,pnl:close-open-flow,fees,rD:(close-open-flow-fees)/den,rG:.01,rB:{},flows};};
+  const rows=[month('2026-08-01','2026-08-31',1000,[['2026-08-10',200]],1250,3),month('2026-09-01','2026-09-30',1250,[['2026-09-20',-100],['2026-09-05',50]],1300,4),month('2026-10-01','2026-10-31',1300,[],1280,2),month('2026-11-01','2026-11-17',1280,[['2026-11-17',-30]],1300,1)];
+  const direct=part=>{const from=part[0].from,span=days(from,part.at(-1).to);let den=part[0].openT,net=0;for(const r of part){for(const [date,amount] of r.flows)den+=amount*((span-days(from,date))/span);net+=r.pnl-r.fees;}return net/den;};
+  for(const part of [rows,rows.slice(1),rows.slice(-2),rows.slice(0,2)])assert.ok(Math.abs(box.windowDietz(part)-direct(part))<1e-12);
+  assert.equal(box.windowDietz(rows.slice(-1)),rows[3].rD);
+  // Months that are not consecutive, a missing figure or a non-positive denominator give no figure.
+  assert.equal(box.windowDietz([rows[0],rows[2]]),null);assert.equal(box.windowDietz([{...rows[0],den:NaN},rows[1]]),null);
+  assert.equal(box.windowDietz([{...rows[0],den:0},rows[1]]),null);assert.equal(box.windowDietz([]),null);assert.equal(box.windowDietz([{...rows[3],rD:undefined}]),null);
+  // In the table: the default keeps the receipt total; a window shows the rebuilt figure and no longer says 仅全部期间.
+  const st={twrG:.9,mwrD:.8,rows,bench:[],ibManager:null},cell=out=>out.match(/<tr data-return-series="investor"[^]*?<\/tr>/)[0].match(/<b class="metric-value[^"]*">([^<]*)<\/b>/)[1];
+  const show=v=>(v>0?'+':'')+(v*100).toFixed(2)+'%',view=key=>{vm.runInContext('_returnWindow='+JSON.stringify(key),box);return box.renderReturnComparison(st);};
+  assert.equal(cell(view('all')),'+80.00%');assert.equal(cell(view('m3')),show(direct(rows.slice(-3))));assert.equal(cell(view('month')),show(rows[3].rD));
+  assert.match(view('m3'),/出资方按该期间的资金流重新加权/);assert.doesNotMatch(view('m3'),/仅全部期间/);
+});
+
+test('the holdings list shows up to five rows with their total; three-row history keeps its own title',()=>{
+  const html=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8'),box={};vm.createContext(box);
+  vm.runInContext(`const esc=v=>String(v??'');const usd=(v,d=2)=>'$'+Number(v).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});`,box);
+  vm.runInContext(html.slice(html.indexOf('/* top-holdings-view:start */'),html.indexOf('/* top-holdings-view:end */')),box);
+  const text=out=>out.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim(),five=[['A',300],['B',200],['C',100],['D',50],['E',25]].map(([ticker,value])=>({ticker,value}));
+  assert.equal(text(box.topHoldingsView({stock:900,topHoldings:five},1000)),'前五大持仓 不含现金及其它 · 占总资产 1 A $300 30.0% 2 B $200 20.0% 3 C $100 10.0% 4 D $50 5.0% 5 E $25 2.5% 合计 $675 67.5%');
+  assert.equal(text(box.topHoldingsView({stock:900,topHoldings:five.slice(0,3)},1000)),'前三大持仓 不含现金及其它 · 占总资产 1 A $300 30.0% 2 B $200 20.0% 3 C $100 10.0% 合计 $600 60.0%');
+  assert.doesNotMatch(box.topHoldingsView({stock:900,topHoldings:five.slice(0,1)},1000),/合计/);
+  assert.equal(box.topHoldingsView({stock:900,topHoldings:[...five,{ticker:'F',value:10}]},1000),'');
+  assert.equal(box.topHoldingsView({stock:500,topHoldings:five},1000),'');
 });

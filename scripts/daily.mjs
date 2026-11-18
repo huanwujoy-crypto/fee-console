@@ -437,7 +437,7 @@ if (styleFile) {
     const resolver = snapshot.input.schemaVersion === 2 ? resolveAssetAllocation : resolveStyle;
     styleResult = resolver({ input: snapshot.input, registry: data.classificationRegistry,
       staticMap, date, sourceDates, stock: splits.stock });
-    topHoldings = summarizeTopHoldings(snapshot.input, 3, staticMap.topHoldingExposureMappings || []);
+    topHoldings = summarizeTopHoldings(snapshot.input, 5, staticMap.topHoldingExposureMappings || []);
     if (styleResult.assetAllocation) assetAllocation = styleResult.assetAllocation;
     else {
       styleSplits.growth = styleResult.growth;
