@@ -10,7 +10,7 @@
 <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAABzUlEQVR42u3bsQ2AMAwAwczDhEzKOqGlCBIgBdnxRT+BfU0Kt20/pGHNCASH4BAcgkNwCA7BITgEh+CQ4BAcgkNwCA7BITgEh+AQHBIcgkNwCA7BITgEh+AQHIJDgkNwCA7BITgEh+AQHIJDcAgOCQ7BITgEh+AQHIJDcOi2/vjBwUQyJXAEkhHNBxyxZITyAQcccMABxwIy4viAAw444IADDjjggAMOOOCAAw444IBDcAgOwQEHHHDAAQcccMABBxxwwAEHHHAIDudocDDxeWFwOEeDg4z3a4MDDjjggKMOjh82BwcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAGHQ1Y4HLLCERPH1IHCkRjH7JnCAQcccMBRB8cam4MDDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAQxWDQ3AIDsEhOFQNR/eSfG7hgAMOOOCAAw444PCq4ZCvrOAQHIJDgkNwCA7BITgEh+AQHIJDcEhwCA7BITgEh+AQHIJDcAgOwSHBITgEh+AQHIJDcAgOwSE4pEsnhtvC417hqCsAAAAASUVORK5CYII=">
-<meta name="fee-console-build" content="4.10.21">
+<meta name="fee-console-build" content="4.10.22">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -160,7 +160,7 @@ section.pane{display:none} section.pane.on{display:block}
 .ratio-rank-chips{display:flex;gap:6px;overflow-x:auto;padding:2px 0 4px;scrollbar-width:none}.ratio-rank-chips::-webkit-scrollbar{display:none}
 .ratio-rank-chip{flex:1 0 auto;text-align:center;border:1px solid var(--border);background:var(--surface-1);color:var(--ink-2);border-radius:999px;padding:8px 8px;font-size:13px;font-family:inherit;cursor:pointer;white-space:nowrap}.ratio-rank-chip[aria-selected="true"]{background:var(--chip);border-color:var(--series-1);color:var(--ink-1);font-weight:600}
 .ratio-holding-tap{cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px;text-decoration-color:var(--ink-muted)}.ratio-holding-fullname{display:block;font-size:12px;color:var(--ink-2);margin-top:2px;overflow-wrap:anywhere}.ratio-holding-fullname[hidden]{display:none}
-.ratio-alloc-bar{display:flex;height:12px;border-radius:6px;overflow:hidden;margin:10px 0 6px;background:var(--grid)}.ratio-alloc-seg{min-width:2px}.ratio-alloc-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:baseline}
+.ratio-alloc-bar{display:flex;height:12px;border-radius:6px;overflow:hidden;margin:10px 0 6px;background:var(--grid)}.ratio-alloc-seg{min-width:2px}.ratio-alloc-cap{font-size:11px;color:var(--ink-2);margin:8px 0 -6px}.ratio-alloc-target{opacity:.55;margin-bottom:10px}.ratio-alloc-target .ratio-alloc-seg{min-width:0}.ratio-alloc-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:baseline}
 .ratio-alloc-c0{background:#2a78d6}.ratio-alloc-c1{background:#eb6834}.ratio-alloc-c2{background:#1f9d8b}.ratio-alloc-c3{background:#7a5cd6}.ratio-alloc-c4{background:#b8a038}.ratio-alloc-c5{background:#d0506e}
 .ratio-holding-list{margin-top:8px}.ratio-holding-row{padding:9px 0;border-top:1px solid var(--grid)}
 .ratio-holding-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;font-size:12px;font-variant-numeric:tabular-nums}
@@ -1189,7 +1189,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.10.21";
+const UI_VERSION_LABEL=" · v4.10.22";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -3509,6 +3509,14 @@ function styleRatioReport(root){
       segment.setAttribute('style','flex:'+shares[i]+' 0 0');bar.append(segment);row.cells[0].insertBefore(dot,row.cells[0].firstChild);
     }
     allocation.parentNode.insertBefore(bar,allocation);
+    // alloc-target:v1 — a second bar for the reference targets already printed beside each share, so the drift is visible at a glance.
+    const targets=allocationRows.map(row=>Number.parseFloat(String(row.cells[0]?.querySelector('.ratio-overview-weights')?.textContent||'').split('／')[1]));
+    if(targets.every(n=>Number.isFinite(n)&&n>=0)&&targets.some(n=>n>0)){
+      const goal=make('div','ratio-alloc-bar ratio-alloc-target'),now=make('div','ratio-alloc-cap'),aim=make('div','ratio-alloc-cap');
+      goal.setAttribute('role','img');goal.setAttribute('aria-label','各类资产参考目标占比');now.textContent='当前';aim.textContent='参考目标';
+      for(const [i] of allocationRows.entries()){const segment=make('span','ratio-alloc-seg ratio-alloc-c'+i);segment.setAttribute('style','flex:'+targets[i]+' 0 0');goal.append(segment);}
+      allocation.parentNode.insertBefore(now,bar);allocation.parentNode.insertBefore(aim,allocation);allocation.parentNode.insertBefore(goal,allocation);
+    }
   }
   const noteNumbers={'计算口径与合并规则':'1','来源日期与核验记录':'2','覆盖范围、残余与缺项':'3','现金与补仓参考说明':'4'};
   for(const note of direct(report,'DETAILS')){

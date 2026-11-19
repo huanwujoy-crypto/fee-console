@@ -740,3 +740,18 @@ test("the settings page jump row names existing cards and hides chips of absent 
   // Switching tab refreshes the row at once instead of waiting for the first scroll.
   assert.match(html, /globalThis\.scrollTo\?\.\(0,0\);renderRatioManagement\(\);try\{syncJumpChips\(\);\}catch\{\}\}\);/);
 });
+
+// alloc-target:v1 — the allocation overview draws the reference targets as a second bar from the text already shown.
+test("the allocation overview pairs the current bar with a reference-target bar without recalculating", () => {
+  const style = html.slice(html.indexOf("function styleRatioReport("), html.indexOf("/* ratio-presentation:v1:end */"));
+  const block = style.slice(style.indexOf("// alloc-target:v1"), style.indexOf("const noteNumbers="));
+  assert.ok(block.length > 200, "the target bar is built inside the reviewed presentation layer");
+  // Targets are read from the printed "current／target" text of each row, and a row without a usable target drops the whole bar.
+  assert.match(block, /querySelector\('\.ratio-overview-weights'\)\?\.textContent\|\|''\)\.split\('／'\)\[1\]\)\)/);
+  assert.match(block, /targets\.every\(n=>Number\.isFinite\(n\)&&n>=0\)&&targets\.some\(n=>n>0\)/);
+  assert.match(block, /now\.textContent='当前';aim\.textContent='参考目标';/);
+  assert.match(block, /segment\.setAttribute\('style','flex:'\+targets\[i\]\+' 0 0'\)/);
+  // It only adds elements beside the table; no amount, share, ranking or source value is written.
+  assert.doesNotMatch(block, /toFixed|Math\.|valueCents|totalCents|innerHTML/);
+  assert.match(html, /\.ratio-alloc-target\{opacity:\.55;margin-bottom:10px\}/);
+});
