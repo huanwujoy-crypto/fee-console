@@ -350,3 +350,31 @@ test('the month strip shows each month as a bar, marks Carry months and selects 
   assert.match(html,/closest\?\.\("\[data-month-pick\]"\)\?\.getAttribute\("data-month-pick"\);if\(\/\^\\d\{4\}-\(\?:0\[1-9\]\|1\[0-2\]\)\$\/\.test\(String\(ym\|\|""\)\)&&ym!==_monthHistoryYm\)\{_monthHistoryYm=ym;scheduleRender\(\);\}/);
   assert.match(html,/box\.innerHTML=`\$\{monthStripView\(model\.months,r\.ym\)\}<div class="history-tools">/);
 });
+
+test('the investor scenario applies the fund-wide S&P scenario to one investor by share',()=>{
+  const html=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8'),box={};vm.createContext(box);
+  vm.runInContext("const esc=v=>String(v??'').replace(/</g,'&lt;');const usd=(v,d=2)=>(v<0?'-$':'$')+Math.abs(Number(v)).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});",box);
+  vm.runInContext(html.slice(html.indexOf('/* risk-desk:start */'),html.indexOf('/* risk-desk:end */'))+html.slice(html.indexOf('/* investor-scenario:start */'),html.indexOf('/* investor-scenario:end */'))+';globalThis.R=riskDeskModel;globalThis.M=investorScenarioModel;globalThis.V=investorScenarioView;',box);
+  const near=(a,b)=>assert.ok(Math.abs(a-b)<1e-6,a+' vs '+b),text=out=>out.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim();
+  const defs=[{id:'schwab',name:'Schwab'},{id:'webull',name:'Webull'}];
+  const lp={d:'2026-11-18',schwab:600000,webull:400000,riskBook:{schemaVersion:1,accounts:{
+    schwab:{cash:20000,holdings:[{ticker:'GOOG',value:300000},{ticker:'AVGO',value:280000}]},
+    webull:{cash:-200000,holdings:[{ticker:'VST',value:200000},{ticker:'TQQQ',value:150000},{ticker:'NVDL',value:100000},{ticker:'GGLL',value:80000},{ticker:'VSTL',value:70000}]}}}};
+  const who={id:'A',date:'2026-11-18',share:.25,value:250000},P={maint:.25,levMaint:.6,scope:'spx'};
+  // A quarter of the fund takes a quarter of the fund-wide result.
+  const down=box.M(who,box.R(lp,defs,{...P,shock:-.1}));near(down.delta,-232200*.25);near(down.after,250000-58050);near(down.fundPct,-.2322);near(down.beta,2.322);
+  assert.equal(down.financed,true);assert.ok(down.callDrop>0&&down.callDrop<.2);assert.equal(down.called,false);
+  const flat=box.M(who,box.R(lp,defs,{...P,shock:0}));near(flat.delta,0);near(flat.after,250000);
+  assert.equal(box.M(who,box.R(lp,defs,{...P,shock:-.3})).called,true);
+  for(const bad of [null,{...who,share:0},{...who,share:1.2},{...who,share:null},{...who,value:NaN},{...who,value:0}])assert.equal(box.M(bad,box.R(lp,defs,P)),null);
+  assert.equal(box.M(who,null),null);assert.equal(box.V(null),'');
+  const view=box.V(down);
+  assert.match(text(view),/情景模拟 标普500 每变动 1%，基金约变动 2\.3%；标普再跌 1\d\.\d% 时基金的融资账户会被追缴。 标普500 涨跌 -10% .* A 的市值变动 -\$58,050（-23\.2%） 模拟后市值 · 费用前 \$191,950 方向性估算，数据日 2026-11-18/);
+  assert.match(view,/<input class="risk-range" id="invShock" type="range" min="-50" max="30" step="1" value="-10"/);assert.match(view,/data-inv-shock="10">\+10%<\/button>/);
+  assert.match(text(box.V(box.M(who,box.R(lp,defs,{...P,shock:-.3})))),/这个跌幅下基金的融资账户会被追缴/);
+  const calm=structuredClone(lp);calm.riskBook.accounts.webull.cash=5000;assert.match(text(box.V(box.M(who,box.R(calm,defs,P)))),/基金当前没有融资/);
+  // Shown only when the risk snapshot is the same fund on the same day as the share valuation; the fund page block itself stays independent.
+  const wire=html.slice(html.indexOf('function renderInvestorScenario('),html.indexOf('function investorScenarioInput('));
+  assert.match(wire,/ctx\.date===_riskPoint\.d&&Math\.abs\(risk\.nav-total\)<=risk\.nav\*\.005/);
+  assert.match(html,/if\(typeof renderInvestorScenario==="function"\)renderInvestorScenario\(\{id:investor\.id,date:last\?\.date,share:held&&latestShares\?held\.shares\/latestShares:null,valueCents:held\?\.valueCents,totalCents:last\?\.totalCents\}\);/);
+});
