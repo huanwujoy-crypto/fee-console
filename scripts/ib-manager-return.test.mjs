@@ -200,7 +200,7 @@ test('the holdings list shows up to five rows with their total; three-row histor
 test('the risk desk folds leveraged products into their underlying and finds the margin-call distance',()=>{
   const html=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8'),box={};vm.createContext(box);
   vm.runInContext(`const esc=v=>String(v??'');const usd=(v,d=2)=>(v<0?'-$':'$')+Math.abs(Number(v)).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});`,box);
-  vm.runInContext(html.slice(html.indexOf('/* risk-desk:start */'),html.indexOf('/* risk-desk:end */'))+';globalThis.riskDeskModel=riskDeskModel;globalThis.riskDeskView=riskDeskView;',box);
+  vm.runInContext(html.slice(html.indexOf('/* risk-desk:start */'),html.indexOf('/* risk-desk:end */'))+';globalThis.riskDeskModel=riskDeskModel;globalThis.riskDeskView=riskDeskView;globalThis.riskDeskCarry=riskDeskCarry;globalThis.riskDeskCarryHint=riskDeskCarryHint;',box);
   const defs=[{id:'schwab',name:'Schwab'},{id:'webull',name:'Webull'}],near=(a,b)=>assert.ok(Math.abs(a-b)<1e-6,`${a} vs ${b}`);
   const lp={d:'2026-11-18',schwab:600000,webull:400000,riskBook:{schemaVersion:1,accounts:{
     schwab:{cash:20000,holdings:[{ticker:'GOOG',value:300000},{ticker:'AVGO',value:280000}]},
@@ -257,7 +257,23 @@ test('the risk desk folds leveraged products into their underlying and finds the
   near(om.scenario.pnl-sp.scenario.pnl,-(1000*.1+1000*.07));
   const spView=text(box.riskDeskView(odd,defs,{scope:'spx'}));assert.match(spView,/标普500 每变动 1%，组合约变动 2\.3%/);assert.match(spView,/按 1\.0 处理：ZZZQ。/);
   assert.match(box.riskDeskView(lp,defs,{scope:'spx'}),/<option value="spx" selected>标普500 指数<\/option>/);
+  // Carry line: the gap to the high-water mark, the move that closes it in the chosen scope, and the Carry a scenario adds.
+  const fee={cum:-50000,hwm:100000,rate:.2},flat=box.riskDeskCarry(lp,defs,box.riskDeskModel(lp,defs,{scope:'spx'}),fee);
+  near(flat.gap,150000);near(flat.short,150000);near(flat.carry,0);near(flat.need,150000/2322000);assert.equal(flat.needPct,7);
+  const up=box.riskDeskCarry(lp,defs,box.riskDeskModel(lp,defs,{scope:'spx',shock:.07}),fee);near(up.cumAfter,-50000+162540);near(up.carry,12540*.2);near(up.short,0);
+  const even=box.riskDeskCarry(lp,defs,box.riskDeskModel(lp,defs,{scope:'all'}),fee);near(even.need,150000/1730000);assert.equal(even.needPct,9);
+  assert.equal(box.riskDeskCarry(lp,defs,box.riskDeskModel(lp,defs,{scope:'spx'}),{cum:-900000,hwm:100000,rate:.2}).needPct,44);
+  near(box.riskDeskCarry(lp,defs,box.riskDeskModel(lp,defs,{shock:-.1}),{cum:120000,hwm:120000,rate:.2}).need,0);
+  for(const bad of [null,undefined,{cum:null,hwm:1,rate:.2},{cum:1,hwm:NaN,rate:.2},{cum:1,hwm:2,rate:0}])assert.equal(box.riskDeskCarry(lp,defs,sp,bad),null);
+  const withFee=box.riskDeskView(lp,defs,{scope:'spx',shock:.07},fee);
+  assert.match(text(withFee),/距 Carry 起算线还差 \$150,000 ，按当前选择约需 \+7% （点按即模拟）。.*累计毛收益（模拟后） \+\$112,540 新增 Carry（按 20%） \$2,508/);
+  assert.match(withFee,/<button type="button" class="risk-link" data-risk-shock="7">\+7%<\/button>/);
+  assert.match(text(box.riskDeskView(lp,defs,{scope:'spx'},fee)),/距 Carry 起算线 还差 \$150,000/);
+  assert.match(text(box.riskDeskView(lp,defs,{scope:'spx'},{cum:-900000,hwm:100000,rate:.2})),/约需上涨 44%，超出滑块范围/);
+  assert.match(text(box.riskDeskView(lp,defs,{},{cum:5,hwm:5,rate:.2})),/已在 Carry 起算线之上，再上涨的部分按 20% 计提 Carry/);
+  // Without a verified fee statement the card says nothing about Carry.
+  assert.match(box.riskDeskView(lp,defs,{}),/id="riskCarry" hidden><\/p>/);assert.doesNotMatch(text(box.riskDeskView(lp,defs,{shock:.1})),/累计毛收益（模拟后）/);
   // The card is for every viewer of the page, read-only links included: it must not depend on the manager token.
-  const render=html.slice(html.indexOf('function renderRiskDesk(st){'),html.indexOf('function riskDeskInput(event){'));
+  const render=html.slice(html.indexOf('function renderRiskDesk(st,feeView){'),html.indexOf('function riskDeskInput(event){'));
   assert.ok(render.includes('show=!!lp;'));assert.ok(!render.includes('isMgr'));
 });
