@@ -10,7 +10,7 @@
 <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAABzUlEQVR42u3bsQ2AMAwAwczDhEzKOqGlCBIgBdnxRT+BfU0Kt20/pGHNCASH4BAcgkNwCA7BITgEh+CQ4BAcgkNwCA7BITgEh+AQHBIcgkNwCA7BITgEh+AQHIJDgkNwCA7BITgEh+AQHIJDcAgOCQ7BITgEh+AQHIJDcOi2/vjBwUQyJXAEkhHNBxyxZITyAQcccMABxwIy4viAAw444IADDjjggAMOOOCAAw444IBDcAgOwQEHHHDAAQcccMABBxxwwAEHHHAIDudocDDxeWFwOEeDg4z3a4MDDjjggKMOjh82BwcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAGHQ1Y4HLLCERPH1IHCkRjH7JnCAQcccMBRB8cam4MDDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAQxWDQ3AIDsEhOFQNR/eSfG7hgAMOOOCAAw444PCq4ZCvrOAQHIJDgkNwCA7BITgEh+AQHIJDcEhwCA7BITgEh+AQHIJDcAgOwSHBITgEh+AQHIJDcAgOwSE4pEsnhtvC417hqCsAAAAASUVORK5CYII=">
-<meta name="fee-console-build" content="4.10.12">
+<meta name="fee-console-build" content="4.10.13">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -1181,7 +1181,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.10.12";
+const UI_VERSION_LABEL=" · v4.10.13";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -3546,11 +3546,12 @@ if(typeof document!=='undefined'&&typeof document.addEventListener==='function')
   (target.closest('.card')||target).scrollIntoView({behavior:'smooth',block:'start'});
 });
 // jump-spy:v1 — while the page scrolls, light the chip of the section now under the sticky bar.
+// The lowest section already under the bar wins, whatever order the chips are written in.
 function syncJumpChips(){
   for(const bar of document.querySelectorAll('.home-jump')){
     if(!bar.offsetParent)continue;
-    const chips=Array.from(bar.querySelectorAll('[data-jump]')),line=bar.getBoundingClientRect().bottom+24;let current=chips[0];
-    for(const chip of chips){const target=document.getElementById(chip.getAttribute('data-jump')),box=target&&(target.closest('.card')||target);if(box&&box.getBoundingClientRect().top<=line)current=chip;}
+    const chips=Array.from(bar.querySelectorAll('[data-jump]')),line=bar.getBoundingClientRect().bottom+24;let current=chips[0],best=-Infinity;
+    for(const chip of chips){const target=document.getElementById(chip.getAttribute('data-jump')),box=target&&(target.closest('.card')||target),top=box?box.getBoundingClientRect().top:NaN;if(box?.offsetParent&&top<=line&&top>=best){best=top;current=chip;}}
     if(window.innerHeight+window.scrollY>=document.documentElement.scrollHeight-4)current=chips.at(-1);
     for(const chip of chips)if(chip.getAttribute('aria-current')!==String(chip===current)){chip.setAttribute('aria-current',String(chip===current));if(chip===current)chip.scrollIntoView?.({block:'nearest',inline:'nearest'});}
   }
@@ -4918,7 +4919,7 @@ function renderRiskDesk(st){
   const lp=st?.lastPt,show=!!lp;
   box.hidden=!show;
   let chip=jump?.querySelector('[data-jump="riskDesk"]');
-  if(show&&jump&&!chip){chip=document.createElement("button");chip.type="button";chip.setAttribute("data-jump","riskDesk");chip.setAttribute("aria-current","false");chip.textContent="风险";jump.querySelector('[data-jump="returnsCard"]')?.before(chip);}
+  if(show&&jump&&!chip){chip=document.createElement("button");chip.type="button";chip.setAttribute("data-jump","riskDesk");chip.setAttribute("aria-current","false");chip.textContent="风险";jump.querySelector('[data-jump="trendDetails"]')?.before(chip);}
   if(!show){chip?.remove();box.innerHTML="";_riskPoint=null;return;}
   _riskPoint=lp;
   // Keep the controls (and the finger on the slider) in place across background refreshes.
