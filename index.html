@@ -10,7 +10,7 @@
 <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAABzUlEQVR42u3bsQ2AMAwAwczDhEzKOqGlCBIgBdnxRT+BfU0Kt20/pGHNCASH4BAcgkNwCA7BITgEh+CQ4BAcgkNwCA7BITgEh+AQHBIcgkNwCA7BITgEh+AQHIJDgkNwCA7BITgEh+AQHIJDcAgOCQ7BITgEh+AQHIJDcOi2/vjBwUQyJXAEkhHNBxyxZITyAQcccMABxwIy4viAAw444IADDjjggAMOOOCAAw444IBDcAgOwQEHHHDAAQcccMABBxxwwAEHHHAIDudocDDxeWFwOEeDg4z3a4MDDjjggKMOjh82BwcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAGHQ1Y4HLLCERPH1IHCkRjH7JnCAQcccMBRB8cam4MDDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAQxWDQ3AIDsEhOFQNR/eSfG7hgAMOOOCAAw444PCq4ZCvrOAQHIJDgkNwCA7BITgEh+AQHIJDcEhwCA7BITgEh+AQHIJDcAgOwSHBITgEh+AQHIJDcAgOwSE4pEsnhtvC417hqCsAAAAASUVORK5CYII=">
-<meta name="fee-console-build" content="4.10.25">
+<meta name="fee-console-build" content="4.10.26">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -193,6 +193,7 @@ section.pane{display:none} section.pane.on{display:block}
 .ratio-distribution-category{margin-top:12px}.ratio-distribution-category h3{font-size:12px;margin:0 0 6px}.ratio-distribution-account{padding:6px 0;border-top:1px solid var(--grid)}
 .ratio-distribution-account h4,.ratio-fund-holding{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:baseline;gap:10px;font-size:11px;line-height:1.6;margin:0;padding:4px 0}
 .ratio-distribution-account h4 span:first-child,.ratio-fund-holding-name{min-width:0;overflow-wrap:anywhere}.ratio-distribution-account h4 span:last-child,.ratio-fund-holding>span:last-child{white-space:nowrap;font-variant-numeric:tabular-nums}.ratio-distribution-account ul{list-style:none;margin:0;padding:0}
+.ratio-fund-holding>span:nth-child(2){white-space:nowrap;font-variant-numeric:tabular-nums}.ratio-fund-holding>.ratio-holding-yield,.ratio-fund-holding>.ratio-holding-lots{grid-column:1/-1}.ratio-holding-yield{display:flex;flex-wrap:wrap;gap:2px 12px;align-items:baseline;color:var(--ink-2);font-variant-numeric:tabular-nums;margin-top:-2px}.ratio-holding-yield-figure{display:inline-flex;gap:4px;align-items:baseline;white-space:nowrap}.ratio-holding-yield-figure strong{color:var(--ink-1);font-weight:600}.ratio-holding-yield-figure small{font-size:10px;color:var(--ink-2)}.ratio-holding-yield-since{white-space:nowrap}.ratio-holding-lots{margin-top:-2px}.ratio-holding-lots summary{cursor:pointer;color:var(--ink-2)}.ratio-holding-lots ul{margin:2px 0 4px;padding:0 0 0 10px;border-left:2px solid var(--grid)}.ratio-holding-lots li{display:flex;flex-wrap:wrap;gap:2px 12px;align-items:baseline;padding:2px 0}.ratio-holding-lot-amount{white-space:nowrap;font-variant-numeric:tabular-nums}
 
 #p-ratio .ratio-six-allocation th:first-child,#p-ratio .ratio-six-allocation td:first-child{width:24%}
 #p-ratio .ratio-six-allocation th:nth-child(2),#p-ratio .ratio-six-allocation td:nth-child(2){width:39%}
@@ -1189,7 +1190,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.10.25";
+const UI_VERSION_LABEL=" · v4.10.26";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -2537,7 +2538,7 @@ function createAggregateReturnsCore(){
  }
  function build(s,{expectedAccounts,expectedAsOf,topTargets:expectedTopTargets=null,excludedMembers=[],benchmarkMembers=[{account:'Citi-HK & 地产四期',market:'NASDAQ',securityCode:'QQQ'},{account:'Citi-HK & 地产四期',market:'NYSE',securityCode:'SPY'}]}={}){
   const api=Object.hasOwn(s||{},'transport');
-  if(!exact(s,['schema','provider','currency','asOf','accounts','reports',...['topHoldings','inceptionEvidence','transport'].filter(k=>Object.hasOwn(s||{},k))])||api&&s.transport!=='official-api'||s.schema!==SCHEMA||s.provider!=='Sharesight'||s.currency!=='USD'||!date(s.asOf)||s.asOf!==expectedAsOf)fail();
+  if(!exact(s,['schema','provider','currency','asOf','accounts','reports',...['topHoldings','holdingReturns','inceptionEvidence','transport'].filter(k=>Object.hasOwn(s||{},k))])||api&&s.transport!=='official-api'||s.schema!==SCHEMA||s.provider!=='Sharesight'||s.currency!=='USD'||!date(s.asOf)||s.asOf!==expectedAsOf)fail();
   const accounts=s.accounts;
   if(!Array.isArray(accounts)||!accounts.length||!accounts.every(text)||new Set(accounts).size!==accounts.length||!Array.isArray(expectedAccounts)||!same([...accounts].sort(),[...expectedAccounts].sort())||!Array.isArray(s.reports)||s.reports.length!==2||!Array.isArray(excludedMembers))fail();
   const inceptions=Object.hasOwn(s,'inceptionEvidence')?inceptionDirectory(s.inceptionEvidence,accounts,s.asOf,api):new Map();
@@ -2602,7 +2603,40 @@ function createAggregateReturnsCore(){
    }
    for(const row of r.unavailable){if(!exact(row,['scope','reason'])||!['benchmark-members-included','native-aggregate-not-provided','cash-scope-unverified'].includes(row.reason))fail();scopeKey(row.scope);put(row.scope,{status:row.reason,nativePct:null,startDate:r.startDate,endDate:r.endDate,...unavailableStart(row.scope,r,inceptions),includeClosed:true});}
   }
-  return {schema:'fee-console.ratio-performance-view.v2',provider:'Sharesight',asOf:s.asOf,currency:'USD',accounts:[...accounts],items:[...items.values()],...(Object.hasOwn(s,'topHoldings')?{topHoldings:buildTop(s.topHoldings,s,expectedTopTargets)}:{})};
+  return {schema:'fee-console.ratio-performance-view.v2',provider:'Sharesight',asOf:s.asOf,currency:'USD',accounts:[...accounts],items:[...items.values()],...(Object.hasOwn(s,'topHoldings')?{topHoldings:buildTop(s.topHoldings,s,expectedTopTargets)}:{}),...(Object.hasOwn(s,'holdingReturns')?{holdings:buildHoldings(s.holdingReturns,s,inceptions)}:{})};
+ }
+ // Each fund position's own native return, exactly as the asset report lists that position. One row per position
+ // and period; the position must belong to a fund-strategy row of the same period under the same fund class.
+ // Nothing is combined: several lots of one product stay several rows.
+ const HOLDING_RETURNS='fee-console.ratio-holding-returns-source.v1';
+ function buildHoldings(source,parent,directory){
+  if(!exact(source,['schema','reports'])||source.schema!==HOLDING_RETURNS||!Array.isArray(source.reports)||source.reports.length!==2)fail();
+  const items=new Map(),periods=new Set(),yearStart=oneYearBefore(parent.asOf);
+  for(const r of source.reports){
+   if(!exact(r,['period','rows'])||!['all','oneYear'].includes(r.period)||periods.has(r.period)||!Array.isArray(r.rows)||r.rows.length>20000)fail();periods.add(r.period);
+   const original=parent.reports.find(p=>p.period===r.period),classOf=new Map();
+   if(!original)fail();
+   for(const row of original.rows)if(row.scope.type==='fund-strategy')for(const m of row.members)classOf.set(memberKey(m),row.scope.parent);
+   const seen=new Set(),lines=new Set();
+   for(const row of r.rows){
+    if(!exact(row,['member','parent','sourceRow','returnPct','unit'])||!exact(row.member,['account','market','securityCode'])||![row.member.account,row.member.market,row.member.securityCode].every(text)||!Number.isSafeInteger(row.sourceRow)||row.sourceRow<1||typeof row.returnPct!=='number'||!Number.isFinite(row.returnPct)||Math.abs(row.returnPct)>1e9||!['p.a.','period','unknown'].includes(row.unit))fail();
+    const k=memberKey(row.member);
+    if(seen.has(k)||lines.has(row.sourceRow)||classOf.get(k)!==row.parent)fail();seen.add(k);lines.add(row.sourceRow);
+    // Bought within the last year: both windows are the same since-purchase figure, and it is never called annualised.
+    const started=directory.get(k),young=date(started)&&started>yearStart;
+    if(young&&row.unit==='p.a.')fail();
+    const item=items.get(k)||{member:{...row.member},parent:row.parent,periods:{}};
+    if(item.parent!==row.parent)fail();
+    item.periods[r.period]={status:young?'under-one-year':row.unit==='p.a.'?'annualised':row.unit==='period'?'period-return':'source-unit-unspecified',nativePct:row.returnPct,startDate:original.startDate,endDate:original.endDate,...investmentStart([row.member],directory,original)};
+    items.set(k,item);
+   }
+  }
+  return [...items.values()];
+ }
+ function selectHolding(view,m){
+  if(!Array.isArray(view?.holdings)||!m)return null;
+  const k=canon([String(m.account).replaceAll('&amp;','&'),m.market,m.securityCode]);
+  return view.holdings.find(x=>memberKey(x.member)===k)||null;
  }
 
  // Only current ranked entries are eligible. The historical return scope can
@@ -2653,7 +2687,7 @@ function createAggregateReturnsCore(){
   const etfs=source.targets.filter(t=>t.category===ETF_TOP).length;if(etfs>5||etfs&&secondary!==5)fail();
   if(expectedTargets!==null&&!same(source.targets,expectedTargets))fail();
   const stockFiles=stockSourceIds(parent);
-  const normalized=structuredClone(parent);delete normalized.topHoldings;
+  const normalized=structuredClone(parent);delete normalized.topHoldings;delete normalized.holdingReturns;
   normalized.reports=source.reports.map(r=>{
    if(!exact(r,['period','startDate','endDate','includeClosed','calculationMethod','currency','cashPerformance','source','additionalSources','rows','unavailable'])||!Array.isArray(r.rows)||!Array.isArray(r.unavailable)||!Array.isArray(r.additionalSources)||r.additionalSources.length>1)fail();
    if(stockFiles.has(fid(r.source))||r.additionalSources.some(s=>stockFiles.has(fid(s)))||r.rows.some(row=>stockFiles.has(row.sourceFileId)||stockFiles.has(fid(row.termEvidence?.source))))fail();
@@ -2741,6 +2775,14 @@ function createAggregateReturnsCore(){
   const scopeNote=item.target?.category==='二级市场'?'仅对应直接持有的实际产品；不包括 ETF 穿透公司敞口，杠杆产品收益不乘敞口倍数。':stockScope(item.scope)?'仅四个股票分类的历史成员，不含现金账户、防御资产或主题投资。':'';
   return '<details class="ratio-returns ratio-return-facts"><summary>详情</summary>'+dates+notes+(scopeNote?'<p class="ratio-return-scope-fact">'+scopeNote+'</p>':'')+'</details>';
  }
+ // One fund position: its two native returns and the day it was first bought. A missing figure stays a dash.
+ function renderHolding(item){
+  if(!item)return '<span class="ratio-holding-yield ratio-holding-yield-none">收益率 —</span>';
+  const all=item.periods.all,year=item.periods.oneYear;
+  const figure=(p,label)=>{const has=Number.isFinite(p?.nativePct),badge={annualised:'年化','under-one-year':'未满一年'}[p?.status]||'';return '<span class="ratio-holding-yield-figure"><span>'+label+'</span><strong>'+(has?esc(p.nativePct.toFixed(2)+'%'):'—')+'</strong>'+(badge?'<small>'+badge+'</small>':'')+'</span>';};
+  const since=all?.investmentStartDate?'<span class="ratio-holding-yield-since">'+(all.investmentStartBasis==='opening-balance-record'?'期初记录 ':'首次买入 ')+esc(all.investmentStartDate)+'</span>':'';
+  return '<span class="ratio-holding-yield">'+figure(all,'全部')+figure(year,'近一年')+since+'</span>';
+ }
  function renderAggregate(item){
   scopeKey(item.scope);
   const reasons={'benchmark-members-included':'原报表范围包含仅作基准的虚拟持仓，尚无剔除后的官方合并收益率。','native-aggregate-not-provided':'尚无这个分类范围的 Sharesight 官方合并收益率。','cash-scope-unverified':'该组合的现金收益覆盖尚未得到来源核实。','source-unavailable':'Sharesight 未提供此范围的收益率。'};
@@ -2755,7 +2797,7 @@ function createAggregateReturnsCore(){
   const note=stockScope(item.scope)?'股票市场小计只包含四个股票分类的历史成员，不含现金账户、防御资产或主题投资。':cash.includes('unknown')?'现金账户收益覆盖未获来源确认。':cash.includes('mixed')||cash.length>1?'现金收益覆盖分别保留各期原报表设置。':cash[0]==='included'?'含现金账户收益。':cash[0]==='excluded'?'未含现金账户收益。':'';
   return '<details class="ratio-returns"><summary>收益率</summary><div class="ratio-return-pair">'+rows+'</div><p class="ratio-return-scope">'+esc(accounts.join(' · '))+' · USD · Sharesight 原生口径</p><p>只显示组合或分类原生收益；已平仓计入历史，不用当前市值权重或穿透敞口重算。'+note+'</p></details>';
  }
- return {SCHEMA,build,validateInceptionBindings,select,render:renderAggregate,scopeKey,oneYearBefore,topTargets,buildTop,selectTop,renderTop,renderCompact,renderInline,datedName,ETF_TOP};
+ return {SCHEMA,build,validateInceptionBindings,select,render:renderAggregate,scopeKey,oneYearBefore,topTargets,buildTop,selectTop,renderTop,renderCompact,renderInline,datedName,ETF_TOP,HOLDING_RETURNS,selectHolding,renderHolding};
 }
 function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
   const companyCore=createFeeCompanyExposureCore(),returnsCore=createAggregateReturnsCore();
@@ -3030,20 +3072,29 @@ function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
       for(const w of [...weights].sort((a,b)=>a.remainder===b.remainder?a.i-b.i:a.remainder>b.remainder?-1:1)){if(left--<=0)break;w.bp++;}
       const bars=f.groups.map((g,i)=>{const pct=(weights[i].bp/100).toFixed(2);return '<div class="ratio-distribution-row"><div class="ratio-distribution-label"><span class="ratio-distribution-name">'+esc(g.name)+'</span><span class="ratio-distribution-values"><span class="ratio-distribution-metric ratio-distribution-market-value"><small>当前市值（USD）</small><span class="ratio-distribution-amount">'+preciseUsd(g.valueCents)+'</span></span><span class="ratio-distribution-metric ratio-distribution-weight"><small>占比</small><strong>'+pct+'%</strong></span></span></div><div class="ratio-distribution-track" role="meter" aria-label="'+esc(g.name)+'" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+pct+'"><i style="width:'+pct+'%"></i></div>'+returns(g.name,f.name)+'</div>';}).join('');
       const target=asset?.groups.find(g=>g.name===f.name)?.targetPct;
+      // Each fund's own two returns and first-buy date, when the snapshot carries them. One product held in several
+      // lots keeps one line with its total; the lots open underneath, oldest first, each with its own figures.
+      const perFund=Array.isArray(performance?.holdings);
+      const fundYield=h=>{
+        if(!perFund)return '';
+        if(h.lots.length===1)return returnsCore.renderHolding(returnsCore.selectHolding(performance,h.lots[0]));
+        const lots=h.lots.map(lot=>({lot,item:returnsCore.selectHolding(performance,lot)})).sort((a,b)=>String(a.item?.periods.all?.investmentStartDate||'9999').localeCompare(String(b.item?.periods.all?.investmentStartDate||'9999'))||b.lot.valueCents-a.lot.valueCents);
+        return '<details class="ratio-holding-lots"><summary>'+lots.length+' 笔 · 各笔收益率</summary><ul>'+lots.map(x=>'<li><span class="ratio-holding-lot-amount">'+money(x.lot.valueCents)+'</span>'+returnsCore.renderHolding(x.item)+'</li>').join('')+'</ul></details>';
+      };
       const holdings=f.groups.map((g,i)=>{
         if(!g.holdings)return '';
         const accounts=new Map();for(const h of g.holdings){
           const a=accounts.get(h.account)||{name:h.account,valueCents:0,holdings:new Map()};
           const name=fundHoldingDisplayName(h.name,h.securityCode)||h.name,prior=a.holdings.get(name);
           a.valueCents+=h.valueCents;
-          if(prior){prior.valueCents+=h.valueCents;prior.sourceCount++;}
-          else a.holdings.set(name,{...h,name,sourceCount:1});
+          if(prior){prior.valueCents+=h.valueCents;prior.sourceCount++;prior.lots.push(h);}
+          else a.holdings.set(name,{...h,name,sourceCount:1,lots:[h]});
           accounts.set(h.account,a);
         }
-        return '<section class="ratio-distribution-category"><h3>'+esc(g.name)+' · '+(weights[i].bp/100).toFixed(2)+'%</h3>'+[...accounts.values()].sort((a,b)=>b.valueCents-a.valueCents||a.name.localeCompare(b.name)).map(a=>'<section class="ratio-distribution-account"><h4><span>'+esc(a.name)+'</span><span>'+money(a.valueCents)+'</span></h4><ul>'+[...a.holdings.values()].sort((a,b)=>b.valueCents-a.valueCents||a.name.localeCompare(b.name)).map(h=>'<li class="ratio-fund-holding" data-source-count="'+h.sourceCount+'"><span class="ratio-fund-holding-name" data-security-code="'+esc(h.securityCode)+'" title="'+esc(h.name)+'">'+esc(h.name)+'</span><span>'+money(h.valueCents)+'</span></li>').join('')+'</ul></section>').join('')+'</section>';
+        return '<section class="ratio-distribution-category"><h3>'+esc(g.name)+' · '+(weights[i].bp/100).toFixed(2)+'%</h3>'+[...accounts.values()].sort((a,b)=>b.valueCents-a.valueCents||a.name.localeCompare(b.name)).map(a=>'<section class="ratio-distribution-account"><h4><span>'+esc(a.name)+'</span><span>'+money(a.valueCents)+'</span></h4><ul>'+[...a.holdings.values()].sort((a,b)=>b.valueCents-a.valueCents||a.name.localeCompare(b.name)).map(h=>'<li class="ratio-fund-holding" data-source-count="'+h.sourceCount+'"><span class="ratio-fund-holding-name" data-security-code="'+esc(h.securityCode)+'" title="'+esc(h.name)+'">'+esc(h.name)+'</span><span>'+money(h.valueCents)+'</span>'+fundYield(h)+'</li>').join('')+'</ul></section>').join('')+'</section>';
       }).join('');
       const missing=f.groups.length&&!f.groups.some(g=>g.holdings)?'<p>此历史快照未包含账户及持仓明细，更新快照后可查看。</p>':'';
-      return '<section class="card ratio-fund-distribution"><h2>'+esc(f.name)+'分布</h2><p>截至 '+esc(classification.asOf)+' · 占本类市值</p>'+(bars||'<p>本类暂无持仓。</p>')+'<details class="ratio-distribution-details"><summary>分类、账户与参考目标</summary><p>按 Sharesight 原始持仓名称首字段分类。上方百分比分母仅为'+esc(f.name)+'市值，不叠加穿透。</p><p>组合参考目标：'+(target===undefined?'未设置':target+'%（占总资产）')+'；各策略的参考目标未设置。</p><p>本类合计 '+money(f.totalCents)+(f.totalCents?' · 占比合计100.00%':' · 市值为零，占比均为0.00%')+'。明细按账户及市值降序列出，同分类、同账户、年月后完整名称相同的持仓合并合计；不同账户和不同份额名称分别列出。</p>'+holdings+missing+'</details></section>';
+      return '<section class="card ratio-fund-distribution"><h2>'+esc(f.name)+'分布</h2><p>截至 '+esc(classification.asOf)+' · 占本类市值</p>'+(bars||'<p>本类暂无持仓。</p>')+'<details class="ratio-distribution-details"><summary>分类、账户与参考目标</summary><p>按 Sharesight 原始持仓名称首字段分类。上方百分比分母仅为'+esc(f.name)+'市值，不叠加穿透。</p><p>组合参考目标：'+(target===undefined?'未设置':target+'%（占总资产）')+'；各策略的参考目标未设置。</p><p>本类合计 '+money(f.totalCents)+(f.totalCents?' · 占比合计100.00%':' · 市值为零，占比均为0.00%')+'。明细按账户及市值降序列出，同分类、同账户、年月后完整名称相同的持仓合并合计；不同账户和不同份额名称分别列出。</p>'+(f.groups.some(g=>g.holdings)?perFund?'<p>各基金的收益率取自 Sharesight 对该笔持仓的原值：“全部”自首次买入日起算，“近一年”为最近十二个月；同一基金分多笔买入时逐笔列出，不合并、不平均。</p>':performance?'<p>此快照未包含各基金的收益率，下次发布后显示。</p>':'':'')+holdings+missing+'</details></section>';
     }).join('');
     const method='<p>黄金占比的分母为同日All Together分类来源总资产；已计入对应类别，不额外累加。常青按原始年月后的完整基金名聚合，份额类别和内部连字符保留，先合并全部持仓再选前五。</p>'+(benchmarkExcluded?'<p>指定Citi账户的QQQ／SPY仅作基准取值，不计入投资资产、占比分母和穿透；原始资料及基准用途保留。</p>':'<p>此历史快照仅排除了指定Citi基准的公司穿透，资产总额保留原口径。</p>')+'<p>'+(asset?'下方四类前五沿用原排名分组：二级市场为前三类以外全部资产，含现金，与上方六类中的股票市场范围不同。':'二级市场为前三类以外全部资产，含现金；')+(directSecondary?'二级市场前五与其余三类一致，按实际持有的证券市值降序；同一证券跨账户合并并保留账户，不同证券不合并。</p><p>ETF和杠杆产品按其自身实际市值列示，不穿透到底层公司，也不乘杠杆倍数。</p><p>管理费':'公司经济敞口只重算分子，不改变真实资产金额、NAV 或费用。仅明确证券及市场映射合并：VST（NYSE）与VSTL（NASDAQ）归Vistra，GOOG／GOOGL（NASDAQ）归Alphabet；未知证券保持独立。</p><p>VSTL按2倍、TQQQ按3倍经济敞口；来源已完整包含相同杠杆时不重复相乘。直接持仓按实际市值降序，穿透按经济敞口降序；各行保留账户。未穿透的残余不猜测归属到个股，ETF本体与底层不双计；真实资产、现金和费用不乘杠杆。</p><p>管理费')+'仍为嘉信＋Webull；Jenny&#39;s IB 收益及回撤独立考核，比例管理不扩大计费范围。</p>';
     const official=b?.browserEvidence?.transport==='official-workbooks',apiSource=b?.browserEvidence?.transport==='official-api';

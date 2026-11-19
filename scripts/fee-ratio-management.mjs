@@ -273,20 +273,29 @@ export function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
       for(const w of [...weights].sort((a,b)=>a.remainder===b.remainder?a.i-b.i:a.remainder>b.remainder?-1:1)){if(left--<=0)break;w.bp++;}
       const bars=f.groups.map((g,i)=>{const pct=(weights[i].bp/100).toFixed(2);return '<div class="ratio-distribution-row"><div class="ratio-distribution-label"><span class="ratio-distribution-name">'+esc(g.name)+'</span><span class="ratio-distribution-values"><span class="ratio-distribution-metric ratio-distribution-market-value"><small>当前市值（USD）</small><span class="ratio-distribution-amount">'+preciseUsd(g.valueCents)+'</span></span><span class="ratio-distribution-metric ratio-distribution-weight"><small>占比</small><strong>'+pct+'%</strong></span></span></div><div class="ratio-distribution-track" role="meter" aria-label="'+esc(g.name)+'" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+pct+'"><i style="width:'+pct+'%"></i></div>'+returns(g.name,f.name)+'</div>';}).join('');
       const target=asset?.groups.find(g=>g.name===f.name)?.targetPct;
+      // Each fund's own two returns and first-buy date, when the snapshot carries them. One product held in several
+      // lots keeps one line with its total; the lots open underneath, oldest first, each with its own figures.
+      const perFund=Array.isArray(performance?.holdings);
+      const fundYield=h=>{
+        if(!perFund)return '';
+        if(h.lots.length===1)return returnsCore.renderHolding(returnsCore.selectHolding(performance,h.lots[0]));
+        const lots=h.lots.map(lot=>({lot,item:returnsCore.selectHolding(performance,lot)})).sort((a,b)=>String(a.item?.periods.all?.investmentStartDate||'9999').localeCompare(String(b.item?.periods.all?.investmentStartDate||'9999'))||b.lot.valueCents-a.lot.valueCents);
+        return '<details class="ratio-holding-lots"><summary>'+lots.length+' 笔 · 各笔收益率</summary><ul>'+lots.map(x=>'<li><span class="ratio-holding-lot-amount">'+money(x.lot.valueCents)+'</span>'+returnsCore.renderHolding(x.item)+'</li>').join('')+'</ul></details>';
+      };
       const holdings=f.groups.map((g,i)=>{
         if(!g.holdings)return '';
         const accounts=new Map();for(const h of g.holdings){
           const a=accounts.get(h.account)||{name:h.account,valueCents:0,holdings:new Map()};
           const name=fundHoldingDisplayName(h.name,h.securityCode)||h.name,prior=a.holdings.get(name);
           a.valueCents+=h.valueCents;
-          if(prior){prior.valueCents+=h.valueCents;prior.sourceCount++;}
-          else a.holdings.set(name,{...h,name,sourceCount:1});
+          if(prior){prior.valueCents+=h.valueCents;prior.sourceCount++;prior.lots.push(h);}
+          else a.holdings.set(name,{...h,name,sourceCount:1,lots:[h]});
           accounts.set(h.account,a);
         }
-        return '<section class="ratio-distribution-category"><h3>'+esc(g.name)+' · '+(weights[i].bp/100).toFixed(2)+'%</h3>'+[...accounts.values()].sort((a,b)=>b.valueCents-a.valueCents||a.name.localeCompare(b.name)).map(a=>'<section class="ratio-distribution-account"><h4><span>'+esc(a.name)+'</span><span>'+money(a.valueCents)+'</span></h4><ul>'+[...a.holdings.values()].sort((a,b)=>b.valueCents-a.valueCents||a.name.localeCompare(b.name)).map(h=>'<li class="ratio-fund-holding" data-source-count="'+h.sourceCount+'"><span class="ratio-fund-holding-name" data-security-code="'+esc(h.securityCode)+'" title="'+esc(h.name)+'">'+esc(h.name)+'</span><span>'+money(h.valueCents)+'</span></li>').join('')+'</ul></section>').join('')+'</section>';
+        return '<section class="ratio-distribution-category"><h3>'+esc(g.name)+' · '+(weights[i].bp/100).toFixed(2)+'%</h3>'+[...accounts.values()].sort((a,b)=>b.valueCents-a.valueCents||a.name.localeCompare(b.name)).map(a=>'<section class="ratio-distribution-account"><h4><span>'+esc(a.name)+'</span><span>'+money(a.valueCents)+'</span></h4><ul>'+[...a.holdings.values()].sort((a,b)=>b.valueCents-a.valueCents||a.name.localeCompare(b.name)).map(h=>'<li class="ratio-fund-holding" data-source-count="'+h.sourceCount+'"><span class="ratio-fund-holding-name" data-security-code="'+esc(h.securityCode)+'" title="'+esc(h.name)+'">'+esc(h.name)+'</span><span>'+money(h.valueCents)+'</span>'+fundYield(h)+'</li>').join('')+'</ul></section>').join('')+'</section>';
       }).join('');
       const missing=f.groups.length&&!f.groups.some(g=>g.holdings)?'<p>此历史快照未包含账户及持仓明细，更新快照后可查看。</p>':'';
-      return '<section class="card ratio-fund-distribution"><h2>'+esc(f.name)+'分布</h2><p>截至 '+esc(classification.asOf)+' · 占本类市值</p>'+(bars||'<p>本类暂无持仓。</p>')+'<details class="ratio-distribution-details"><summary>分类、账户与参考目标</summary><p>按 Sharesight 原始持仓名称首字段分类。上方百分比分母仅为'+esc(f.name)+'市值，不叠加穿透。</p><p>组合参考目标：'+(target===undefined?'未设置':target+'%（占总资产）')+'；各策略的参考目标未设置。</p><p>本类合计 '+money(f.totalCents)+(f.totalCents?' · 占比合计100.00%':' · 市值为零，占比均为0.00%')+'。明细按账户及市值降序列出，同分类、同账户、年月后完整名称相同的持仓合并合计；不同账户和不同份额名称分别列出。</p>'+holdings+missing+'</details></section>';
+      return '<section class="card ratio-fund-distribution"><h2>'+esc(f.name)+'分布</h2><p>截至 '+esc(classification.asOf)+' · 占本类市值</p>'+(bars||'<p>本类暂无持仓。</p>')+'<details class="ratio-distribution-details"><summary>分类、账户与参考目标</summary><p>按 Sharesight 原始持仓名称首字段分类。上方百分比分母仅为'+esc(f.name)+'市值，不叠加穿透。</p><p>组合参考目标：'+(target===undefined?'未设置':target+'%（占总资产）')+'；各策略的参考目标未设置。</p><p>本类合计 '+money(f.totalCents)+(f.totalCents?' · 占比合计100.00%':' · 市值为零，占比均为0.00%')+'。明细按账户及市值降序列出，同分类、同账户、年月后完整名称相同的持仓合并合计；不同账户和不同份额名称分别列出。</p>'+(f.groups.some(g=>g.holdings)?perFund?'<p>各基金的收益率取自 Sharesight 对该笔持仓的原值：“全部”自首次买入日起算，“近一年”为最近十二个月；同一基金分多笔买入时逐笔列出，不合并、不平均。</p>':performance?'<p>此快照未包含各基金的收益率，下次发布后显示。</p>':'':'')+holdings+missing+'</details></section>';
     }).join('');
     const method='<p>黄金占比的分母为同日All Together分类来源总资产；已计入对应类别，不额外累加。常青按原始年月后的完整基金名聚合，份额类别和内部连字符保留，先合并全部持仓再选前五。</p>'+(benchmarkExcluded?'<p>指定Citi账户的QQQ／SPY仅作基准取值，不计入投资资产、占比分母和穿透；原始资料及基准用途保留。</p>':'<p>此历史快照仅排除了指定Citi基准的公司穿透，资产总额保留原口径。</p>')+'<p>'+(asset?'下方四类前五沿用原排名分组：二级市场为前三类以外全部资产，含现金，与上方六类中的股票市场范围不同。':'二级市场为前三类以外全部资产，含现金；')+(directSecondary?'二级市场前五与其余三类一致，按实际持有的证券市值降序；同一证券跨账户合并并保留账户，不同证券不合并。</p><p>ETF和杠杆产品按其自身实际市值列示，不穿透到底层公司，也不乘杠杆倍数。</p><p>管理费':'公司经济敞口只重算分子，不改变真实资产金额、NAV 或费用。仅明确证券及市场映射合并：VST（NYSE）与VSTL（NASDAQ）归Vistra，GOOG／GOOGL（NASDAQ）归Alphabet；未知证券保持独立。</p><p>VSTL按2倍、TQQQ按3倍经济敞口；来源已完整包含相同杠杆时不重复相乘。直接持仓按实际市值降序，穿透按经济敞口降序；各行保留账户。未穿透的残余不猜测归属到个股，ETF本体与底层不双计；真实资产、现金和费用不乘杠杆。</p><p>管理费')+'仍为嘉信＋Webull；Jenny&#39;s IB 收益及回撤独立考核，比例管理不扩大计费范围。</p>';
     const official=b?.browserEvidence?.transport==='official-workbooks',apiSource=b?.browserEvidence?.transport==='official-api';
