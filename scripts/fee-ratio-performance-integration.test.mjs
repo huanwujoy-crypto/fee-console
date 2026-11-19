@@ -522,3 +522,28 @@ const browserOriginalMutations={
 for(const [label,edit]of Object.entries(browserOriginalMutations))test('complete-original verifier rejects browser inception '+label,async t=>{
  await assert.rejects(fixture(t,r=>{addBrowserInceptionV2(r);edit(r);}));
 });
+
+test('fund holdings show each position\'s own two returns and first-buy date; lots of one product open underneath',async t=>{
+ const f=await fixture(t),m=structuredClone(f.model),hedge=m.classificationSummary.fundDistributions[1].groups[0].holdings;
+ const member=h=>({account:h.account,market:h.market,securityCode:h.securityCode}),source={libraryFileId:'libfile_'+'8'.repeat(32),version:0,sha256:'8'.repeat(64),locator:'Synthetic private inception directory'};
+ // A snapshot from before this change says so once and shows no per-fund figure.
+ const before=f.ratio.render(f.model);assert.doesNotMatch(before,/ratio-holding-yield|ratio-holding-lots/);assert.equal((before.match(/此快照未包含各基金的收益率，下次发布后显示。/g)||[]).length,2);
+ hedge[3].name=hedge[2].name;
+ for(const [i,r] of m.performance.reports.entries())r.rows.push({scope:scope('未分类','对冲基金'),members:hedge.map(member),sourceSheet:'Synthetic group',sourceRow:30,returnPct:i?1.5:6.5,unit:i?'period':'p.a.',termEvidence:{type:'unknown'}});
+ m.performance.holdingReturns={schema:'fee-console.ratio-holding-returns-source.v1',reports:['all','oneYear'].map((period,i)=>({period,rows:hedge.slice(0,4).map((h,n)=>({member:member(h),parent:'对冲基金',sourceRow:40+n,returnPct:(i?1:10)+n,unit:i?'period':n===1?'unknown':'p.a.'}))}))};
+ const starts=['2021-05-06','2026-03-01','2022-01-10','2020-07-08'];
+ m.performance.inceptionEvidence={schema:'fee-console.ratio-inception-source.v1',capturedAt:'2026-10-29T05:00:00.000Z',includeClosed:true,sources:[source],members:hedge.slice(0,4).map((h,n)=>({...member(h),startDate:starts[n],dateKind:'holding-inception',sourceFileId:source.libraryFileId,sourceLocator:'Synthetic historical member inception_date'}))};
+ const html=f.ratio.render(m),lines=html.match(/<li class="ratio-fund-holding"[^]*?<\/li>(?=<li class="ratio-fund-holding"|<\/ul><\/section>)/g)||[],line=code=>lines.find(x=>x.includes('data-security-code="'+code+'"'));
+ assert.equal(lines.length,9,'two lots of one product share a line');
+ assert.match(line('F10'),/<span>USD 100\.00<\/span><span class="ratio-holding-yield"><span class="ratio-holding-yield-figure"><span>全部<\/span><strong>10\.00%<\/strong><small>年化<\/small><\/span><span class="ratio-holding-yield-figure"><span>近一年<\/span><strong>1\.00%<\/strong><\/span><span class="ratio-holding-yield-since">首次买入 2021-05-06<\/span><\/span><\/li>$/);
+ // Bought within the last year: both figures say so and neither is called annualised.
+ assert.match(line('F11'),/全部<\/span><strong>11\.00%<\/strong><small>未满一年<\/small>.*近一年<\/span><strong>2\.00%<\/strong><small>未满一年<\/small>.*首次买入 2026-03-01/);
+ // Two lots: one line with the total, the lots underneath oldest first, each with its own amount and figures; nothing averaged.
+ const lots=line('F12');assert.match(lots,/data-source-count="2"/);assert.match(lots,/<span>USD 195\.00<\/span><details class="ratio-holding-lots"><summary>2 笔 · 各笔收益率<\/summary><ul><li><span class="ratio-holding-lot-amount">USD 97\.00<\/span>.*全部<\/span><strong>13\.00%<\/strong>.*首次买入 2020-07-08<\/span><\/span><\/li><li><span class="ratio-holding-lot-amount">USD 98\.00<\/span>.*全部<\/span><strong>12\.00%<\/strong>.*首次买入 2022-01-10<\/span><\/span><\/li><\/ul><\/details><\/li>$/);
+ // No figure for a position: a dash, never zero. The other fund class has no rows here.
+ assert.match(line('F14'),/<span class="ratio-holding-yield ratio-holding-yield-none">收益率 —<\/span><\/li>$/);assert.match(line('F20'),/收益率 —/);
+ assert.equal((html.match(/各基金的收益率取自 Sharesight 对该笔持仓的原值/g)||[]).length,2);assert.doesNotMatch(html,/此快照未包含各基金的收益率/);
+ // Amounts, shares and strategy returns are what they were.
+ const strip=s=>s.replace(/<span class="ratio-holding-yield[^]*?<\/span><\/span>|<span class="ratio-holding-yield ratio-holding-yield-none">收益率 —<\/span>/g,'');
+ assert.equal((html.match(/class="ratio-fund-holding"/g)||[]).length,9);assert.match(strip(line('F10')),/<span>USD 100\.00<\/span><\/li>$/);
+});

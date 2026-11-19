@@ -207,3 +207,54 @@ test('anything that does not fit exactly is refused with a fixed code',()=>{
   refused(c=>{c.allStartDate='2019-06-01';each(c,(r,k)=>{if(k.endsWith('.all'))r.start_date='2019-06-01';});},'CONTRACT');
   assert.equal(new Set(core.CODES).size,core.CODES.length);
 });
+
+test('each fund position keeps its own native return for both windows, dated by its own first buy',()=>{
+  const p=build(),h=p.holdingReturns,viewer=createAggregateReturnsCore();
+  assert.equal(h.schema,'fee-console.ratio-holding-returns-source.v1');assert.deepEqual(h.reports.map(r=>r.period),['all','oneYear']);
+  // The seven fund positions are rows 2..8 of the asset report; no other class contributes a row.
+  for(const r of h.reports){
+    assert.deepEqual(r.rows.map(x=>x.sourceRow),[2,3,4,5,6,7,8]);assert.deepEqual(r.rows.map(x=>x.returnPct),[1,2,3,4,5,6,7].map(i=>1+i/4));
+    assert.deepEqual(r.rows.map(x=>x.parent),['对冲基金','对冲基金','对冲基金','对冲基金','常青基金','常青基金','常青基金']);
+    assert.ok(r.rows.every(x=>Object.keys(x).sort().join()==='member,parent,returnPct,sourceRow,unit'&&x.unit===(r.period==='all'?'p.a.':'period')));
+  }
+  const view=viewer.build(p,{expectedAccounts:p.accounts,expectedAsOf:ASOF}),pick=(i,code)=>viewer.selectHolding(view,member(i,code,'PRIVATE'));
+  assert.equal(view.holdings.length,7);
+  const alpha=pick(3,'宏观-2020-01-Alpha');
+  assert.deepEqual([alpha.parent,alpha.periods.all.status,alpha.periods.all.nativePct,alpha.periods.all.investmentStartDate,alpha.periods.all.endDate,alpha.periods.oneYear.status,alpha.periods.oneYear.nativePct,alpha.periods.oneYear.startDate],
+    ['对冲基金','annualised',1.25,'2020-02-03',ASOF,'period-return',1.25,ONE]);
+  assert.equal(Object.hasOwn(alpha.periods.oneYear,'investmentStartDate'),false);
+  // An opening-balance record is said to be one; two lots of one product stay two rows with their own dates.
+  assert.equal(pick(3,'Legacy hedge fund').periods.all.investmentStartBasis,'opening-balance-record');
+  assert.deepEqual([pick(5,'地产-2021-01-Delta'),pick(6,'地产-2021-01-Delta')].map(x=>[x.periods.all.nativePct,x.periods.all.investmentStartDate]),[[2.25,'2021-02-03'],[2.5,'2021-03-04']]);
+  // The account may arrive HTML-escaped from the exposure summary; anything unknown finds nothing.
+  assert.equal(viewer.selectHolding(view,member(9,'Nothing','PRIVATE')),null);assert.equal(viewer.selectHolding({items:[]},member(3,'宏观-2020-01-Alpha','PRIVATE')),null);assert.equal(viewer.selectHolding(view,null),null);
+  const html=viewer.renderHolding(alpha);
+  assert.match(html,/^<span class="ratio-holding-yield"><span class="ratio-holding-yield-figure"><span>全部<\/span><strong>1\.25%<\/strong><small>年化<\/small><\/span><span class="ratio-holding-yield-figure"><span>近一年<\/span><strong>1\.25%<\/strong><\/span><span class="ratio-holding-yield-since">首次买入 2020-02-03<\/span><\/span>$/);
+  assert.match(viewer.renderHolding(pick(3,'Legacy hedge fund')),/期初记录 2019-05-06/);assert.match(viewer.renderHolding(null),/收益率 —/);
+
+  // Bought within the last year: never annualised, and marked as under one year in both windows.
+  const young=build(c=>{c.holdings.rows[7].holding.inception_date='2026-03-02';c.trades.rows.find(r=>r.trade.holding_id===holdingId(7)&&r.trade.transaction_date==='2022-08-09').trade.transaction_date='2026-03-02';});
+  assert.deepEqual(young.holdingReturns.reports.map(r=>r.rows.find(x=>x.sourceRow===8).unit),['unknown','period']);
+  const youngItem=viewer.selectHolding(viewer.build(young,{expectedAccounts:young.accounts,expectedAsOf:ASOF}),member(5,'No date evergreen','PRIVATE'));
+  assert.deepEqual([youngItem.periods.all.status,youngItem.periods.oneYear.status,youngItem.periods.all.investmentStartDate],['under-one-year','under-one-year','2026-03-02']);
+  assert.match(viewer.renderHolding(youngItem),/全部<\/span><strong>2\.75%<\/strong><small>未满一年<\/small>.*近一年<\/span><strong>2\.75%<\/strong><small>未满一年<\/small>/);
+
+  // A position without a usable figure is left out; with none at all the block is absent and the source is still valid.
+  const gap=build(c=>each(c,(r,k)=>{if(k.startsWith('asset.'))r.holdings[1].total_gain_percent=null;}));
+  assert.deepEqual(gap.holdingReturns.reports.map(r=>r.rows.map(x=>x.sourceRow)),[[3,4,5,6,7,8],[3,4,5,6,7,8]]);
+  const none=build(c=>each(c,(r,k)=>{if(k.startsWith('asset.'))for(const i of [1,2,3,4,5,6,7])r.holdings[i].total_gain_percent=null;}));
+  assert.equal(Object.hasOwn(none,'holdingReturns'),false);assert.equal(Object.hasOwn(viewer.build(none,{expectedAccounts:none.accounts,expectedAsOf:ASOF}),'holdings'),false);
+  const old=structuredClone(p);delete old.holdingReturns;assert.equal(Object.hasOwn(viewer.build(old,{expectedAccounts:old.accounts,expectedAsOf:ASOF}),'holdings'),false);
+
+  // The viewer refuses anything that is not exactly this shape or not bound to a fund-strategy row of the same period.
+  const refuse=change=>{const bad=structuredClone(p);change(bad.holdingReturns,bad);assert.throws(()=>viewer.build(bad,{expectedAccounts:bad.accounts,expectedAsOf:ASOF}),/RATIO_PERFORMANCE_REFUSED/);};
+  refuse(h=>{h.schema='x';});refuse(h=>{h.extra=1;});refuse(h=>{h.reports.pop();});refuse(h=>{h.reports[1].period='all';});refuse(h=>{h.reports[0].note=1;});
+  refuse(h=>{h.reports[0].rows[0].name='x';});refuse(h=>{h.reports[0].rows[0].returnPct='1';});refuse(h=>{h.reports[0].rows[0].returnPct=Infinity;});refuse(h=>{h.reports[0].rows[0].unit='unavailable';});
+  refuse(h=>{h.reports[0].rows[0].sourceRow=0;});refuse(h=>{h.reports[0].rows[1].sourceRow=h.reports[0].rows[0].sourceRow;});refuse(h=>{h.reports[0].rows.push(structuredClone(h.reports[0].rows[0]));});
+  refuse(h=>{h.reports[0].rows[0].parent='常青基金';});refuse(h=>{h.reports[0].rows[0].member=member(0,'AAA','NYSE');});refuse(h=>{h.reports[0].rows[0].member.extra=1;});
+  // A position bought within the year cannot be labelled annualised.
+  assert.throws(()=>{const bad=structuredClone(young);bad.holdingReturns.reports[0].rows.find(x=>x.sourceRow===8).unit='p.a.';viewer.build(bad,{expectedAccounts:bad.accounts,expectedAsOf:ASOF});},/RATIO_PERFORMANCE_REFUSED/);
+  // The top-five block is built from the same source and is unaffected by the new rows.
+  const withTop=build(undefined,TARGETS);assert.ok(withTop.topHoldings&&withTop.holdingReturns);
+  assert.equal(viewer.build(withTop,{expectedAccounts:withTop.accounts,expectedAsOf:ASOF,topTargets:TARGETS}).holdings.length,7);
+});

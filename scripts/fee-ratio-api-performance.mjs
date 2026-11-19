@@ -236,15 +236,27 @@ export function createApiPerformanceCore(){
       return {period,startDate:parent.startDate,endDate:asOf,includeClosed:true,calculationMethod:'sharesight-native',currency:'USD',cashPerformance:parent.cashPerformance,source:parent.source,additionalSources:rows.some(r=>r.sourceFileId)?[top.source]:[],rows,unavailable};
     });
 
+    // ---- each fund position's own return, straight from the asset report's holding rows ----
+    // The asset report already lists every position with its own figure; only positions of the two fund classes
+    // are kept, one row per position and period. A position without a finite figure is simply left out.
+    const holdingReports=PERIODS.map((period,index)=>{
+      const asset=parsed['asset.'+period],parentOf=new Map(reports[index].rows.filter(x=>x.scope.type==='fund-strategy').flatMap(x=>x.members.map(m=>[key(m),x.scope.parent])));
+      return {period,rows:[...asset.members].filter(([k,e])=>parentOf.has(k)&&finite(e.returnPct)).map(([k,e])=>({member:e.member,parent:parentOf.get(k),sourceRow:e.row,returnPct:e.returnPct,unit:unitOf(asset.r,period,[e.member])})).sort((a,b)=>a.sourceRow-b.sourceRow)};
+    });
+
     const used=new Set([...inception.values()].map(m=>m.sourceFileId));
     const sources=[{apiReportId:HOLDINGS_ID,sha256:h.sha256,locator:'api-v3 member holdings listings',capturedAt:h.capturedAt},{apiReportId:CASH_ID,sha256:c.sha256,locator:'api-v2 cash account transactions',capturedAt:c.capturedAt}].filter(s=>used.has(s.apiReportId));
     const performance={schema:'fee-console.ratio-performance-source.v2',provider:'Sharesight',transport:'official-api',currency:'USD',asOf,accounts:capture.accounts.map(a=>a.name),reports,
       ...(targets.length?{topHoldings:{schema:'fee-console.ratio-top5-source.v1',targets,reports:topReports}}:{}),
+      ...(holdingReports.some(r=>r.rows.length)?{holdingReturns:{schema:'fee-console.ratio-holding-returns-source.v1',reports:holdingReports}}:{}),
       inceptionEvidence:{schema:'fee-console.ratio-inception-source.v2',capturedAt:sources.map(s=>s.capturedAt).sort().at(-1),includeClosed:true,
         sources:sources.map(({capturedAt,...s})=>s),sourceCaptures:sources.map(s=>({apiReportId:s.apiReportId,capturedAt:s.capturedAt,sourceKind:'sharesight-api-holdings'})),
         members:[...inception.values()].sort((a,b)=>key(a).localeCompare(key(b)))}};
     // The same core the viewer uses must accept the result as it stands.
-    try{createAggregateReturnsCore().build(performance,{expectedAccounts:performance.accounts,expectedAsOf:asOf,...(targets.length?{topTargets:targets}:{})});}catch{fail('CONTRACT');}
+    const accepted=()=>{try{createAggregateReturnsCore().build(performance,{expectedAccounts:performance.accounts,expectedAsOf:asOf,...(targets.length?{topTargets:targets}:{})});return true;}catch{return false;}};
+    // The per-fund rows are an addition for display. If the viewer would not take them, publish without them
+    // rather than lose the whole day's report; everything else must still be accepted as before.
+    if(!accepted()){if(!Object.hasOwn(performance,'holdingReturns'))fail('CONTRACT');delete performance.holdingReturns;if(!accepted())fail('CONTRACT');}
     return performance;
   }
   return {CAPTURE,CODES,GROUPS,PERIODS,build};
