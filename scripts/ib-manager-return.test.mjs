@@ -277,3 +277,29 @@ test('the risk desk folds leveraged products into their underlying and finds the
   const render=html.slice(html.indexOf('function renderRiskDesk(st,feeView){'),html.indexOf('function riskDeskInput(event){'));
   assert.ok(render.includes('show=!!lp;'));assert.ok(!render.includes('isMgr'));
 });
+
+test('the month-end payable estimate adds the remaining management fee and the Carry a move would bring',()=>{
+  const html=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8'),box={};vm.createContext(box);
+  vm.runInContext("const esc=v=>String(v??'');const usd=(v,d=2)=>(v<0?'-$':'$')+Math.abs(Number(v)).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});",box);
+  vm.runInContext(html.slice(html.indexOf('/* payable-forecast:start */'),html.indexOf('/* payable-forecast:end */'))+';globalThis.M=payableForecastModel;globalThis.V=payableForecastView;',box);
+  const near=(a,b)=>assert.ok(Math.abs(a-b)<1e-6,a+' vs '+b),text=out=>out.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim();
+  const input={asOf:'2026-11-18',nav:1000000,due:4000,cum:-50000,hwm:100000,hwmBefore:100000,mgmtRate:.02,carryRate:.2,baseShare:1};
+  // Twelve days are left in November; a flat month adds only the management fee.
+  const flat=box.M(input,0);assert.equal(flat.days,12);assert.equal(flat.monthEnd,'2026-11-30');near(flat.mgmt,12*1000000*.02/365);near(flat.carry,0);near(flat.short,150000);near(flat.dueEnd,4000+flat.mgmt);
+  // A gain past the high-water mark adds Carry on the excess; the fee base follows the average of the path.
+  const up=box.M(input,.2);near(up.pnl,200000);near(up.mgmt,12*1000000*1.1*.02/365);near(up.carry,50000*.2);near(up.dueEnd,4000+up.mgmt+10000);
+  near(box.M({...input,baseShare:.5},0).mgmt,flat.mgmt/2);near(box.M(input,.9).move,.2);near(box.M(input,-.9).move,-.2);
+  // The month in progress can lose Carry it has accrued so far, but never more than that.
+  const ahead={...input,cum:130000,hwm:130000,hwmBefore:100000};near(box.M(ahead,-.01).carry,-10000*.2);near(box.M(ahead,-.2).carry,-30000*.2);near(box.M(ahead,.01).carry,10000*.2);
+  near(box.M({...input,hwmBefore:undefined},.2).carry,10000);
+  assert.equal(box.M({...input,asOf:'2026-11-30'},0).days,0);assert.equal(box.M({...input,asOf:'2028-02-10'},0).monthEnd,'2028-02-29');
+  for(const bad of [null,{},{...input,asOf:'x'},{...input,nav:0},{...input,due:NaN},{...input,hwm:null},{...input,mgmtRate:-1}]){assert.equal(box.M(bad,0),null);}
+  assert.equal(box.V(null),'');
+  assert.match(text(box.V(flat)),/月底预估 到月底组合涨跌 0% 剩余 12 天管理费 \$658 新增 Carry 无（距起算线还差 \$150,000） 2026-11-30 应付约 \$4,658 方向性估算/);
+  assert.match(text(box.V(up)),/\+20% 剩余 12 天管理费 \$723 新增 Carry（按 20%） \$10,000 2026-11-30 应付约 \$14,723/);
+  assert.match(text(box.V(box.M(ahead,-.2))),/本月 Carry 减少 −\$6,000/);
+  assert.match(box.V(flat),/<input class="risk-range" id="balMove" type="range" min="-20" max="20" step="1" value="0"/);
+  // The estimate reads the verified statement only and is never shown while the payable figure is withheld.
+  const wire=html.slice(html.indexOf('function renderBalForecast('),html.indexOf('function renderFees('));
+  assert.match(wire,/feeView\?\.state==="verified"&&B&&!G\?\.hold&&st\?\.hwm!=null/);assert.doesNotMatch(wire,/fetch\(|store\b|DB\./);
+});
