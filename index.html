@@ -10,7 +10,7 @@
 <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAABzUlEQVR42u3bsQ2AMAwAwczDhEzKOqGlCBIgBdnxRT+BfU0Kt20/pGHNCASH4BAcgkNwCA7BITgEh+CQ4BAcgkNwCA7BITgEh+AQHBIcgkNwCA7BITgEh+AQHIJDgkNwCA7BITgEh+AQHIJDcAgOCQ7BITgEh+AQHIJDcOi2/vjBwUQyJXAEkhHNBxyxZITyAQcccMABxwIy4viAAw444IADDjjggAMOOOCAAw444IBDcAgOwQEHHHDAAQcccMABBxxwwAEHHHAIDudocDDxeWFwOEeDg4z3a4MDDjjggKMOjh82BwcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAGHQ1Y4HLLCERPH1IHCkRjH7JnCAQcccMBRB8cam4MDDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAQxWDQ3AIDsEhOFQNR/eSfG7hgAMOOOCAAw444PCq4ZCvrOAQHIJDgkNwCA7BITgEh+AQHIJDcEhwCA7BITgEh+AQHIJDcAgOwSHBITgEh+AQHIJDcAgOwSE4pEsnhtvC417hqCsAAAAASUVORK5CYII=">
-<meta name="fee-console-build" content="4.10.17">
+<meta name="fee-console-build" content="4.10.18">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -255,6 +255,7 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
 .month-detail:last-child{border-bottom:0}
 .month-detail>summary{padding:8px 0}
 .month-detail .month-body{padding:0 0 12px 20px}
+.month-strip{display:flex;gap:3px;margin:0 0 10px}.month-strip button{flex:1 1 0;min-width:0;border:1px solid transparent;border-radius:8px;background:transparent;padding:3px 0 2px;font-family:inherit;color:var(--ink-2);cursor:pointer}.month-strip button[aria-pressed="true"]{border-color:var(--border);background:var(--chip);color:var(--ink-1);font-weight:600}.month-strip .plot{position:relative;display:block;height:46px}.month-strip .plot::before{content:"";position:absolute;left:0;right:0;top:50%;border-top:1px solid var(--border)}.month-strip .bar{position:absolute;left:50%;width:56%;max-width:26px;transform:translateX(-50%);border-radius:2px;min-height:2px}.month-strip .bar.up{bottom:50%;background:var(--good-text)}.month-strip .bar.down{top:50%;background:var(--critical)}.month-strip .carry{position:absolute;top:0;left:50%;width:6px;height:6px;margin-left:-3px;border-radius:50%;background:var(--series-1)}.month-strip .m{display:block;font-size:11px;line-height:1.3}.month-strip-key{display:flex;gap:12px;font-size:11px;color:var(--ink-2);margin:-4px 0 10px}.month-strip-key i{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--series-1);margin-right:4px;vertical-align:1px}
 .month-totals{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;padding:4px 0 10px;font-size:12px;color:var(--ink-2)}
 .month-totals b{display:block;margin-top:3px;font-size:17px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
 .month-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px 14px;font-size:12px;color:var(--ink-2)}
@@ -1185,7 +1186,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.10.17";
+const UI_VERSION_LABEL=" · v4.10.18";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -5145,6 +5146,18 @@ function toggleMonthReturnHistory(button){
   button.setAttribute("aria-expanded",String(_monthReturnHistoryExpanded));
   button.textContent=`${_monthReturnHistoryExpanded?"收起":"查看"}更早月份（${rows.length}）`;
 }
+/* month-strip:start */
+// month-strip:v1 — the last twelve months at a glance: a bar for each month's gross P&L, a dot where Carry was charged. Tapping a month selects it.
+function monthStripView(months,selectedYm){
+  const rows=[...(months||[])].filter(r=>r&&/^\d{4}-(?:0[1-9]|1[0-2])$/.test(String(r.ym))&&Number.isFinite(r.pnl)).sort((a,b)=>a.ym.localeCompare(b.ym)).slice(-12);
+  if(rows.length<2)return "";
+  const top=Math.max(...rows.map(r=>Math.abs(r.pnl)))||1;
+  return `<div class="month-strip" role="group" aria-label="近 ${rows.length} 个月毛收益，点按选择月份">`+rows.map(r=>{
+    const height=r.pnl===0?0:Math.max(4,Math.round(Math.abs(r.pnl)/top*46))/2,carry=r.carry>0;
+    return `<button type="button" data-month-pick="${r.ym}" aria-pressed="${r.ym===selectedYm}" aria-label="${esc(r.ym)}，毛收益 ${r.pnl>0?"+":""}${usd(r.pnl,0)}${carry?"，计提 Carry "+usd(r.carry,0):""}${r.inProgress?"，进行中":""}"><span class="plot">${carry?'<span class="carry"></span>':""}${height?`<span class="bar ${r.pnl>0?"up":"down"}" style="height:${height}px"></span>`:""}</span><span class="m">${Number(r.ym.slice(5))}月</span></button>`;
+  }).join("")+`</div><div class="month-strip-key"><span>柱：当月毛收益（绿涨红跌）</span><span><i></i>当月计提了 Carry</span></div>`;
+}
+/* month-strip:end */
 function renderMonths(feeView,st){
   const box=document.getElementById("monthsBox");
   if(feeView.state!=="verified"){box.innerHTML=`<div class="receipt-pending">${feeView.message}</div>`;return;}
@@ -5152,7 +5165,7 @@ function renderMonths(feeView,st){
   const r=model.selected,previous=document.getElementById("monthCalculation"),open=previous?.dataset.ym===r.ym&&previous.open===true;
   const net=r.pnl-r.fees,status=r.inProgress?"进行中":r.excess>0?"超高水位":r.cum<r.hwm?"补亏中":"完整月";
   const monthVerifiedClosures=(st.verifiedClosures||[]).filter(date=>date.slice(0,7)===r.ym);
-  box.innerHTML=`<div class="history-tools"><label for="monthHistoryMonth">月份</label><select id="monthHistoryMonth" aria-label="选择月份，全部历史均保留">${model.months.map(row=>`<option value="${row.ym}"${row.ym===r.ym?" selected":""}>${ymLabel(row.ym)}</option>`).join("")}</select><span class="badge ${r.inProgress?"est":r.excess>0?"ok":r.cum<r.hwm?"hwm":""}">${status}</span></div>
+  box.innerHTML=`${monthStripView(model.months,r.ym)}<div class="history-tools"><label for="monthHistoryMonth">月份</label><select id="monthHistoryMonth" aria-label="选择月份，全部历史均保留">${model.months.map(row=>`<option value="${row.ym}"${row.ym===r.ym?" selected":""}>${ymLabel(row.ym)}</option>`).join("")}</select><span class="badge ${r.inProgress?"est":r.excess>0?"ok":r.cum<r.hwm?"hwm":""}">${status}</span></div>
     <div class="month-totals" aria-live="polite"><span>毛收益<b class="${sgn(r.pnl)}">${usd(r.pnl,0)}</b></span><span>费用<b>${usd(r.fees,0)}</b></span><span>净收益<b class="${sgn(net)}">${usd(net,0)}</b></span></div>${feeView.status.provisional?`<div class="small" style="margin:0 0 6px">本回执含暂估数据，费用非最终结算。${feeView.status.provisionalCodes?.includes("owner-estimated-cash-date")?"现金记账日采用用户推定，待正式结单／Fund Records 核对。":""}${feeView.status.provisionalCodes?.includes("owner-notification-cash-date")?"按用户选择的到账通知日记账；券商实际入账日待核。扣减栏含预扣税及代收费，属于投资跟踪口径。":""}</div>`:""}
     ${monthlyReturnsTable(model,st.ibManager)}<details class="month-detail" id="monthCalculation" data-ym="${r.ym}"${open?" open":""}><summary>计算及组成 <span class="month-summary">${r.from} → ${r.to}</span></summary><div class="month-body"><div class="month-grid"><span>期初 <b>${usd(r.openT,0)}</b></span><span>期末 <b>${usd(r.closeT,0)}</b></span><span>外部资金流 <b>${usd(r.flowT,0)}</b></span><span>日均管理费基数 <b>${usd(r.averageFeeBase,0)}</b></span><span>管理费 <b>${usd(r.mgmt)}</b></span><span>Carry <b>${usd(r.carry)}</b></span><span>管理方 TWR <b>${pct(r.rG,1)}</b></span><span>出资方 Dietz <b>${pct(r.rD,1)}</b></span>${st.bench.map(b=>`<span class="wide">${esc(b.name)}（${r.from} → ${r.to}） <b>${pct(r.rB&&r.rB[b.k],1)}</b></span>`).join("")}${monthVerifiedClosures.length?`<span class="wide">基准已核验休市 <b>${monthVerifiedClosures.join("、")}</b></span>`:""}</div></div></details>`;
 }
@@ -5704,6 +5717,7 @@ document.getElementById("fundProfileLinkForm").addEventListener("submit",e=>{e.p
 document.getElementById("fundDocsFile").addEventListener("change",e=>importFundDocuments(e.target.files?.[0]));
 document.getElementById("fundGovForm").addEventListener("submit",e=>{e.preventDefault();saveFundGovernance();});
 document.getElementById("fundDocForm").addEventListener("submit",e=>{e.preventDefault();saveFundDocumentForm();});
+document.body.addEventListener("click",e=>{const ym=e.target?.closest?.("[data-month-pick]")?.getAttribute("data-month-pick");if(/^\d{4}-(?:0[1-9]|1[0-2])$/.test(String(ym||""))&&ym!==_monthHistoryYm){_monthHistoryYm=ym;scheduleRender();}});
 document.body.addEventListener("change",e=>{const historyMonth=monthHistoryMonthFromEvent(e);if(historyMonth){_monthHistoryYm=historyMonth;scheduleRender();return;}if(!isMgr())return;const T=e.target;
   if(T.dataset.flow){const f=(DAILY.flowsAuto||[]).find(x=>x.id===T.dataset.flow);if(!f||f.effective===true)return;changeDraft(d=>{const ym=f.date.slice(0,7);let m=d.months.find(x=>x.ym===ym);if(!m){m={ym,flows:[]};d.months.push(m);d.months.sort((a,b)=>a.ym.localeCompare(b.ym));}m.flows=m.flows.filter(c=>c.src!==f.id);if(T.checked)m.flows.push({id:crypto.randomUUID(),src:f.id,date:f.date,acct:f.acct,amount:f.amount,note:f.desc||""});});return;}ledgerInput(e);});
 for(const event of ["pointerdown","keydown"])document.addEventListener(event,()=>{if(LG.isEditable(EDIT,Date.now()))EDIT=LG.touch(EDIT,Date.now());else if(["editing","review"].includes(EDIT.mode))lockLedger();},{passive:true});

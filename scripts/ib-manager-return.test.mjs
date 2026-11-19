@@ -330,3 +330,23 @@ test('the daily brief states margin-call distance, the Carry line and the payabl
   assert.match(html,/<div class="card brief" id="briefBox" hidden><\/div>\n  <div class="kpis" id="kpis"><\/div>/);
   assert.match(html,/if\(target\.id==='kpis'\)\{globalThis\.scrollTo\?\.\(\{top:0,behavior:'smooth'\}\);return;\}/);
 });
+
+test('the month strip shows each month as a bar, marks Carry months and selects a month on tap',()=>{
+  const html=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8'),box={};vm.createContext(box);
+  vm.runInContext("const esc=v=>String(v??'').replace(/</g,'&lt;');const usd=(v,d=2)=>(v<0?'-$':'$')+Math.abs(Number(v)).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});",box);
+  vm.runInContext(html.slice(html.indexOf('/* month-strip:start */'),html.indexOf('/* month-strip:end */'))+';globalThis.S=monthStripView;',box);
+  const months=[{ym:'2026-11',pnl:-40000,carry:0,inProgress:true},{ym:'2026-08',pnl:100000,carry:20000},{ym:'2026-10',pnl:-5000,carry:0},{ym:'2026-09',pnl:0,carry:0}];
+  const out=box.S(months,'2026-10'),picks=[...out.matchAll(/data-month-pick="([\d-]+)" aria-pressed="(true|false)" aria-label="([^"]+)"/g)].map(m=>[m[1],m[2],m[3]]);
+  // Oldest on the left whatever order the rows arrive in; the selected month is pressed.
+  assert.deepEqual(picks,[['2026-08','false','2026-08，毛收益 +$100,000，计提 Carry $20,000'],['2026-09','false','2026-09，毛收益 $0'],['2026-10','true','2026-10，毛收益 -$5,000'],['2026-11','false','2026-11，毛收益 -$40,000，进行中']]);
+  // Bars scale to the largest month, with a visible minimum; a flat month draws none; only Carry months carry the dot.
+  assert.deepEqual([...out.matchAll(/class="bar (up|down)" style="height:([\d.]+)px"/g)].map(m=>[m[1],Number(m[2])]),[['up',23],['down',2],['down',9]]);
+  assert.equal(out.split('class="carry"').length-1,1);assert.match(out,/<span class="m">8月<\/span>/);
+  // At most twelve months, the most recent ones; fewer than two months is not a strip.
+  const many=Array.from({length:15},(_,i)=>({ym:'20'+(25+Math.floor(i/12))+'-'+String(i%12+1).padStart(2,'0'),pnl:i+1,carry:0}));
+  const shown=[...box.S(many,'x').matchAll(/data-month-pick="([\d-]+)"/g)].map(m=>m[1]);assert.equal(shown.length,12);assert.equal(shown[0],'2025-04');assert.equal(shown.at(-1),'2026-03');
+  assert.equal(box.S([months[0]],'2026-11'),'');assert.equal(box.S(null,'x'),'');assert.equal(box.S([{ym:'bad',pnl:1},{ym:'2026-01',pnl:NaN}],'x'),'');
+  // Tapping only changes which month the page shows.
+  assert.match(html,/closest\?\.\("\[data-month-pick\]"\)\?\.getAttribute\("data-month-pick"\);if\(\/\^\\d\{4\}-\(\?:0\[1-9\]\|1\[0-2\]\)\$\/\.test\(String\(ym\|\|""\)\)&&ym!==_monthHistoryYm\)\{_monthHistoryYm=ym;scheduleRender\(\);\}/);
+  assert.match(html,/box\.innerHTML=`\$\{monthStripView\(model\.months,r\.ym\)\}<div class="history-tools">/);
+});
