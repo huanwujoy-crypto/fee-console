@@ -753,7 +753,8 @@ test("the allocation overview pairs the current bar with a reference-target bar 
   assert.match(block, /segment\.setAttribute\('style','flex:'\+targets\[i\]\+' 0 0'\)/);
   // It only adds elements beside the table; no amount, share, ranking or source value is written.
   assert.doesNotMatch(block, /toFixed|Math\.|valueCents|totalCents|innerHTML/);
-  assert.match(html, /\.ratio-alloc-target\{opacity:\.55;margin-bottom:10px\}/);
+  // Owner feedback 2026-11-19: one class must look the same colour in both bars, so the target bar is not faded.
+  assert.match(html, /\.ratio-alloc-target\{margin-bottom:10px\}/);assert.doesNotMatch(html, /\.ratio-alloc-target\{[^}]*opacity/);
 });
 
 // stock-bars:v1 — the four stock classes get the same pair of bars, read from their table's printed "current／target" column.
