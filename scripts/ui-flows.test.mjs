@@ -618,6 +618,9 @@ test("overview jump chips point at existing sections and never touch the address
   // The lit chip follows the scroll position; it reads layout only and never navigates.
   const spy = html.slice(html.indexOf("function syncJumpChips(){"), html.indexOf("/* ratio-presentation:v1:end */"));
   assert.match(spy, /aria-current/);
+  // The risk card sits below the returns card, so its chip is added after 收益 and the spy picks by position, not chip order.
+  assert.match(spy, /top<=line&&top>=best/);
+  assert.match(html, /chip\.textContent="风险";jump\.querySelector\('\[data-jump="trendDetails"\]'\)\?\.before\(chip\)/);
   assert.doesNotMatch(spy, /location|history\.|\.hash/);
   // Changing tab starts the new tab at its top instead of at the previous tab's scroll position.
   assert.match(html, /s\.id===b\.dataset\.p\)\);globalThis\.scrollTo\?\.\(0,0\);renderRatioManagement\(\);/);
