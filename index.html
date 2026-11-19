@@ -10,7 +10,7 @@
 <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAABzUlEQVR42u3bsQ2AMAwAwczDhEzKOqGlCBIgBdnxRT+BfU0Kt20/pGHNCASH4BAcgkNwCA7BITgEh+CQ4BAcgkNwCA7BITgEh+AQHBIcgkNwCA7BITgEh+AQHIJDgkNwCA7BITgEh+AQHIJDcAgOCQ7BITgEh+AQHIJDcOi2/vjBwUQyJXAEkhHNBxyxZITyAQcccMABxwIy4viAAw444IADDjjggAMOOOCAAw444IBDcAgOwQEHHHDAAQcccMABBxxwwAEHHHAIDudocDDxeWFwOEeDg4z3a4MDDjjggKMOjh82BwcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAGHQ1Y4HLLCERPH1IHCkRjH7JnCAQcccMBRB8cam4MDDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAQxWDQ3AIDsEhOFQNR/eSfG7hgAMOOOCAAw444PCq4ZCvrOAQHIJDgkNwCA7BITgEh+AQHIJDcEhwCA7BITgEh+AQHIJDcAgOwSHBITgEh+AQHIJDcAgOwSE4pEsnhtvC417hqCsAAAAASUVORK5CYII=">
-<meta name="fee-console-build" content="4.10.18">
+<meta name="fee-console-build" content="4.10.19">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -1186,7 +1186,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.10.18";
+const UI_VERSION_LABEL=" · v4.10.19";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -4738,11 +4738,12 @@ function renderInvestors(loaded,feeView){
   const tableRows=[...points].reverse().map(p=>{const row=p.investors.find(i=>i.id===investor.id);return `<tr><td>${esc(p.date)}${p.provisional?" *":""}</td><td>${p.unitValue.toFixed(6)}</td><td>${money(row.valueCents)}</td></tr>`;});
   box.innerHTML=`${message?`<div class="fund-alert" role="status">${esc(message)}${model.flowGateDate?` 首笔日期：${esc(model.flowGateDate)}。`:""}${last?` 下列历史市值仅截至 ${esc(last.date)}。`:""}</div>`:""}
     <div class="kpis"><div class="kpi wide fund-hero"><div class="lab">${esc(investor.id)} 的${current?"份额市值":"最近可计算市值"} · 费用前</div><div class="val">${money(held?.valueCents)}</div><div class="note">${last?`${esc(last.date)} 收盘${last.provisional||feeView.status?.provisional?" · 来源暂估":""}`:"数据待核验"}${current?"":" · 当前市值待核验"}</div></div>
-    <div class="kpi"><div class="lab">成立以来盈亏 · 费用前</div><div class="val ${sgn(held?.pnlCents)}">${money(held?.pnlCents)}</div><div class="note">${held?pct(held.returnRate):"—"}<span class="fund-return-period">${initial&&last?` · ${esc(initial.date)} → ${esc(last.date)}`:" · 期间待核验"}</span></div></div><div class="kpi"><div class="lab">较前一周／月快照 · 已剔除期间增资／份额转让</div><div class="val ${sgn(change)}">${money(change)}</div><div class="note">${comparison.from?esc(comparison.from)+" → "+esc(comparison.to):"等待可比日期"}</div></div></div>
+    <div class="kpi"><div class="lab">成立以来盈亏 · 费用前</div><div class="val ${sgn(held?.pnlCents)}">${money(held?.pnlCents)}</div><div class="note">${held?pct(held.returnRate):"—"}<span class="fund-return-period">${initial&&last?` · ${esc(initial.date)} → ${esc(last.date)}`:" · 期间待核验"}</span></div></div><div class="kpi"><div class="lab">较前一周／月快照 · 已剔除期间增资／份额转让</div><div class="val ${sgn(change)}">${money(change)}</div><div class="note">${comparison.from?esc(comparison.from)+" → "+esc(comparison.to):"等待可比日期"}</div></div></div><div id="fundScenarioBox"></div>
     <div class="card"><h2>我的份额</h2><div class="fund-meta"><div>基金档案已登记份额<b>${fmt(registeredShares[profile.investors.findIndex(row=>row.id===investor.id)])} 股</b></div><div>基金档案已登记占比<b>${(registeredShares[profile.investors.findIndex(row=>row.id===investor.id)]/registeredTotal*100).toFixed(2)}%</b></div><div>最新可核验份额 · ${last?esc(last.date):"待核验"}<b>${held?fmt(held.shares)+" 股":"—"}</b></div><div>最新可核验占比<b>${held&&latestShares?(held.shares/latestShares*100).toFixed(2)+"%":"—"}</b></div><div>初始持有份额<b>${fmt(investor.shares)} 股</b></div><div>成立时归属资产<b>${money(start?.valueCents)}</b></div><div>基金总资产 · ${last?esc(last.date):"待核验"}<b>${money(last?.totalCents)}</b></div><div>每股份额市值 · 费用前<b>${last?usd(last.unitValue,6):"—"}</b></div></div></div>
     <div class="card"><h2>${esc(investor.id)} 的市值变化</h2>${chart}<div class="small">${initial&&last?`${esc(initial.date)} → ${esc(last.date)} · 美元 · 费用前`:"成立日以后按周／月快照展示"}</div></div>
     <div class="card"><h2>周／月估值快照</h2><div class="small">显示成立日、每周末、自然月末及最新可核验日期；日期为实际账务估值日。内部仍逐日核算收益、现金流、费用和回撤。</div>${tableRows.length?`<table class="fund-table" aria-label="投资人周月份额估值快照"><thead><tr><th>估值日</th><th>每股市值</th><th>${esc(investor.id)} 的市值</th></tr></thead><tbody>${tableRows.slice(0,10).join("")}</tbody></table>${tableRows.length>10?`<details class="fund-method"><summary>更早 ${tableRows.length-10} 期</summary><table class="fund-table"><tbody>${tableRows.slice(10).join("")}</tbody></table></details>`:""}`:'<p class="hint">完整数据到齐后显示。</p>'}</div>
     <div class="card"><details class="fund-method"><summary>份额与估值说明</summary><p>成立基准为 ${esc(profile.inceptionDate)} 纽约估值日收盘，转入后 Schwab-HK + Webull 的全部资产与现金。香港到账通知日为 ${esc(profile.inceptionNoticeDate)}。现金已包含在账户总额中。</p><p>每股份额市值＝基金账户总资产 ÷ 基金份额；个人市值＝个人份额 × 每股市值。初始份额合计 ${fmt(profile.initialShares)} 股。成立日收盘作为起点，从次日起计算变化。</p><p>这里的“费用前”指未另扣小程序应计管理费及 Carry；已计入券商资产的实际支出保留在原账户金额内。此页暂不提供扣除全部费用负债后的 NAV。</p><p>新增或提取本金需明确投资人和发行／注销份额，不能当作投资收益；未完成归属时暂停后续个人估值。内部买卖不会增减基金份额。</p><p>* 表示来源暂估。历史未标星不代表独立校准。投资人档案是展示配置，视图切换不提供个人之间的数据隔离。</p></details></div>`;
+  if(typeof renderInvestorScenario==="function")renderInvestorScenario({id:investor.id,date:last?.date,share:held&&latestShares?held.shares/latestShares:null,valueCents:held?.valueCents,totalCents:last?.totalCents});
 }
 const fundDocumentStatusLabel={draft:"草案（未签署）", "internal-review":"内部已复核（仍非签署）",archived:"已归档"};
 const fundDocumentCategoryLabel={governance:"治理规则",transaction:"交易文件",valuation:"估值依据",other:"其它"};
@@ -5245,6 +5246,53 @@ function renderDayBrief(){
   const html=dayBriefView(dayBriefItems({risk,carry:risk?riskDeskCarry(_riskPoint,DB.accounts,risk,_riskFee):null,pay:payableForecastModel(_balForecast,0)}),_riskPoint?.d||_balForecast?.asOf);
   box.hidden=!html;if(box.innerHTML!==html)box.innerHTML=html;
 }
+/* investor-scenario:start */
+// investor-scenario:v1 — what an S&P 500 move would do to one investor's share value, using the risk card's model. Display only, before fees.
+function investorScenarioModel(input,risk){
+  const f=input||{};
+  if(!risk||!(f.share>0)||!(f.share<=1)||!Number.isFinite(f.value)||!(f.value>0))return null;
+  const drops=risk.margin.map(a=>a.callDropSpx).filter(v=>v!=null);
+  return {id:f.id,date:f.date,move:risk.shock,fundPct:risk.scenario.pnlPct,delta:risk.scenario.pnl*f.share,after:f.value+risk.scenario.pnl*f.share,beta:risk.spxBeta,financed:risk.margin.length>0,callDrop:drops.length?Math.min(...drops):null,called:risk.margin.some(a=>a.excessAfter<0)};
+}
+function investorScenarioOutput(m){
+  const signed=v=>(v>0?"+":"")+usd(v,0),pc=v=>(v*100).toFixed(1)+"%",tone=m.delta<0?"neg":m.delta>0?"pos":"";
+  return `<div class="res"><div class="line"><span>${esc(m.id)} 的市值变动</span><b class="${tone}">${signed(m.delta)}（${m.fundPct>0?"+":""}${pc(m.fundPct)}）</b></div><div class="line tot"><span>模拟后市值 · 费用前</span><b>${usd(m.after,0)}</b></div></div>`
+    +(m.called?`<p class="hint risk-warn">这个跌幅下基金的融资账户会被追缴，实际损失可能因被迫减仓而更大。</p>`:"");
+}
+function investorScenarioView(m){
+  if(!m)return "";
+  const pct=Math.round(m.move*100),pc=v=>(v*100).toFixed(1)+"%";
+  return `<div class="card"><h2>情景模拟</h2><p class="hint">标普500 每变动 1%，基金约变动 ${m.beta.toFixed(1)}%${!m.financed?"；基金当前没有融资":m.callDrop==null?"；基金有融资，这个范围内不会被追缴":m.callDrop===0?"；基金融资账户已低于维持保证金":"；标普再跌 "+pc(m.callDrop)+" 时基金的融资账户会被追缴"}。</p>
+<div class="risk-ctl"><label for="invShock">标普500 涨跌</label><output id="invShockLabel" for="invShock">${pct>0?"+":""}${pct}%</output></div>
+<input class="risk-range" id="invShock" type="range" min="-50" max="30" step="1" value="${pct}" aria-label="标普500 涨跌（百分比）">
+<div class="risk-chips">${[-10,-20,-30,10,0].map(v=>`<button type="button" data-inv-shock="${v}">${v===0?"复位":(v>0?"+":"")+v+"%"}</button>`).join("")}</div>
+<div id="invScenarioOut" aria-live="polite">${investorScenarioOutput(m)}</div>
+<p class="small">方向性估算，数据日 ${esc(m.date)}，按份额占比摊分基金整体的模拟盈亏；与"管理人"页的风险模拟用同一套假设，不是投资建议。</p></div>`;
+}
+/* investor-scenario:end */
+let _invScenario=null,_invShock=0;
+function investorScenarioNow(){
+  if(!_invScenario||!_riskPoint)return null;
+  const p=riskDeskParams();
+  return investorScenarioModel(_invScenario,riskDeskModel(_riskPoint,DB.accounts,{maint:p.maint,levMaint:p.levMaint,rate:p.rate,scope:"spx",shock:_invShock}));
+}
+function renderInvestorScenario(ctx){
+  const box=document.getElementById("fundScenarioBox");if(!box)return;
+  // Only when the risk snapshot is the same fund on the same day as the share valuation.
+  const total=Number.isSafeInteger(ctx?.totalCents)?ctx.totalCents/100:NaN,risk=_riskPoint?riskDeskModel(_riskPoint,DB.accounts,{scope:"spx",shock:0}):null;
+  _invScenario=risk&&ctx.date===_riskPoint.d&&Math.abs(risk.nav-total)<=risk.nav*.005&&Number.isSafeInteger(ctx.valueCents)?{id:ctx.id,date:ctx.date,share:ctx.share,value:ctx.valueCents/100}:null;
+  box.innerHTML=investorScenarioView(investorScenarioNow());
+}
+function investorScenarioInput(event){
+  const t=event.target,quick=event.type==="click"?t?.closest?.("[data-inv-shock]"):null;
+  if(quick)_invShock=Number(quick.getAttribute("data-inv-shock"))/100;else if(event.type==="input"&&t?.id==="invShock")_invShock=Number(t.value)/100;else return;
+  const m=investorScenarioNow();if(!m)return;
+  const pct=Math.round(m.move*100),range=document.getElementById("invShock");_invShock=m.move;
+  if(range&&quick)range.value=String(pct);
+  document.getElementById("invShockLabel").textContent=(pct>0?"+":"")+pct+"%";
+  document.getElementById("invScenarioOut").innerHTML=investorScenarioOutput(m);
+}
+document.addEventListener("input",investorScenarioInput);document.addEventListener("click",investorScenarioInput);
 function renderFees(feeView,st,B,G){
   const DB=editDB();
   G=G||{hold:false,holdReasons:[]};
