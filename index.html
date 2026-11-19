@@ -10,7 +10,7 @@
 <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAABzUlEQVR42u3bsQ2AMAwAwczDhEzKOqGlCBIgBdnxRT+BfU0Kt20/pGHNCASH4BAcgkNwCA7BITgEh+CQ4BAcgkNwCA7BITgEh+AQHBIcgkNwCA7BITgEh+AQHIJDgkNwCA7BITgEh+AQHIJDcAgOCQ7BITgEh+AQHIJDcOi2/vjBwUQyJXAEkhHNBxyxZITyAQcccMABxwIy4viAAw444IADDjjggAMOOOCAAw444IBDcAgOwQEHHHDAAQcccMABBxxwwAEHHHAIDudocDDxeWFwOEeDg4z3a4MDDjjggKMOjh82BwcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAGHQ1Y4HLLCERPH1IHCkRjH7JnCAQcccMBRB8cam4MDDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAQxWDQ3AIDsEhOFQNR/eSfG7hgAMOOOCAAw444PCq4ZCvrOAQHIJDgkNwCA7BITgEh+AQHIJDcEhwCA7BITgEh+AQHIJDcAgOwSHBITgEh+AQHIJDcAgOwSE4pEsnhtvC417hqCsAAAAASUVORK5CYII=">
-<meta name="fee-console-build" content="4.10.16">
+<meta name="fee-console-build" content="4.10.17">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -66,6 +66,7 @@ h1{font-size:19px;margin:0}
 .risk-ctl{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:8px 0;font-size:13px}.risk-ctl label{color:var(--ink-2)}.risk-ctl output{font-size:18px;font-weight:650;font-variant-numeric:tabular-nums}
 .risk-ctl select,.risk-num input{font-family:inherit;font-size:16px;color:var(--ink-1);background:var(--surface-1);border:1px solid var(--border);border-radius:8px;padding:7px 8px}.risk-ctl select{min-width:0;max-width:62%}.risk-num{white-space:nowrap;color:var(--ink-2)}.risk-num input{width:76px;text-align:right;margin-right:4px}
 .risk-range{display:block;width:100%;height:36px;margin:0;accent-color:var(--series-1)}.risk-chips{display:flex;gap:6px;margin:2px 0 10px}.risk-chips button{flex:1 1 0;border:1px solid var(--border);background:var(--surface-1);color:var(--ink-2);border-radius:9px;padding:8px 2px;font-size:13px;font-family:inherit;cursor:pointer}.risk-chips button:active{background:var(--chip);color:var(--ink-1)}
+.brief{padding:6px 12px}.brief h2{font-size:12px;font-weight:600;color:var(--ink-2);margin:6px 2px 2px}.brief-row{display:flex;align-items:baseline;gap:10px;width:100%;border:0;border-top:1px solid var(--border);background:transparent;color:var(--ink-1);padding:10px 2px;font-size:14px;font-family:inherit;text-align:left;cursor:pointer}.brief-row:first-of-type{border-top:0}.brief-row .lab{flex:0 0 3.2em;font-size:12px;color:var(--ink-2)}.brief-row .txt{flex:1 1 auto;min-width:0;line-height:1.45}.brief-row .go{flex:0 0 auto;color:var(--ink-2)}.brief-bad{color:var(--critical);font-weight:600}.brief-warn{color:var(--series-2);font-weight:600}.brief-ok{color:var(--good-text);font-weight:600}
 .risk-carry{margin:0 0 10px}.risk-link{border:1px solid var(--series-1);background:transparent;color:var(--series-1);border-radius:999px;padding:3px 10px;font-size:13px;font-weight:600;font-family:inherit;cursor:pointer}
 .risk-status{border-radius:10px;border:1px solid var(--border);padding:9px 12px;margin:8px 0 0;font-size:13px;line-height:1.55}.risk-status ul{margin:4px 0 0;padding-left:18px}.risk-status li,.risk-status li b{color:var(--ink-1)}div.risk-status.risk-bad{border-color:var(--critical);background:rgba(208,59,59,.07)}
 .risk-ok{color:var(--good-text)}.risk-warn{color:var(--series-2)}.risk-bad{color:var(--critical)}#riskDesk[hidden]{display:none}
@@ -384,6 +385,7 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
 <section class="pane on" id="p-home">
   <nav class="home-jump" aria-label="本页快速跳转"><button type="button" data-jump="kpis" aria-current="true">总览</button><button type="button" data-jump="returnsCard">收益</button><button type="button" data-jump="trendDetails">走势</button><button type="button" data-jump="monthsBox">月度</button><button type="button" data-jump="balBox">应付</button></nav>
   <div id="gateBox"></div>
+  <div class="card brief" id="briefBox" hidden></div>
   <div class="kpis" id="kpis"></div>
   <div class="card" id="riskDesk" hidden></div>
   <div class="card">
@@ -1183,7 +1185,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.10.16";
+const UI_VERSION_LABEL=" · v4.10.17";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -3545,6 +3547,7 @@ if(typeof document!=='undefined'&&typeof document.addEventListener==='function')
 // Overview: a chip scrolls to its section. It never touches the address fragment, which carries the access key.
 if(typeof document!=='undefined'&&typeof document.addEventListener==='function')document.addEventListener('click',event=>{
   const chip=event.target?.closest?.('[data-jump]'),target=chip&&document.getElementById(chip.getAttribute('data-jump'));if(!target)return;
+  if(target.id==='kpis'){globalThis.scrollTo?.({top:0,behavior:'smooth'});return;}
   (target.closest('.card')||target).scrollIntoView({behavior:'smooth',block:'start'});
 });
 // jump-spy:v1 — while the page scrolls, light the chip of the section now under the sticky bar.
@@ -4652,7 +4655,7 @@ async function render(){
   const feeSummary=feeView.state==="verified"?` · 起算 ${feeView.start} · ${feeView.managementRatePpm/10000}% / ${feeView.carryRatePpm/10000}%`:` · ${feeView.message}`;
   document.getElementById("subTitle").textContent=`${DB.accounts.map(a=>a.name).join(" + ")}${feeSummary}${SHELL_BUILD?` · v${SHELL_BUILD}`:UI_VERSION_LABEL}`+(isMgr()?"":" · 只读");
   renderReportPublication(reportView);
-  renderKPIs(feeView,st,B,G);renderChart1(feeView,st);renderChart2(feeView,st);renderChart3(feeView,st);renderMonths(feeView,st);renderBal(feeView,st,B,G);renderBalForecast(feeView,st,B,G);renderRiskDesk(st,feeView);if(isMgr()){renderFees(feeView,st,B,G);renderSettings();renderFlows();}
+  renderKPIs(feeView,st,B,G);renderChart1(feeView,st);renderChart2(feeView,st);renderChart3(feeView,st);renderMonths(feeView,st);renderBal(feeView,st,B,G);renderBalForecast(feeView,st,B,G);renderRiskDesk(st,feeView);renderDayBrief();if(isMgr()){renderFees(feeView,st,B,G);renderSettings();renderFlows();}
   renderGiftRegistryStatus(documentsAuthorized,feeView.state==='verified',feeView.asOf);
   renderRatioManagement();renderInvestors(fundProfile,feeView);renderInvestorFundArchive(fundProfile,fundArchive);if(documentsAuthorized)renderFundDocuments(fundDocuments);renderSetup();renderA2hs();renderLedgerControls();renderStyleRegistryDiagnostic(documentsAuthorized);
 }
@@ -4967,6 +4970,7 @@ function riskDeskInput(event){
   if(carryBox&&!quick?.closest?.("#riskCarry"))carryBox.innerHTML=riskDeskCarryHint(c);
   document.getElementById("riskOut").innerHTML=riskDeskOutput(m,c);
   document.getElementById("riskInterest").textContent=riskDeskInterest(m);
+  if(t.id==="riskMaint"||t.id==="riskLevMaint")renderDayBrief();
 }
 document.addEventListener("input",riskDeskInput);document.addEventListener("change",riskDeskInput);document.addEventListener("click",riskDeskInput);
 /* top-holdings-view:start */
@@ -5200,6 +5204,34 @@ document.addEventListener("input",event=>{
   const pct=Math.round(m.move*100);document.getElementById("balMoveLabel").textContent=(pct>0?"+":"")+pct+"%";
   document.getElementById("balForecastOut").innerHTML=payableForecastOutput(m);
 });
+/* day-brief:start */
+// day-brief:v1 — three lines at the top of the overview: margin-call distance, distance to the Carry line, payable now and at month end.
+// Each line is built from a model another card already shows, and tapping it jumps to that card. Display only.
+function dayBriefItems(input){
+  const {risk,carry,pay}=input||{},items=[],pc=v=>(v*100).toFixed(1)+"%";
+  if(risk){
+    const drops=risk.margin.map(a=>a.callDropSpx).filter(v=>v!=null),drop=drops.length?Math.min(...drops):null;
+    items.push(!risk.margin.length?{jump:"riskDesk",lab:"追缴",tone:"ok",head:"无融资",tail:"不存在追缴风险"}
+      :drop==null?{jump:"riskDesk",lab:"追缴",tone:"ok",head:"不会触发",tail:`融资 ${usd(risk.borrowed,0)}`}
+      :drop===0?{jump:"riskDesk",lab:"追缴",tone:"bad",head:"已低于维持保证金",tail:`融资 ${usd(risk.borrowed,0)}`}
+      :{jump:"riskDesk",lab:"追缴",tone:drop<.1?"bad":drop<.2?"warn":"ok",head:`标普再跌 ${pc(drop)} 触发`,tail:`融资 ${usd(risk.borrowed,0)}`});
+  }
+  if(carry)items.push(carry.gap<=0?{jump:"riskDesk",lab:"Carry",tone:"ok",head:"已在起算线之上",tail:`再涨的部分按 ${+(carry.rate*100).toFixed(2)}% 计提`}
+    :{jump:"riskDesk",lab:"Carry",tone:"",head:`距起算线还差 ${usd(carry.gap,0)}`,tail:carry.needPct==null?"":`约需标普 +${carry.needPct}%`});
+  if(pay)items.push({jump:"balBox",lab:"应付",tone:"",head:`现在 ${usd(pay.dueNow,0)}`,tail:pay.days>0?`持平到月底约 ${usd(pay.dueEnd,0)}`:"本月已到月底"});
+  return items;
+}
+function dayBriefView(items,day){
+  if(!items?.length)return "";
+  return `<h2>今日要点${day?" · 数据日 "+esc(day):""}</h2>`+items.map(i=>`<button type="button" class="brief-row" data-jump="${i.jump}"><span class="lab">${esc(i.lab)}</span><span class="txt"><span${i.tone?` class="brief-${i.tone}"`:""}>${esc(i.head)}</span>${i.tail?"，"+esc(i.tail):""}</span><span class="go" aria-hidden="true">›</span></button>`).join("");
+}
+/* day-brief:end */
+function renderDayBrief(){
+  const box=document.getElementById("briefBox");if(!box)return;
+  const p=riskDeskParams(),risk=_riskPoint?riskDeskModel(_riskPoint,DB.accounts,{maint:p.maint,levMaint:p.levMaint,rate:p.rate,scope:"spx",shock:0}):null;
+  const html=dayBriefView(dayBriefItems({risk,carry:risk?riskDeskCarry(_riskPoint,DB.accounts,risk,_riskFee):null,pay:payableForecastModel(_balForecast,0)}),_riskPoint?.d||_balForecast?.asOf);
+  box.hidden=!html;if(box.innerHTML!==html)box.innerHTML=html;
+}
 function renderFees(feeView,st,B,G){
   const DB=editDB();
   G=G||{hold:false,holdReasons:[]};

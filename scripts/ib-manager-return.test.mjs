@@ -300,6 +300,33 @@ test('the month-end payable estimate adds the remaining management fee and the C
   assert.match(text(box.V(box.M(ahead,-.2))),/本月 Carry 减少 −\$6,000/);
   assert.match(box.V(flat),/<input class="risk-range" id="balMove" type="range" min="-20" max="20" step="1" value="0"/);
   // The estimate reads the verified statement only and is never shown while the payable figure is withheld.
-  const wire=html.slice(html.indexOf('function renderBalForecast('),html.indexOf('function renderFees('));
+  const wire=html.slice(html.indexOf('function renderBalForecast('),html.indexOf('/* day-brief:start */'));
   assert.match(wire,/feeView\?\.state==="verified"&&B&&!G\?\.hold&&st\?\.hwm!=null/);assert.doesNotMatch(wire,/fetch\(|store\b|DB\./);
+});
+
+test('the daily brief states margin-call distance, the Carry line and the payable figure, each jumping to its card',()=>{
+  const html=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8'),box={};vm.createContext(box);
+  vm.runInContext("const esc=v=>String(v??'').replace(/</g,'&lt;');const usd=(v,d=2)=>(v<0?'-$':'$')+Math.abs(Number(v)).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});",box);
+  vm.runInContext(html.slice(html.indexOf('/* day-brief:start */'),html.indexOf('/* day-brief:end */'))+';globalThis.I=dayBriefItems;globalThis.V=dayBriefView;',box);
+  const text=out=>out.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim(),plain=v=>JSON.parse(JSON.stringify(v));
+  const risk=drop=>({borrowed:200000,margin:[{callDropSpx:.3},{callDropSpx:drop}]}),carry={gap:150000,rate:.2,needPct:7},pay={dueNow:4000,dueEnd:4658,days:12};
+  const all=plain(box.I({risk:risk(.132),carry,pay}));
+  assert.deepEqual(all.map(i=>[i.jump,i.lab,i.tone]),[['riskDesk','追缴','warn'],['riskDesk','Carry',''],['balBox','应付','']]);
+  assert.equal(text(box.V(all,'2026-11-18')),'今日要点 · 数据日 2026-11-18 追缴 标普再跌 13.2% 触发 ，融资 $200,000 › Carry 距起算线还差 $150,000 ，约需标普 +7% › 应付 现在 $4,000 ，持平到月底约 $4,658 ›');
+  assert.match(box.V(all,'2026-11-18'),/<button type="button" class="brief-row" data-jump="balBox">/);
+  // The tone follows the distance; the nearest account decides.
+  assert.equal(box.I({risk:risk(.05)})[0].tone,'bad');assert.equal(box.I({risk:risk(.25)})[0].tone,'ok');
+  assert.equal(box.I({risk:risk(0)})[0].head,'已低于维持保证金');
+  assert.equal(box.I({risk:{borrowed:5,margin:[{callDropSpx:null}]}})[0].head,'不会触发');
+  assert.equal(box.I({risk:{borrowed:0,margin:[]}})[0].head,'无融资');
+  assert.equal(box.I({carry:{gap:0,rate:.2,needPct:0}})[0].head,'已在起算线之上');
+  assert.equal(box.I({carry:{gap:9,rate:.2,needPct:null}})[0].tail,'');
+  assert.equal(box.I({pay:{dueNow:1,dueEnd:1,days:0}})[0].tail,'本月已到月底');
+  // Nothing usable: the card stays empty and hidden.
+  assert.deepEqual(plain(box.I({})),[]);assert.deepEqual(plain(box.I(null)),[]);assert.equal(box.V([],'x'),'');
+  // It only rereads models the other cards already built, and the overview chip returns to the top where it sits.
+  const wire=html.slice(html.indexOf('function renderDayBrief(){'),html.indexOf('function renderFees('));
+  assert.match(wire,/scope:"spx",shock:0/);assert.doesNotMatch(wire,/fetch\(|setItem|location|history\./);
+  assert.match(html,/<div class="card brief" id="briefBox" hidden><\/div>\n  <div class="kpis" id="kpis"><\/div>/);
+  assert.match(html,/if\(target\.id==='kpis'\)\{globalThis\.scrollTo\?\.\(\{top:0,behavior:'smooth'\}\);return;\}/);
 });
