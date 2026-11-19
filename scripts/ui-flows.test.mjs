@@ -620,6 +620,8 @@ test("overview jump chips point at existing sections and never touch the address
   assert.match(spy, /aria-current/);
   // The risk card sits below the returns card, so its chip is added after 收益 and the spy picks by position, not chip order.
   assert.match(spy, /top<=line&&top>=best/);
+  // The risk card offers one gain preset beside the loss presets.
+  assert.match(html, /\[-10,-20,-30,-50,10,0\]\.map\(v=>`<button type="button" data-risk-shock="\$\{v\}">\$\{v===0\?"复位":\(v>0\?"\+":""\)\+v\+"%"\}/);
   assert.match(html, /chip\.textContent="风险";jump\.querySelector\('\[data-jump="trendDetails"\]'\)\?\.before\(chip\)/);
   assert.doesNotMatch(spy, /location|history\.|\.hash/);
   // Changing tab starts the new tab at its top instead of at the previous tab's scroll position.
