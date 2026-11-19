@@ -768,3 +768,12 @@ test("the stock-class table gets the same current and reference-target bars with
   assert.match(block, /draw\(0,'当前',''\);draw\(1,'参考目标',' ratio-alloc-target'\);/);
   assert.doesNotMatch(block, /toFixed|Math\.|valueCents|totalCents|innerHTML/);
 });
+
+// units-hint:v1 — the hint under the six-class title is shortened on display so it does not wrap to a stray last line.
+test("the six-class hint is shortened on display only, and only when it is the known sentence", () => {
+  const tidy = html.slice(html.indexOf("function tidyRatioNotes("), html.indexOf("/* ratio-presentation:v1:end */"));
+  assert.match(tidy, /for\(const hint of Array\.from\(report\.querySelectorAll\('\.ratio-overview-units'\)\)\)if\(hint\.textContent==='分类下方为当前占比／参考目标；市值下方括号为目标差额。'\)hint\.textContent='小字为当前／目标占比，括号为目标差额。';/);
+  // The renderer keeps publishing its own sentence; only the presentation layer rewords it.
+  assert.equal(html.split("分类下方为当前占比／参考目标；市值下方括号为目标差额。").length, 3);
+  assert.match(html, /<p class="ratio-overview-units">分类下方为当前占比／参考目标；市值下方括号为目标差额。<\/p>/);
+});
