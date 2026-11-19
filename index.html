@@ -10,7 +10,7 @@
 <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAABzUlEQVR42u3bsQ2AMAwAwczDhEzKOqGlCBIgBdnxRT+BfU0Kt20/pGHNCASH4BAcgkNwCA7BITgEh+CQ4BAcgkNwCA7BITgEh+AQHBIcgkNwCA7BITgEh+AQHIJDgkNwCA7BITgEh+AQHIJDcAgOCQ7BITgEh+AQHIJDcOi2/vjBwUQyJXAEkhHNBxyxZITyAQcccMABxwIy4viAAw444IADDjjggAMOOOCAAw444IBDcAgOwQEHHHDAAQcccMABBxxwwAEHHHAIDudocDDxeWFwOEeDg4z3a4MDDjjggKMOjh82BwcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAGHQ1Y4HLLCERPH1IHCkRjH7JnCAQcccMBRB8cam4MDDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAQxWDQ3AIDsEhOFQNR/eSfG7hgAMOOOCAAw444PCq4ZCvrOAQHIJDgkNwCA7BITgEh+AQHIJDcEhwCA7BITgEh+AQHIJDcAgOwSHBITgEh+AQHIJDcAgOwSE4pEsnhtvC417hqCsAAAAASUVORK5CYII=">
-<meta name="fee-console-build" content="4.10.22">
+<meta name="fee-console-build" content="4.10.23">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -1189,7 +1189,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.10.22";
+const UI_VERSION_LABEL=" · v4.10.23";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -3517,6 +3517,16 @@ function styleRatioReport(root){
       for(const [i] of allocationRows.entries()){const segment=make('span','ratio-alloc-seg ratio-alloc-c'+i);segment.setAttribute('style','flex:'+targets[i]+' 0 0');goal.append(segment);}
       allocation.parentNode.insertBefore(now,bar);allocation.parentNode.insertBefore(aim,allocation);allocation.parentNode.insertBefore(goal,allocation);
     }
+  }
+  // stock-bars:v1 — the same pair of bars for the four stock classes, from the "current／target" text of that table's third column.
+  const stock=report.querySelector('.ratio-stock-table'),stockRows=Array.from(stock?.tBodies?.[0]?.rows||[]);
+  const stockPairs=stockRows.map(row=>String(row.cells[2]?.textContent||'').split('／').map(part=>Number.parseFloat(part)));
+  if(stockRows.length>1&&stockRows.length<=6&&stockPairs.every(pair=>pair.length===2&&pair.every(n=>Number.isFinite(n)&&n>=0))&&stockPairs.some(pair=>pair[0]>0)&&stockPairs.some(pair=>pair[1]>0)){
+    const draw=(index,label,extra)=>{const cap=make('div','ratio-alloc-cap'),bar=make('div','ratio-alloc-bar'+extra);cap.textContent=label;bar.setAttribute('role','img');bar.setAttribute('aria-label','四类股票'+label+'占比');
+      for(const [i] of stockRows.entries()){const segment=make('span','ratio-alloc-seg ratio-alloc-c'+i);segment.setAttribute('style','flex:'+stockPairs[i][index]+' 0 0');bar.append(segment);}
+      stock.parentNode.insertBefore(cap,stock);stock.parentNode.insertBefore(bar,stock);};
+    draw(0,'当前','');draw(1,'参考目标',' ratio-alloc-target');
+    for(const [i,row] of stockRows.entries()){const dot=make('span','ratio-alloc-dot ratio-alloc-c'+i);row.cells[0].insertBefore(dot,row.cells[0].firstChild);}
   }
   const noteNumbers={'计算口径与合并规则':'1','来源日期与核验记录':'2','覆盖范围、残余与缺项':'3','现金与补仓参考说明':'4'};
   for(const note of direct(report,'DETAILS')){
