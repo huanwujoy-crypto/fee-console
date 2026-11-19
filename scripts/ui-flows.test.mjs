@@ -717,3 +717,26 @@ test("a history that lies within one year names that year on the first chip", ()
   assert.deepEqual(returnWindows(months(["2025-11", "2025-12", "2026-01", "2026-02", "2026-03", "2026-04"])).map(w => w.label), ["全部", "今年", "近3个月", "本月"]);
   assert.match(html, /\.return-windows button\[aria-selected="true"\]\{background:var\(--chip\);border-color:var\(--series-1\)/);
 });
+
+// settings-jump:v1 — the settings page has its own chip row; chips of sections that are not on the page are dropped.
+test("the settings page jump row names existing cards and hides chips of absent sections", () => {
+  const section = html.slice(html.indexOf('<section class="pane" id="p-set">'), html.indexOf("</section>", html.indexOf('<section class="pane" id="p-set">')));
+  const nav = section.match(/^<section class="pane" id="p-set">\n  <nav class="home-jump" aria-label="设置页快速跳转" data-jump-auto>([\s\S]*?)<\/nav>/);
+  assert.ok(nav, "the settings page opens with its jump row");
+  const targets = [...nav[1].matchAll(/<button type="button" data-jump="([\w-]+)"(?: aria-current="true")?>([^<]+)<\/button>/g)].map(m => [m[1], m[2]]);
+  assert.deepEqual(targets, [["setLedgerCard", "账本"], ["setShareCard", "共享"], ["fundProfileAdminCard", "基金"], ["fundDocsCard", "文件"], ["setRulesCard", "费率"], ["setFlowsCard", "出入金"], ["setDataCard", "数据"]]);
+  // Every target is exactly one card of this page, in the same order as the chips.
+  let at = 0;
+  for (const [id] of targets) {
+    assert.equal(html.split('id="' + id + '"').length, 2, id);
+    const found = section.indexOf('<div class="card" id="' + id + '"', at);
+    assert.ok(found > at, id + " is a card of the settings page, after the previous one"); at = found;
+  }
+  assert.doesNotMatch(nav[1], /href=/);
+  assert.match(html, /#p-home>\.card,#p-set>\.card,\.ratio-report>section\.card\{scroll-margin-top:/);
+  const spy = html.slice(html.indexOf("function syncJumpChips(){"), html.indexOf("/* ratio-presentation:v1:end */"));
+  assert.match(spy, /if\(bar\.hasAttribute\('data-jump-auto'\)\)for\(const chip of every\)\{const hide=!shown\(chip\);if\(chip\.hidden!==hide\)chip\.hidden=hide;\}/);
+  assert.match(spy, /const chips=every\.filter\(chip=>!chip\.hidden\);if\(!chips\.length\)continue;/);
+  // Switching tab refreshes the row at once instead of waiting for the first scroll.
+  assert.match(html, /globalThis\.scrollTo\?\.\(0,0\);renderRatioManagement\(\);try\{syncJumpChips\(\);\}catch\{\}\}\);/);
+});

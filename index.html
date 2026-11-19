@@ -10,7 +10,7 @@
 <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAABzUlEQVR42u3bsQ2AMAwAwczDhEzKOqGlCBIgBdnxRT+BfU0Kt20/pGHNCASH4BAcgkNwCA7BITgEh+CQ4BAcgkNwCA7BITgEh+AQHBIcgkNwCA7BITgEh+AQHIJDgkNwCA7BITgEh+AQHIJDcAgOCQ7BITgEh+AQHIJDcOi2/vjBwUQyJXAEkhHNBxyxZITyAQcccMABxwIy4viAAw444IADDjjggAMOOOCAAw444IBDcAgOwQEHHHDAAQcccMABBxxwwAEHHHAIDudocDDxeWFwOEeDg4z3a4MDDjjggKMOjh82BwcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAGHQ1Y4HLLCERPH1IHCkRjH7JnCAQcccMBRB8cam4MDDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAQxWDQ3AIDsEhOFQNR/eSfG7hgAMOOOCAAw444PCq4ZCvrOAQHIJDgkNwCA7BITgEh+AQHIJDcEhwCA7BITgEh+AQHIJDcAgOwSHBITgEh+AQHIJDcAgOwSE4pEsnhtvC417hqCsAAAAASUVORK5CYII=">
-<meta name="fee-console-build" content="4.10.20">
+<meta name="fee-console-build" content="4.10.21">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -26,7 +26,7 @@ header.top>.row{flex-shrink:0}#btnRefresh{white-space:nowrap}
 header.top{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:10px;row-gap:2px}header.top>div:first-child{display:contents}header.top h1{grid-column:1;grid-row:1}header.top>.row{grid-column:2;grid-row:1;justify-content:flex-end}header.top .sub{grid-column:1/-1;grid-row:2}
 .home-jump{position:sticky;top:env(safe-area-inset-top);z-index:40;display:flex;gap:6px;padding:6px 0 8px;margin:-4px 0 6px;background:var(--plane);box-shadow:0 calc(-1*env(safe-area-inset-top)) 0 var(--plane)}.home-jump button{flex:1 1 0;border:1px solid var(--border);background:var(--surface-1);color:var(--ink-2);border-radius:999px;padding:7px 4px;font-size:13px;font-family:inherit;cursor:pointer;white-space:nowrap}.home-jump button:active{background:var(--chip);color:var(--ink-1)}.home-jump{overflow-x:auto;scrollbar-width:none}.home-jump::-webkit-scrollbar{display:none}.home-jump button{flex:1 0 auto;transition:background .15s,color .15s}.home-jump button[aria-current="true"]{background:var(--series-1);border-color:transparent;color:#fff;font-weight:600}
 /* jump-spy:v1 — a jumped-to section lands just below the sticky chips. */
-#kpis,#returnsCard,#p-home>.card,.ratio-report>section.card{scroll-margin-top:calc(54px + env(safe-area-inset-top))}.ratio-report>.home-jump button{font-size:12.5px;padding:7px 6px}
+#kpis,#returnsCard,#p-home>.card,#p-set>.card,.ratio-report>section.card{scroll-margin-top:calc(54px + env(safe-area-inset-top))}.ratio-report>.home-jump button{font-size:12.5px;padding:7px 6px}
 .return-windows{display:flex;gap:6px;margin:6px 0 4px}.return-windows button{flex:1 1 0;border:1px solid var(--border);background:var(--surface-1);color:var(--ink-2);border-radius:9px;padding:8px 4px;font-size:13px;font-family:inherit;cursor:pointer;white-space:nowrap}.return-windows button[aria-selected="true"]{background:var(--chip);border-color:var(--series-1);color:var(--ink-1);font-weight:600}.ratio-return-compact-line small.ratio-return-annual{margin-left:1px;font-size:11px}.return-window-note{margin:2px 0 6px}
 #p-home .card,#p-home .kpis{scroll-margin-top:calc(54px + env(safe-area-inset-top))}
 h1{font-size:19px;margin:0}
@@ -427,6 +427,7 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
 </section>
 
 <section class="pane" id="p-set">
+  <nav class="home-jump" aria-label="设置页快速跳转" data-jump-auto><button type="button" data-jump="setLedgerCard" aria-current="true">账本</button><button type="button" data-jump="setShareCard">共享</button><button type="button" data-jump="fundProfileAdminCard">基金</button><button type="button" data-jump="fundDocsCard">文件</button><button type="button" data-jump="setRulesCard">费率</button><button type="button" data-jump="setFlowsCard">出入金</button><button type="button" data-jump="setDataCard">数据</button></nav>
   <div class="card" id="styleDiagnosticCard" hidden><details class="fund-method">
     <summary>分类登记诊断（只读）</summary>
     <label class="f" for="styleDiagnosticQuery">七项私密诊断清单</label>
@@ -434,10 +435,10 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
     <p class="hint">清单仅在当前页面读取，关闭页面即清除。</p>
     <div id="styleDiagnosticBox" aria-live="polite"></div>
   </details></div>
-  <div class="card"><h2>账本管理</h2>
+  <div class="card" id="setLedgerCard"><h2>账本管理</h2>
     <div id="ledgerBar" class="ledger-bar" aria-live="polite"></div>
   </div>
-  <div class="card"><h2>共享给其他手机（只看）</h2>
+  <div class="card" id="setShareCard"><h2>共享给其他手机（只看）</h2>
     <p class="hint">生成一个只读链接/二维码，其他手机打开后只能查看，不能修改。</p>
     <button class="btn primary big" id="btnShare">📱 显示只读二维码 / 链接</button>
     <p class="hint" style="margin-top:12px">添加到主屏幕后仍默认只读；需要修改时主动进入编辑。</p>
@@ -540,7 +541,7 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
     <p class="hint" id="fundDocsNotice" style="margin-top:10px">文件库在当前设备本地加密；恢复加密备份必须使用创建备份时的原管理人 token。全部文件及历史版本会按原状态加密加入新生成的基金只读链接。</p>
   </div>
   <div class="card mgr" id="giftRegistryCheck" hidden><div class="row" style="justify-content:space-between"><span id="giftRegistryState" role="status">本报告赠股登记：未知</span><button class="btn sm" id="giftRegistryPick" type="button" aria-label="核对赠股登记" title="仅本机读取核对目标，不上传、不改登记" disabled>核对</button><input id="giftRegistryQueryFile" type="file" accept="application/json,.json" hidden></div><div class="muted" id="giftRegistryNote">报告截至 未核验 · 核对目标 未选择 · 非交易验收</div></div>
-  <div class="card"><h2>重要设置</h2><p class="hint">期初本金、费率和起算日影响历史计算；只有确认差异后才会保存。</p>
+  <div class="card" id="setRulesCard"><h2>重要设置</h2><p class="hint">期初本金、费率和起算日影响历史计算；只有确认差异后才会保存。</p>
     <div class="grid">
       <div><label class="f">管理费率（%/年）</label><input type="number" id="sMgmt" step="0.01"></div>
       <div><label class="f">Carry（%）</label><input type="number" id="sCarry" step="0.1"></div>
@@ -550,11 +551,11 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
     <div id="openBox" style="margin-top:10px"></div>
     <div id="acctBox" style="margin-top:10px"></div>
   </div>
-  <div class="card"><h2>出入金</h2>
+  <div class="card" id="setFlowsCard"><h2>出入金</h2>
     <p class="hint">外部转入/转出会影响收益计算。系统从券商现金流水自动识别，勾选后计入；买卖交易不算出入金。</p>
     <div id="flowBox"></div>
   </div>
-  <div class="card"><h2>数据</h2>
+  <div class="card" id="setDataCard"><h2>数据</h2>
     <div class="res" id="ghStatusBox"></div>
     <div class="row" style="margin-top:10px">
       <button class="btn sm" id="btnGhSync">重新读取</button>
@@ -1188,7 +1189,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.10.20";
+const UI_VERSION_LABEL=" · v4.10.21";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -3558,10 +3559,14 @@ if(typeof document!=='undefined'&&typeof document.addEventListener==='function')
 function syncJumpChips(){
   for(const bar of document.querySelectorAll('.home-jump')){
     if(!bar.offsetParent)continue;
-    const chips=Array.from(bar.querySelectorAll('[data-jump]')),line=bar.getBoundingClientRect().bottom+24;let current=chips[0],best=-Infinity;
+    const every=Array.from(bar.querySelectorAll('[data-jump]')),shown=chip=>{const target=document.getElementById(chip.getAttribute('data-jump'));return !!(target&&(target.closest('.card')||target).offsetParent);};
+    // A bar marked data-jump-auto drops the chips whose section is not on the page right now.
+    if(bar.hasAttribute('data-jump-auto'))for(const chip of every){const hide=!shown(chip);if(chip.hidden!==hide)chip.hidden=hide;}
+    const chips=every.filter(chip=>!chip.hidden);if(!chips.length)continue;
+    const line=bar.getBoundingClientRect().bottom+24;let current=chips[0],best=-Infinity;
     for(const chip of chips){const target=document.getElementById(chip.getAttribute('data-jump')),box=target&&(target.closest('.card')||target),top=box?box.getBoundingClientRect().top:NaN;if(box?.offsetParent&&top<=line&&top>=best){best=top;current=chip;}}
     if(window.innerHeight+window.scrollY>=document.documentElement.scrollHeight-4)current=chips.at(-1);
-    for(const chip of chips)if(chip.getAttribute('aria-current')!==String(chip===current)){chip.setAttribute('aria-current',String(chip===current));if(chip===current)chip.scrollIntoView?.({block:'nearest',inline:'nearest'});}
+    for(const chip of every)if(chip.getAttribute('aria-current')!==String(chip===current)){chip.setAttribute('aria-current',String(chip===current));if(chip===current)chip.scrollIntoView?.({block:'nearest',inline:'nearest'});}
   }
 }
 if(typeof window!=='undefined'&&typeof window.addEventListener==='function'&&typeof document.querySelectorAll==='function'){
@@ -5720,7 +5725,7 @@ function showShare(){
 
 /* ============ 事件 ============ */
 document.getElementById("tabs").addEventListener("click",e=>{const b=e.target.closest("button[data-p]");if(!b)return;
-  if(b.dataset.p==="p-ratio"&&(!ratioAuthorized()||b.classList.contains("on")))return;clearRatioRecipientPreview();clearRatioManagement(false);document.querySelectorAll("#tabs button").forEach(x=>x.classList.toggle("on",x===b));document.querySelectorAll("section.pane").forEach(s=>s.classList.toggle("on",s.id===b.dataset.p));globalThis.scrollTo?.(0,0);renderRatioManagement();});
+  if(b.dataset.p==="p-ratio"&&(!ratioAuthorized()||b.classList.contains("on")))return;clearRatioRecipientPreview();clearRatioManagement(false);document.querySelectorAll("#tabs button").forEach(x=>x.classList.toggle("on",x===b));document.querySelectorAll("section.pane").forEach(s=>s.classList.toggle("on",s.id===b.dataset.p));globalThis.scrollTo?.(0,0);renderRatioManagement();try{syncJumpChips();}catch{}});
 document.getElementById("cfmCancel").onclick=()=>{_cfmCb=null;document.getElementById("cfm").classList.remove("on");};
 document.getElementById("cfmOk").onclick=()=>{const cb=_cfmCb;_cfmCb=null;document.getElementById("cfm").classList.remove("on");if(cb)cb();};
 document.body.addEventListener("click",e=>{const T=e.target;
