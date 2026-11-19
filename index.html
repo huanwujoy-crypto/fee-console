@@ -10,7 +10,7 @@
 <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAABzUlEQVR42u3bsQ2AMAwAwczDhEzKOqGlCBIgBdnxRT+BfU0Kt20/pGHNCASH4BAcgkNwCA7BITgEh+CQ4BAcgkNwCA7BITgEh+AQHBIcgkNwCA7BITgEh+AQHIJDgkNwCA7BITgEh+AQHIJDcAgOCQ7BITgEh+AQHIJDcOi2/vjBwUQyJXAEkhHNBxyxZITyAQcccMABxwIy4viAAw444IADDjjggAMOOOCAAw444IBDcAgOwQEHHHDAAQcccMABBxxwwAEHHHAIDudocDDxeWFwOEeDg4z3a4MDDjjggKMOjh82BwcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAGHQ1Y4HLLCERPH1IHCkRjH7JnCAQcccMBRB8cam4MDDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAQxWDQ3AIDsEhOFQNR/eSfG7hgAMOOOCAAw444PCq4ZCvrOAQHIJDgkNwCA7BITgEh+AQHIJDcEhwCA7BITgEh+AQHIJDcAgOwSHBITgEh+AQHIJDcAgOwSE4pEsnhtvC417hqCsAAAAASUVORK5CYII=">
-<meta name="fee-console-build" content="4.10.19">
+<meta name="fee-console-build" content="4.10.20">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -205,6 +205,7 @@ section.pane{display:none} section.pane.on{display:block}
 .feeCard{border:1px solid var(--border);border-radius:12px;padding:10px;margin-top:10px;background:var(--lockbg)}
 .feeCard .fr{display:flex;gap:8px;align-items:center;margin-top:8px}.feeCard .fr:first-child{margin-top:0}
 .feeCard input,.feeCard select{min-width:0;font-size:16px;padding:8px}
+.fee-progress{margin:0 0 12px}.fee-progress .track{height:10px;border-radius:999px;background:var(--chip);overflow:hidden}.fee-progress .fill{display:block;height:100%;border-radius:999px;background:var(--series-1)}.fee-progress .nums{display:flex;justify-content:space-between;gap:10px;margin-top:6px;font-size:12px;color:var(--ink-2)}.fee-progress .nums b{color:var(--ink-1);font-variant-numeric:tabular-nums}
 .feeSum{display:flex;justify-content:space-between;margin-top:12px;font-weight:600;font-size:14px}.feeSum .l{font-weight:400;color:var(--ink-muted)}
 input,select,textarea{background:var(--plane);color:var(--ink-1);border:1px solid var(--border);border-radius:8px;padding:9px 10px;font-size:16px;font-family:inherit;width:100%;font-variant-numeric:tabular-nums}
 input:disabled,select:disabled,textarea:disabled{background:var(--lockbg);color:var(--ink-2);border-style:dashed}
@@ -419,8 +420,9 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
   <div class="card">
     <h2>付款记录</h2>
     <p class="hint">只记录已付款，不会转账。修改先保留为草稿，确认保存后再更新计算回执。</p>
+    <div id="feeProgress"></div>
     <div id="tblFee"></div>
-    <div class="row" style="margin-top:12px"><button class="btn primary" id="btnAddFee">+ 新增一笔付款</button></div>
+    <div class="row" style="margin-top:12px"><button class="btn primary" id="btnAddFee">+ 新增一笔付款</button><button class="btn" id="btnAddFeeDue" hidden></button></div>
   </div>
 </section>
 
@@ -1186,7 +1188,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.10.19";
+const UI_VERSION_LABEL=" · v4.10.20";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -4037,7 +4039,7 @@ function renderLedgerControls(){
   const legacyReady=isMgr()&&_receiptSource.state==="verified"&&_receiptSource.envelopeVersion===3&&managerDocumentsAuthorized()&&!EDIT.draft&&!_draftBlocked;
   bar.innerHTML=`<b>${active?"修改草稿 · 尚未保存":"只读查看 · 编辑已锁定"}</b><div class="small">${esc(_ledgerMessage||(EDIT.draft?"草稿保留，正式报告未改变":"查看与刷新不会修改账本"))}</div>${isMgr()&&!_draftBlocked?`<div class="row">${_legacyMigrationPending?'<button class="btn" id="ledgerMigrationCheck">核对迁移结果</button>':EDIT.pending?'<button class="btn" id="ledgerCheck">核对上次保存结果</button>':legacyReady?'<button class="btn primary" id="ledgerMigrate">备份并迁移原账本至 v4</button>':active?'<button class="btn primary" id="ledgerReviewOpen">核对并保存</button><button class="btn" id="ledgerLock">锁定编辑</button>':`<button class="btn" id="ledgerEdit">${EDIT.draft?"继续编辑草稿":"修改账本"}</button>`}${EDIT.draft&&!EDIT.pending?'<button class="btn" id="ledgerDiscard">丢弃草稿</button>':""}</div>`:""}`;
   if(_ledgerConflict.length)bar.innerHTML+=`<details><summary>查看冲突：云端 → 我的草稿（${_ledgerConflict.length} 项）</summary>${ledgerDiffTable(_ledgerConflict)}</details>`;
-  for(const el of document.querySelectorAll('[data-open],[data-acct],[data-fee],[data-flow],#sMgmt,#sCarry,#sStart,#sWho,#btnAddFee,[data-delfee],[data-delflow]'))el.disabled=!active||(!!el.dataset.flow&&(DAILY.flowsAuto||[]).some(f=>f.id===el.dataset.flow&&f.effective===true));
+  for(const el of document.querySelectorAll('[data-open],[data-acct],[data-fee],[data-flow],#sMgmt,#sCarry,#sStart,#sWho,#btnAddFee,#btnAddFeeDue,[data-delfee],[data-delflow]'))el.disabled=!active||(!!el.dataset.flow&&(DAILY.flowsAuto||[]).some(f=>f.id===el.dataset.flow&&f.effective===true));
   bar.querySelectorAll("button").forEach(b=>b.disabled=_ledgerBusy);
 }
 function changeDraft(mutator,rerender=true){if(!canEdit()){lockLedger();return;}try{EDIT=LG.change(EDIT,mutator,Date.now());_ledgerMessage="仅修改草稿，尚未保存";persistDraft();if(rerender)scheduleRender();else renderLedgerControls();}catch(e){toast(e.message);}}
@@ -5293,6 +5295,28 @@ function investorScenarioInput(event){
   document.getElementById("invScenarioOut").innerHTML=investorScenarioOutput(m);
 }
 document.addEventListener("input",investorScenarioInput);document.addEventListener("click",investorScenarioInput);
+/* fee-progress:start */
+// fee-progress:v1 — how much of the accrued fee has been paid, and a one-tap draft for the amount still due. Display and draft only.
+function feeProgressModel(input){
+  const f=input||{};
+  if(![f.accrued,f.paid,f.due].every(Number.isFinite)||!/^\d{4}-\d{2}-\d{2}$/.test(String(f.asOf||""))||f.hold)return null;
+  const share=f.accrued>0?Math.min(1,Math.max(0,f.paid/f.accrued)):f.paid>0?1:0,payable=f.due>=.005;
+  return {asOf:f.asOf,accrued:f.accrued,paid:f.paid,due:f.due,share,fill:payable?{amount:f.due.toFixed(2),note:`截至 ${f.asOf} 应付费用`}:null};
+}
+function feeProgressView(m){
+  if(!m)return "";
+  const pctText=(m.share*100).toFixed(0)+"%";
+  return `<div class="fee-progress"><div class="track" role="img" aria-label="已付占累计费用 ${pctText}"><span class="fill" style="width:${(m.share*100).toFixed(1)}%"></span></div><div class="nums"><span>已付 <b>${usd(m.paid,0)}</b> ／ 累计费用 <b>${usd(m.accrued,0)}</b>（${pctText}）</span><span>${m.due<-.005?`多付 <b>${usd(-m.due,0)}</b>`:`应付 <b>${usd(m.due,0)}</b>`}</span></div></div>`;
+}
+/* fee-progress:end */
+let _feeDueFill=null;
+function renderFeeProgress(feeView,B,G){
+  const box=document.getElementById("feeProgress"),button=document.getElementById("btnAddFeeDue");
+  const m=feeView?.state==="verified"&&B?feeProgressModel({accrued:B.accrued,paid:B.paid,due:B.due,asOf:feeView.asOf,hold:!!G?.hold}):null;
+  _feeDueFill=m?.fill||null;
+  if(box)box.innerHTML=feeProgressView(m);
+  if(button){button.hidden=!_feeDueFill;button.textContent=_feeDueFill?"按应付 "+usd(Number(_feeDueFill.amount),2)+" 新增":"";}
+}
 function renderFees(feeView,st,B,G){
   const DB=editDB();
   G=G||{hold:false,holdReasons:[]};
@@ -5307,7 +5331,8 @@ function renderFees(feeView,st,B,G){
       <select data-fee="${f.id}" data-k="ccy" style="flex:0 0 82px">${CCY.map(c=>`<option ${f.ccy===c?'selected':''}>${c}</option>`).join("")}</select></div>
     <div class="fr"><input data-fee="${f.id}" data-k="note" value="${esc(f.note||'')}" placeholder="备注（如：8 月费用）" style="flex:1"></div>
   </div>`).join(""):`<div class="empty">还没有付款记录</div>`)+
-  `<div class="feeSum"><span>${registered}</span>${feeView.state!=="verified"||!B?`<span>${feeView.message}</span>`:`<span>截至 ${esc(feeView.asOf)} 已计入回执 ${usd(B.paid,0)}</span>${pendingCount?`<span>待后续日点计入 ${pendingCount} 笔</span>`:""}<span>截至 ${esc(feeView.asOf)} 应付费用 ${G.hold?'<b class="hold">暂不可用</b>':usd(B.due,0)}</span>`}</div>`;}
+  `<div class="feeSum"><span>${registered}</span>${feeView.state!=="verified"||!B?`<span>${feeView.message}</span>`:`<span>截至 ${esc(feeView.asOf)} 已计入回执 ${usd(B.paid,0)}</span>${pendingCount?`<span>待后续日点计入 ${pendingCount} 笔</span>`:""}<span>截至 ${esc(feeView.asOf)} 应付费用 ${G.hold?'<b class="hold">暂不可用</b>':usd(B.due,0)}</span>`}</div>`;
+  renderFeeProgress(feeView,B,G);}
 function renderFlows(){
   const DB=editDB();
   const box=document.getElementById("flowBox");const auto=(DAILY.flowsAuto||[]);
@@ -5735,6 +5760,7 @@ document.body.addEventListener("click",e=>{const T=e.target;
   if(T.id==="ratioRecipientConfirm"){registerRatioRecipient(e);return;}
   if(T.id==="ratioSnapshotExport"){exportCurrentRatioSnapshot(e);return;}
   if(T.id==="ratioRecipientCancel"){if(e.isTrusted)clearRatioRecipientPreview();return;}
+  if(T.id==="btnAddFeeDue"){const fill=_feeDueFill;if(fill)changeDraft(d=>d.fees.push({id:crypto.randomUUID(),date:todayStr(),amount:fill.amount,ccy:"USD",fx:"",note:fill.note}));return;}
   if(T.id==="btnAddFee"){changeDraft(d=>d.fees.push({id:crypto.randomUUID(),date:todayStr(),amount:"",ccy:"USD",fx:"",note:""}));return;}
   if(T.dataset.delfee){changeDraft(d=>{d.fees=d.fees.filter(f=>f.id!==T.dataset.delfee);});return;}
   if(T.dataset.delflow){changeDraft(d=>d.months.forEach(m=>m.flows=m.flows.filter(f=>f.id!==T.dataset.delflow)));return;}

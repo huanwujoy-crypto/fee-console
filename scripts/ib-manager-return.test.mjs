@@ -378,3 +378,22 @@ test('the investor scenario applies the fund-wide S&P scenario to one investor b
   assert.match(wire,/ctx\.date===_riskPoint\.d&&Math\.abs\(risk\.nav-total\)<=risk\.nav\*\.005/);
   assert.match(html,/if\(typeof renderInvestorScenario==="function"\)renderInvestorScenario\(\{id:investor\.id,date:last\?\.date,share:held&&latestShares\?held\.shares\/latestShares:null,valueCents:held\?\.valueCents,totalCents:last\?\.totalCents\}\);/);
 });
+
+test('the payments page shows how much of the accrued fee is paid and offers a draft for the amount due',()=>{
+  const html=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8'),box={};vm.createContext(box);
+  vm.runInContext("const esc=v=>String(v??'').replace(/</g,'&lt;');const usd=(v,d=2)=>(v<0?'-$':'$')+Math.abs(Number(v)).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});",box);
+  vm.runInContext(html.slice(html.indexOf('/* fee-progress:start */'),html.indexOf('/* fee-progress:end */'))+';globalThis.M=feeProgressModel;globalThis.V=feeProgressView;',box);
+  const near=(a,b)=>assert.ok(Math.abs(a-b)<1e-9,a+' vs '+b),text=out=>out.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim(),plain=v=>JSON.parse(JSON.stringify(v));
+  const m=box.M({accrued:29000,paid:25000,due:4000.004,asOf:'2026-11-18'});near(m.share,25000/29000);
+  assert.deepEqual(plain(m.fill),{amount:'4000.00',note:'截至 2026-11-18 应付费用'});
+  assert.equal(text(box.V(m)),'已付 $25,000 ／ 累计费用 $29,000 （86%） 应付 $4,000');assert.match(box.V(m),/class="fill" style="width:86\.2%"/);
+  // Fully paid or overpaid: nothing to draft, and the bar never runs past the end.
+  const over=box.M({accrued:29000,paid:30000,due:-1000,asOf:'2026-11-18'});near(over.share,1);assert.equal(over.fill,null);assert.match(text(box.V(over)),/（100%） 多付 \$1,000/);
+  assert.equal(box.M({accrued:100,paid:100,due:0,asOf:'2026-11-18'}).fill,null);near(box.M({accrued:0,paid:0,due:0,asOf:'2026-11-18'}).share,0);
+  // Withheld or unusable figures show nothing.
+  for(const bad of [null,{accrued:1,paid:1,due:NaN,asOf:'2026-11-18'},{accrued:1,paid:0,due:1,asOf:'x'},{accrued:1,paid:0,due:1,asOf:'2026-11-18',hold:true}])assert.equal(box.M(bad),null);
+  assert.equal(box.V(null),'');
+  // The one-tap entry is an ordinary draft row through the same guarded path as a manual one, and locks with the other edit controls.
+  assert.match(html,/if\(T\.id==="btnAddFeeDue"\)\{const fill=_feeDueFill;if\(fill\)changeDraft\(d=>d\.fees\.push\(\{id:crypto\.randomUUID\(\),date:todayStr\(\),amount:fill\.amount,ccy:"USD",fx:"",note:fill\.note\}\)\);return;\}/);
+  assert.match(html,/#btnAddFee,#btnAddFeeDue,\[data-delfee\]/);assert.match(html,/<button class="btn" id="btnAddFeeDue" hidden><\/button>/);
+});
