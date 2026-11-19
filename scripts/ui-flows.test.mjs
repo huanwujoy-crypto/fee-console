@@ -744,7 +744,7 @@ test("the settings page jump row names existing cards and hides chips of absent 
 // alloc-target:v1 — the allocation overview draws the reference targets as a second bar from the text already shown.
 test("the allocation overview pairs the current bar with a reference-target bar without recalculating", () => {
   const style = html.slice(html.indexOf("function styleRatioReport("), html.indexOf("/* ratio-presentation:v1:end */"));
-  const block = style.slice(style.indexOf("// alloc-target:v1"), style.indexOf("const noteNumbers="));
+  const block = style.slice(style.indexOf("// alloc-target:v1"), style.indexOf("// stock-bars:v1"));
   assert.ok(block.length > 200, "the target bar is built inside the reviewed presentation layer");
   // Targets are read from the printed "current／target" text of each row, and a row without a usable target drops the whole bar.
   assert.match(block, /querySelector\('\.ratio-overview-weights'\)\?\.textContent\|\|''\)\.split\('／'\)\[1\]\)\)/);
@@ -754,4 +754,17 @@ test("the allocation overview pairs the current bar with a reference-target bar 
   // It only adds elements beside the table; no amount, share, ranking or source value is written.
   assert.doesNotMatch(block, /toFixed|Math\.|valueCents|totalCents|innerHTML/);
   assert.match(html, /\.ratio-alloc-target\{opacity:\.55;margin-bottom:10px\}/);
+});
+
+// stock-bars:v1 — the four stock classes get the same pair of bars, read from their table's printed "current／target" column.
+test("the stock-class table gets the same current and reference-target bars without recalculating", () => {
+  const style = html.slice(html.indexOf("function styleRatioReport("), html.indexOf("/* ratio-presentation:v1:end */"));
+  const block = style.slice(style.indexOf("// stock-bars:v1"), style.indexOf("const noteNumbers="));
+  assert.ok(block.length > 200);
+  assert.match(block, /report\.querySelector\('\.ratio-stock-table'\)/);
+  assert.match(block, /String\(row\.cells\[2\]\?\.textContent\|\|''\)\.split\('／'\)\.map\(part=>Number\.parseFloat\(part\)\)/);
+  // Every row must carry both numbers, and both bars need something to show; otherwise the table is left as it was.
+  assert.match(block, /stockPairs\.every\(pair=>pair\.length===2&&pair\.every\(n=>Number\.isFinite\(n\)&&n>=0\)\)&&stockPairs\.some\(pair=>pair\[0\]>0\)&&stockPairs\.some\(pair=>pair\[1\]>0\)/);
+  assert.match(block, /draw\(0,'当前',''\);draw\(1,'参考目标',' ratio-alloc-target'\);/);
+  assert.doesNotMatch(block, /toFixed|Math\.|valueCents|totalCents|innerHTML/);
 });
