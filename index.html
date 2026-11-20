@@ -10,7 +10,7 @@
 <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAABzUlEQVR42u3bsQ2AMAwAwczDhEzKOqGlCBIgBdnxRT+BfU0Kt20/pGHNCASH4BAcgkNwCA7BITgEh+CQ4BAcgkNwCA7BITgEh+AQHBIcgkNwCA7BITgEh+AQHIJDgkNwCA7BITgEh+AQHIJDcAgOCQ7BITgEh+AQHIJDcOi2/vjBwUQyJXAEkhHNBxyxZITyAQcccMABxwIy4viAAw444IADDjjggAMOOOCAAw444IBDcAgOwQEHHHDAAQcccMABBxxwwAEHHHAIDudocDDxeWFwOEeDg4z3a4MDDjjggKMOjh82BwcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAGHQ1Y4HLLCERPH1IHCkRjH7JnCAQcccMBRB8cam4MDDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAQxWDQ3AIDsEhOFQNR/eSfG7hgAMOOOCAAw444PCq4ZCvrOAQHIJDgkNwCA7BITgEh+AQHIJDcEhwCA7BITgEh+AQHIJDcAgOwSHBITgEh+AQHIJDcAgOwSE4pEsnhtvC417hqCsAAAAASUVORK5CYII=">
-<meta name="fee-console-build" content="4.10.32">
+<meta name="fee-console-build" content="4.10.33">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -198,6 +198,9 @@ section.pane{display:none} section.pane.on{display:block}
 .evergreen-ladder-title{font-size:12px;margin:14px 0 4px;color:var(--ink-2);font-weight:600}.evergreen-ladder li{display:grid;grid-template-columns:62px minmax(0,1fr) auto;gap:8px;align-items:center;padding:5px 0;font-size:12px}.evergreen-ladder-quarter{color:var(--ink-2);font-variant-numeric:tabular-nums}.evergreen-ladder-track{display:flex;height:10px;background:var(--line);border-radius:5px;overflow:hidden}.evergreen-ladder-track i{display:block;height:100%}.evergreen-free{background:#3f9a78}.evergreen-fee{background:#d99a2b}.evergreen-ladder-amount{display:flex;flex-direction:column;align-items:flex-end;font-variant-numeric:tabular-nums;white-space:nowrap}.evergreen-ladder-amount small{font-size:10px;color:var(--ink-2)}
 .evergreen-terms{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px;margin:4px 0 8px}.evergreen-terms div{min-width:0}.evergreen-terms dt{font-size:10px;color:var(--ink-2)}.evergreen-terms dd{margin:0;font-size:12px;overflow-wrap:anywhere}.evergreen-lot-plans li{display:flex;flex-direction:column;gap:2px;padding:6px 0 6px 10px;border-left:2px solid var(--grid);font-size:12px}.evergreen-lot-plans li+li{margin-top:6px}.evergreen-lot-plans strong{font-weight:600}.evergreen-lot-plans strong[data-status="locked"]{color:#c8553d}.evergreen-lot-plans strong[data-status="fee"]{color:#b07a16}.evergreen-lot-plans small{font-size:11px;color:var(--ink-2)}
 #p-ratio .evergreen-pack{margin-top:14px;border-top:1px solid var(--grid)}.evergreen-sheet input{font-size:16px}.evergreen-pack-text{width:100%;margin-top:8px;font:16px/1.4 ui-monospace,Menlo,monospace;border:1px solid var(--border);border-radius:9px;padding:8px;background:var(--surface-1);color:var(--ink-1);box-sizing:border-box}
+.evergreen-summary{font-size:13px;line-height:1.6;margin:0 0 6px}.evergreen-sheet h4{font-size:11px;font-weight:600;color:var(--ink-2);margin:12px 0 4px}.evergreen-mix,.evergreen-updates,.evergreen-links,.evergreen-reading{list-style:none;margin:0;padding:0}.evergreen-mix li{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr) 44px;gap:8px;align-items:center;font-size:12px;padding:3px 0}.evergreen-mix li>span:first-child{min-width:0;overflow-wrap:anywhere}.evergreen-mix-track{height:6px;background:var(--line);border-radius:3px;overflow:hidden}.evergreen-mix-track i{display:block;height:100%;background:var(--series-1);border-radius:3px}.evergreen-mix b{font-weight:500;text-align:right;font-variant-numeric:tabular-nums}
+.evergreen-updates li{display:flex;flex-direction:column;gap:2px;padding:6px 0 6px 10px;border-left:2px solid var(--grid);font-size:12px;line-height:1.55}.evergreen-updates li+li{margin-top:6px}.evergreen-updates b{font-weight:600;font-variant-numeric:tabular-nums}.evergreen-updates small,.evergreen-reading small{font-size:11px;color:var(--ink-2)}.evergreen-links li{padding:2px 0}.evergreen-links a,.evergreen-reading a{display:inline-block;padding:6px 0;font-size:13px;color:var(--series-1);text-decoration:underline;overflow-wrap:anywhere}
+.evergreen-reading li{display:flex;flex-direction:column;gap:2px;padding:8px 0;border-top:1px solid var(--grid)}.evergreen-reading a{font-weight:600;padding:2px 0}.evergreen-reading p{font-size:12px;line-height:1.55;margin:2px 0}.evergreen-tags{display:flex;flex-wrap:wrap;gap:4px}.evergreen-tags i{font-style:normal;font-size:10px;padding:2px 7px;border-radius:999px;background:var(--chip);color:var(--ink-2)}
 .evergreen-sub,.evergreen-meta{font-size:12px;color:var(--ink-2);line-height:1.6;margin:4px 0}.evergreen-filter{display:flex;gap:6px;overflow-x:auto;padding:6px 0 8px;scrollbar-width:none}.evergreen-filter button,.evergreen-states button{flex:none;font:inherit;font-size:12px;color:var(--ink-2);background:var(--chip);border:1px solid transparent;border-radius:999px;padding:6px 12px;min-height:32px;cursor:pointer}.evergreen-filter button[aria-pressed="true"],.evergreen-states button[aria-pressed="true"]{color:var(--ink-1);border-color:var(--series-1);font-weight:600}
 #p-ratio .evergreen-fund{margin:0;border-top:1px solid var(--grid)}#p-ratio .evergreen-fund>summary{display:flex;gap:8px;align-items:center;min-height:56px;padding:8px 0;list-style:none;color:var(--ink-1)}.evergreen-fund-main{display:flex;flex:1;flex-direction:column;gap:2px;min-width:0}.evergreen-fund-main strong{font-size:14px;font-weight:600;overflow-wrap:anywhere}.evergreen-fund-main small{font-size:11px;color:var(--ink-2)}.evergreen-fund-side{display:flex;flex-direction:column;align-items:flex-end;gap:4px}.evergreen-amount{font-size:13px;font-variant-numeric:tabular-nums;white-space:nowrap}
 .evergreen-pill{font-size:11px;line-height:1;padding:4px 8px;border-radius:999px;background:var(--chip);color:var(--ink-2);white-space:nowrap}.evergreen-pill[data-state="watch"]{background:color-mix(in srgb,#d99a2b 22%,transparent);color:var(--ink-1)}.evergreen-pill[data-state="prepare"],.evergreen-pill[data-state="redeeming"]{background:color-mix(in srgb,#c8553d 22%,transparent);color:var(--ink-1)}.evergreen-pill[data-state="hold"]{background:color-mix(in srgb,#3f9a78 22%,transparent);color:var(--ink-1)}
@@ -1197,7 +1200,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.10.32";
+const UI_VERSION_LABEL=" · v4.10.33";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -3348,6 +3351,62 @@ function createRatioSnapshotCore(ratioCore,exposureCore,sourceFactory,parseJson,
   return {SCHEMA,FILE,verifyOriginal,candidate,authenticate,verify,bodyCheck,digestBytes};
 }
 /* ratio-presentation:v1 */
+/* evergreen-profile:v1:start */
+// evergreen-profile:v1 — what each evergreen fund is: a short description, its published mix and holdings, dated
+// factual updates, links to the owner's own filed documents, and a reading list of public commentary. All of it
+// arrives in the terms pack, prepared from the funds' own reports, and stays on this device. Nothing is fetched;
+// a link only opens when the owner taps it. Missing pieces are simply not shown.
+const EVERGREEN_PROFILE_KEY='feeConsole.evergreen.profile.v1',EVERGREEN_READING_KEY='feeConsole.evergreen.reading.v1';
+function evergreenText(v,max){return typeof v==='string'&&v.trim()?v.trim().slice(0,max):'';}
+// Only plain https links, so a pasted pack cannot plant a script or a local address behind a title.
+function evergreenUrl(v){
+  if(typeof v!=='string'||v.length>500||!/^https:\/\/[A-Za-z0-9.-]+\.[A-Za-z]{2,}(\/[^\s"'<>\\]*)?$/.test(v))return '';
+  try{return new URL(v).protocol==='https:'?v:'';}catch{return '';}
+}
+function evergreenMix(list,max){
+  return (Array.isArray(list)?list:[]).map(x=>{const name=evergreenText(x?.name,60);if(!name)return null;
+    return typeof x.pct==='number'&&Number.isFinite(x.pct)&&x.pct>=0&&x.pct<=100?{name,pct:x.pct}:{name};}).filter(Boolean).slice(0,max);
+}
+// Pure: one fund's pack entry in, a clean record out; an empty record means there is nothing to show.
+function evergreenProfileClean(fund){
+  const p=fund?.profile&&typeof fund.profile==='object'&&!Array.isArray(fund.profile)?fund.profile:{},out={};
+  for(const [k,max] of [['source',160],['summary',200],['size',40]]){const t=evergreenText(p[k],max);if(t)out[k]=t;}
+  if(typeof p.asOf==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(p.asOf))out.asOf=p.asOf;
+  for(const [k,max] of [['strategy',8],['sector',8],['region',6],['holdings',10]]){const mix=evergreenMix(p[k],max);if(mix.length)out[k]=mix;}
+  const links=(Array.isArray(fund?.links)?fund.links:[]).map(x=>({title:evergreenText(x?.title,60),url:evergreenUrl(x?.url)})).filter(x=>x.title&&x.url).slice(0,5);
+  const updates=(Array.isArray(fund?.updates)?fund.updates:[]).map(x=>({date:typeof x?.date==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(x.date)?x.date:'',text:evergreenText(x?.text,160),source:evergreenText(x?.source,100)}))
+    .filter(x=>x.date&&x.text).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,3);
+  if(links.length)out.links=links;if(updates.length)out.updates=updates;
+  return out;
+}
+function evergreenReadingClean(list){
+  return (Array.isArray(list)?list:[]).map(x=>({title:evergreenText(x?.title,120),source:evergreenText(x?.source,60),date:typeof x?.date==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(x.date)?x.date:'',
+    url:evergreenUrl(x?.url),takeaway:evergreenText(x?.takeaway,200),tags:(Array.isArray(x?.tags)?x.tags:[]).map(t=>evergreenText(t,12)).filter(Boolean).slice(0,4)}))
+    .filter(x=>x.title&&x.url).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,40);
+}
+function evergreenStored(key,fallback){try{const v=JSON.parse((typeof store!=='undefined'&&store?store.getItem(key):null)||'null');return v&&typeof v==='object'?v:fallback;}catch{return fallback;}}
+function evergreenProfiles(){
+  const v=evergreenStored(EVERGREEN_PROFILE_KEY,{});if(Array.isArray(v))return {};
+  return Object.fromEntries(Object.entries(v).map(([k,r])=>[k,evergreenProfileClean({profile:r,links:r?.links,updates:r?.updates})]).filter(([,r])=>Object.keys(r).length));
+}
+function evergreenReading(){return evergreenReadingClean(evergreenStored(EVERGREEN_READING_KEY,[]));}
+function evergreenProfileView(record){
+  const e=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const r=record||{};if(!Object.keys(r).length)return '';
+  const mix=(title,list)=>list?.length?'<h4>'+title+'</h4><ul class="evergreen-mix">'+list.map(x=>'<li><span>'+e(x.name)+'</span>'+(x.pct===undefined?'':'<span class="evergreen-mix-track"><i style="width:'+Math.min(100,x.pct)+'%"></i></span><b>'+e(x.pct)+'%</b>')+'</li>').join('')+'</ul>':'';
+  const facts=(r.summary?'<p class="evergreen-summary">'+e(r.summary)+'</p>':'')+(r.size?'<p class="evergreen-meta">基金规模 '+e(r.size)+'</p>':'')+mix('策略分布',r.strategy)+mix('行业分布',r.sector)+mix('地区分布',r.region)+mix('主要持仓',r.holdings);
+  const updates=r.updates?.length?'<h3>最新动态</h3><ul class="evergreen-updates">'+r.updates.map(u=>'<li><b>'+e(u.date)+'</b><span>'+e(u.text)+'</span>'+(u.source?'<small>'+e(u.source)+'</small>':'')+'</li>').join('')+'</ul>':'';
+  const links=r.links?.length?'<h3>文件</h3><ul class="evergreen-links">'+r.links.map(l=>'<li><a href="'+e(l.url)+'" target="_blank" rel="noopener noreferrer">'+e(l.title)+'</a></li>').join('')+'</ul>':'';
+  return (facts?'<h3>基金概况</h3>'+facts+'<p class="evergreen-meta">'+(r.asOf?'资料截至 '+e(r.asOf):'资料日期未填')+(r.source?' · '+e(r.source):'')+'</p>':'')+updates+links;
+}
+function evergreenReadingView(list){
+  const e=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  if(!list?.length)return '';
+  return '<h2>阅读清单</h2><p class="evergreen-sub">关于常青基金这类产品的公开评论，帮助了解它的结构和风险；不针对你的任何一只持仓。</p><ul class="evergreen-reading">'
+    +list.map(x=>'<li><a href="'+e(x.url)+'" target="_blank" rel="noopener noreferrer">'+e(x.title)+'</a><small>'+e([x.source,x.date].filter(Boolean).join(' · '))+'</small>'+(x.takeaway?'<p>'+e(x.takeaway)+'</p>':'')
+      +(x.tags.length?'<span class="evergreen-tags">'+x.tags.map(t=>'<i>'+e(t)+'</i>').join('')+'</span>':'')+'</li>').join('')+'</ul>';
+}
+/* evergreen-profile:v1:end */
 /* evergreen-calendar:v1:start */
 // evergreen-calendar:v1 — redemption planning for the evergreen funds. Each fund's terms come from a "terms pack"
 // the owner imports (prepared from the fund's own documents); they stay on this device. Dates are computed per
@@ -3459,25 +3518,26 @@ function evergreenTermsView(fund,terms,today){
   return '<dl class="evergreen-terms">'+facts+'</dl>'+(t.note?'<p class="evergreen-meta">'+e(t.note)+'</p>':'')+'<ul class="evergreen-lot-plans">'+lots+'</ul><p class="evergreen-meta">'+(t.source?'出处：'+e(t.source):'出处未填')+(t.asOf?' · 截至 '+e(t.asOf):'')+' · 以基金文件和平台通知为准</p>';
 }
 // The terms pack: one text the owner copies out, has filled in from the fund documents, and pastes back.
-function evergreenPackBuild(rows,termsByKey,labels,today){
+function evergreenPackBuild(rows,termsByKey,labels,today,profiles,reading){
+  const record=k=>{const {links,updates,...profile}=profiles?.[k]||{};return {...(Object.keys(profile).length?{profile}:{}),...(links?{links}:{}),...(updates?{updates}:{})};};
   return {schema:EVERGREEN_PACK_SCHEMA,exportedAt:today,funds:(rows||[]).map(r=>({key:r.key,name:r.name,platform:r.platform,strategy:r.strategy,purchases:(r.lotList||[]).map(l=>l.date).filter(Boolean),
-    terms:termsByKey?.[r.key]||{},label:evergreenLabelClean(labels?.[r.key])}))};
+    terms:termsByKey?.[r.key]||{},label:evergreenLabelClean(labels?.[r.key]),...record(r.key)})),...(reading?.length?{reading}:{})};
 }
 // Pure: pasted text in, cleaned terms and labels out, or a reason. Funds are matched by their exact key only.
 function evergreenPackRead(text){
   let pack;try{pack=JSON.parse(text);}catch{return {ok:false,reason:'不是有效的条款包文本'};}
   if(!pack||pack.schema!==EVERGREEN_PACK_SCHEMA||!Array.isArray(pack.funds)||pack.funds.length>200)return {ok:false,reason:'不是本页导出的条款包'};
-  const terms={},labels={};
+  const terms={},labels={},profiles={};
   for(const fund of pack.funds){
     if(!fund||typeof fund.key!=='string'||!fund.key||fund.key.length>300)return {ok:false,reason:'条款包里有无法识别的基金'};
-    const t=evergreenTermsClean(fund.terms),l=evergreenLabelClean(fund.label);
-    if(Object.keys(t).length)terms[fund.key]=t;if(l.state||l.note||l.reviewBy)labels[fund.key]=l;
+    const t=evergreenTermsClean(fund.terms),l=evergreenLabelClean(fund.label),p=evergreenProfileClean(fund);
+    if(Object.keys(t).length)terms[fund.key]=t;if(l.state||l.note||l.reviewBy)labels[fund.key]=l;if(Object.keys(p).length)profiles[fund.key]=p;
   }
-  return {ok:true,terms,labels,funds:pack.funds.length};
+  return {ok:true,terms,labels,profiles,reading:evergreenReadingClean(pack.reading),funds:pack.funds.length};
 }
 function evergreenPackView(open,message){
   const e=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  return '<details class="evergreen-pack"'+(open?' open':'')+'><summary>条款包（导出清单 · 导入条款 · 备份）</summary>'
+  return '<details class="evergreen-pack"'+(open?' open':'')+'><summary>条款包（导出清单 · 导入条款与资料 · 备份）</summary>'
     +'<p class="evergreen-meta">导出的文本含基金名称、各笔买入日期、已录入的条款和你的状态标记，不含金额。把它交给整理条款的人填写，再把填好的文本粘贴到下面：粘贴进有效的条款包会自动导入，不用再点按钮。换手机时也用它搬运。</p>'
     +'<div class="row"><button class="btn" type="button" data-evergreen-pack="export">复制当前清单</button><button class="btn primary" type="button" data-evergreen-pack="import">导入下面的文本</button></div>'
     +'<textarea class="evergreen-pack-text" data-evergreen-pack-text rows="5" placeholder="把填好的条款包文本粘贴在这里，会自动导入"></textarea>'
@@ -3492,15 +3552,20 @@ function evergreenPackApply(text){
   const read=evergreenPackRead(text);if(!read.ok)return read.reason;
   if(typeof store==='undefined'||!store)return '本机无法保存';
   const known=new Set(_evergreenRows.map(r=>r.key)),matched=Object.keys(read.terms).filter(k=>known.has(k)).length,unmatched=Object.keys(read.terms).length-matched;
-  try{store.setItem(EVERGREEN_TERMS_KEY,JSON.stringify({...evergreenTerms(),...read.terms}));
-    if(Object.keys(read.labels).length)store.setItem(EVERGREEN_KEY,JSON.stringify({...evergreenLabels(),...read.labels}));}catch{return '本机无法保存';}
-  return '已导入 '+matched+' 只基金的条款'+(unmatched?'；另有 '+unmatched+' 只的名称与当前持仓对不上，已保存但不会显示':'')+'。';
+  const count=o=>Object.keys(o).length;
+  try{if(count(read.terms))store.setItem(EVERGREEN_TERMS_KEY,JSON.stringify({...evergreenTerms(),...read.terms}));
+    if(count(read.labels))store.setItem(EVERGREEN_KEY,JSON.stringify({...evergreenLabels(),...read.labels}));
+    if(count(read.profiles))store.setItem(EVERGREEN_PROFILE_KEY,JSON.stringify({...evergreenProfiles(),...read.profiles}));
+    if(read.reading.length)store.setItem(EVERGREEN_READING_KEY,JSON.stringify(read.reading));}catch{return '本机无法保存';}
+  // Say what arrived, in the owner's words; a pack may carry any mix of the four.
+  const parts=[count(read.terms)?matched+' 只基金的条款':'',count(read.profiles)?count(read.profiles)+' 只基金的资料':'',count(read.labels)?count(read.labels)+' 只基金的状态':'',read.reading.length?'阅读清单 '+read.reading.length+' 篇':''].filter(Boolean);
+  return (parts.length?'已导入 '+parts.join('、'):'文本里没有可导入的内容')+(unmatched?'；另有 '+unmatched+' 只的名称与当前持仓对不上，已保存但不会显示':'')+'。';
 }
 if(typeof document!=='undefined'&&typeof document.addEventListener==='function')document.addEventListener('click',async event=>{
   const button=event.target?.closest?.('[data-evergreen-pack]');if(!button)return;
   const area=button.closest('.evergreen-pack')?.querySelector('[data-evergreen-pack-text]');_evergreenPackOpen=true;
   if(button.getAttribute('data-evergreen-pack')==='export'){
-    const text=JSON.stringify(evergreenPackBuild(_evergreenRows,evergreenTerms(),evergreenLabels(),todayStr()),null,1);
+    const text=JSON.stringify(evergreenPackBuild(_evergreenRows,evergreenTerms(),evergreenLabels(),todayStr(),evergreenProfiles(),evergreenReading()),null,1);
     let copied=false;try{await navigator.clipboard.writeText(text);copied=true;}catch{}
     _evergreenPackMessage=copied?'清单已复制，可以粘贴到别处。':'无法自动复制，清单已放在下面的文本框里，请手动全选复制。';
     renderEvergreenDesk(document.getElementById('ratioContent'));
@@ -3558,7 +3623,7 @@ function evergreenDeskView(model,filter,open){
     +'<label class="f">下次复核日<input data-evergreen-review type="date" value="'+e(x.label.reviewBy)+'"></label>'
     +'<p class="evergreen-meta">'+(x.label.updatedAt?'标记更新于 '+e(x.label.updatedAt):'尚未标记')+(x.overdue?' · <strong>已过复核日</strong>':'')+' · 仅保存在本机</p>'
     +'<h3>我的持仓</h3><div class="evergreen-position"><p><span>'+e(x.platform)+' · '+e(x.strategy)+'</span><span>'+e(x.amount)+'</span></p>'+(x.figuresHtml||'<p class="evergreen-meta">此快照未包含这只基金的收益率。</p>')+'</div>'
-    +'<h3>条款与赎回</h3>'+(x.termsHtml||'<p class="evergreen-meta">尚未录入条款。在页面底部“条款包”里导入后显示。</p>')
+    +'<h3>条款与赎回</h3>'+(x.termsHtml||'<p class="evergreen-meta">尚未录入条款。在页面底部“条款包”里导入后显示。</p>')+(x.profileHtml||'')
     +'</div>';
   const list=shown.map(x=>'<details class="evergreen-fund" data-evergreen-key="'+e(x.key)+'"'+(open?.has(x.key)?' open':'')+'><summary><span class="evergreen-fund-main"><strong>'+e(x.name)+'</strong><small>'+e(x.platform)+' · '+e(x.strategy)+(x.lots>1?' · '+x.lots+' 笔':'')+'</small></span><span class="evergreen-fund-side"><span class="evergreen-amount">'+e(x.amount)+'</span><span class="evergreen-pill" data-state="'+(x.label.state||'none')+'">'+x.stateName+(x.overdue?' · 待复核':'')+'</span></span></summary>'+sheet(x)+'</details>').join('');
   return '<h2>常青基金管理</h2><p class="evergreen-sub">'+model.counts.all+' 只基金 · '+model.platforms+' 个平台'+(model.overdue?' · '+model.overdue+' 只已过复核日':'')+'</p>'
@@ -3592,9 +3657,10 @@ function renderEvergreenDesk(root){
   let desk=report.querySelector('.evergreen-desk');
   if(!desk){desk=document.createElement('section');desk.className='card evergreen-desk';desk.id='evergreenDesk';report.append(desk);}
   const rows=evergreenRows(report),today=todayStr(),terms=evergreenTerms(),model=evergreenDeskModel(rows,evergreenLabels(),today);
-  for(const fund of model.funds)fund.termsHtml=evergreenTermsView(fund,terms[fund.key],today);
+  const profiles=evergreenProfiles();
+  for(const fund of model.funds){fund.termsHtml=evergreenTermsView(fund,terms[fund.key],today);fund.profileHtml=evergreenProfileView(profiles[fund.key]);}
   const calendar=evergreenCalendarModel(rows,terms,today);
-  desk.innerHTML=evergreenCalendarView(calendar)+evergreenDeskView(model,_evergreenFilter,_evergreenOpen)+evergreenPackView(_evergreenPackOpen,_evergreenPackMessage);
+  desk.innerHTML=evergreenCalendarView(calendar)+evergreenDeskView(model,_evergreenFilter,_evergreenOpen)+evergreenReadingView(evergreenReading())+evergreenPackView(_evergreenPackOpen,_evergreenPackMessage);
   _evergreenRows=rows;evergreenBriefSave(calendar,today);
 }
 function evergreenLabelSet(key,patch){

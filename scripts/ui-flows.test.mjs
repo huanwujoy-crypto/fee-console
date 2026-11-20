@@ -883,12 +883,13 @@ test("an evergreen label is saved on this device only, dated, and survives a dam
 // evergreen-calendar:v1 — owner request 2026-11-20, second step: terms per fund, a redemption calendar per purchase lot,
 // a liquidity ladder, and a terms pack to carry terms and labels between people and devices.
 const calendarBlock = html.slice(html.indexOf("/* evergreen-calendar:v1:start */"), html.indexOf("/* evergreen-calendar:v1:end */"));
+const profileBlock = html.slice(html.indexOf("/* evergreen-profile:v1:start */"), html.indexOf("/* evergreen-profile:v1:end */"));
 async function calendarBox(saved = {}) {
   const vm = await import("node:vm");
   const memory = new Map(Object.entries(saved).map(([k, v]) => [k, JSON.stringify(v)]));
-  const box = { store: { getItem: k => memory.get(k) ?? null, setItem: (k, v) => { memory.set(k, v); }, removeItem: k => { memory.delete(k); } }, todayStr: () => "2026-11-20" };
+  const box = { store: { getItem: k => memory.get(k) ?? null, setItem: (k, v) => { memory.set(k, v); }, removeItem: k => { memory.delete(k); } }, todayStr: () => "2026-11-20", URL };
   vm.createContext(box);
-  vm.runInContext(calendarBlock + "\n" + evergreenBlock + ";globalThis.c={evergreenTermsClean,evergreenTerms,evergreenAddMonths,evergreenAddDays,evergreenDaysBetween,evergreenDealingDay,evergreenLotPlan,evergreenCents,evergreenUsd,evergreenQuarter,evergreenCalendarModel,evergreenCalendarView,evergreenTermsView,evergreenPackBuild,evergreenPackRead,evergreenPackView,evergreenBriefSave};", box);
+  vm.runInContext(profileBlock + "\n" + calendarBlock + "\n" + evergreenBlock + ";globalThis.c={evergreenProfileClean,evergreenReadingClean,evergreenProfiles,evergreenReading,evergreenProfileView,evergreenReadingView,evergreenUrl,evergreenPackApply,evergreenTermsClean,evergreenTerms,evergreenAddMonths,evergreenAddDays,evergreenDaysBetween,evergreenDealingDay,evergreenLotPlan,evergreenCents,evergreenUsd,evergreenQuarter,evergreenCalendarModel,evergreenCalendarView,evergreenTermsView,evergreenPackBuild,evergreenPackRead,evergreenPackView,evergreenBriefSave};", box);
   return { c: box.c, memory };
 }
 const plain = v => JSON.parse(JSON.stringify(v));
@@ -1059,4 +1060,85 @@ test("a pasted valid terms pack is imported at once; anything else waits for the
   const view = c.evergreenPackView(true, "");
   assert.ok(view.includes("粘贴进有效的条款包会自动导入，不用再点按钮")); assert.ok(view.includes('placeholder="把填好的条款包文本粘贴在这里，会自动导入"'));
   assert.ok(view.includes('data-evergreen-pack="import"'), "the button stays for text typed by hand");
+});
+
+// evergreen-profile:v1 — owner request 2026-11-20, third step: what each fund is, dated updates, the owner's own
+// document links, and a reading list. Everything arrives in the pack and is cleaned on the way in.
+const profileFund = {
+  key: "P|A",
+  profile: { asOf: "2026-04-30", source: "Fact Sheet <b>", summary: "投资全球<私募>股权。", size: "US$6.9bn", junk: 1,
+    strategy: [{ name: "Buyout", pct: 62.5 }, { name: "Secondaries", pct: 6 }, { name: "", pct: 5 }, { name: "No pct" }, { name: "Bad", pct: 250 }],
+    sector: "x", region: [{ name: "North America", pct: 74 }], holdings: Array.from({ length: 14 }, (_, i) => ({ name: "H" + i, pct: i })) },
+  links: [{ title: "Prospectus", url: "https://drive.google.com/file/d/abc/view" }, { title: "Script", url: "javascript:alert(1)" }, { title: "Plain", url: "http://example.com/a" },
+    { title: "Quote", url: 'https://example.com/"onclick="x' }, { title: "", url: "https://example.com/ok" }, { title: "Local", url: "https://localhost/x" }],
+  updates: [{ date: "2026-03-01", text: "old" }, { date: "2026-09-30", text: "赎回申请超过上限，按比例兑付。", source: "季报 <p3>" }, { date: "soon", text: "x" }, { date: "2026-06-01", text: "" },
+    { date: "2026-05-01", text: "mid" }, { date: "2026-01-01", text: "oldest" }],
+};
+test("a fund's profile keeps only well-formed text, mixes, https links and dated updates", async () => {
+  const { c } = await calendarBox(), clean = plain(c.evergreenProfileClean(profileFund));
+  assert.deepEqual(Object.keys(clean), ["source", "summary", "size", "asOf", "strategy", "region", "holdings", "links", "updates"]);
+  assert.deepEqual(clean.strategy, [{ name: "Buyout", pct: 62.5 }, { name: "Secondaries", pct: 6 }, { name: "No pct" }, { name: "Bad" }]);
+  assert.equal(clean.holdings.length, 10);
+  assert.deepEqual(clean.links, [{ title: "Prospectus", url: "https://drive.google.com/file/d/abc/view" }]);
+  assert.deepEqual(clean.updates.map(u => u.date), ["2026-09-30", "2026-05-01", "2026-03-01"]);
+  for (const bad of ["javascript:alert(1)", "http://example.com", "https://localhost/x", "https://example.com/a b", 'https://example.com/"', "https://example.com/<x>", "//example.com", "", null, 5, "https://" + "a".repeat(600) + ".com"])
+    assert.equal(c.evergreenUrl(bad), "", String(bad).slice(0, 30));
+  assert.equal(c.evergreenUrl("https://www.reuters.com/commentary/breakingviews/x-2026-09-23/"), "https://www.reuters.com/commentary/breakingviews/x-2026-09-23/");
+  assert.deepEqual(plain(c.evergreenProfileClean({})), {}); assert.deepEqual(plain(c.evergreenProfileClean(null)), {}); assert.deepEqual(plain(c.evergreenProfileClean({ profile: [1] })), {});
+  const view = c.evergreenProfileView(c.evergreenProfileClean(profileFund));
+  for (const text of ["<h3>基金概况</h3>", '<p class="evergreen-summary">投资全球&lt;私募&gt;股权。</p>', "基金规模 US$6.9bn", "<h4>策略分布</h4>", '<i style="width:62.5%"></i></span><b>62.5%</b>', "<li><span>No pct</span></li>",
+    "<h4>地区分布</h4>", "<h4>主要持仓</h4>", "资料截至 2026-04-30 · Fact Sheet &lt;b&gt;", "<h3>最新动态</h3>", "<b>2026-09-30</b><span>赎回申请超过上限，按比例兑付。</span><small>季报 &lt;p3&gt;</small>",
+    "<h3>文件</h3>", '<a href="https://drive.google.com/file/d/abc/view" target="_blank" rel="noopener noreferrer">Prospectus</a>'])
+    assert.ok(view.includes(text), text);
+  assert.equal(view.includes("<h4>行业分布</h4>"), false); assert.equal(view.includes("javascript:"), false); assert.equal(view.includes("<b>\"") || view.includes("<p3>"), false);
+  assert.equal(c.evergreenProfileView({}), ""); assert.equal(c.evergreenProfileView(undefined), "");
+  // Links and updates alone still show, without an empty overview heading.
+  const bare = c.evergreenProfileView({ links: [{ title: "T", url: "https://drive.google.com/x" }] });
+  assert.ok(bare.includes("<h3>文件</h3>")); assert.equal(bare.includes("基金概况"), false);
+});
+test("the reading list is cleaned, newest first, and says it is about the product type, not a holding", async () => {
+  const { c } = await calendarBox();
+  const list = plain(c.evergreenReadingClean([
+    { title: "Old piece", source: "FT", date: "2026-03-01", url: "https://www.ft.com/content/x", takeaway: "t", tags: ["估值", "赎回限额", "x".repeat(20), "a", "b"] },
+    { title: "Buyout barons' forever funds", source: "Reuters Breakingviews", date: "2026-09-23", url: "https://www.reuters.com/commentary/breakingviews/y/", takeaway: "<要点>" },
+    { title: "No link", url: "ftp://x" }, { title: "", url: "https://example.com/a" }, null]));
+  assert.deepEqual(list.map(x => x.title), ["Buyout barons' forever funds", "Old piece"]);
+  assert.deepEqual(list[1].tags, ["估值", "赎回限额", "x".repeat(12), "a"]); assert.deepEqual(list[0].tags, []);
+  const view = c.evergreenReadingView(list);
+  assert.ok(view.includes("<h2>阅读清单</h2>")); assert.ok(view.includes("不针对你的任何一只持仓"));
+  assert.ok(view.includes('<a href="https://www.reuters.com/commentary/breakingviews/y/" target="_blank" rel="noopener noreferrer">Buyout barons&#39; forever funds</a><small>Reuters Breakingviews · 2026-09-23</small><p>&lt;要点&gt;</p>'));
+  assert.ok(view.includes('<span class="evergreen-tags"><i>估值</i><i>赎回限额</i>'));
+  assert.equal(c.evergreenReadingView([]), ""); assert.deepEqual(plain(c.evergreenReadingClean("x")), []);
+});
+test("one pack may carry terms, profiles, labels and the reading list, and the page says which arrived", async () => {
+  const { c, memory } = await calendarBox();
+  const text = JSON.stringify({ schema: "fee-console.evergreen-pack.v1", funds: [profileFund, { key: "P|B", terms: { frequency: "quarterly", noticeDays: 30 } }, { key: "P|C", label: { state: "redeeming", note: "等回款" } }],
+    reading: [{ title: "T", url: "https://example.com/t", date: "2026-09-23" }] });
+  const read = c.evergreenPackRead(text);
+  assert.equal(read.ok, true); assert.deepEqual(Object.keys(plain(read.profiles)), ["P|A"]); assert.deepEqual(Object.keys(plain(read.terms)), ["P|B"]); assert.deepEqual(Object.keys(plain(read.labels)), ["P|C"]); assert.equal(read.reading.length, 1);
+  assert.equal(c.evergreenPackApply(text), "已导入 0 只基金的条款、1 只基金的资料、1 只基金的状态、阅读清单 1 篇；另有 1 只的名称与当前持仓对不上，已保存但不会显示。");
+  assert.deepEqual(Object.keys(plain(c.evergreenProfiles())), ["P|A"]); assert.equal(c.evergreenReading().length, 1);
+  assert.equal(JSON.parse(memory.get("feeConsole.evergreen.profile.v1"))["P|A"].links.length, 1);
+  // A labels-only pack no longer claims to have imported terms, and an empty one says so.
+  assert.equal(c.evergreenPackApply(JSON.stringify({ schema: "fee-console.evergreen-pack.v1", funds: [{ key: "P|C", label: { state: "hold" } }] })), "已导入 1 只基金的状态。");
+  assert.equal(c.evergreenPackApply(JSON.stringify({ schema: "fee-console.evergreen-pack.v1", funds: [{ key: "P|C" }] })), "文本里没有可导入的内容。");
+  // A later pack for one fund leaves the others and the reading list as they were.
+  c.evergreenPackApply(JSON.stringify({ schema: "fee-console.evergreen-pack.v1", funds: [{ key: "P|Z", profile: { summary: "z" } }] }));
+  assert.deepEqual(Object.keys(plain(c.evergreenProfiles())).sort(), ["P|A", "P|Z"]); assert.equal(c.evergreenReading().length, 1);
+  // The export carries profiles and the reading list back out, still without any amount.
+  const out = c.evergreenPackBuild([{ key: "P|A", name: "A", platform: "P", strategy: "S", amount: "USD 123.45", lotList: [] }], {}, {}, "2026-11-20", c.evergreenProfiles(), c.evergreenReading());
+  assert.equal(out.funds[0].profile.size, "US$6.9bn"); assert.equal(out.funds[0].links.length, 1); assert.equal(out.funds[0].updates.length, 3); assert.equal(out.reading.length, 1);
+  assert.equal(JSON.stringify(out).includes("123.45"), false);
+  // Damaged storage reads as empty.
+  memory.set("feeConsole.evergreen.profile.v1", "[1]"); memory.set("feeConsole.evergreen.reading.v1", "{broken");
+  assert.deepEqual(plain(c.evergreenProfiles()), {}); assert.deepEqual(plain(c.evergreenReading()), []);
+});
+test("profiles and the reading list stay on the device, are shown in the sheet and page, and fetch nothing", () => {
+  assert.ok(profileBlock.length > 1000);
+  assert.doesNotMatch(profileBlock, /changeDraft|EDIT\.|saveLedger|writeRemote|ghRead|fetch\(|ghApi|ratioCore|deriveManager|XMLHttpRequest|innerHTML/i);
+  assert.match(html, /\+\(x\.termsHtml\|\|'<p class="evergreen-meta">尚未录入条款。在页面底部“条款包”里导入后显示。<\/p>'\)\+\(x\.profileHtml\|\|''\)/);
+  assert.match(html, /fund\.profileHtml=evergreenProfileView\(profiles\[fund\.key\]\);/);
+  assert.match(html, /evergreenDeskView\(model,_evergreenFilter,_evergreenOpen\)\+evergreenReadingView\(evergreenReading\(\)\)\+evergreenPackView\(/);
+  // Every link the block writes opens in a new tab without handing the page to it.
+  assert.equal((profileBlock.match(/<a href=/g) || []).length, 2); assert.equal((profileBlock.match(/target="_blank" rel="noopener noreferrer"/g) || []).length, 2);
 });
