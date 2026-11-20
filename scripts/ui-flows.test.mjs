@@ -889,7 +889,7 @@ async function calendarBox(saved = {}) {
   const memory = new Map(Object.entries(saved).map(([k, v]) => [k, JSON.stringify(v)]));
   const box = { store: { getItem: k => memory.get(k) ?? null, setItem: (k, v) => { memory.set(k, v); }, removeItem: k => { memory.delete(k); } }, todayStr: () => "2026-11-20", URL };
   vm.createContext(box);
-  vm.runInContext(profileBlock + "\n" + calendarBlock + "\n" + evergreenBlock + ";globalThis.c={evergreenProfileClean,evergreenReadingClean,evergreenProfiles,evergreenReading,evergreenProfileView,evergreenReadingView,evergreenUrl,evergreenPackApply,evergreenTermsClean,evergreenTerms,evergreenAddMonths,evergreenAddDays,evergreenDaysBetween,evergreenDealingDay,evergreenLotPlan,evergreenCents,evergreenUsd,evergreenQuarter,evergreenCalendarModel,evergreenCalendarView,evergreenTermsView,evergreenPackBuild,evergreenPackRead,evergreenPackView,evergreenBriefSave};", box);
+  vm.runInContext(profileBlock + "\n" + calendarBlock + "\n" + evergreenBlock + ";globalThis.c={evergreenProfileClean,evergreenReadingClean,evergreenProfiles,evergreenReading,evergreenProfileView,evergreenReadingView,evergreenUrl,evergreenPackApply,evergreenTermsClean,evergreenTerms,evergreenAddMonths,evergreenAddDays,evergreenDaysBetween,evergreenDealingDay,evergreenLotPlan,evergreenCents,evergreenUsd,evergreenQuarter,evergreenCalendarModel,evergreenCalendarView,evergreenTermsView,evergreenPackBuild,evergreenPackRead,evergreenPackView};", box);
   return { c: box.c, memory };
 }
 const plain = v => JSON.parse(JSON.stringify(v));
@@ -996,40 +996,20 @@ test("the terms pack carries names, dates, terms and labels but no amount, and i
   assert.match(view, /<details class="evergreen-pack" open>/); assert.ok(view.includes("不含金额")); assert.ok(view.includes("已导入 &lt;1&gt;"));
   assert.ok(view.includes('data-evergreen-pack="export"')); assert.ok(view.includes('data-evergreen-pack="import"'));
 });
-test("terms stay on the device, and the overview keeps only a date for its evergreen line", async () => {
+test("terms stay on the device, and the overview carries no evergreen line (owner request 2026-11-20)", async () => {
   const { c, memory } = await calendarBox({ "feeConsole.evergreen.terms.v1": { "P|A": { frequency: "quarterly", noticeDays: 45, junk: 1 }, "P|Z": { junk: 1 }, "P|Y": "x" } });
   assert.deepEqual(plain(c.evergreenTerms()), { "P|A": { frequency: "quarterly", noticeDays: 45 } });
   memory.set("feeConsole.evergreen.terms.v1", "{broken"); assert.deepEqual(plain(c.evergreenTerms()), {});
-  c.evergreenBriefSave(c.evergreenCalendarModel(calendarRows, calendarTerms, "2026-11-20"), "2026-11-20");
-  assert.deepEqual(JSON.parse(memory.get("feeConsole.evergreen.brief.v1")), { savedAt: "2026-11-20", notice: "2026-12-31", funds: 3, missing: 1 });
-  // A reading before any terms exist, or with no funds at all, leaves the saved date alone (owner report 2026-11-20:
-  // the overview line was missing). Only funds with terms and no deadline at all remove it.
-  c.evergreenBriefSave(c.evergreenCalendarModel(calendarRows, {}, "2026-11-20"), "2026-11-20"); assert.equal(memory.has("feeConsole.evergreen.brief.v1"), true);
-  c.evergreenBriefSave(c.evergreenCalendarModel([], calendarTerms, "2026-11-20"), "2026-11-20"); assert.equal(memory.has("feeConsole.evergreen.brief.v1"), true);
-  c.evergreenBriefSave(c.evergreenCalendarModel([calendarRows[4]], calendarTerms, "2026-11-20"), "2026-11-20"); assert.equal(memory.has("feeConsole.evergreen.brief.v1"), false);
-  // The page saves only from a finished render and redraws the overview line at once.
-  assert.ok(html.includes("_evergreenRows=rows;if(report.classList.contains('ratio-styled'))evergreenBriefSave(calendar,today);"));
-  assert.ok(html.includes("if(typeof renderDayBrief==='function')try{renderDayBrief();}catch{}\n}\nfunction evergreenLabelSet("));
+  // The evergreen page keeps its deadlines to itself: no saved date, no line and no jump on the overview.
+  assert.doesNotMatch(html, /EVERGREEN_BRIEF_KEY|evergreenBriefSave|feeConsole\.evergreen\.brief|data-jump="evergreenTab"|jump:"evergreenTab"/);
+  { const vm = await import("node:vm"), box = {}; vm.createContext(box);
+    vm.runInContext("const esc=v=>String(v??'');const usd=(v,d)=>'USD '+Number(v).toFixed(d);" + html.slice(html.indexOf("/* day-brief:start */"), html.indexOf("/* day-brief:end */")) + ";globalThis.I=dayBriefItems;", box);
+    assert.deepEqual(plain(box.I({ evergreen: { notice: "2026-12-31", days: 41 } })), []); }
   // Nothing here reaches the ledger, a draft, a publication or the network.
   assert.doesNotMatch(calendarBlock, /changeDraft|EDIT\.|saveLedger|publish|gist|fetch\(|ghApi|ratioCore|deriveManager/i);
   // The desk feeds the calendar the printed lot amounts and first-purchase dates.
   assert.match(html, /const lotList=lots\?Array\.from\(lots\.querySelectorAll\('li'\)\)\.map\(x=>\(\{amount:x\.querySelector\('\.ratio-holding-lot-amount'\)\?\.textContent\|\|'',date:since\(x\)\}\)\):\[\{amount,date:since\(single\)\}\];/);
 });
-test("the overview's evergreen line shows the nearest notice deadline and opens the evergreen page", async () => {
-  const vm = await import("node:vm"), box = {}; vm.createContext(box);
-  vm.runInContext("const esc=v=>String(v??'');const usd=(v,d)=>'USD '+Number(v).toFixed(d);" + html.slice(html.indexOf("/* day-brief:start */"), html.indexOf("/* day-brief:end */")) + ";globalThis.I=dayBriefItems;globalThis.V=dayBriefView;", box);
-  const line = e => plain(box.I({ evergreen: e }));
-  assert.deepEqual(line({ notice: "2026-12-31", days: 41 }), [{ jump: "evergreenTab", lab: "常青", tone: "", head: "赎回通知截止 2026-12-31", tail: "还有 41 天" }]);
-  assert.equal(line({ notice: "2026-12-31", days: 30 })[0].tone, "warn"); assert.equal(line({ notice: "2026-12-31", days: 14 })[0].tone, "bad");
-  assert.equal(line({ notice: "2026-11-20", days: 0 })[0].tail, "今天截止");
-  assert.deepEqual(line({ notice: "2026-11-01", days: -19 }), [{ jump: "evergreenTab", lab: "常青", tone: "warn", head: "赎回日历需要更新", tail: "打开常青页重新推算" }]);
-  for (const bad of [null, {}, { notice: "soon", days: 3 }, { notice: "2026-12-31", days: 1.5 }, { notice: "2026-12-31" }]) assert.deepEqual(line(bad), []);
-  assert.ok(box.V(box.I({ evergreen: { notice: "2026-12-31", days: 41 } }), "2026-11-19").includes('data-jump="evergreenTab"'));
-  // Only the manager's own device reads the saved date, and the row switches tabs.
-  assert.match(html, /const saved=isMgr\(\)&&store\?JSON\.parse\(store\.getItem\(EVERGREEN_BRIEF_KEY\)\|\|"null"\):null;/);
-  assert.match(html, /event\.target\?\.closest\?\.\('\.brief-row\[data-jump="evergreenTab"\]'\)\)document\.getElementById\('evergreenTab'\)\?\.click\(\);/);
-});
-
 // dealing-offset:v1 — real terms 2026-11-20: two funds deal on a month-end other than the quarter's last one.
 test("a dealing day can sit a whole number of months before or after the period end", async () => {
   const { c } = await calendarBox();

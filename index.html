@@ -10,7 +10,7 @@
 <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAABzUlEQVR42u3bsQ2AMAwAwczDhEzKOqGlCBIgBdnxRT+BfU0Kt20/pGHNCASH4BAcgkNwCA7BITgEh+CQ4BAcgkNwCA7BITgEh+AQHBIcgkNwCA7BITgEh+AQHIJDgkNwCA7BITgEh+AQHIJDcAgOCQ7BITgEh+AQHIJDcOi2/vjBwUQyJXAEkhHNBxyxZITyAQcccMABxwIy4viAAw444IADDjjggAMOOOCAAw444IBDcAgOwQEHHHDAAQcccMABBxxwwAEHHHAIDudocDDxeWFwOEeDg4z3a4MDDjjggKMOjh82BwcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAGHQ1Y4HLLCERPH1IHCkRjH7JnCAQcccMBRB8cam4MDDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAQxWDQ3AIDsEhOFQNR/eSfG7hgAMOOOCAAw444PCq4ZCvrOAQHIJDgkNwCA7BITgEh+AQHIJDcEhwCA7BITgEh+AQHIJDcAgOwSHBITgEh+AQHIJDcAgOwSE4pEsnhtvC417hqCsAAAAASUVORK5CYII=">
-<meta name="fee-console-build" content="4.10.34">
+<meta name="fee-console-build" content="4.10.35">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -1200,7 +1200,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.10.34";
+const UI_VERSION_LABEL=" · v4.10.35";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -3413,7 +3413,7 @@ function evergreenReadingView(list){
 // purchase lot from the lot's printed first-purchase date. Amounts in the ladder are the report's printed lot
 // amounts added up in whole cents; nothing is fetched. Everything here is directional: the platform's own notice
 // and the fund's dealing calendar decide.
-const EVERGREEN_TERMS_KEY='feeConsole.evergreen.terms.v1',EVERGREEN_BRIEF_KEY='feeConsole.evergreen.brief.v1',EVERGREEN_PACK_SCHEMA='fee-console.evergreen-pack.v1';
+const EVERGREEN_TERMS_KEY='feeConsole.evergreen.terms.v1',EVERGREEN_PACK_SCHEMA='fee-console.evergreen-pack.v1';
 const EVERGREEN_FREQUENCY={monthly:['每月',1],quarterly:['每季度',3],semiannual:['每半年',6],annual:['每年',12]};
 let _evergreenRows=[],_evergreenPackOpen=false,_evergreenPackMessage='';
 // Pure: one fund's terms in, a clean record out. Anything out of range or of the wrong type is dropped, not guessed.
@@ -3543,14 +3543,6 @@ function evergreenPackView(open,message){
     +'<textarea class="evergreen-pack-text" data-evergreen-pack-text rows="5" placeholder="把填好的条款包文本粘贴在这里，会自动导入"></textarea>'
     +(message?'<p class="evergreen-meta" role="status"><strong>'+e(message)+'</strong></p>':'')+'</details>';
 }
-// The overview page may show one line about the nearest deadline. Only the date and counts are kept for it, never a name or an amount.
-// The date is replaced when a calendar has deadlines and removed only when the page has funds with terms but none
-// yields a deadline. A reading with no funds, or before any terms exist, says nothing and leaves the saved date alone.
-function evergreenBriefSave(calendar,today){
-  if(typeof store==='undefined'||!store)return;
-  try{if(calendar.next)store.setItem(EVERGREEN_BRIEF_KEY,JSON.stringify({savedAt:today,notice:calendar.next.notice,funds:calendar.deadlines.length,missing:calendar.missing}));
-    else if(calendar.funds&&calendar.missing<calendar.funds)store.removeItem(EVERGREEN_BRIEF_KEY);}catch{}
-}
 function evergreenPackApply(text){
   const read=evergreenPackRead(text);if(!read.ok)return read.reason;
   if(typeof store==='undefined'||!store)return '本机无法保存';
@@ -3664,9 +3656,7 @@ function renderEvergreenDesk(root){
   for(const fund of model.funds){fund.termsHtml=evergreenTermsView(fund,terms[fund.key],today);fund.profileHtml=evergreenProfileView(profiles[fund.key]);}
   const calendar=evergreenCalendarModel(rows,terms,today);
   desk.innerHTML=evergreenCalendarView(calendar)+evergreenDeskView(model,_evergreenFilter,_evergreenOpen)+evergreenReadingView(evergreenReading())+evergreenPackView(_evergreenPackOpen,_evergreenPackMessage);
-  _evergreenRows=rows;if(report.classList.contains('ratio-styled'))evergreenBriefSave(calendar,today);
-  // The overview's line is drawn from the saved date; redraw it now so it is current without a reload.
-  if(typeof renderDayBrief==='function')try{renderDayBrief();}catch{}
+  _evergreenRows=rows;
 }
 function evergreenLabelSet(key,patch){
   if(typeof store==='undefined'||!store)return false;
@@ -3694,8 +3684,6 @@ if(typeof document!=='undefined'&&typeof document.addEventListener==='function')
     if(fund.open)_evergreenOpen.add(key);else _evergreenOpen.delete(key);
   },true);
   document.addEventListener('toggle',event=>{if(event.target?.classList?.contains('evergreen-pack'))_evergreenPackOpen=event.target.open;},true);
-  // The overview's evergreen line opens this page instead of scrolling.
-  document.addEventListener('click',event=>{if(event.target?.closest?.('.brief-row[data-jump="evergreenTab"]'))document.getElementById('evergreenTab')?.click();});
 }
 /* evergreen-desk:v1:end */
 function arrangeRatioRowDetails(report){
@@ -5661,7 +5649,7 @@ document.addEventListener("input",event=>{
 // day-brief:v1 — three lines at the top of the overview: margin-call distance, distance to the Carry line, payable now and at month end.
 // Each line is built from a model another card already shows, and tapping it jumps to that card. Display only.
 function dayBriefItems(input){
-  const {risk,carry,pay,evergreen}=input||{},items=[],pc=v=>(v*100).toFixed(1)+"%";
+  const {risk,carry,pay}=input||{},items=[],pc=v=>(v*100).toFixed(1)+"%";
   if(risk){
     const drops=risk.margin.map(a=>a.callDropSpx).filter(v=>v!=null),drop=drops.length?Math.min(...drops):null;
     items.push(!risk.margin.length?{jump:"riskDesk",lab:"追缴",tone:"ok",head:"无融资",tail:"不存在追缴风险"}
@@ -5672,9 +5660,6 @@ function dayBriefItems(input){
   if(carry)items.push(carry.gap<=0?{jump:"riskDesk",lab:"Carry",tone:"ok",head:"已在起算线之上",tail:`再涨的部分按 ${+(carry.rate*100).toFixed(2)}% 计提`}
     :{jump:"riskDesk",lab:"Carry",tone:"",head:`距起算线还差 ${usd(carry.gap,0)}`,tail:carry.needPct==null?"":`约需标普 +${carry.needPct}%`});
   if(pay)items.push({jump:"balBox",lab:"应付",tone:"",head:`现在 ${usd(pay.dueNow,0)}`,tail:pay.days>0?`持平到月底约 ${usd(pay.dueEnd,0)}`:"本月已到月底"});
-  // The nearest redemption-notice deadline the evergreen page last worked out on this device: a date only.
-  if(evergreen&&/^\d{4}-\d{2}-\d{2}$/.test(evergreen.notice||"")&&Number.isInteger(evergreen.days))items.push(evergreen.days<0?{jump:"evergreenTab",lab:"常青",tone:"warn",head:"赎回日历需要更新",tail:"打开常青页重新推算"}
-    :{jump:"evergreenTab",lab:"常青",tone:evergreen.days<=14?"bad":evergreen.days<=30?"warn":"",head:`赎回通知截止 ${evergreen.notice}`,tail:evergreen.days===0?"今天截止":`还有 ${evergreen.days} 天`});
   return items;
 }
 function dayBriefView(items,day){
@@ -5685,8 +5670,7 @@ function dayBriefView(items,day){
 function renderDayBrief(){
   const box=document.getElementById("briefBox");if(!box)return;
   const p=riskDeskParams(),risk=_riskPoint?riskDeskModel(_riskPoint,DB.accounts,{maint:p.maint,levMaint:p.levMaint,rate:p.rate,scope:"spx",shock:0}):null;
-  let evergreen=null;try{const saved=isMgr()&&store?JSON.parse(store.getItem(EVERGREEN_BRIEF_KEY)||"null"):null;if(saved?.notice)evergreen={notice:saved.notice,days:evergreenDaysBetween(todayStr(),saved.notice)};}catch{}
-  const html=dayBriefView(dayBriefItems({risk,carry:risk?riskDeskCarry(_riskPoint,DB.accounts,risk,_riskFee):null,pay:payableForecastModel(_balForecast,0),evergreen}),_riskPoint?.d||_balForecast?.asOf);
+  const html=dayBriefView(dayBriefItems({risk,carry:risk?riskDeskCarry(_riskPoint,DB.accounts,risk,_riskFee):null,pay:payableForecastModel(_balForecast,0)}),_riskPoint?.d||_balForecast?.asOf);
   box.hidden=!html;if(box.innerHTML!==html)box.innerHTML=html;
 }
 /* investor-scenario:start */
