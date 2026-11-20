@@ -921,6 +921,29 @@ test('all existing IB source failure categories survive pending handoff without 
     assert.equal(safeProducerFailureSummary(stderr+'FEE_CLOUD_IB_INCOMPLETE\n').diagnostic.sourceReason,'IB_SOURCE_'+code);fs.unlinkSync(prep.file);
   }
 });
+test('a cash-reconciliation refusal names its fixed check and date role in the publication diagnostic',async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ib-cash-site-synthetic-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  const environ={IB_MANAGER_READ_ENABLED:'true',IB_MANAGER_BASELINE_SHA256:lock()},data=feeData();
+  const run=async error=>{
+    const prep=await prepareIbManagerReport({payload:data,targetDate:baseline.asOf,outputDir:dir,environ,reader:{async readStable(){throw error;}}});
+    const pending=(await loadIbManagerReport(prep.file,{environ})).apply(data,baseline.asOf);fs.unlinkSync(prep.file);let stderr='';const write=process.stderr.write;
+    try{process.stderr.write=chunk=>{stderr+=String(chunk);return true;};await assert.rejects(assertIbManagerPublication(pending,baseline.asOf,environ),/IB_INCOMPLETE/);}finally{process.stderr.write=write;}
+    for(const hidden of ['PRIVATE_CANARY','456.78'])assert.equal(stderr.includes(hidden),false);
+    return safeProducerFailureSummary(stderr+'FEE_CLOUD_IB_INCOMPLETE\n').diagnostic;
+  };
+  const named=await run(new IbManagerSourceError('CASH_RECONCILIATION','DAILY_MOVEMENT','TARGET'));
+  assert.equal(named.sourceReason,'IB_SOURCE_CASH_RECONCILIATION');assert.equal(named.cashSite,'DAILY_MOVEMENT');assert.equal(named.cashDateRole,'TARGET');
+  const forged=await run(new IbManagerSourceError('CASH_RECONCILIATION','PRIVATE_CANARY 456.78','PRIVATE_CANARY'));
+  assert.equal(forged.sourceReason,'IB_SOURCE_CASH_RECONCILIATION');assert.equal(Object.hasOwn(forged,'cashSite'),false);assert.equal(Object.hasOwn(forged,'cashDateRole'),false);
+  // Another refusal after a cash one never inherits its site.
+  const other=await run(new IbManagerSourceError('UNSTABLE'));
+  assert.equal(other.sourceReason,'IB_SOURCE_UNSTABLE');assert.equal(Object.hasOwn(other,'cashSite'),false);
+  const base={schema:'fee-console.ib-publication-diagnostic.v1',code:'FEE_CLOUD_IB_INCOMPLETE',predicate:'SOURCE_CUTOFF',sourceReason:'IB_SOURCE_CASH_RECONCILIATION',returnReason:'NOT_CHECKED',drawdownReason:'NOT_CHECKED'};
+  assert.equal(validateIbPublicationDiagnostic(base),true);
+  assert.equal(validateIbPublicationDiagnostic({...base,cashSite:'DAILY_MOVEMENT',cashDateRole:'TARGET'}),true);
+  for(const bad of [{...base,cashSite:'DAILY_MOVEMENT'},{...base,cashDateRole:'TARGET'},{...base,cashSite:'PRIVATE_CANARY',cashDateRole:'TARGET'},{...base,cashSite:'DAILY_MOVEMENT',cashDateRole:'2026-11-19'},
+    {...base,sourceReason:'IB_SOURCE_UNSTABLE',cashSite:'DAILY_MOVEMENT',cashDateRole:'TARGET'},{...base,cashSite:'DAILY_MOVEMENT',cashDateRole:'TARGET',amount:1}])assert.equal(validateIbPublicationDiagnostic(bad),false);
+});
 test('normal handoff preserves fee accounts, amounts and receipt; pending suppresses stale IB',async t=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ib-source-synthetic-'));fs.chmodSync(dir,0o700);t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
   const environ={IB_MANAGER_READ_ENABLED:'true',IB_MANAGER_BASELINE_SHA256:lock()},data=feeData(),original=structuredClone(data),s=await source();
