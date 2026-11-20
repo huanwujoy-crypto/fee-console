@@ -787,3 +787,11 @@ test("a fund's lots open close under its name and every lot puts its first-purch
   // A fund held in one lot keeps its single flowing line.
   assert.doesNotMatch(html, /\.ratio-fund-holding>\.ratio-holding-yield \.ratio-holding-yield-since\{flex-basis/);
 });
+
+// holding-dividers:v1 — owner request 2026-11-20: tell products and lots apart in the holdings list.
+// Three levels, each lighter than the one above: platform (solid, already there), product (dashed), lot (dotted).
+test("the holdings list separates platforms, products and lots with three distinct rules", () => {
+  assert.match(html, /\.ratio-distribution-account\{padding:6px 0;border-top:1px solid var\(--grid\)\}/);
+  assert.match(html, /\.ratio-fund-holding\+\.ratio-fund-holding\{border-top:1px dashed var\(--grid\);margin-top:2px;padding-top:6px\}/);
+  assert.match(html, /\.ratio-holding-lots li\+li\{border-top:1px dotted var\(--grid\);margin-top:3px;padding-top:5px\}/);
+});
