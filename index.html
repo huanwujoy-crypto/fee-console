@@ -10,7 +10,7 @@
 <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAABzUlEQVR42u3bsQ2AMAwAwczDhEzKOqGlCBIgBdnxRT+BfU0Kt20/pGHNCASH4BAcgkNwCA7BITgEh+CQ4BAcgkNwCA7BITgEh+AQHBIcgkNwCA7BITgEh+AQHIJDgkNwCA7BITgEh+AQHIJDcAgOCQ7BITgEh+AQHIJDcOi2/vjBwUQyJXAEkhHNBxyxZITyAQcccMABxwIy4viAAw444IADDjjggAMOOOCAAw444IBDcAgOwQEHHHDAAQcccMABBxxwwAEHHHAIDudocDDxeWFwOEeDg4z3a4MDDjjggKMOjh82BwcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAGHQ1Y4HLLCERPH1IHCkRjH7JnCAQcccMBRB8cam4MDDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAQxWDQ3AIDsEhOFQNR/eSfG7hgAMOOOCAAw444PCq4ZCvrOAQHIJDgkNwCA7BITgEh+AQHIJDcEhwCA7BITgEh+AQHIJDcAgOwSHBITgEh+AQHIJDcAgOwSE4pEsnhtvC417hqCsAAAAASUVORK5CYII=">
-<meta name="fee-console-build" content="4.10.31">
+<meta name="fee-console-build" content="4.10.32">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -1197,7 +1197,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.10.31";
+const UI_VERSION_LABEL=" · v4.10.32";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -3478,9 +3478,9 @@ function evergreenPackRead(text){
 function evergreenPackView(open,message){
   const e=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   return '<details class="evergreen-pack"'+(open?' open':'')+'><summary>条款包（导出清单 · 导入条款 · 备份）</summary>'
-    +'<p class="evergreen-meta">导出的文本含基金名称、各笔买入日期、已录入的条款和你的状态标记，不含金额。把它交给整理条款的人填写，再把填好的文本粘贴回来导入。换手机时也用它搬运。</p>'
+    +'<p class="evergreen-meta">导出的文本含基金名称、各笔买入日期、已录入的条款和你的状态标记，不含金额。把它交给整理条款的人填写，再把填好的文本粘贴到下面：粘贴进有效的条款包会自动导入，不用再点按钮。换手机时也用它搬运。</p>'
     +'<div class="row"><button class="btn" type="button" data-evergreen-pack="export">复制当前清单</button><button class="btn primary" type="button" data-evergreen-pack="import">导入下面的文本</button></div>'
-    +'<textarea class="evergreen-pack-text" data-evergreen-pack-text rows="5" placeholder="把填好的条款包文本粘贴在这里"></textarea>'
+    +'<textarea class="evergreen-pack-text" data-evergreen-pack-text rows="5" placeholder="把填好的条款包文本粘贴在这里，会自动导入"></textarea>'
     +(message?'<p class="evergreen-meta" role="status"><strong>'+e(message)+'</strong></p>':'')+'</details>';
 }
 // The overview page may show one line about the nearest deadline. Only the date and counts are kept for it, never a name or an amount.
@@ -3508,6 +3508,13 @@ if(typeof document!=='undefined'&&typeof document.addEventListener==='function')
     return;
   }
   _evergreenPackMessage=evergreenPackApply(area?.value||'');renderEvergreenDesk(document.getElementById('ratioContent'));
+});
+// pack-auto-import:v1 — a pasted text that is a valid terms pack is imported at once. Leaving the page clears the box,
+// so a pack that waited for a second tap was easily lost. Anything else in the box is left alone until the button is used.
+if(typeof document!=='undefined'&&typeof document.addEventListener==='function')document.addEventListener('input',event=>{
+  const area=event.target?.closest?.('[data-evergreen-pack-text]');if(!area)return;
+  const text=area.value;if(!evergreenPackRead(text).ok)return;
+  _evergreenPackOpen=true;_evergreenPackMessage=evergreenPackApply(text);renderEvergreenDesk(document.getElementById('ratioContent'));
 });
 /* evergreen-calendar:v1:end */
 /* evergreen-desk:v1:start */
