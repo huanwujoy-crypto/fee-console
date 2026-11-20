@@ -10,7 +10,7 @@
 <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAABzUlEQVR42u3bsQ2AMAwAwczDhEzKOqGlCBIgBdnxRT+BfU0Kt20/pGHNCASH4BAcgkNwCA7BITgEh+CQ4BAcgkNwCA7BITgEh+AQHBIcgkNwCA7BITgEh+AQHIJDgkNwCA7BITgEh+AQHIJDcAgOCQ7BITgEh+AQHIJDcOi2/vjBwUQyJXAEkhHNBxyxZITyAQcccMABxwIy4viAAw444IADDjjggAMOOOCAAw444IBDcAgOwQEHHHDAAQcccMABBxxwwAEHHHAIDudocDDxeWFwOEeDg4z3a4MDDjjggKMOjh82BwcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAGHQ1Y4HLLCERPH1IHCkRjH7JnCAQcccMBRB8cam4MDDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAQxWDQ3AIDsEhOFQNR/eSfG7hgAMOOOCAAw444PCq4ZCvrOAQHIJDgkNwCA7BITgEh+AQHIJDcEhwCA7BITgEh+AQHIJDcAgOwSHBITgEh+AQHIJDcAgOwSE4pEsnhtvC417hqCsAAAAASUVORK5CYII=">
-<meta name="fee-console-build" content="4.10.33">
+<meta name="fee-console-build" content="4.10.34">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -1200,7 +1200,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.10.33";
+const UI_VERSION_LABEL=" · v4.10.34";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -3544,9 +3544,12 @@ function evergreenPackView(open,message){
     +(message?'<p class="evergreen-meta" role="status"><strong>'+e(message)+'</strong></p>':'')+'</details>';
 }
 // The overview page may show one line about the nearest deadline. Only the date and counts are kept for it, never a name or an amount.
+// The date is replaced when a calendar has deadlines and removed only when the page has funds with terms but none
+// yields a deadline. A reading with no funds, or before any terms exist, says nothing and leaves the saved date alone.
 function evergreenBriefSave(calendar,today){
   if(typeof store==='undefined'||!store)return;
-  try{if(calendar.next)store.setItem(EVERGREEN_BRIEF_KEY,JSON.stringify({savedAt:today,notice:calendar.next.notice,funds:calendar.deadlines.length,missing:calendar.missing}));else store.removeItem(EVERGREEN_BRIEF_KEY);}catch{}
+  try{if(calendar.next)store.setItem(EVERGREEN_BRIEF_KEY,JSON.stringify({savedAt:today,notice:calendar.next.notice,funds:calendar.deadlines.length,missing:calendar.missing}));
+    else if(calendar.funds&&calendar.missing<calendar.funds)store.removeItem(EVERGREEN_BRIEF_KEY);}catch{}
 }
 function evergreenPackApply(text){
   const read=evergreenPackRead(text);if(!read.ok)return read.reason;
@@ -3661,7 +3664,9 @@ function renderEvergreenDesk(root){
   for(const fund of model.funds){fund.termsHtml=evergreenTermsView(fund,terms[fund.key],today);fund.profileHtml=evergreenProfileView(profiles[fund.key]);}
   const calendar=evergreenCalendarModel(rows,terms,today);
   desk.innerHTML=evergreenCalendarView(calendar)+evergreenDeskView(model,_evergreenFilter,_evergreenOpen)+evergreenReadingView(evergreenReading())+evergreenPackView(_evergreenPackOpen,_evergreenPackMessage);
-  _evergreenRows=rows;evergreenBriefSave(calendar,today);
+  _evergreenRows=rows;if(report.classList.contains('ratio-styled'))evergreenBriefSave(calendar,today);
+  // The overview's line is drawn from the saved date; redraw it now so it is current without a reload.
+  if(typeof renderDayBrief==='function')try{renderDayBrief();}catch{}
 }
 function evergreenLabelSet(key,patch){
   if(typeof store==='undefined'||!store)return false;

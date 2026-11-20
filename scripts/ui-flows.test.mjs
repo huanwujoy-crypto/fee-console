@@ -1002,7 +1002,14 @@ test("terms stay on the device, and the overview keeps only a date for its everg
   memory.set("feeConsole.evergreen.terms.v1", "{broken"); assert.deepEqual(plain(c.evergreenTerms()), {});
   c.evergreenBriefSave(c.evergreenCalendarModel(calendarRows, calendarTerms, "2026-11-20"), "2026-11-20");
   assert.deepEqual(JSON.parse(memory.get("feeConsole.evergreen.brief.v1")), { savedAt: "2026-11-20", notice: "2026-12-31", funds: 3, missing: 1 });
-  c.evergreenBriefSave(c.evergreenCalendarModel(calendarRows, {}, "2026-11-20"), "2026-11-20"); assert.equal(memory.has("feeConsole.evergreen.brief.v1"), false);
+  // A reading before any terms exist, or with no funds at all, leaves the saved date alone (owner report 2026-11-20:
+  // the overview line was missing). Only funds with terms and no deadline at all remove it.
+  c.evergreenBriefSave(c.evergreenCalendarModel(calendarRows, {}, "2026-11-20"), "2026-11-20"); assert.equal(memory.has("feeConsole.evergreen.brief.v1"), true);
+  c.evergreenBriefSave(c.evergreenCalendarModel([], calendarTerms, "2026-11-20"), "2026-11-20"); assert.equal(memory.has("feeConsole.evergreen.brief.v1"), true);
+  c.evergreenBriefSave(c.evergreenCalendarModel([calendarRows[4]], calendarTerms, "2026-11-20"), "2026-11-20"); assert.equal(memory.has("feeConsole.evergreen.brief.v1"), false);
+  // The page saves only from a finished render and redraws the overview line at once.
+  assert.ok(html.includes("_evergreenRows=rows;if(report.classList.contains('ratio-styled'))evergreenBriefSave(calendar,today);"));
+  assert.ok(html.includes("if(typeof renderDayBrief==='function')try{renderDayBrief();}catch{}\n}\nfunction evergreenLabelSet("));
   // Nothing here reaches the ledger, a draft, a publication or the network.
   assert.doesNotMatch(calendarBlock, /changeDraft|EDIT\.|saveLedger|publish|gist|fetch\(|ghApi|ratioCore|deriveManager/i);
   // The desk feeds the calendar the printed lot amounts and first-purchase dates.
