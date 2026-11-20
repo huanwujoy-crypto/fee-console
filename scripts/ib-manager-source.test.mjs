@@ -1563,7 +1563,7 @@ async function cashDateFixture({events=[{d:'2026-11-02',kind:'BUY'}],target='202
     if(b.cash_accounts)for(const a of b.cash_accounts)a.balance=a.balance_in_portfolio_currency=cash(d);
     const active=events.map((e,n)=>({...e,n})).filter(e=>e.d>=(c.q.get('start_date')||c.q.get('from'))&&e.d<=(c.q.get('end_date')||c.q.get('to')));
     if(b.trades)b.trades=active.map(e=>({id:8+e.n,portfolio_id:1,holding_id:2,state:'confirmed',transaction_date:e.d,description_code:e.kind,value:-move(e),quantity:1,instrument:{currency_code:'USD'}}));
-    if(b.cash_account_transactions)b.cash_account_transactions=active.map(e=>({id:18+e.n,cash_account_id:3,date_time:e.d+'T00:00:00.000Z',amount:move(e),balance:50+events.filter(x=>x.d<=e.d).reduce((v,x)=>v+move(x),0),trade_id:8+e.n,holding_id:2,cash_account_transaction_type:{name:e.kind==='BUY'?'Buy Trade':'Sell Trade'}}));
+    if(b.cash_account_transactions)b.cash_account_transactions=active.map(e=>({id:18+e.n,cash_account_id:3,date_time:e.d+'T00:00:00.000Z',amount:move(e),balance:50+events.filter((x,i)=>x.d<e.d||x.d===e.d&&i<=e.n).reduce((v,x)=>v+move(x),0),trade_id:8+e.n,holding_id:2,cash_account_transaction_type:{name:e.kind==='BUY'?'Buy Trade':'Sell Trade'}}));
     mutate(b,c);if(b.report)captured.push(structuredClone(b.report));
   }});
   const args={targetDate:target,baseline:base,expectedBaselineHash:expected,...(checkpoint?{checkpoint}:{ownerBaseline:owner,bootstrapCoverage:coverage})};
@@ -1584,6 +1584,52 @@ test('one early USD trade cash valuation is explicitly proved without shifting t
     const again=await(await cashDateFixture({events:[{d:'2026-11-02',kind}],checkpoint:s})).run();
     assert.deepEqual(again.cashDateNormalizations,s.cashDateNormalizations);assert.deepEqual(again.periodReturnsInput,s.periodReturnsInput);
   }
+});
+test('several early USD trades of one date are proved together as one unbroken cash chain',async()=>{
+  const events=[{d:'2026-11-02',kind:'BUY'},{d:'2026-11-02',kind:'BUY'},{d:'2026-11-02',kind:'SELL'},{d:'2026-11-02',kind:'BUY'}];
+  const f=await cashDateFixture({events}),s=await f.run(),normal=await(await cashDateFixture({events,early:false})).run();
+  const {cashDateNormalizations,...rest}=s;assert.deepEqual(rest,normal);assert.equal(cashDateNormalizations.length,1);
+  const p=cashDateNormalizations[0];
+  assert.equal(p.schema,'fee-console.ib-cash-date-normalization.v2');assert.equal(p.trades.length,4);assert.equal(p.cashLegs.length,4);
+  assert.deepEqual(p.trades.map(t=>t.id),[8,9,10,11]);assert.deepEqual(p.cashLegs.map(l=>l.tradeId),[8,9,10,11]);
+  assert.deepEqual(p.cashLegs.map(l=>l.balanceCents),[4000,3000,4000,3000]);
+  assert.equal(p.rawBefore.d,'2026-11-01');assert.equal(p.rawBefore.cash[3],3000);assert.equal(p.rawBefore.totalCents,11600);assert.equal(p.anchor.d,'2026-10-31');
+  assert.equal(s.closingSnapshots[0].cash[3],5000);assert.equal(s.closingSnapshots[0].totalCents,13600);
+  assert.deepEqual(s.cashFlowByDate,{});assert.deepEqual(s.periodReturnsInput.points.map(x=>x.tot),[136,136,136,136]);
+  assert.deepEqual(validateIbManagerReportInput(s,f.expected),s);await buildIbManagerReportBundle(s,f.expected);
+  // The same capture read again from its own checkpoint, and the following day, keep the proof unchanged.
+  const again=await(await cashDateFixture({events,checkpoint:s})).run();assert.deepEqual(again.cashDateNormalizations,s.cashDateNormalizations);
+  const later=await(await cashDateFixture({events,target:'2026-11-03',checkpoint:s})).run();assert.deepEqual(later.cashDateNormalizations,s.cashDateNormalizations);
+  // A one-trade day after a several-trade day keeps the original v1 proof beside it.
+  const more=[...events,{d:'2026-11-03',kind:'SELL'}],next=await(await cashDateFixture({events:more,target:'2026-11-03',checkpoint:s})).run();
+  assert.deepEqual(next.cashDateNormalizations.map(x=>x.schema),['fee-console.ib-cash-date-normalization.v2','fee-console.ib-cash-date-normalization.v1']);
+  assert.deepEqual(validateIbManagerReportInput(next,f.expected),next);
+  // Refused at the source: a missing or extra cash row, a broken chain, an amount that differs, two dates, a foreign instrument.
+  for(const mutate of [
+    b=>{if(b.cash_account_transactions)b.cash_account_transactions.pop();},
+    b=>{if(b.cash_account_transactions)b.cash_account_transactions.push({id:99,cash_account_id:3,date_time:'2026-11-01T12:00:00Z',amount:0,balance:50,cash_account_transaction_type:{name:'FEE'}});},
+    b=>{if(b.cash_account_transactions)b.cash_account_transactions[1].balance=31;},
+    b=>{if(b.cash_account_transactions)b.cash_account_transactions[2].amount=9.99;},
+    b=>{if(b.cash_account_transactions)b.cash_account_transactions[2].trade_id=8;},
+    b=>{if(b.cash_account_transactions)b.cash_account_transactions[3].payout_id=99;},
+    b=>{if(b.trades)b.trades[1].instrument.currency_code='CAD';},
+    b=>{if(b.trades)b.trades[3].state='unconfirmed';},
+    b=>{if(b.report?.end_date==='2026-11-02')b.report.holdings[0].quantity++;},
+    b=>{if(b.report?.end_date==='2026-11-01'){b.report.cash_accounts[0].value++;b.report.value++;}}
+  ])await assert.rejects((await cashDateFixture({events,mutate})).run(),/IB_SOURCE_/);
+  await assert.rejects((await cashDateFixture({events:[{d:'2026-11-02',kind:'BUY'},{d:'2026-11-02',kind:'BUY'},{d:'2026-11-04',kind:'BUY'}],target:'2026-11-04'})).run(),/CASH_RECONCILIATION/);
+  // Refused in the stored proof: every edited field, even with a recomputed hash.
+  const canonical=createIbManagerReturnConsumer().canonical,rehash=x=>{const {proofId,...body}=x;x.proofId=crypto.createHash('sha256').update(canonical(body)).digest('hex');};
+  for(const mutate of [
+    x=>x.cashLegs[1].amountCents++,x=>x.cashLegs[1].balanceCents++,x=>x.cashLegs[2].tradeId=8,x=>x.cashLegs[0].dateTime='2026-11-01T00:00:00.000Z',x=>x.cashLegs[3].payoutId=99,x=>x.cashLegs[3].cashId=4,
+    x=>x.cashLegs.pop(),x=>{x.cashLegs.pop();x.trades.pop();},x=>{x.trades.reverse();x.cashLegs.reverse();},x=>x.cashLegs[1].id=x.cashLegs[0].id,
+    x=>x.trades[1].date='2026-11-03',x=>x.trades[2].currency='CAD',x=>x.trades[0].quantityAtoms='2000000000000000000',x=>x.trades[3].kind='SELL',
+    x=>x.rawBefore.cash[3]++,x=>x.rawBefore.totalCents++,x=>x.rawAfter.cash[3]++,x=>x.anchor.cash[3]++,x=>x.rawBefore.positions[2]='1000000000000000000',
+    x=>x.windowThrough='2026-11-10',x=>x.anchorKind='checkpoint',x=>x.portfolioIdentityHash='a'.repeat(64),x=>x.schema='fee-console.ib-cash-date-normalization.v1'
+  ]){const bad=structuredClone(s);mutate(bad.cashDateNormalizations[0]);rehash(bad.cashDateNormalizations[0]);assert.throws(()=>validateIbManagerReportInput(bad,f.expected),/IB_SOURCE_/);}
+  const unhashed=structuredClone(s);unhashed.cashDateNormalizations[0].proofId='a'.repeat(64);assert.throws(()=>validateIbManagerReportInput(unhashed,f.expected),cashFailure('TRADE_PROOF_HASH','PROOF'));
+  const twice=structuredClone(s);twice.cashDateNormalizations.push(structuredClone(twice.cashDateNormalizations[0]));assert.throws(()=>validateIbManagerReportInput(twice,f.expected),/IB_SOURCE_/);
+  const before=structuredClone(s);await buildIbManagerReportBundle(s,f.expected);assert.deepEqual(s,before);
 });
 test('a later trade may reprice the raw checkpoint anchor only when its canonical snapshot still matches in full',async()=>{
   const first=await(await cashDateFixture()).run(),events=[{d:'2026-11-02',kind:'BUY'},{d:'2026-11-03',kind:'BUY'}];

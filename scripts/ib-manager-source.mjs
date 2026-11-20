@@ -281,7 +281,52 @@ function cashDatePassive(a,b,except=null,recorded=[]){
   if(ibCanonical(a.cashCurrency)!==ibCanonical(b.cashCurrency)||ibCanonical(a.nativeCash||{})!==ibCanonical(b.nativeCash||{})||ibCanonical(a.foreignCurrencies||{})!==ibCanonical(b.foreignCurrencies||{}))fail('CASH_RECONCILIATION','PASSIVE_CURRENCY');
   for(const k of Object.keys(a.cash))if(k!==String(except)&&!recorded.includes(k)&&a.cashCurrency[k]==='USD'&&a.cash[k]!==b.cash[k])fail('CASH_RECONCILIATION','PASSIVE_USD_BALANCE');
 }
+// v1 proves exactly one trade and keeps its original checks byte for byte.
+// v2 proves several confirmed USD trades of one date that settled through one
+// USD cash account: every trade has exactly one cash leg of the opposite
+// amount, the legs form one unbroken balance chain from the anchor's cash to
+// the raw value, and positions change by exactly the traded quantities. Like
+// v1 it is a derived date projection only: no transaction, balance or old
+// point is rewritten and no difference is waived.
+const CASH_DATE_V2='fee-console.ib-cash-date-normalization.v2';
+const cashDateTradeIds=p=>p?.schema===CASH_DATE_V2?p.trades.map(t=>t.id):[p.trade.id];
+const cashDateLegIds=p=>p?.schema===CASH_DATE_V2?p.cashLegs.map(l=>l.id):[p.cashLeg.id];
+function validateCashDateNormalizationMany(p,source){
+  if(!exact(p,['schema','portfolioIdentityHash','windowFrom','windowThrough','anchorKind','anchor','rawBefore','rawAfter','trades','cashLegs','proofId'])||!['window','checkpoint'].includes(p.anchorKind)||![p.windowFrom,p.windowThrough].every(isCalendarDate)||inclusiveDays(p.windowFrom,p.windowThrough)<2||inclusiveDays(p.windowFrom,p.windowThrough)>9
+    ||!Array.isArray(p.trades)||!Array.isArray(p.cashLegs)||p.trades.length<2||p.trades.length>100||p.cashLegs.length!==p.trades.length)fail('CASH_RECONCILIATION','TRADE_PROOF_SCHEMA');
+  const a=p.anchor,b=p.rawBefore,c=p.rawAfter;
+  for(const s of [a,b,c])cashDateSnapshot(s);
+  const first=p.trades[0],cashId=p.cashLegs[0]?.cashId,legIds=new Set(),change=new Map();let sum=0n;
+  p.trades.forEach((t,n)=>{
+    const l=p.cashLegs[n];
+    if(!exact(t,['id','portfolioId','holdingId','date','kind','quantityAtoms','valueCents','currency'])||!exact(l,['id','cashId','tradeId','holdingId','dateTime','amountCents','balanceCents','type','payoutId'])||![t.id,t.portfolioId,t.holdingId,l.id,l.cashId].every(v=>Number.isSafeInteger(v)&&v>0)||!['BUY','SELL'].includes(t.kind)||t.currency!=='USD'||typeof t.quantityAtoms!=='string'||!/^\d{1,29}$/.test(t.quantityAtoms)||BigInt(t.quantityAtoms)<=0n||BigInt(t.quantityAtoms)>10n**28n||![t.valueCents,l.amountCents,l.balanceCents].every(Number.isSafeInteger)
+      ||n&&t.id<=p.trades[n-1].id||legIds.has(l.id))fail('CASH_RECONCILIATION','TRADE_PROOF_LEG_SCHEMA');
+    legIds.add(l.id);
+    if(t.portfolioId!==first.portfolioId||t.date!==first.date||l.cashId!==cashId||l.tradeId!==t.id||l.holdingId!==t.holdingId||l.payoutId!==null||l.dateTime!==t.date+'T00:00:00.000Z'||l.type!==(t.kind==='BUY'?'BUY TRADE':'SELL TRADE')||!l.amountCents||(t.kind==='BUY')!==(l.amountCents<0)||BigInt(l.amountCents)+BigInt(t.valueCents)!==0n)fail('CASH_RECONCILIATION','TRADE_PROOF_LINK');
+    sum+=BigInt(l.amountCents);change.set(String(t.holdingId),(change.get(String(t.holdingId))||0n)+(t.kind==='BUY'?1n:-1n)*BigInt(t.quantityAtoms));
+  });
+  if(p.portfolioIdentityHash!==hash({name:NAME,id:first.portfolioId,currency:'USD'})||c.d!==first.date||add(b.d,1)!==c.d||b.d<p.windowFrom||c.d>p.windowThrough)fail('CASH_RECONCILIATION','TRADE_PROOF_LINK');
+  const opening=a.cash[cashId],edges=new Map();
+  for(const l of p.cashLegs){const before=l.balanceCents-l.amountCents;if(!Number.isSafeInteger(before))fail('CASH_RECONCILIATION','TRADE_PROOF_BOUNDARY');if(!edges.has(before))edges.set(before,[]);edges.get(before).push(l.balanceCents);}
+  const stack=[opening],path=[];
+  while(stack.length){const out=edges.get(stack.at(-1));if(out?.length)stack.push(out.pop());else path.push(stack.pop());}
+  if(!Number.isSafeInteger(opening)||[a,b,c].some(s=>s.cashCurrency[cashId]!=='USD'||p.trades.some(t=>s.foreignCurrencies?.[t.holdingId]))||path.length!==p.cashLegs.length+1||path[0]!==b.cash[cashId]||BigInt(b.cash[cashId])-BigInt(opening)!==sum||c.cash[cashId]!==b.cash[cashId]||a.d!==(p.anchorKind==='window'?add(b.d,-1):b.d)||a.d<p.windowFrom)fail('CASH_RECONCILIATION','TRADE_PROOF_BOUNDARY');
+  cashDatePassive(a,b,cashId);cashDatePassive(b,c,cashId);
+  if(ibCanonical(a.positions)!==ibCanonical(b.positions))fail('CASH_RECONCILIATION','TRADE_PROOF_PRE_POSITIONS');
+  for(const k of new Set([...Object.keys(b.positions),...Object.keys(c.positions)]))if(BigInt(c.positions[k]||'0')-BigInt(b.positions[k]||'0')!==(change.get(k)||0n))fail('CASH_RECONCILIATION','TRADE_PROOF_POSITION_DELTA');
+  const corrected=structuredClone(b);corrected.cash[cashId]=opening;corrected.totalCents+=opening-b.cash[cashId];
+  cashDateSnapshot(corrected);
+  if(p.anchorKind==='checkpoint'&&ibCanonical(corrected)!==ibCanonical(a))failPast('TRADE_PROOF_CHECKPOINT',a,corrected);
+  const {proofId,...body}=p;if(hash(body)!==proofId)fail('CASH_RECONCILIATION','TRADE_PROOF_HASH');
+  if(source){
+    if(source.schema!=='fee-console.ib-manager-source.v3'||p.portfolioIdentityHash!==source.portfolioIdentityHash||b.d<=source.baselineAsOf||p.windowThrough>source.sourceAsOf||source.noncashProofs.some(x=>p.trades.some(t=>t.id===x.tradeId)))fail('CASH_RECONCILIATION','TRADE_PROOF_SOURCE');
+    for(const s of [a,corrected,c])if(ibMoneyCents(source.periodReturnsInput.points.find(x=>x.d===s.d)?.tot)!==s.totalCents)fail('CASH_RECONCILIATION','TRADE_PROOF_TOTAL');
+    for(const s of source.closingSnapshots)if(s.d===corrected.d&&ibCanonical(s)!==ibCanonical(corrected))fail('CASH_RECONCILIATION','TRADE_PROOF_CLOSING');
+  }
+  return corrected;
+}
 function validateCashDateNormalization(p,source){
+  if(p?.schema===CASH_DATE_V2)return validateCashDateNormalizationMany(p,source);
   if(!exact(p,['schema','portfolioIdentityHash','windowFrom','windowThrough','anchorKind','anchor','rawBefore','rawAfter','trade','cashLeg','proofId'])||p.schema!=='fee-console.ib-cash-date-normalization.v1'||!['window','checkpoint'].includes(p.anchorKind)||![p.windowFrom,p.windowThrough].every(isCalendarDate)||inclusiveDays(p.windowFrom,p.windowThrough)<2||inclusiveDays(p.windowFrom,p.windowThrough)>9)fail('CASH_RECONCILIATION','TRADE_PROOF_SCHEMA');
   const t=p.trade,l=p.cashLeg,a=p.anchor,b=p.rawBefore,c=p.rawAfter;
   for(const s of [a,b,c])cashDateSnapshot(s);
@@ -311,7 +356,24 @@ function normalizeEarlyTradeCash({reports,trades,ledger,rawCashRows,prior,baseli
     if(BigInt(reports[n].cash[k])-BigInt(reports[n-1].cash[k]||0)!==moved)mismatch=true;
   }
   if(!mismatch)return proofs;
-  if(!coverage||trades.length!==1||ledger.length!==1)fail('CASH_RECONCILIATION','TRADE_NORMALIZATION_SCOPE');
+  if(!coverage||!trades.length||trades.length>100||ledger.length!==trades.length||trades.some(t=>t.transaction_date!==trades[0].transaction_date))fail('CASH_RECONCILIATION','TRADE_NORMALIZATION_SCOPE');
+  if(trades.length>1){
+    const sorted=[...trades].sort((x,y)=>x.id-y.id),legs=sorted.map(t=>ledger.filter(l=>l.tradeId===t.id)),date=sorted[0].transaction_date,n=reports.findIndex(s=>s.d===date),b=reports[n-1],c=reports[n];
+    if(!b||!c||b.d<=baseline.asOf||sorted.some((t,i)=>{const l=legs[i][0],raw=l&&rawCashRows.get(l.id);return legs[i].length!==1||t.state!=='confirmed'||!['BUY','SELL'].includes(t.description_code)||l.external||!raw||raw.date_time!==date+'T00:00:00.000Z'||l.holdingId!==t.holding_id||l.payoutId!==null;}))fail('CASH_RECONCILIATION','TRADE_NORMALIZATION_LINK');
+    const anchor=n>1?reports[n-2]:oldAnchor;if(!anchor)fail('CASH_RECONCILIATION','TRADE_NORMALIZATION_ANCHOR');
+    const body={schema:CASH_DATE_V2,portfolioIdentityHash:hash({name:NAME,id:portfolioId,currency:'USD'}),windowFrom:reports[0].d,windowThrough:reports.at(-1).d,anchorKind:n>1?'window':'checkpoint',anchor:structuredClone(anchor),rawBefore:structuredClone(b),rawAfter:structuredClone(c),
+      trades:sorted.map(t=>({id:t.id,portfolioId:t.portfolio_id,holdingId:t.holding_id,date:t.transaction_date,kind:t.description_code,quantityAtoms:quantity(t).toString(),valueCents:ibMoneyCents(t.value),currency:'USD'})),
+      cashLegs:legs.map(([l])=>({id:l.id,cashId:l.cashId,tradeId:l.tradeId,holdingId:l.holdingId,dateTime:rawCashRows.get(l.id).date_time,amountCents:l.movement,balanceCents:l.balance,type:l.type,payoutId:l.payoutId}))};
+    const proof={...body,proofId:hash(body)},corrected=validateCashDateNormalization(proof);
+    const existing=proofs.find(p=>cashDateTradeIds(p).some(id=>sorted.some(t=>t.id===id)));
+    if(existing){
+      if(existing.schema!==CASH_DATE_V2)failPast('TRADE_NORMALIZATION_INPUT');
+      for(const k of ['rawBefore','rawAfter','trades','cashLegs'])if(ibCanonical(existing[k])!==ibCanonical(proof[k]))failPast('TRADE_NORMALIZATION_INPUT');
+      const recorded=validateCashDateNormalization(existing);if(ibCanonical(recorded)!==ibCanonical(corrected))failPast('TRADE_NORMALIZATION_RESULT',recorded,corrected);
+    }else proofs.push(proof);
+    reports[n-1]=corrected;
+    return proofs;
+  }
   const t=trades[0],l=ledger[0],raw=rawCashRows.get(l.id),n=reports.findIndex(s=>s.d===t.transaction_date),b=reports[n-1],c=reports[n];
   if(!b||!c||b.d<=baseline.asOf||t.state!=='confirmed'||!['BUY','SELL'].includes(t.description_code)||l.external||!raw||raw.date_time!==t.transaction_date+'T00:00:00.000Z'||l.tradeId!==t.id||l.holdingId!==t.holding_id||l.payoutId!==null)fail('CASH_RECONCILIATION','TRADE_NORMALIZATION_LINK');
   const anchor=n>1?reports[n-2]:oldAnchor;if(!anchor)fail('CASH_RECONCILIATION','TRADE_NORMALIZATION_ANCHOR');
@@ -319,8 +381,9 @@ function normalizeEarlyTradeCash({reports,trades,ledger,rawCashRows,prior,baseli
     trade:{id:t.id,portfolioId:t.portfolio_id,holdingId:t.holding_id,date:t.transaction_date,kind:t.description_code,quantityAtoms:quantity(t).toString(),valueCents:ibMoneyCents(t.value),currency:'USD'},
     cashLeg:{id:l.id,cashId:l.cashId,tradeId:l.tradeId,holdingId:l.holdingId,dateTime:raw.date_time,amountCents:l.movement,balanceCents:l.balance,type:l.type,payoutId:l.payoutId}};
   const proof={...body,proofId:hash(body)},corrected=validateCashDateNormalization(proof);
-  const existing=proofs.find(p=>p.trade.id===t.id);
+  const existing=proofs.find(p=>cashDateTradeIds(p).includes(t.id));
   if(existing){
+    if(existing.schema===CASH_DATE_V2)failPast('TRADE_NORMALIZATION_INPUT');
     for(const k of ['rawBefore','rawAfter','trade','cashLeg'])if(ibCanonical(existing[k])!==ibCanonical(proof[k]))failPast('TRADE_NORMALIZATION_INPUT');
     const recorded=validateCashDateNormalization(existing);if(ibCanonical(recorded)!==ibCanonical(corrected))failPast('TRADE_NORMALIZATION_RESULT',recorded,corrected);
   }else proofs.push(proof);
@@ -490,11 +553,11 @@ export function validateIbManagerReportInput(source,expectedHash){
   if(i.from!==source.baselineFrom||i.to!==source.sourceAsOf||i.to<source.baselineAsOf||ibBaselineBusinessHash(i,source.baselineAsOf)!==expectedHash)fail('BASELINE_MISMATCH');
   if(normalized){
     if(!advanced||!Array.isArray(source.cashDateNormalizations)||!source.cashDateNormalizations.length||source.cashDateNormalizations.length>1000)fail('CASH_RECONCILIATION','TRADE_NORMALIZATION_COLLECTION');
-    const ids=new Set(),dates=new Set();for(const p of source.cashDateNormalizations){validateCashDateNormalization(p,source);if(ids.has(p.trade.id)||dates.has(p.rawBefore.d))fail('CASH_RECONCILIATION','TRADE_NORMALIZATION_DUPLICATE');ids.add(p.trade.id);dates.add(p.rawBefore.d);}
+    const ids=new Set(),dates=new Set();for(const p of source.cashDateNormalizations){validateCashDateNormalization(p,source);if(cashDateTradeIds(p).some(id=>ids.has(id))||dates.has(p.rawBefore.d))fail('CASH_RECONCILIATION','TRADE_NORMALIZATION_DUPLICATE');for(const id of cashDateTradeIds(p))ids.add(id);dates.add(p.rawBefore.d);}
   }
   if(incomeNormalized){
     if(!advanced||!Array.isArray(source.incomeDateNormalizations)||!source.incomeDateNormalizations.length||source.incomeDateNormalizations.length>1000)fail('CASH_RECONCILIATION','INCOME_NORMALIZATION_COLLECTION');
-    const payouts=new Set(),cashIds=new Set((source.cashDateNormalizations||[]).map(p=>p.cashLeg.id)),dates=new Set((source.cashDateNormalizations||[]).map(p=>p.rawBefore.d));
+    const payouts=new Set(),cashIds=new Set((source.cashDateNormalizations||[]).flatMap(cashDateLegIds)),dates=new Set((source.cashDateNormalizations||[]).map(p=>p.rawBefore.d));
     for(const p of source.incomeDateNormalizations){
       validateIncomeDateNormalization(p,source);
       if(payouts.has(p.payout.id)||dates.has(p.anchor.d)||p.cashLegs.some(l=>cashIds.has(l.id)))fail('CASH_RECONCILIATION','INCOME_NORMALIZATION_DUPLICATE');
