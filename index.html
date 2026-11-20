@@ -10,7 +10,7 @@
 <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAABzUlEQVR42u3bsQ2AMAwAwczDhEzKOqGlCBIgBdnxRT+BfU0Kt20/pGHNCASH4BAcgkNwCA7BITgEh+CQ4BAcgkNwCA7BITgEh+AQHBIcgkNwCA7BITgEh+AQHIJDgkNwCA7BITgEh+AQHIJDcAgOCQ7BITgEh+AQHIJDcOi2/vjBwUQyJXAEkhHNBxyxZITyAQcccMABxwIy4viAAw444IADDjjggAMOOOCAAw444IBDcAgOwQEHHHDAAQcccMABBxxwwAEHHHAIDudocDDxeWFwOEeDg4z3a4MDDjjggKMOjh82BwcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAGHQ1Y4HLLCERPH1IHCkRjH7JnCAQcccMBRB8cam4MDDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAQxWDQ3AIDsEhOFQNR/eSfG7hgAMOOOCAAw444PCq4ZCvrOAQHIJDgkNwCA7BITgEh+AQHIJDcEhwCA7BITgEh+AQHIJDcAgOwSHBITgEh+AQHIJDcAgOwSE4pEsnhtvC417hqCsAAAAASUVORK5CYII=">
-<meta name="fee-console-build" content="4.10.30">
+<meta name="fee-console-build" content="4.10.31">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -197,7 +197,7 @@ section.pane{display:none} section.pane.on{display:block}
 .evergreen-deadlines,.evergreen-ladder,.evergreen-lot-plans{list-style:none;margin:6px 0;padding:0}.evergreen-deadlines li{display:flex;flex-direction:column;gap:3px;padding:9px 0;border-top:1px solid var(--grid)}.evergreen-deadline-top{display:flex;justify-content:space-between;align-items:baseline;gap:10px}.evergreen-deadlines strong{font-size:14px;font-weight:600;min-width:0;overflow-wrap:anywhere}.evergreen-days{flex:none;font-size:12px;font-variant-numeric:tabular-nums;padding:3px 8px;border-radius:999px;background:var(--chip);color:var(--ink-1)}.evergreen-deadlines small{font-size:11px;color:var(--ink-2);line-height:1.5}.evergreen-deadline-dates b{color:var(--ink-1);font-weight:600}.evergreen-deadlines li.evergreen-soon .evergreen-days{background:color-mix(in srgb,#c8553d 22%,transparent)}.evergreen-desk h2+.evergreen-sub{margin-top:0}.evergreen-desk h2:not(:first-child){margin-top:22px;padding-top:16px;border-top:1px solid var(--border)}
 .evergreen-ladder-title{font-size:12px;margin:14px 0 4px;color:var(--ink-2);font-weight:600}.evergreen-ladder li{display:grid;grid-template-columns:62px minmax(0,1fr) auto;gap:8px;align-items:center;padding:5px 0;font-size:12px}.evergreen-ladder-quarter{color:var(--ink-2);font-variant-numeric:tabular-nums}.evergreen-ladder-track{display:flex;height:10px;background:var(--line);border-radius:5px;overflow:hidden}.evergreen-ladder-track i{display:block;height:100%}.evergreen-free{background:#3f9a78}.evergreen-fee{background:#d99a2b}.evergreen-ladder-amount{display:flex;flex-direction:column;align-items:flex-end;font-variant-numeric:tabular-nums;white-space:nowrap}.evergreen-ladder-amount small{font-size:10px;color:var(--ink-2)}
 .evergreen-terms{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px;margin:4px 0 8px}.evergreen-terms div{min-width:0}.evergreen-terms dt{font-size:10px;color:var(--ink-2)}.evergreen-terms dd{margin:0;font-size:12px;overflow-wrap:anywhere}.evergreen-lot-plans li{display:flex;flex-direction:column;gap:2px;padding:6px 0 6px 10px;border-left:2px solid var(--grid);font-size:12px}.evergreen-lot-plans li+li{margin-top:6px}.evergreen-lot-plans strong{font-weight:600}.evergreen-lot-plans strong[data-status="locked"]{color:#c8553d}.evergreen-lot-plans strong[data-status="fee"]{color:#b07a16}.evergreen-lot-plans small{font-size:11px;color:var(--ink-2)}
-#p-ratio .evergreen-pack{margin-top:14px;border-top:1px solid var(--grid)}.evergreen-pack-text{width:100%;margin-top:8px;font:12px/1.5 ui-monospace,Menlo,monospace;border:1px solid var(--border);border-radius:9px;padding:8px;background:var(--surface-1);color:var(--ink-1);box-sizing:border-box}
+#p-ratio .evergreen-pack{margin-top:14px;border-top:1px solid var(--grid)}.evergreen-sheet input{font-size:16px}.evergreen-pack-text{width:100%;margin-top:8px;font:16px/1.4 ui-monospace,Menlo,monospace;border:1px solid var(--border);border-radius:9px;padding:8px;background:var(--surface-1);color:var(--ink-1);box-sizing:border-box}
 .evergreen-sub,.evergreen-meta{font-size:12px;color:var(--ink-2);line-height:1.6;margin:4px 0}.evergreen-filter{display:flex;gap:6px;overflow-x:auto;padding:6px 0 8px;scrollbar-width:none}.evergreen-filter button,.evergreen-states button{flex:none;font:inherit;font-size:12px;color:var(--ink-2);background:var(--chip);border:1px solid transparent;border-radius:999px;padding:6px 12px;min-height:32px;cursor:pointer}.evergreen-filter button[aria-pressed="true"],.evergreen-states button[aria-pressed="true"]{color:var(--ink-1);border-color:var(--series-1);font-weight:600}
 #p-ratio .evergreen-fund{margin:0;border-top:1px solid var(--grid)}#p-ratio .evergreen-fund>summary{display:flex;gap:8px;align-items:center;min-height:56px;padding:8px 0;list-style:none;color:var(--ink-1)}.evergreen-fund-main{display:flex;flex:1;flex-direction:column;gap:2px;min-width:0}.evergreen-fund-main strong{font-size:14px;font-weight:600;overflow-wrap:anywhere}.evergreen-fund-main small{font-size:11px;color:var(--ink-2)}.evergreen-fund-side{display:flex;flex-direction:column;align-items:flex-end;gap:4px}.evergreen-amount{font-size:13px;font-variant-numeric:tabular-nums;white-space:nowrap}
 .evergreen-pill{font-size:11px;line-height:1;padding:4px 8px;border-radius:999px;background:var(--chip);color:var(--ink-2);white-space:nowrap}.evergreen-pill[data-state="watch"]{background:color-mix(in srgb,#d99a2b 22%,transparent);color:var(--ink-1)}.evergreen-pill[data-state="prepare"],.evergreen-pill[data-state="redeeming"]{background:color-mix(in srgb,#c8553d 22%,transparent);color:var(--ink-1)}.evergreen-pill[data-state="hold"]{background:color-mix(in srgb,#3f9a78 22%,transparent);color:var(--ink-1)}
@@ -1197,7 +1197,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.10.30";
+const UI_VERSION_LABEL=" · v4.10.31";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -3363,6 +3363,8 @@ function evergreenTermsClean(value){
   const int=(k,max)=>{if(Number.isInteger(v[k])&&v[k]>=0&&v[k]<=max)out[k]=v[k];},pct=k=>{if(typeof v[k]==='number'&&Number.isFinite(v[k])&&v[k]>=0&&v[k]<=100)out[k]=v[k];};
   if(Object.hasOwn(EVERGREEN_FREQUENCY,v.frequency))out.frequency=v.frequency;
   int('noticeDays',400);int('lockupMonths',240);int('softLockMonths',240);int('settlementDays',400);
+  // Some funds deal on a month-end other than the period's last one, e.g. the month before each quarter-end (-1).
+  if(Number.isInteger(v.dealingOffsetMonths)&&v.dealingOffsetMonths!==0&&v.dealingOffsetMonths>=-11&&v.dealingOffsetMonths<=11)out.dealingOffsetMonths=v.dealingOffsetMonths;
   for(const k of ['earlyFeePct','gatePct','mgmtPct','perfPct','hurdlePct','servicingPct'])pct(k);
   for(const [k,max] of [['source',160],['note',300]])if(typeof v[k]==='string'&&v[k].trim())out[k]=v[k].trim().slice(0,max);
   if(typeof v.asOf==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(v.asOf))out.asOf=v.asOf;
@@ -3380,11 +3382,12 @@ function evergreenAddMonths(iso,n){
   first.setUTCDate(Math.min(day,last));return first.toISOString().slice(0,10);
 }
 function evergreenDaysBetween(from,to){const a=evergreenDate(from),b=evergreenDate(to);return a&&b?Math.round((b-a)/86400000):null;}
-// The first dealing day on or after a date: the last calendar day of a month, quarter, half-year or year.
-function evergreenDealingDay(onOrAfter,frequency){
-  const d=evergreenDate(onOrAfter),step=EVERGREEN_FREQUENCY[frequency]?.[1];if(!d||!step)return '';
-  let y=d.getUTCFullYear(),m=d.getUTCMonth();m=m-(m%step)+step-1;
-  for(let i=0;i<3;i++){const end=new Date(Date.UTC(y,m+1,0)).toISOString().slice(0,10);if(end>=onOrAfter)return end;m+=step;}
+// The first dealing day on or after a date: the last calendar day of a month, quarter, half-year or year,
+// moved by a whole number of months where the fund deals on another month-end.
+function evergreenDealingDay(onOrAfter,frequency,offsetMonths){
+  const d=evergreenDate(onOrAfter),step=EVERGREEN_FREQUENCY[frequency]?.[1],offset=Number.isInteger(offsetMonths)?offsetMonths:0;if(!d||!step)return '';
+  const y=d.getUTCFullYear();let m=d.getUTCMonth();m=m-(m%step)+step-1-2*step;
+  for(let i=0;i<8;i++){const end=new Date(Date.UTC(y,m+offset+1,0)).toISOString().slice(0,10);if(end>=onOrAfter)return end;m+=step;}
   return '';
 }
 // Pure: one lot's first-purchase date and the fund's terms in, that lot's plan out.
@@ -3393,8 +3396,8 @@ function evergreenLotPlan(purchase,terms,today){
   if(!evergreenDate(purchase)||!evergreenDate(today))return {status:'no-date'};
   const hardUnlock=evergreenAddMonths(purchase,t.lockupMonths||0),softEnd=evergreenAddMonths(purchase,t.softLockMonths||0);
   const earliest=evergreenAddDays(today,t.noticeDays),from=earliest>hardUnlock?earliest:hardUnlock;
-  const dealing=evergreenDealingDay(from,t.frequency);if(!dealing)return {status:'no-date'};
-  const freeDealing=evergreenDealingDay(from>softEnd?from:softEnd,t.frequency),fee=Boolean(t.earlyFeePct)&&dealing<softEnd;
+  const dealing=evergreenDealingDay(from,t.frequency,t.dealingOffsetMonths);if(!dealing)return {status:'no-date'};
+  const freeDealing=evergreenDealingDay(from>softEnd?from:softEnd,t.frequency,t.dealingOffsetMonths),fee=Boolean(t.earlyFeePct)&&dealing<softEnd;
   const cash=d=>evergreenAddDays(d,t.settlementDays||0),notice=d=>evergreenAddDays(d,-t.noticeDays);
   return {status:today<hardUnlock?'locked':fee?'fee':'free',hardUnlock,softEnd,dealing,notice:notice(dealing),cash:cash(dealing),daysToNotice:evergreenDaysBetween(today,notice(dealing)),
     freeDealing,freeNotice:notice(freeDealing),freeCash:cash(freeDealing)};
@@ -3447,7 +3450,7 @@ function evergreenTermsView(fund,terms,today){
   const e=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const t=terms||{};if(!Object.keys(t).length)return '';
   const row=(label,value)=>value===undefined||value===''?'':'<div><dt>'+label+'</dt><dd>'+value+'</dd></div>',pct=v=>v===undefined?undefined:e(v)+'%',has=k=>t[k]!==undefined;
-  const facts=row('赎回频率',t.frequency?EVERGREEN_FREQUENCY[t.frequency][0]:'')+row('通知期',has('noticeDays')?'提前 '+t.noticeDays+' 天':'')+row('锁定期',has('lockupMonths')?(t.lockupMonths?t.lockupMonths+' 个月':'无'):'')
+  const facts=row('赎回频率',t.frequency?EVERGREEN_FREQUENCY[t.frequency][0]:'')+row('赎回日',has('dealingOffsetMonths')?'期末'+(t.dealingOffsetMonths<0?'前 ':'后 ')+Math.abs(t.dealingOffsetMonths)+' 个月的月底':'')+row('通知期',has('noticeDays')?'提前 '+t.noticeDays+' 天':'')+row('锁定期',has('lockupMonths')?(t.lockupMonths?t.lockupMonths+' 个月':'无'):'')
     +row('提前赎回费',has('softLockMonths')&&t.softLockMonths?'买入后 '+t.softLockMonths+' 个月内'+(has('earlyFeePct')?' '+e(t.earlyFeePct)+'%':''):'')+row('每期赎回上限',has('gatePct')?'基金净值的 '+e(t.gatePct)+'%':'')+row('到账',has('settlementDays')?'赎回日后约 '+t.settlementDays+' 天':'')
     +row('管理费',pct(t.mgmtPct))+row('业绩报酬',has('perfPct')?e(t.perfPct)+'%'+(has('hurdlePct')?'（门槛 '+e(t.hurdlePct)+'%）':''):'')+row('服务费',pct(t.servicingPct));
   const label={locked:p=>'锁定至 '+e(p.hardUnlock),fee:p=>'可赎回，'+e(p.softEnd)+' 前有提前赎回费',free:()=>'可赎回','no-date':()=>'缺少买入日期','no-terms':()=>'条款不足，无法推算'};

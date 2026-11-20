@@ -1021,3 +1021,30 @@ test("the overview's evergreen line shows the nearest notice deadline and opens 
   assert.match(html, /const saved=isMgr\(\)&&store\?JSON\.parse\(store\.getItem\(EVERGREEN_BRIEF_KEY\)\|\|"null"\):null;/);
   assert.match(html, /event\.target\?\.closest\?\.\('\.brief-row\[data-jump="evergreenTab"\]'\)\)document\.getElementById\('evergreenTab'\)\?\.click\(\);/);
 });
+
+// dealing-offset:v1 — real terms 2026-11-20: two funds deal on a month-end other than the quarter's last one.
+test("a dealing day can sit a whole number of months before or after the period end", async () => {
+  const { c } = await calendarBox();
+  // The month before each quarter-end: February, May, August, November.
+  for (const [from, want] of [["2026-11-20", "2026-11-30"], ["2026-12-01", "2027-02-28"], ["2027-02-28", "2027-02-28"], ["2027-03-01", "2027-05-31"], ["2028-01-15", "2028-02-29"]])
+    assert.equal(c.evergreenDealingDay(from, "quarterly", -1), want, from);
+  // Two months before, i.e. the first month of each quarter: January, April, July, October.
+  for (const [from, want] of [["2026-11-20", "2027-01-31"], ["2027-01-31", "2027-01-31"], ["2027-02-01", "2027-04-30"], ["2026-10-31", "2026-10-31"]])
+    assert.equal(c.evergreenDealingDay(from, "quarterly", -2), want, from);
+  assert.equal(c.evergreenDealingDay("2026-11-20", "quarterly", 1), "2027-01-31"); assert.equal(c.evergreenDealingDay("2026-11-20", "annual", -1), "2026-11-30");
+  // No offset, or a malformed one, is the plain period end as before.
+  for (const offset of [undefined, 0, 1.5, "x", null]) assert.equal(c.evergreenDealingDay("2026-11-20", "quarterly", offset), "2026-12-31");
+  assert.deepEqual(plain(c.evergreenTermsClean({ frequency: "quarterly", dealingOffsetMonths: -1 })), { frequency: "quarterly", dealingOffsetMonths: -1 });
+  for (const bad of [0, 12, -12, 0.5, "1"]) assert.deepEqual(plain(c.evergreenTermsClean({ dealingOffsetMonths: bad })), {});
+  // The lot plan and the sheet follow it: notice counted back from the moved dealing day.
+  const terms = { frequency: "quarterly", noticeDays: 14, dealingOffsetMonths: -1, softLockMonths: 12, earlyFeePct: 2, settlementDays: 10 };
+  const plan = c.evergreenLotPlan("2024-04-01", terms, "2026-11-20");
+  assert.equal(plan.dealing, "2027-02-28"); assert.equal(plan.notice, "2027-02-14"); assert.equal(plan.cash, "2027-03-10"); assert.equal(plan.status, "free");
+  assert.equal(c.evergreenLotPlan("2024-04-01", terms, "2026-11-10").dealing, "2026-11-30");
+  const view = c.evergreenTermsView({ lotList: [{ amount: "USD 1.00", date: "2024-04-01" }] }, terms, "2026-11-20");
+  assert.ok(view.includes("<dt>赎回日</dt><dd>期末前 1 个月的月底</dd>")); assert.ok(view.includes("通知截止 2027-02-14 → 赎回日 2027-02-28"));
+  assert.equal(c.evergreenTermsView({ lotList: [] }, { frequency: "quarterly" }, "2026-11-20").includes("<dt>赎回日</dt>"), false);
+});
+test("fields on the evergreen page are 16px so an iPhone does not enlarge the page when one is tapped", () => {
+  assert.match(html, /\.evergreen-sheet input\{font-size:16px\}\.evergreen-pack-text\{width:100%;margin-top:8px;font:16px\/1\.4 ui-monospace,Menlo,monospace;/);
+});
