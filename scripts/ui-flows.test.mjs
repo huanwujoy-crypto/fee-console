@@ -1048,3 +1048,15 @@ test("a dealing day can sit a whole number of months before or after the period 
 test("fields on the evergreen page are 16px so an iPhone does not enlarge the page when one is tapped", () => {
   assert.match(html, /\.evergreen-sheet input\{font-size:16px\}\.evergreen-pack-text\{width:100%;margin-top:8px;font:16px\/1\.4 ui-monospace,Menlo,monospace;/);
 });
+
+// pack-auto-import:v1 — owner's real use 2026-11-20: a pasted pack waited for a second tap and was lost twice.
+test("a pasted valid terms pack is imported at once; anything else waits for the button", async () => {
+  assert.match(html, /document\.addEventListener\('input',event=>\{\n  const area=event\.target\?\.closest\?\.\('\[data-evergreen-pack-text\]'\);if\(!area\)return;\n  const text=area\.value;if\(!evergreenPackRead\(text\)\.ok\)return;\n  _evergreenPackOpen=true;_evergreenPackMessage=evergreenPackApply\(text\);renderEvergreenDesk\(document\.getElementById\('ratioContent'\)\);\n\}\);/);
+  const { c } = await calendarBox();
+  // The same strict reader decides: a half-typed or foreign text is not a pack, so nothing is imported for it.
+  for (const partial of ["{", '{"schema":"fee-console.evergreen-pack.v1","funds":[', "hello", '{"schema":"other","funds":[]}']) assert.equal(c.evergreenPackRead(partial).ok, false);
+  assert.equal(c.evergreenPackRead('{"schema":"fee-console.evergreen-pack.v1","funds":[{"key":"P|A","terms":{"frequency":"quarterly","noticeDays":30}}]}').ok, true);
+  const view = c.evergreenPackView(true, "");
+  assert.ok(view.includes("粘贴进有效的条款包会自动导入，不用再点按钮")); assert.ok(view.includes('placeholder="把填好的条款包文本粘贴在这里，会自动导入"'));
+  assert.ok(view.includes('data-evergreen-pack="import"'), "the button stays for text typed by hand");
+});
