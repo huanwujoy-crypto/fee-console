@@ -10,7 +10,7 @@
 <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAABzUlEQVR42u3bsQ2AMAwAwczDhEzKOqGlCBIgBdnxRT+BfU0Kt20/pGHNCASH4BAcgkNwCA7BITgEh+CQ4BAcgkNwCA7BITgEh+AQHBIcgkNwCA7BITgEh+AQHIJDgkNwCA7BITgEh+AQHIJDcAgOCQ7BITgEh+AQHIJDcOi2/vjBwUQyJXAEkhHNBxyxZITyAQcccMABxwIy4viAAw444IADDjjggAMOOOCAAw444IBDcAgOwQEHHHDAAQcccMABBxxwwAEHHHAIDudocDDxeWFwOEeDg4z3a4MDDjjggKMOjh82BwcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAGHQ1Y4HLLCERPH1IHCkRjH7JnCAQcccMBRB8cam4MDDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAQxWDQ3AIDsEhOFQNR/eSfG7hgAMOOOCAAw444PCq4ZCvrOAQHIJDgkNwCA7BITgEh+AQHIJDcEhwCA7BITgEh+AQHIJDcAgOwSHBITgEh+AQHIJDcAgOwSE4pEsnhtvC417hqCsAAAAASUVORK5CYII=">
-<meta name="fee-console-build" content="4.10.28">
+<meta name="fee-console-build" content="4.10.29">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -193,7 +193,12 @@ section.pane{display:none} section.pane.on{display:block}
 .ratio-distribution-category{margin-top:12px}.ratio-distribution-category h3{font-size:12px;margin:0 0 6px}.ratio-distribution-account{padding:6px 0;border-top:1px solid var(--grid)}
 .ratio-distribution-account h4,.ratio-fund-holding{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:baseline;gap:10px;font-size:11px;line-height:1.6;margin:0;padding:4px 0}
 .ratio-distribution-account h4 span:first-child,.ratio-fund-holding-name{min-width:0;overflow-wrap:anywhere}.ratio-distribution-account h4 span:last-child,.ratio-fund-holding>span:last-child{white-space:nowrap;font-variant-numeric:tabular-nums}.ratio-distribution-account ul{list-style:none;margin:0;padding:0}
-.ratio-fund-holding>span:nth-child(2){white-space:nowrap;font-variant-numeric:tabular-nums}.ratio-fund-holding>.ratio-holding-yield,.ratio-fund-holding>.ratio-holding-lots{grid-column:1/-1}.ratio-holding-yield{display:flex;flex-wrap:wrap;gap:2px 12px;align-items:baseline;color:var(--ink-2);font-variant-numeric:tabular-nums;margin-top:-2px}.ratio-holding-yield-figure{display:inline-flex;gap:4px;align-items:baseline;white-space:nowrap}.ratio-holding-yield-figure strong{color:var(--ink-1);font-weight:600}.ratio-holding-yield-figure small{font-size:10px;color:var(--ink-2)}.ratio-holding-yield-since{white-space:nowrap}#p-ratio .ratio-holding-lots{margin-top:-4px}#p-ratio .ratio-holding-lots summary{cursor:pointer;color:var(--ink-2);min-height:28px}.ratio-holding-lots .ratio-holding-yield{flex:1 0 100%}.ratio-holding-lots .ratio-holding-yield-since{flex-basis:100%}.ratio-fund-holding+.ratio-fund-holding{border-top:1px dashed var(--grid);margin-top:2px;padding-top:6px}.ratio-holding-lots li+li{border-top:1px dotted var(--grid);margin-top:3px;padding-top:5px}.ratio-holding-lots ul{margin:2px 0 4px;padding:0 0 0 10px;border-left:2px solid var(--grid)}.ratio-holding-lots li{display:flex;flex-wrap:wrap;gap:2px 12px;align-items:baseline;padding:2px 0}.ratio-holding-lot-amount{white-space:nowrap;font-variant-numeric:tabular-nums}
+.ratio-fund-holding>span:nth-child(2){white-space:nowrap;font-variant-numeric:tabular-nums}.ratio-fund-holding>.ratio-holding-yield,.ratio-fund-holding>.ratio-holding-lots{grid-column:1/-1}.ratio-holding-yield{display:flex;flex-wrap:wrap;gap:2px 12px;align-items:baseline;color:var(--ink-2);font-variant-numeric:tabular-nums;margin-top:-2px}.ratio-holding-yield-figure{display:inline-flex;gap:4px;align-items:baseline;white-space:nowrap}.ratio-holding-yield-figure strong{color:var(--ink-1);font-weight:600}.ratio-holding-yield-figure small{font-size:10px;color:var(--ink-2)}.ratio-holding-yield-since{white-space:nowrap}#p-ratio .ratio-holding-lots{margin-top:-4px}#p-ratio .ratio-holding-lots summary{cursor:pointer;color:var(--ink-2);min-height:28px}.ratio-holding-lots .ratio-holding-yield{flex:1 0 100%}.ratio-holding-lots .ratio-holding-yield-since{flex-basis:100%}#p-ratio[data-view="evergreen"] .ratio-report>*:not(.evergreen-desk),#p-ratio[data-view="evergreen"] .ratio-tools,#p-ratio[data-view="evergreen"] .ratio-intro h2,#p-ratio[data-view="evergreen"] .ratio-intro h2+p,#p-ratio:not([data-view="evergreen"]) .evergreen-desk{display:none}
+.evergreen-sub,.evergreen-meta{font-size:12px;color:var(--ink-2);line-height:1.6;margin:4px 0}.evergreen-filter{display:flex;gap:6px;overflow-x:auto;padding:6px 0 8px;scrollbar-width:none}.evergreen-filter button,.evergreen-states button{flex:none;font:inherit;font-size:12px;color:var(--ink-2);background:var(--chip);border:1px solid transparent;border-radius:999px;padding:6px 12px;min-height:32px;cursor:pointer}.evergreen-filter button[aria-pressed="true"],.evergreen-states button[aria-pressed="true"]{color:var(--ink-1);border-color:var(--series-1);font-weight:600}
+#p-ratio .evergreen-fund{margin:0;border-top:1px solid var(--grid)}#p-ratio .evergreen-fund>summary{display:flex;gap:8px;align-items:center;min-height:56px;padding:8px 0;list-style:none;color:var(--ink-1)}.evergreen-fund-main{display:flex;flex:1;flex-direction:column;gap:2px;min-width:0}.evergreen-fund-main strong{font-size:14px;font-weight:600;overflow-wrap:anywhere}.evergreen-fund-main small{font-size:11px;color:var(--ink-2)}.evergreen-fund-side{display:flex;flex-direction:column;align-items:flex-end;gap:4px}.evergreen-amount{font-size:13px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.evergreen-pill{font-size:11px;line-height:1;padding:4px 8px;border-radius:999px;background:var(--chip);color:var(--ink-2);white-space:nowrap}.evergreen-pill[data-state="watch"]{background:color-mix(in srgb,#d99a2b 22%,transparent);color:var(--ink-1)}.evergreen-pill[data-state="prepare"],.evergreen-pill[data-state="redeeming"]{background:color-mix(in srgb,#c8553d 22%,transparent);color:var(--ink-1)}.evergreen-pill[data-state="hold"]{background:color-mix(in srgb,#3f9a78 22%,transparent);color:var(--ink-1)}
+.evergreen-sheet{padding:2px 0 14px}.evergreen-sheet h3{font-size:12px;margin:14px 0 6px;color:var(--ink-2);font-weight:600}.evergreen-states{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}.evergreen-sheet label.f{display:block;margin-top:8px}.evergreen-position>p{display:flex;justify-content:space-between;gap:10px;font-size:12px;margin:0 0 4px}.evergreen-position>p span:last-child{font-variant-numeric:tabular-nums;white-space:nowrap}.evergreen-position .ratio-holding-yield{font-size:12px}.evergreen-lots{list-style:none;margin:4px 0 0;padding:0 0 0 10px;border-left:2px solid var(--grid);font-size:12px}.evergreen-lots li{display:flex;flex-wrap:wrap;gap:2px 12px;padding:3px 0}.evergreen-lots li+li{border-top:1px dotted var(--grid);margin-top:3px;padding-top:5px}.evergreen-lots .ratio-holding-yield{flex:1 0 100%}.evergreen-lots .ratio-holding-yield-since{flex-basis:100%}
+.ratio-fund-holding+.ratio-fund-holding{border-top:1px dashed var(--grid);margin-top:2px;padding-top:6px}.ratio-holding-lots li+li{border-top:1px dotted var(--grid);margin-top:3px;padding-top:5px}.ratio-holding-lots ul{margin:2px 0 4px;padding:0 0 0 10px;border-left:2px solid var(--grid)}.ratio-holding-lots li{display:flex;flex-wrap:wrap;gap:2px 12px;align-items:baseline;padding:2px 0}.ratio-holding-lot-amount{white-space:nowrap;font-variant-numeric:tabular-nums}
 
 #p-ratio .ratio-six-allocation th:first-child,#p-ratio .ratio-six-allocation td:first-child{width:24%}
 #p-ratio .ratio-six-allocation th:nth-child(2),#p-ratio .ratio-six-allocation td:nth-child(2){width:39%}
@@ -347,8 +352,8 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
 <nav class="tabs" id="tabs" hidden>
   <button data-p="p-home" class="on">管理人</button>
   <button data-p="p-investors">投资人</button>
-  <button data-p="p-fee" class="mgr">付款</button>
   <button data-p="p-set" class="mgr">设置</button>
+  <button data-p="p-ratio" class="mgr" id="evergreenTab" data-view="evergreen" hidden>常青</button>
   <button data-p="p-ratio" class="mgr" id="ratioTab" hidden>资产配置</button>
 </nav>
 
@@ -417,18 +422,8 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
 
 </section>
 
-<section class="pane" id="p-fee">
-  <div class="card">
-    <h2>付款记录</h2>
-    <p class="hint">只记录已付款，不会转账。修改先保留为草稿，确认保存后再更新计算回执。</p>
-    <div id="feeProgress"></div>
-    <div id="tblFee"></div>
-    <div class="row" style="margin-top:12px"><button class="btn primary" id="btnAddFee">+ 新增一笔付款</button><button class="btn" id="btnAddFeeDue" hidden></button></div>
-  </div>
-</section>
-
 <section class="pane" id="p-set">
-  <nav class="home-jump" aria-label="设置页快速跳转" data-jump-auto><button type="button" data-jump="setLedgerCard" aria-current="true">账本</button><button type="button" data-jump="setShareCard">共享</button><button type="button" data-jump="fundProfileAdminCard">基金</button><button type="button" data-jump="fundDocsCard">文件</button><button type="button" data-jump="setRulesCard">费率</button><button type="button" data-jump="setFlowsCard">出入金</button><button type="button" data-jump="setDataCard">数据</button></nav>
+  <nav class="home-jump" aria-label="设置页快速跳转" data-jump-auto><button type="button" data-jump="setFeeCard" aria-current="true">付款</button><button type="button" data-jump="setLedgerCard">账本</button><button type="button" data-jump="setShareCard">共享</button><button type="button" data-jump="fundProfileAdminCard">基金</button><button type="button" data-jump="fundDocsCard">文件</button><button type="button" data-jump="setRulesCard">费率</button><button type="button" data-jump="setFlowsCard">出入金</button><button type="button" data-jump="setDataCard">数据</button></nav>
   <div class="card" id="styleDiagnosticCard" hidden><details class="fund-method">
     <summary>分类登记诊断（只读）</summary>
     <label class="f" for="styleDiagnosticQuery">七项私密诊断清单</label>
@@ -436,6 +431,14 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
     <p class="hint">清单仅在当前页面读取，关闭页面即清除。</p>
     <div id="styleDiagnosticBox" aria-live="polite"></div>
   </details></div>
+  <!-- fee-in-settings:v1 — owner request 2026-11-20: payments moved here from their own tab; same ids, same draft path. -->
+  <div class="card" id="setFeeCard">
+    <h2>付款记录</h2>
+    <p class="hint">只记录已付款，不会转账。修改先保留为草稿，确认保存后再更新计算回执。</p>
+    <div id="feeProgress"></div>
+    <div id="tblFee"></div>
+    <div class="row" style="margin-top:12px"><button class="btn primary" id="btnAddFee">+ 新增一笔付款</button><button class="btn" id="btnAddFeeDue" hidden></button></div>
+  </div>
   <div class="card" id="setLedgerCard"><h2>账本管理</h2>
     <div id="ledgerBar" class="ledger-bar" aria-live="polite"></div>
   </div>
@@ -1190,7 +1193,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.10.28";
+const UI_VERSION_LABEL=" · v4.10.29";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -3341,6 +3344,107 @@ function createRatioSnapshotCore(ratioCore,exposureCore,sourceFactory,parseJson,
   return {SCHEMA,FILE,verifyOriginal,candidate,authenticate,verify,bodyCheck,digestBytes};
 }
 /* ratio-presentation:v1 */
+/* evergreen-desk:v1:start */
+// evergreen-desk:v1 — the manager's working view of the evergreen funds, opened from its own tab on the same
+// verified pane as the allocation report. Display only: it rereads the holdings the report has already printed
+// (names, amounts, figures, lots) and never recalculates one. The status label, its note and its review date are
+// the owner's own judgement, kept on this device; nothing here recommends an action.
+const EVERGREEN_STATES=[['hold','持有'],['watch','观察'],['prepare','准备赎回'],['redeeming','赎回中']];
+const EVERGREEN_KEY='feeConsole.evergreen.labels.v1';
+let _ratioView='all',_evergreenFilter='all';const _evergreenOpen=new Set();
+function setRatioView(view){
+  _ratioView=view==='evergreen'?'evergreen':'all';
+  const pane=typeof document!=='undefined'&&document.getElementById('p-ratio');if(pane)pane.setAttribute('data-view',_ratioView);
+}
+function evergreenLabels(){
+  try{const v=JSON.parse((typeof store!=='undefined'&&store?store.getItem(EVERGREEN_KEY):null)||'{}');return v&&typeof v==='object'&&!Array.isArray(v)?v:{};}catch{return {};}
+}
+// Pure: one label record in, a clean record out. Unknown states, long notes and malformed dates are dropped.
+function evergreenLabelClean(value){
+  const v=value&&typeof value==='object'?value:{},date=x=>typeof x==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(x)?x:'';
+  return {state:EVERGREEN_STATES.some(([id])=>id===v.state)?v.state:'',note:typeof v.note==='string'?v.note.slice(0,120):'',reviewBy:date(v.reviewBy),updatedAt:date(v.updatedAt)};
+}
+// Pure: the printed fund rows and the owner's labels in, the list model out. No amount is parsed or summed.
+function evergreenDeskModel(rows,labels,today){
+  const funds=(Array.isArray(rows)?rows:[]).map(r=>{
+    const label=evergreenLabelClean(labels?.[r.key]),state=label.state;
+    return {...r,label,stateName:(EVERGREEN_STATES.find(([id])=>id===state)||[,'未标记'])[1],overdue:Boolean(label.reviewBy&&today&&label.reviewBy<today)};
+  });
+  const counts={all:funds.length,none:funds.filter(x=>!x.label.state).length};
+  for(const [id] of EVERGREEN_STATES)counts[id]=funds.filter(x=>x.label.state===id).length;
+  return {funds,counts,platforms:new Set(funds.map(x=>x.platform)).size,overdue:funds.filter(x=>x.overdue).length};
+}
+function evergreenDeskView(model,filter,open){
+  const e=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const chips=[['all','全部'],['none','未标记'],...EVERGREEN_STATES].filter(([id])=>id==='all'||model.counts[id]||id===filter)
+    .map(([id,name])=>'<button type="button" data-evergreen-filter="'+id+'" aria-pressed="'+String(id===filter)+'">'+name+' '+model.counts[id]+'</button>').join('');
+  const shown=model.funds.filter(x=>filter==='all'||(filter==='none'?!x.label.state:x.label.state===filter));
+  const sheet=x=>'<div class="evergreen-sheet">'
+    +'<h3>状态</h3><div class="evergreen-states" role="group" aria-label="状态">'+EVERGREEN_STATES.map(([id,name])=>'<button type="button" data-evergreen-state="'+id+'" aria-pressed="'+String(x.label.state===id)+'">'+name+'</button>').join('')+'</div>'
+    +'<label class="f">理由（自己看的备注）<input data-evergreen-note maxlength="120" value="'+e(x.label.note)+'" placeholder="例如：等下一份季报"></label>'
+    +'<label class="f">下次复核日<input data-evergreen-review type="date" value="'+e(x.label.reviewBy)+'"></label>'
+    +'<p class="evergreen-meta">'+(x.label.updatedAt?'标记更新于 '+e(x.label.updatedAt):'尚未标记')+(x.overdue?' · <strong>已过复核日</strong>':'')+' · 仅保存在本机</p>'
+    +'<h3>我的持仓</h3><div class="evergreen-position"><p><span>'+e(x.platform)+' · '+e(x.strategy)+'</span><span>'+e(x.amount)+'</span></p>'+(x.figuresHtml||'<p class="evergreen-meta">此快照未包含这只基金的收益率。</p>')+'</div>'
+    +'<h3>条款与赎回</h3><p class="evergreen-meta">尚未录入。锁定期、通知截止日、赎回日历下一期加入。</p>'
+    +'</div>';
+  const list=shown.map(x=>'<details class="evergreen-fund" data-evergreen-key="'+e(x.key)+'"'+(open?.has(x.key)?' open':'')+'><summary><span class="evergreen-fund-main"><strong>'+e(x.name)+'</strong><small>'+e(x.platform)+' · '+e(x.strategy)+(x.lots>1?' · '+x.lots+' 笔':'')+'</small></span><span class="evergreen-fund-side"><span class="evergreen-amount">'+e(x.amount)+'</span><span class="evergreen-pill" data-state="'+(x.label.state||'none')+'">'+x.stateName+(x.overdue?' · 待复核':'')+'</span></span></summary>'+sheet(x)+'</details>').join('');
+  return '<h2>常青基金管理</h2><p class="evergreen-sub">'+model.counts.all+' 只基金 · '+model.platforms+' 个平台'+(model.overdue?' · '+model.overdue+' 只已过复核日':'')+'</p>'
+    +(model.counts.all?'<div class="evergreen-filter" role="group" aria-label="按状态筛选">'+chips+'</div><div class="evergreen-list">'+(list||'<p class="evergreen-meta">这个状态下没有基金。</p>')+'</div><p class="evergreen-meta">金额与收益率和“资产配置”页相同，来自 Sharesight。状态由你自己判断并设置，本页不提供买卖或赎回建议。</p>'
+      :'<p class="evergreen-meta">此快照未包含常青基金的持仓明细。</p>');
+}
+// Reads the report's own printed evergreen section. Each fund keeps the report's figure markup as it is.
+function evergreenRows(report){
+  const section=Array.from(report.querySelectorAll('.ratio-fund-distribution')).find(x=>(x.querySelector('h2')?.textContent||'').startsWith('常青基金'));
+  if(!section)return [];
+  const rows=[];
+  for(const category of section.querySelectorAll('.ratio-distribution-category')){
+    const strategy=(category.querySelector('h3')?.textContent||'').split(' · ')[0];
+    for(const account of category.querySelectorAll('.ratio-distribution-account')){
+      const platform=account.querySelector('h4 span')?.textContent||'';
+      for(const li of account.querySelectorAll('li.ratio-fund-holding')){
+        const name=li.querySelector('.ratio-fund-holding-name')?.textContent||'',amount=li.children[1]?.textContent||'';
+        const lots=li.querySelector('.ratio-holding-lots'),single=Array.from(li.children).find(x=>x.classList?.contains('ratio-holding-yield'));
+        const figuresHtml=lots?'<ul class="evergreen-lots">'+lots.querySelector('ul').innerHTML+'</ul>':single?single.outerHTML:'';
+        rows.push({key:platform+'|'+name,name,platform,strategy,amount,lots:lots?lots.querySelectorAll('li').length:1,figuresHtml});
+      }
+    }
+  }
+  return rows;
+}
+function renderEvergreenDesk(root){
+  const report=root?.querySelector?.('.ratio-report');if(!report)return;
+  setRatioView(_ratioView);
+  let desk=report.querySelector('.evergreen-desk');
+  if(!desk){desk=document.createElement('section');desk.className='card evergreen-desk';desk.id='evergreenDesk';report.append(desk);}
+  desk.innerHTML=evergreenDeskView(evergreenDeskModel(evergreenRows(report),evergreenLabels(),todayStr()),_evergreenFilter,_evergreenOpen);
+}
+function evergreenLabelSet(key,patch){
+  if(typeof store==='undefined'||!store)return false;
+  const all=evergreenLabels();all[key]=evergreenLabelClean({...evergreenLabelClean(all[key]),...patch,updatedAt:todayStr()});
+  try{store.setItem(EVERGREEN_KEY,JSON.stringify(all));return true;}catch{return false;}
+}
+if(typeof document!=='undefined'&&typeof document.addEventListener==='function'){
+  const fundOf=el=>el?.closest?.('.evergreen-fund'),again=()=>renderEvergreenDesk(document.getElementById('ratioContent'));
+  document.addEventListener('click',event=>{
+    const filter=event.target?.closest?.('[data-evergreen-filter]'),state=event.target?.closest?.('[data-evergreen-state]');
+    if(filter){_evergreenFilter=filter.getAttribute('data-evergreen-filter');again();return;}
+    if(state){const fund=fundOf(state),key=fund?.getAttribute('data-evergreen-key');if(!key)return;
+      const pressed=state.getAttribute('aria-pressed')==='true';
+      if(!evergreenLabelSet(key,{state:pressed?'':state.getAttribute('data-evergreen-state')})){toast('本机无法保存标记');return;}
+      _evergreenOpen.add(key);again();}
+  });
+  document.addEventListener('change',event=>{
+    const note=event.target?.closest?.('[data-evergreen-note]'),review=event.target?.closest?.('[data-evergreen-review]'),input=note||review;if(!input)return;
+    const key=fundOf(input)?.getAttribute('data-evergreen-key');if(!key)return;
+    if(!evergreenLabelSet(key,note?{note:input.value}:{reviewBy:input.value})){toast('本机无法保存标记');return;}
+    _evergreenOpen.add(key);again();
+  });
+  document.addEventListener('toggle',event=>{
+    const fund=event.target?.classList?.contains('evergreen-fund')?event.target:null,key=fund?.getAttribute('data-evergreen-key');if(!key)return;
+    if(fund.open)_evergreenOpen.add(key);else _evergreenOpen.delete(key);
+  },true);
+}
+/* evergreen-desk:v1:end */
 function arrangeRatioRowDetails(report){
   // Move existing rendered nodes only; no financial recalculation or new data.
   const direct=(node,selector)=>Array.from(node.children).filter(n=>n.matches(selector));
@@ -3453,6 +3557,7 @@ function ratioHoldingDisplayName(raw,securityCode=''){
   return project?.replace(knownSuffix,'').trim()||original;
 }
 function styleRatioReport(root){
+  try{renderEvergreenDesk(root);}catch{}
   const report=root?.querySelector?.('.ratio-report');
   if(!report||report.classList.contains('ratio-styled'))return;
   for(const label of report.querySelectorAll('.ratio-fund-holding-name')){const original=label.textContent;label.textContent=ratioHoldingDisplayName(original,label.dataset.securityCode)||original;}
@@ -3606,6 +3711,8 @@ function styleRatioReport(root){
   if(jump.children.length>1)report.insertBefore(jump,report.firstChild);
   if(typeof tidyRatioNotes==='function')tidyRatioNotes(report);
   report.classList.add('ratio-styled');
+  // Again now that names and strategy titles are in their displayed form.
+  try{renderEvergreenDesk(root);}catch{}
   // The report arrives after the tab is shown and no scroll event follows, so light the right chip once now.
   if(typeof requestAnimationFrame==='function')requestAnimationFrame(()=>{try{syncJumpChips();}catch{}});
 }
@@ -3764,7 +3871,8 @@ function syncRatioNavigation(){
   // Publish the whole permitted navigation in one synchronous update. Content
   // still authenticates independently; no private tab is exposed while pending.
   tab.hidden=!allowed;tab.style.display=allowed?'':'none';
-  document.querySelectorAll('#tabs button.mgr').forEach(b=>{if(b!==tab)b.style.display=isMgr()?'':'none';});
+  const evergreen=document.getElementById('evergreenTab');if(evergreen){evergreen.hidden=!allowed;evergreen.style.display=allowed?'':'none';}
+  document.querySelectorAll('#tabs button.mgr').forEach(b=>{if(b!==tab&&b!==evergreen)b.style.display=isMgr()?'':'none';});
   tabs.hidden=pending;tabs.classList.remove('hidden');if(status)status.hidden=!pending;
 }
 async function renderRatioManagement(){
@@ -4730,7 +4838,7 @@ async function render(){
   document.querySelectorAll(".mgr").forEach(e=>e.style.display=isMgr()?"":"none");
   const fundDocsCard=document.getElementById("fundDocsCard");if(fundDocsCard)fundDocsCard.style.display=documentsAuthorized?"":"none";if(!documentsAuthorized)clearFundDocumentPlaintext();
   syncRatioNavigation();
-  if(!isMgr()&&["p-fee","p-set"].some(id=>document.getElementById(id).classList.contains("on"))){document.querySelectorAll("section.pane").forEach(p=>p.classList.toggle("on",p.id==="p-investors"));document.querySelectorAll("#tabs button").forEach(b=>b.classList.toggle("on",b.dataset.p==="p-investors"));}
+  if(!isMgr()&&["p-set"].some(id=>document.getElementById(id).classList.contains("on"))){document.querySelectorAll("section.pane").forEach(p=>p.classList.toggle("on",p.id==="p-investors"));document.querySelectorAll("#tabs button").forEach(b=>b.classList.toggle("on",b.dataset.p==="p-investors"));}
   const feeSummary=feeView.state==="verified"?` · 起算 ${feeView.start} · ${feeView.managementRatePpm/10000}% / ${feeView.carryRatePpm/10000}%`:` · ${feeView.message}`;
   document.getElementById("subTitle").textContent=`${DB.accounts.map(a=>a.name).join(" + ")}${feeSummary}${SHELL_BUILD?` · v${SHELL_BUILD}`:UI_VERSION_LABEL}`+(isMgr()?"":" · 只读");
   renderReportPublication(reportView);
@@ -5796,7 +5904,7 @@ function showShare(){
 
 /* ============ 事件 ============ */
 document.getElementById("tabs").addEventListener("click",e=>{const b=e.target.closest("button[data-p]");if(!b)return;
-  if(b.dataset.p==="p-ratio"&&(!ratioAuthorized()||b.classList.contains("on")))return;clearRatioRecipientPreview();clearRatioManagement(false);document.querySelectorAll("#tabs button").forEach(x=>x.classList.toggle("on",x===b));document.querySelectorAll("section.pane").forEach(s=>s.classList.toggle("on",s.id===b.dataset.p));globalThis.scrollTo?.(0,0);renderRatioManagement();try{syncJumpChips();}catch{}});
+  if(b.dataset.p==="p-ratio"&&(!ratioAuthorized()||b.classList.contains("on")))return;if(b.dataset.p==="p-ratio"&&typeof setRatioView==='function')setRatioView(b.dataset.view);clearRatioRecipientPreview();clearRatioManagement(false);document.querySelectorAll("#tabs button").forEach(x=>x.classList.toggle("on",x===b));document.querySelectorAll("section.pane").forEach(s=>s.classList.toggle("on",s.id===b.dataset.p));globalThis.scrollTo?.(0,0);renderRatioManagement();try{syncJumpChips();}catch{}});
 document.getElementById("cfmCancel").onclick=()=>{_cfmCb=null;document.getElementById("cfm").classList.remove("on");};
 document.getElementById("cfmOk").onclick=()=>{const cb=_cfmCb;_cfmCb=null;document.getElementById("cfm").classList.remove("on");if(cb)cb();};
 document.body.addEventListener("click",e=>{const T=e.target;
