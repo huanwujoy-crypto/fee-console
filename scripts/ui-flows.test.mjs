@@ -724,7 +724,7 @@ test("the settings page jump row names existing cards and hides chips of absent 
   const nav = section.match(/^<section class="pane" id="p-set">\n  <nav class="home-jump" aria-label="设置页快速跳转" data-jump-auto>([\s\S]*?)<\/nav>/);
   assert.ok(nav, "the settings page opens with its jump row");
   const targets = [...nav[1].matchAll(/<button type="button" data-jump="([\w-]+)"(?: aria-current="true")?>([^<]+)<\/button>/g)].map(m => [m[1], m[2]]);
-  assert.deepEqual(targets, [["setLedgerCard", "账本"], ["setShareCard", "共享"], ["fundProfileAdminCard", "基金"], ["fundDocsCard", "文件"], ["setRulesCard", "费率"], ["setFlowsCard", "出入金"], ["setDataCard", "数据"]]);
+  assert.deepEqual(targets, [["setFeeCard", "付款"], ["setLedgerCard", "账本"], ["setShareCard", "共享"], ["fundProfileAdminCard", "基金"], ["fundDocsCard", "文件"], ["setRulesCard", "费率"], ["setFlowsCard", "出入金"], ["setDataCard", "数据"]]);
   // Every target is exactly one card of this page, in the same order as the chips.
   let at = 0;
   for (const [id] of targets) {
@@ -794,4 +794,88 @@ test("the holdings list separates platforms, products and lots with three distin
   assert.match(html, /\.ratio-distribution-account\{padding:6px 0;border-top:1px solid var\(--grid\)\}/);
   assert.match(html, /\.ratio-fund-holding\+\.ratio-fund-holding\{border-top:1px dashed var\(--grid\);margin-top:2px;padding-top:6px\}/);
   assert.match(html, /\.ratio-holding-lots li\+li\{border-top:1px dotted var\(--grid\);margin-top:3px;padding-top:5px\}/);
+});
+
+// fee-in-settings:v1 — owner request 2026-11-20: the payments tab is gone; its card opens the Settings page.
+test("payments live in Settings with the same controls, and no payments tab or pane remains", () => {
+  assert.equal(html.includes('id="p-fee"'), false);
+  assert.equal(html.includes('data-p="p-fee"'), false);
+  const tabs = html.slice(html.indexOf('<nav class="tabs" id="tabs"'), html.indexOf("</nav>", html.indexOf('<nav class="tabs" id="tabs"')));
+  assert.deepEqual([...tabs.matchAll(/<button data-p="([\w-]+)"/g)].map(m => m[1]).filter(p => p !== "p-ratio"), ["p-home", "p-investors", "p-set"]);
+  const section = html.slice(html.indexOf('<section class="pane" id="p-set">'), html.indexOf("</section>", html.indexOf('<section class="pane" id="p-set">')));
+  const card = section.slice(section.indexOf('<div class="card" id="setFeeCard">'), section.indexOf('<div class="card" id="setLedgerCard">'));
+  for (const id of ["feeProgress", "tblFee", "btnAddFee", "btnAddFeeDue"]) {
+    assert.equal(html.split('id="' + id + '"').length, 2, id);
+    assert.ok(card.includes('id="' + id + '"'), id + " is inside the payments card");
+  }
+  // A reader who is not the manager is still moved off the Settings page.
+  assert.match(html, /if\(!isMgr\(\)&&\["p-set"\]\.some\(/);
+});
+
+// evergreen-desk:v1 — owner request 2026-11-20: a working page for the evergreen funds with an owner-set status.
+const evergreenBlock = html.slice(html.indexOf("/* evergreen-desk:v1:start */"), html.indexOf("/* evergreen-desk:v1:end */"));
+async function evergreenBox(saved) {
+  const vm = await import("node:vm");
+  const memory = new Map(saved ? [["feeConsole.evergreen.labels.v1", JSON.stringify(saved)]] : []);
+  const box = { store: { getItem: k => memory.get(k) ?? null, setItem: (k, v) => { memory.set(k, v); } }, todayStr: () => "2026-11-20" };
+  vm.createContext(box);
+  vm.runInContext(evergreenBlock + ";globalThis.t={evergreenLabelClean,evergreenDeskModel,evergreenDeskView,evergreenLabels,evergreenLabelSet,EVERGREEN_STATES};", box);
+  return { t: box.t, memory };
+}
+const evergreenRows = [
+  { key: "P|Fund <A>", name: "Fund <A>", platform: "P", strategy: "S1", amount: "USD 100.00", lots: 3, figuresHtml: '<ul class="evergreen-lots"><li>x</li></ul>' },
+  { key: "P|Fund B", name: "Fund B", platform: "P", strategy: "S2", amount: "USD 99.00", lots: 1, figuresHtml: "" },
+  { key: "Q|Fund C", name: "Fund C", platform: "Q", strategy: "S1", amount: "USD 98.00", lots: 1, figuresHtml: '<span class="ratio-holding-yield">y</span>' },
+];
+test("the evergreen page has its own tab on the verified allocation pane and is display only", () => {
+  assert.ok(evergreenBlock.length > 1000, "index.html carries the evergreen-desk block");
+  const tabs = html.slice(html.indexOf('<nav class="tabs" id="tabs"'), html.indexOf("</nav>", html.indexOf('<nav class="tabs" id="tabs"')));
+  assert.match(tabs, /<button data-p="p-ratio" class="mgr" id="evergreenTab" data-view="evergreen" hidden>常青<\/button>\n  <button data-p="p-ratio" class="mgr" id="ratioTab" hidden>资产配置<\/button>/);
+  // The new tab is shown and hidden by the same permission as the allocation tab, never by the manager flag alone.
+  assert.match(html, /const evergreen=document\.getElementById\('evergreenTab'\);if\(evergreen\)\{evergreen\.hidden=!allowed;evergreen\.style\.display=allowed\?'':'none';\}\n  document\.querySelectorAll\('#tabs button\.mgr'\)\.forEach\(b=>\{if\(b!==tab&&b!==evergreen\)b\.style\.display=isMgr\(\)\?'':'none';\}\);/);
+  assert.match(html, /if\(b\.dataset\.p==="p-ratio"&&\(!ratioAuthorized\(\)\|\|b\.classList\.contains\("on"\)\)\)return;if\(b\.dataset\.p==="p-ratio"&&typeof setRatioView==='function'\)setRatioView\(b\.dataset\.view\);/);
+  // One view at a time, by style only: the report stays in the page and nothing is fetched or decrypted again for it.
+  assert.match(html, /#p-ratio\[data-view="evergreen"\] \.ratio-report>\*:not\(\.evergreen-desk\),[^{]*#p-ratio:not\(\[data-view="evergreen"\]\) \.evergreen-desk\{display:none\}/);
+  // It rereads printed text and never computes, fetches or decrypts.
+  assert.doesNotMatch(evergreenBlock, /toFixed|Math\.|valueCents|totalCents|parseFloat|Number\(|fetch\(|ghApi|ratioCore|deriveManager|crypto/);
+  assert.match(html, /function styleRatioReport\(root\)\{\n  try\{renderEvergreenDesk\(root\);\}catch\{\}\n/);
+});
+test("evergreen labels are cleaned, counted and shown without touching any amount", async () => {
+  const { t } = await evergreenBox();
+  assert.deepEqual(JSON.parse(JSON.stringify(t.evergreenLabelClean({ state: "sell-now", note: "x".repeat(200), reviewBy: "soon", updatedAt: "2026-11-20", extra: 1 }))),
+    { state: "", note: "x".repeat(120), reviewBy: "", updatedAt: "2026-11-20" });
+  assert.deepEqual(JSON.parse(JSON.stringify(t.evergreenLabelClean(null))), { state: "", note: "", reviewBy: "", updatedAt: "" });
+  const labels = { "P|Fund <A>": { state: "watch", note: "wait <b>", reviewBy: "2026-11-01", updatedAt: "2026-10-01" }, "Q|Fund C": { state: "hold", reviewBy: "2026-12-31" } };
+  const model = t.evergreenDeskModel(evergreenRows, labels, "2026-11-20");
+  assert.deepEqual(JSON.parse(JSON.stringify(model.counts)), { all: 3, none: 1, hold: 1, watch: 1, prepare: 0, redeeming: 0 });
+  assert.equal(model.platforms, 2); assert.equal(model.overdue, 1);
+  assert.deepEqual(model.funds.map(x => [x.stateName, x.overdue]), [["观察", true], ["未标记", false], ["持有", false]]);
+  const view = t.evergreenDeskView(model, "all", new Set(["P|Fund B"]));
+  assert.match(view, /3 只基金 · 2 个平台 · 1 只已过复核日/);
+  // Only states in use get a filter chip; names and notes are escaped; figures come through as the report printed them.
+  assert.deepEqual([...view.matchAll(/data-evergreen-filter="(\w+)" aria-pressed="(\w+)">([^<]+)</g)].map(m => m.slice(1)), [["all", "true", "全部 3"], ["none", "false", "未标记 1"], ["hold", "false", "持有 1"], ["watch", "false", "观察 1"]]);
+  assert.ok(view.includes("<strong>Fund &lt;A&gt;</strong>")); assert.ok(view.includes('value="wait &lt;b&gt;"')); assert.equal(view.includes("<b>"), false);
+  assert.ok(view.includes('<ul class="evergreen-lots"><li>x</li></ul>')); assert.ok(view.includes('<span class="ratio-holding-yield">y</span>'));
+  assert.ok(view.includes("此快照未包含这只基金的收益率。")); assert.ok(view.includes("P · S1 · 3 笔"));
+  assert.match(view, /<details class="evergreen-fund" data-evergreen-key="P\|Fund B" open>/);
+  assert.equal((view.match(/<details class="evergreen-fund"/g) || []).length, 3);
+  assert.ok(view.includes('data-state="watch">观察 · 待复核<')); assert.ok(view.includes("本页不提供买卖或赎回建议"));
+  for (const amount of ["USD 100.00", "USD 99.00", "USD 98.00"]) assert.ok(view.includes(amount));
+  // A filter narrows the list; an empty snapshot says so.
+  const watch = t.evergreenDeskView(model, "watch", new Set());
+  assert.equal((watch.match(/<details class="evergreen-fund"/g) || []).length, 1); assert.ok(watch.includes("Fund &lt;A&gt;"));
+  assert.ok(t.evergreenDeskView(model, "prepare", new Set()).includes("这个状态下没有基金。"));
+  assert.ok(t.evergreenDeskView(t.evergreenDeskModel([], {}, "2026-11-20"), "all", new Set()).includes("此快照未包含常青基金的持仓明细。"));
+});
+test("an evergreen label is saved on this device only, dated, and survives a damaged store", async () => {
+  const { t, memory } = await evergreenBox();
+  assert.equal(t.evergreenLabelSet("P|Fund B", { state: "prepare" }), true);
+  assert.equal(t.evergreenLabelSet("P|Fund B", { note: "see Q4 report" }), true);
+  assert.deepEqual(JSON.parse(memory.get("feeConsole.evergreen.labels.v1")), { "P|Fund B": { state: "prepare", note: "see Q4 report", reviewBy: "", updatedAt: "2026-11-20" } });
+  assert.equal(memory.size, 1);
+  const damaged = await evergreenBox(); damaged.memory.set("feeConsole.evergreen.labels.v1", "{not json");
+  assert.deepEqual(JSON.parse(JSON.stringify(damaged.t.evergreenLabels())), {});
+  const list = await evergreenBox([1, 2]); assert.deepEqual(JSON.parse(JSON.stringify(list.t.evergreenLabels())), {});
+  // The label never leaves the device: the block has no draft, ledger or publish call.
+  assert.doesNotMatch(evergreenBlock, /changeDraft|EDIT\.|saveLedger|publish|gist/i);
 });
