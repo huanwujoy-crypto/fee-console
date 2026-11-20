@@ -879,3 +879,145 @@ test("an evergreen label is saved on this device only, dated, and survives a dam
   // The label never leaves the device: the block has no draft, ledger or publish call.
   assert.doesNotMatch(evergreenBlock, /changeDraft|EDIT\.|saveLedger|publish|gist/i);
 });
+
+// evergreen-calendar:v1 — owner request 2026-11-20, second step: terms per fund, a redemption calendar per purchase lot,
+// a liquidity ladder, and a terms pack to carry terms and labels between people and devices.
+const calendarBlock = html.slice(html.indexOf("/* evergreen-calendar:v1:start */"), html.indexOf("/* evergreen-calendar:v1:end */"));
+async function calendarBox(saved = {}) {
+  const vm = await import("node:vm");
+  const memory = new Map(Object.entries(saved).map(([k, v]) => [k, JSON.stringify(v)]));
+  const box = { store: { getItem: k => memory.get(k) ?? null, setItem: (k, v) => { memory.set(k, v); }, removeItem: k => { memory.delete(k); } }, todayStr: () => "2026-11-20" };
+  vm.createContext(box);
+  vm.runInContext(calendarBlock + "\n" + evergreenBlock + ";globalThis.c={evergreenTermsClean,evergreenTerms,evergreenAddMonths,evergreenAddDays,evergreenDaysBetween,evergreenDealingDay,evergreenLotPlan,evergreenCents,evergreenUsd,evergreenQuarter,evergreenCalendarModel,evergreenCalendarView,evergreenTermsView,evergreenPackBuild,evergreenPackRead,evergreenPackView,evergreenBriefSave};", box);
+  return { c: box.c, memory };
+}
+const plain = v => JSON.parse(JSON.stringify(v));
+test("evergreen terms keep only well-formed values and calendar arithmetic is exact", async () => {
+  const { c } = await calendarBox();
+  assert.deepEqual(plain(c.evergreenTermsClean({ frequency: "weekly", noticeDays: 45.5, lockupMonths: -1, softLockMonths: 24, earlyFeePct: 5, gatePct: 101, mgmtPct: "1.25", source: "  Prospectus  ", asOf: "2026-5-20", note: "x".repeat(400), secret: 1 })),
+    { softLockMonths: 24, earlyFeePct: 5, source: "Prospectus", note: "x".repeat(300) });
+  assert.deepEqual(plain(c.evergreenTermsClean([1])), {}); assert.deepEqual(plain(c.evergreenTermsClean(null)), {});
+  assert.equal(c.evergreenAddMonths("2024-08-31", 6), "2025-02-28"); assert.equal(c.evergreenAddMonths("2024-01-31", 1), "2024-02-29");
+  assert.equal(c.evergreenAddMonths("2026-10-28", 12), "2027-10-28"); assert.equal(c.evergreenAddMonths("2026-02-30", 1), "");
+  assert.equal(c.evergreenAddDays("2026-12-31", 45), "2027-02-14"); assert.equal(c.evergreenAddDays("2027-03-31", -90), "2026-12-31");
+  assert.equal(c.evergreenDaysBetween("2026-11-20", "2026-12-31"), 41); assert.equal(c.evergreenDaysBetween("x", "2026-12-31"), null);
+  for (const [from, frequency, want] of [["2026-11-20", "monthly", "2026-11-30"], ["2026-11-30", "monthly", "2026-11-30"], ["2026-12-01", "monthly", "2026-12-31"], ["2027-02-01", "monthly", "2027-02-28"],
+    ["2026-11-20", "quarterly", "2026-12-31"], ["2027-01-01", "quarterly", "2027-03-31"], ["2027-03-31", "quarterly", "2027-03-31"],
+    ["2026-11-20", "semiannual", "2026-12-31"], ["2027-01-01", "semiannual", "2027-06-30"], ["2027-01-01", "annual", "2027-12-31"]])
+    assert.equal(c.evergreenDealingDay(from, frequency), want, from + " " + frequency);
+  assert.equal(c.evergreenDealingDay("2026-11-20", "weekly"), "");
+  assert.equal(c.evergreenCents("USD 702,583.16"), 70258316); assert.equal(c.evergreenCents("USD 0.05"), 5); assert.equal(c.evergreenCents("USD 100"), null);
+  assert.equal(c.evergreenCents("EUR 100.00"), null); assert.equal(c.evergreenCents("USD 1,23.45"), null); assert.equal(c.evergreenCents(""), null);
+  assert.equal(c.evergreenUsd(70258316), "USD 702,583"); assert.equal(c.evergreenUsd(19900), "USD 199"); assert.equal(c.evergreenQuarter("2027-05-15"), "2027 Q2");
+});
+test("each purchase lot gets its own lock, fee and deadline", async () => {
+  const { c } = await calendarBox(), today = "2026-11-20";
+  const quarterly = { frequency: "quarterly", noticeDays: 45, lockupMonths: 0, softLockMonths: 24, earlyFeePct: 5, settlementDays: 30 };
+  // Bought long ago: free. The first quarter-end at least 45 days away is 2027-03-31.
+  assert.deepEqual(plain(c.evergreenLotPlan("2024-08-31", quarterly, today)), { status: "free", hardUnlock: "2024-08-31", softEnd: "2026-08-31", dealing: "2027-03-31", notice: "2027-02-14", cash: "2027-04-30", daysToNotice: 86, freeDealing: "2027-03-31", freeNotice: "2027-02-14", freeCash: "2027-04-30" });
+  // Bought this year: redeemable with the early fee; the first fee-free dealing day is after the 24 months.
+  const young = c.evergreenLotPlan("2026-05-27", quarterly, today);
+  assert.equal(young.status, "fee"); assert.equal(young.dealing, "2027-03-31"); assert.equal(young.softEnd, "2028-05-27"); assert.equal(young.freeDealing, "2028-06-30"); assert.equal(young.freeNotice, "2028-05-16");
+  // A hard lock-up: nothing before the lock ends, and the notice is counted back from that dealing day.
+  const locked = c.evergreenLotPlan("2026-10-28", { frequency: "monthly", noticeDays: 10, lockupMonths: 12, settlementDays: 20 }, today);
+  assert.equal(locked.status, "locked"); assert.equal(locked.hardUnlock, "2027-10-28"); assert.equal(locked.dealing, "2027-10-31"); assert.equal(locked.notice, "2027-10-21"); assert.equal(locked.cash, "2027-11-20");
+  // A soft lock without a fee percentage is not called a fee.
+  assert.equal(c.evergreenLotPlan("2026-05-27", { ...quarterly, earlyFeePct: undefined }, today).status, "free");
+  // Missing pieces are named, never guessed.
+  assert.equal(c.evergreenLotPlan("2024-08-31", { frequency: "quarterly" }, today).status, "no-terms");
+  assert.equal(c.evergreenLotPlan("2024-08-31", null, today).status, "no-terms");
+  assert.equal(c.evergreenLotPlan("", quarterly, today).status, "no-date"); assert.equal(c.evergreenLotPlan("2024-13-01", quarterly, today).status, "no-date");
+  // The deadline can be today, never in the past.
+  const edge = c.evergreenLotPlan("2020-01-01", { frequency: "quarterly", noticeDays: 41 }, today);
+  assert.equal(edge.dealing, "2026-12-31"); assert.equal(edge.notice, "2026-11-20"); assert.equal(edge.daysToNotice, 0);
+});
+const calendarRows = [
+  { key: "P|A", name: "A <x>", platform: "P", strategy: "S", amount: "USD 100.00", lotList: [{ amount: "USD 60.00", date: "2024-08-31" }, { amount: "USD 30.00", date: "2026-05-27" }, { amount: "USD 10.00", date: "2026-10-01" }] },
+  { key: "P|B", name: "B", platform: "P", strategy: "S", amount: "USD 99.00", lotList: [{ amount: "USD 99.00", date: "2024-04-02" }] },
+  { key: "P|C", name: "C", platform: "P", strategy: "S", amount: "USD 98.00", lotList: [{ amount: "USD 98.00", date: "2026-10-28" }] },
+  { key: "P|D", name: "D", platform: "P", strategy: "S", amount: "USD 96.00", lotList: [{ amount: "USD 96.00", date: "2023-01-10" }] },
+  { key: "P|E", name: "E", platform: "P", strategy: "S", amount: "USD 50.00", lotList: [{ amount: "USD 50.00", date: "" }] },
+];
+const calendarTerms = {
+  "P|A": { frequency: "quarterly", noticeDays: 45, softLockMonths: 24, earlyFeePct: 5, gatePct: 5, settlementDays: 30, mgmtPct: 1.25, perfPct: 12.5, hurdlePct: 5, source: "Prospectus <b>", asOf: "2026-05-20" },
+  "P|B": { frequency: "quarterly", noticeDays: 90, settlementDays: 45 },
+  "P|C": { frequency: "monthly", noticeDays: 10, lockupMonths: 12, settlementDays: 20 },
+  "P|E": { frequency: "quarterly", noticeDays: 45 },
+};
+test("the calendar orders deadlines, builds the ladder in whole cents and names what it could not place", async () => {
+  const { c } = await calendarBox(), model = c.evergreenCalendarModel(calendarRows, calendarTerms, "2026-11-20");
+  assert.deepEqual(plain(model.deadlines.map(d => [d.name, d.notice, d.days, d.dealing, d.cash, d.status, d.lots])), [
+    ["B", "2026-12-31", 41, "2027-03-31", "2027-05-15", "free", 1], ["A <x>", "2027-02-14", 86, "2027-03-31", "2027-04-30", "mixed", 3], ["C", "2027-10-21", 335, "2027-10-31", "2027-11-20", "locked", 1]]);
+  assert.deepEqual(plain(model.ladder), [{ quarter: "2027 Q2", freeCents: 6000 + 9900, feeCents: 4000 }, { quarter: "2027 Q4", freeCents: 9800, feeCents: 0 }]);
+  assert.equal(model.peak, 19900); assert.equal(model.missing, 1); assert.equal(model.unknownCents, 9600 + 5000); assert.equal(model.lockedFunds, 1); assert.equal(model.next.name, "B");
+  // Every printed cent is either in the ladder or named as not placed.
+  assert.equal(model.ladder.reduce((n, b) => n + b.freeCents + b.feeCents, 0) + model.unknownCents, 10000 + 9900 + 9800 + 9600 + 5000);
+  const view = c.evergreenCalendarView(model);
+  assert.match(view, /最近的通知截止日：<strong>2026-12-31<\/strong>（还有 41 天） · 1 只未录入条款/);
+  assert.ok(view.includes("<strong>A &lt;x&gt;</strong>")); assert.equal(view.includes("<x>"), false);
+  assert.ok(view.includes("通知截止 <b>2027-02-14</b> → 赎回日 2027-03-31 → 约 2027-04-30 到账")); assert.ok(view.includes("各笔不同 · 3 笔")); assert.ok(view.includes("锁定中"));
+  assert.ok(view.includes("USD 199<small>其中 USD 40 有提前赎回费</small>")); assert.ok(view.includes("另有约 USD 146 因未录入条款或缺少买入日期，未排入上表。"));
+  assert.ok(view.includes("假设赎回申请全额获批")); assert.ok(view.includes("实际日期以平台通知为准"));
+  assert.equal((view.match(/class="evergreen-soon"/g) || []).length, 0);
+  assert.equal((c.evergreenCalendarView(c.evergreenCalendarModel(calendarRows, calendarTerms, "2026-12-10")).match(/class="evergreen-soon"/g) || []).length, 1);
+  // No terms at all: the card says how to add them. No funds: nothing is drawn.
+  assert.ok(c.evergreenCalendarView(c.evergreenCalendarModel(calendarRows, {}, "2026-11-20")).includes("还没有任何基金录入条款"));
+  assert.equal(c.evergreenCalendarView(c.evergreenCalendarModel([], {}, "2026-11-20")), "");
+});
+test("a fund's sheet shows its terms, each lot's status and the source, escaped", async () => {
+  const { c } = await calendarBox(), view = c.evergreenTermsView(calendarRows[0], calendarTerms["P|A"], "2026-11-20");
+  for (const text of ["<dt>赎回频率</dt><dd>每季度</dd>", "<dt>通知期</dt><dd>提前 45 天</dd>", "<dt>提前赎回费</dt><dd>买入后 24 个月内 5%</dd>", "<dt>每期赎回上限</dt><dd>基金净值的 5%</dd>",
+    "<dt>到账</dt><dd>赎回日后约 30 天</dd>", "<dt>管理费</dt><dd>1.25%</dd>", "<dt>业绩报酬</dt><dd>12.5%（门槛 5%）</dd>", "出处：Prospectus &lt;b&gt; · 截至 2026-05-20",
+    '<strong data-status="free">可赎回</strong>', '<strong data-status="fee">可赎回，2028-05-27 前有提前赎回费</strong>', "免费用最早 2028-06-30（通知截止 2028-05-16）", "USD 60.00 · 买入 2024-08-31"])
+    assert.ok(view.includes(text), text);
+  assert.equal(view.includes("<dt>锁定期</dt>"), false, "a term that was not given is not shown as a value");
+  assert.equal(view.includes("<b>"), false);
+  assert.ok(c.evergreenTermsView(calendarRows[2], calendarTerms["P|C"], "2026-11-20").includes('<strong data-status="locked">锁定至 2027-10-28</strong>'));
+  assert.ok(c.evergreenTermsView(calendarRows[4], calendarTerms["P|E"], "2026-11-20").includes("缺少买入日期"));
+  assert.equal(c.evergreenTermsView(calendarRows[3], undefined, "2026-11-20"), "");
+});
+test("the terms pack carries names, dates, terms and labels but no amount, and is read back strictly", async () => {
+  const { c } = await calendarBox();
+  const pack = c.evergreenPackBuild(calendarRows, calendarTerms, { "P|B": { state: "watch", note: "n", reviewBy: "2027-01-01", updatedAt: "2026-11-20" } }, "2026-11-20"), text = JSON.stringify(pack);
+  assert.equal(pack.schema, "fee-console.evergreen-pack.v1"); assert.equal(pack.funds.length, 5);
+  assert.deepEqual(plain(pack.funds[0]), { key: "P|A", name: "A <x>", platform: "P", strategy: "S", purchases: ["2024-08-31", "2026-05-27", "2026-10-01"], terms: calendarTerms["P|A"], label: { state: "", note: "", reviewBy: "", updatedAt: "" } });
+  assert.deepEqual(plain(pack.funds[3].terms), {}); assert.deepEqual(plain(pack.funds[4].purchases), []);
+  assert.equal(/USD|\d+\.\d{2}"/.test(JSON.stringify(pack.funds.map(x => ({ ...x, terms: {} })))), false, "no printed amount leaves in the pack");
+  const read = c.evergreenPackRead(text);
+  assert.equal(read.ok, true); assert.equal(read.funds, 5); assert.deepEqual(plain(read.terms), calendarTerms);
+  assert.deepEqual(plain(read.labels), { "P|B": { state: "watch", note: "n", reviewBy: "2027-01-01", updatedAt: "2026-11-20" } });
+  // Edited values are cleaned on the way in; unknown keys are dropped.
+  const edited = c.evergreenPackRead(JSON.stringify({ schema: "fee-console.evergreen-pack.v1", funds: [{ key: "P|D", terms: { frequency: "annual", noticeDays: 95, earlyFeePct: 500, password: "x" }, label: { state: "sell" } }] }));
+  assert.deepEqual(plain(edited.terms), { "P|D": { frequency: "annual", noticeDays: 95 } }); assert.deepEqual(plain(edited.labels), {});
+  for (const bad of ["", "{", "[]", '{"schema":"other","funds":[]}', '{"schema":"fee-console.evergreen-pack.v1"}', '{"schema":"fee-console.evergreen-pack.v1","funds":[{"terms":{}}]}', '{"schema":"fee-console.evergreen-pack.v1","funds":[null]}'])
+    assert.equal(c.evergreenPackRead(bad).ok, false, bad);
+  const view = c.evergreenPackView(true, "已导入 <1>");
+  assert.match(view, /<details class="evergreen-pack" open>/); assert.ok(view.includes("不含金额")); assert.ok(view.includes("已导入 &lt;1&gt;"));
+  assert.ok(view.includes('data-evergreen-pack="export"')); assert.ok(view.includes('data-evergreen-pack="import"'));
+});
+test("terms stay on the device, and the overview keeps only a date for its evergreen line", async () => {
+  const { c, memory } = await calendarBox({ "feeConsole.evergreen.terms.v1": { "P|A": { frequency: "quarterly", noticeDays: 45, junk: 1 }, "P|Z": { junk: 1 }, "P|Y": "x" } });
+  assert.deepEqual(plain(c.evergreenTerms()), { "P|A": { frequency: "quarterly", noticeDays: 45 } });
+  memory.set("feeConsole.evergreen.terms.v1", "{broken"); assert.deepEqual(plain(c.evergreenTerms()), {});
+  c.evergreenBriefSave(c.evergreenCalendarModel(calendarRows, calendarTerms, "2026-11-20"), "2026-11-20");
+  assert.deepEqual(JSON.parse(memory.get("feeConsole.evergreen.brief.v1")), { savedAt: "2026-11-20", notice: "2026-12-31", funds: 3, missing: 1 });
+  c.evergreenBriefSave(c.evergreenCalendarModel(calendarRows, {}, "2026-11-20"), "2026-11-20"); assert.equal(memory.has("feeConsole.evergreen.brief.v1"), false);
+  // Nothing here reaches the ledger, a draft, a publication or the network.
+  assert.doesNotMatch(calendarBlock, /changeDraft|EDIT\.|saveLedger|publish|gist|fetch\(|ghApi|ratioCore|deriveManager/i);
+  // The desk feeds the calendar the printed lot amounts and first-purchase dates.
+  assert.match(html, /const lotList=lots\?Array\.from\(lots\.querySelectorAll\('li'\)\)\.map\(x=>\(\{amount:x\.querySelector\('\.ratio-holding-lot-amount'\)\?\.textContent\|\|'',date:since\(x\)\}\)\):\[\{amount,date:since\(single\)\}\];/);
+});
+test("the overview's evergreen line shows the nearest notice deadline and opens the evergreen page", async () => {
+  const vm = await import("node:vm"), box = {}; vm.createContext(box);
+  vm.runInContext("const esc=v=>String(v??'');const usd=(v,d)=>'USD '+Number(v).toFixed(d);" + html.slice(html.indexOf("/* day-brief:start */"), html.indexOf("/* day-brief:end */")) + ";globalThis.I=dayBriefItems;globalThis.V=dayBriefView;", box);
+  const line = e => plain(box.I({ evergreen: e }));
+  assert.deepEqual(line({ notice: "2026-12-31", days: 41 }), [{ jump: "evergreenTab", lab: "常青", tone: "", head: "赎回通知截止 2026-12-31", tail: "还有 41 天" }]);
+  assert.equal(line({ notice: "2026-12-31", days: 30 })[0].tone, "warn"); assert.equal(line({ notice: "2026-12-31", days: 14 })[0].tone, "bad");
+  assert.equal(line({ notice: "2026-11-20", days: 0 })[0].tail, "今天截止");
+  assert.deepEqual(line({ notice: "2026-11-01", days: -19 }), [{ jump: "evergreenTab", lab: "常青", tone: "warn", head: "赎回日历需要更新", tail: "打开常青页重新推算" }]);
+  for (const bad of [null, {}, { notice: "soon", days: 3 }, { notice: "2026-12-31", days: 1.5 }, { notice: "2026-12-31" }]) assert.deepEqual(line(bad), []);
+  assert.ok(box.V(box.I({ evergreen: { notice: "2026-12-31", days: 41 } }), "2026-11-19").includes('data-jump="evergreenTab"'));
+  // Only the manager's own device reads the saved date, and the row switches tabs.
+  assert.match(html, /const saved=isMgr\(\)&&store\?JSON\.parse\(store\.getItem\(EVERGREEN_BRIEF_KEY\)\|\|"null"\):null;/);
+  assert.match(html, /event\.target\?\.closest\?\.\('\.brief-row\[data-jump="evergreenTab"\]'\)\)document\.getElementById\('evergreenTab'\)\?\.click\(\);/);
+});
