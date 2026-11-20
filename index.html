@@ -10,7 +10,7 @@
 <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAABzUlEQVR42u3bsQ2AMAwAwczDhEzKOqGlCBIgBdnxRT+BfU0Kt20/pGHNCASH4BAcgkNwCA7BITgEh+CQ4BAcgkNwCA7BITgEh+AQHBIcgkNwCA7BITgEh+AQHIJDgkNwCA7BITgEh+AQHIJDcAgOCQ7BITgEh+AQHIJDcOi2/vjBwUQyJXAEkhHNBxyxZITyAQcccMABxwIy4viAAw444IADDjjggAMOOOCAAw444IBDcAgOwQEHHHDAAQcccMABBxxwwAEHHHAIDudocDDxeWFwOEeDg4z3a4MDDjjggKMOjh82BwcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAGHQ1Y4HLLCERPH1IHCkRjH7JnCAQcccMBRB8cam4MDDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAQxWDQ3AIDsEhOFQNR/eSfG7hgAMOOOCAAw444PCq4ZCvrOAQHIJDgkNwCA7BITgEh+AQHIJDcEhwCA7BITgEh+AQHIJDcAgOwSHBITgEh+AQHIJDcAgOwSE4pEsnhtvC417hqCsAAAAASUVORK5CYII=">
-<meta name="fee-console-build" content="4.10.26">
+<meta name="fee-console-build" content="4.10.27">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -193,7 +193,7 @@ section.pane{display:none} section.pane.on{display:block}
 .ratio-distribution-category{margin-top:12px}.ratio-distribution-category h3{font-size:12px;margin:0 0 6px}.ratio-distribution-account{padding:6px 0;border-top:1px solid var(--grid)}
 .ratio-distribution-account h4,.ratio-fund-holding{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:baseline;gap:10px;font-size:11px;line-height:1.6;margin:0;padding:4px 0}
 .ratio-distribution-account h4 span:first-child,.ratio-fund-holding-name{min-width:0;overflow-wrap:anywhere}.ratio-distribution-account h4 span:last-child,.ratio-fund-holding>span:last-child{white-space:nowrap;font-variant-numeric:tabular-nums}.ratio-distribution-account ul{list-style:none;margin:0;padding:0}
-.ratio-fund-holding>span:nth-child(2){white-space:nowrap;font-variant-numeric:tabular-nums}.ratio-fund-holding>.ratio-holding-yield,.ratio-fund-holding>.ratio-holding-lots{grid-column:1/-1}.ratio-holding-yield{display:flex;flex-wrap:wrap;gap:2px 12px;align-items:baseline;color:var(--ink-2);font-variant-numeric:tabular-nums;margin-top:-2px}.ratio-holding-yield-figure{display:inline-flex;gap:4px;align-items:baseline;white-space:nowrap}.ratio-holding-yield-figure strong{color:var(--ink-1);font-weight:600}.ratio-holding-yield-figure small{font-size:10px;color:var(--ink-2)}.ratio-holding-yield-since{white-space:nowrap}.ratio-holding-lots{margin-top:-2px}.ratio-holding-lots summary{cursor:pointer;color:var(--ink-2)}.ratio-holding-lots ul{margin:2px 0 4px;padding:0 0 0 10px;border-left:2px solid var(--grid)}.ratio-holding-lots li{display:flex;flex-wrap:wrap;gap:2px 12px;align-items:baseline;padding:2px 0}.ratio-holding-lot-amount{white-space:nowrap;font-variant-numeric:tabular-nums}
+.ratio-fund-holding>span:nth-child(2){white-space:nowrap;font-variant-numeric:tabular-nums}.ratio-fund-holding>.ratio-holding-yield,.ratio-fund-holding>.ratio-holding-lots{grid-column:1/-1}.ratio-holding-yield{display:flex;flex-wrap:wrap;gap:2px 12px;align-items:baseline;color:var(--ink-2);font-variant-numeric:tabular-nums;margin-top:-2px}.ratio-holding-yield-figure{display:inline-flex;gap:4px;align-items:baseline;white-space:nowrap}.ratio-holding-yield-figure strong{color:var(--ink-1);font-weight:600}.ratio-holding-yield-figure small{font-size:10px;color:var(--ink-2)}.ratio-holding-yield-since{white-space:nowrap}#p-ratio .ratio-holding-lots{margin-top:-4px}#p-ratio .ratio-holding-lots summary{cursor:pointer;color:var(--ink-2);min-height:28px}.ratio-holding-lots .ratio-holding-yield{flex:1 0 100%}.ratio-holding-lots .ratio-holding-yield-since{flex-basis:100%}.ratio-holding-lots ul{margin:2px 0 4px;padding:0 0 0 10px;border-left:2px solid var(--grid)}.ratio-holding-lots li{display:flex;flex-wrap:wrap;gap:2px 12px;align-items:baseline;padding:2px 0}.ratio-holding-lot-amount{white-space:nowrap;font-variant-numeric:tabular-nums}
 
 #p-ratio .ratio-six-allocation th:first-child,#p-ratio .ratio-six-allocation td:first-child{width:24%}
 #p-ratio .ratio-six-allocation th:nth-child(2),#p-ratio .ratio-six-allocation td:nth-child(2){width:39%}
@@ -1190,7 +1190,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.10.26";
+const UI_VERSION_LABEL=" · v4.10.27";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */

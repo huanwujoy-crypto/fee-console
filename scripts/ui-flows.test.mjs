@@ -778,3 +778,12 @@ test("the six-class hint is shortened on display only, and only when it is the k
   assert.equal(html.split("分类下方为当前占比／参考目标；市值下方括号为目标差额。").length, 3);
   assert.match(html, /<p class="ratio-overview-units">分类下方为当前占比／参考目标；市值下方括号为目标差额。<\/p>/);
 });
+
+// lots-layout:v1 — owner feedback 2026-11-20 on the real page: the "N 笔" row sat under a tall gap, and the
+// first-purchase date wrapped on some lots and not on others.
+test("a fund's lots open close under its name and every lot puts its first-purchase date on its own line", () => {
+  assert.match(html, /#p-ratio \.ratio-holding-lots\{margin-top:-4px\}#p-ratio \.ratio-holding-lots summary\{cursor:pointer;color:var\(--ink-2\);min-height:28px\}/);
+  assert.match(html, /\.ratio-holding-lots \.ratio-holding-yield\{flex:1 0 100%\}\.ratio-holding-lots \.ratio-holding-yield-since\{flex-basis:100%\}/);
+  // A fund held in one lot keeps its single flowing line.
+  assert.doesNotMatch(html, /\.ratio-fund-holding>\.ratio-holding-yield \.ratio-holding-yield-since\{flex-basis/);
+});
