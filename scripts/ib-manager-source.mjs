@@ -316,14 +316,18 @@ function validateCashDateNormalizationMany(p,source){
   for(const k of new Set([...Object.keys(b.positions),...Object.keys(c.positions)]))if(BigInt(c.positions[k]||'0')-BigInt(b.positions[k]||'0')!==(change.get(k)||0n))fail('CASH_RECONCILIATION','TRADE_PROOF_POSITION_DELTA');
   const corrected=structuredClone(b);corrected.cash[cashId]=opening;corrected.totalCents+=opening-b.cash[cashId];
   cashDateSnapshot(corrected);
-  if(p.anchorKind==='checkpoint'&&ibCanonical(corrected)!==ibCanonical(a))failPast('TRADE_PROOF_CHECKPOINT',a,corrected);
+  // Owner rule of 2026-11-14, as for any last published day: when the restored
+  // value differs from the published anchor by valuation only, the published
+  // snapshot stays and the later valuation is carried by the next day's return.
+  let restored=corrected;
+  if(p.anchorKind==='checkpoint'&&ibCanonical(corrected)!==ibCanonical(a)){if(!ibAnchorRepricedOnly(a,corrected))failPast('TRADE_PROOF_CHECKPOINT',a,corrected);restored=structuredClone(a);}
   const {proofId,...body}=p;if(hash(body)!==proofId)fail('CASH_RECONCILIATION','TRADE_PROOF_HASH');
   if(source){
     if(source.schema!=='fee-console.ib-manager-source.v3'||p.portfolioIdentityHash!==source.portfolioIdentityHash||b.d<=source.baselineAsOf||p.windowThrough>source.sourceAsOf||source.noncashProofs.some(x=>p.trades.some(t=>t.id===x.tradeId)))fail('CASH_RECONCILIATION','TRADE_PROOF_SOURCE');
-    for(const s of [a,corrected,c])if(ibMoneyCents(source.periodReturnsInput.points.find(x=>x.d===s.d)?.tot)!==s.totalCents)fail('CASH_RECONCILIATION','TRADE_PROOF_TOTAL');
-    for(const s of source.closingSnapshots)if(s.d===corrected.d&&ibCanonical(s)!==ibCanonical(corrected))fail('CASH_RECONCILIATION','TRADE_PROOF_CLOSING');
+    for(const s of [a,restored,c])if(ibMoneyCents(source.periodReturnsInput.points.find(x=>x.d===s.d)?.tot)!==s.totalCents)fail('CASH_RECONCILIATION','TRADE_PROOF_TOTAL');
+    for(const s of source.closingSnapshots)if(s.d===restored.d&&ibCanonical(s)!==ibCanonical(restored))fail('CASH_RECONCILIATION','TRADE_PROOF_CLOSING');
   }
-  return corrected;
+  return restored;
 }
 function validateCashDateNormalization(p,source){
   if(p?.schema===CASH_DATE_V2)return validateCashDateNormalizationMany(p,source);
@@ -339,14 +343,18 @@ function validateCashDateNormalization(p,source){
   for(const k of new Set([...Object.keys(b.positions),...Object.keys(c.positions)]))if(BigInt(c.positions[k]||'0')-BigInt(b.positions[k]||'0')!==(k===String(t.holdingId)?(t.kind==='BUY'?1n:-1n)*BigInt(t.quantityAtoms):0n))fail('CASH_RECONCILIATION','TRADE_PROOF_POSITION_DELTA');
   const corrected=structuredClone(b);corrected.cash[l.cashId]=opening;corrected.totalCents+=opening-b.cash[l.cashId];
   cashDateSnapshot(corrected);
-  if(p.anchorKind==='checkpoint'&&ibCanonical(corrected)!==ibCanonical(a))failPast('TRADE_PROOF_CHECKPOINT',a,corrected);
+  // Owner rule of 2026-11-14, as for any last published day: when the restored
+  // value differs from the published anchor by valuation only, the published
+  // snapshot stays and the later valuation is carried by the next day's return.
+  let restored=corrected;
+  if(p.anchorKind==='checkpoint'&&ibCanonical(corrected)!==ibCanonical(a)){if(!ibAnchorRepricedOnly(a,corrected))failPast('TRADE_PROOF_CHECKPOINT',a,corrected);restored=structuredClone(a);}
   const {proofId,...body}=p;if(hash(body)!==proofId)fail('CASH_RECONCILIATION','TRADE_PROOF_HASH');
   if(source){
     if(source.schema!=='fee-console.ib-manager-source.v3'||p.portfolioIdentityHash!==source.portfolioIdentityHash||b.d<=source.baselineAsOf||p.windowThrough>source.sourceAsOf||source.noncashProofs.some(x=>x.tradeId===t.id))fail('CASH_RECONCILIATION','TRADE_PROOF_SOURCE');
-    for(const s of [a,corrected,c])if(ibMoneyCents(source.periodReturnsInput.points.find(x=>x.d===s.d)?.tot)!==s.totalCents)fail('CASH_RECONCILIATION','TRADE_PROOF_TOTAL');
-    for(const s of source.closingSnapshots)if(s.d===corrected.d&&ibCanonical(s)!==ibCanonical(corrected))fail('CASH_RECONCILIATION','TRADE_PROOF_CLOSING');
+    for(const s of [a,restored,c])if(ibMoneyCents(source.periodReturnsInput.points.find(x=>x.d===s.d)?.tot)!==s.totalCents)fail('CASH_RECONCILIATION','TRADE_PROOF_TOTAL');
+    for(const s of source.closingSnapshots)if(s.d===restored.d&&ibCanonical(s)!==ibCanonical(restored))fail('CASH_RECONCILIATION','TRADE_PROOF_CLOSING');
   }
-  return corrected;
+  return restored;
 }
 function normalizeEarlyTradeCash({reports,trades,ledger,rawCashRows,prior,baseline,coverage,portfolioId}){
   const proofs=structuredClone(prior?.cashDateNormalizations||[]),oldAnchor=prior?.closingSnapshots?.find(s=>s.d===reports[0].d);

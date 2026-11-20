@@ -1639,7 +1639,44 @@ test('a later trade may reprice the raw checkpoint anchor only when its canonica
   assert.deepEqual(next.cashDateNormalizations[0],first.cashDateNormalizations[0]);assert.equal(next.cashDateNormalizations[1].anchorKind,'checkpoint');
   const same=await(await cashDateFixture({events,target:'2026-11-03',checkpoint:next})).run();assert.deepEqual(same.cashDateNormalizations,next.cashDateNormalizations);
   const later=await(await cashDateFixture({events,target:'2026-11-04',checkpoint:next})).run();assert.deepEqual(later.cashDateNormalizations,next.cashDateNormalizations);assert.deepEqual(later.periodReturnsInput.points.slice(0,-1),next.periodReturnsInput.points);
-  await assert.rejects((await cashDateFixture({events,target:'2026-11-03',checkpoint:first,mutate:b=>{if(b.report?.end_date==='2026-11-02'){b.report.holdings[0].value++;b.report.value++;}}})).run(),/PAST_POINT_CHANGED/);
+  // Owner rule of 2026-11-14 also holds on a day followed by a trade: the published day was only revalued (same
+  // quantity, same cash once the early trade cash is restored), so its published snapshot and point stay.
+  const revalue=b=>{if(b.report?.end_date==='2026-11-02'){b.report.holdings[0].value++;b.report.value++;}};
+  const revalued=await(await cashDateFixture({events,target:'2026-11-03',checkpoint:first,mutate:revalue})).run();
+  assert.deepEqual(revalued.closingSnapshots[0],first.closingSnapshots[1]);assert.deepEqual(revalued.periodReturnsInput.points.slice(0,-1),first.periodReturnsInput.points);
+  assert.equal(revalued.cashDateNormalizations.length,2);assert.equal(revalued.cashDateNormalizations[1].rawBefore.totalCents,first.closingSnapshots[1].totalCents-1000+100);
+  assert.deepEqual(validateIbManagerReportInput(revalued,(await cashDateFixture()).expected),revalued);
+  // Anything but valuation is still a changed past point: a quantity, or cash beyond the trade's own.
+  for(const mutate of [b=>{if(b.report?.end_date==='2026-11-02')b.report.holdings[0].quantity+=1;},
+    b=>{if(b.report?.end_date==='2026-11-02'){b.report.cash_accounts[0].value+=1;b.report.value+=1;}if(b.cash_accounts&&b.cash_accounts[0]?.date==='2026-11-02')b.cash_accounts[0].balance=b.cash_accounts[0].balance_in_portfolio_currency+=1;}])
+    await assert.rejects((await cashDateFixture({events,target:'2026-11-03',checkpoint:first,mutate})).run(),/IB_SOURCE_/);
+  // The same with several trades on the following day.
+  const many=[...events,{d:'2026-11-03',kind:'BUY'},{d:'2026-11-03',kind:'SELL'}];
+  const manyRevalued=await(await cashDateFixture({events:many,target:'2026-11-03',checkpoint:first,mutate:revalue})).run();
+  assert.deepEqual(manyRevalued.closingSnapshots[0],first.closingSnapshots[1]);assert.equal(manyRevalued.cashDateNormalizations[1].schema,'fee-console.ib-cash-date-normalization.v2');
+  await assert.rejects((await cashDateFixture({events:many,target:'2026-11-03',checkpoint:first,mutate:b=>{if(b.report?.end_date==='2026-11-02')b.report.holdings[0].quantity+=1;}})).run(),/IB_SOURCE_/);
+});
+test('a changed past point names its fixed check and changed categories in the publication diagnostic',async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ib-past-site-synthetic-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  const environ={IB_MANAGER_READ_ENABLED:'true',IB_MANAGER_BASELINE_SHA256:lock()},data=feeData();
+  const events=[{d:'2026-11-02',kind:'BUY'}],marked=b=>{if(b.report)b.report.holdings[0].instrument={id:9,code:'SYN',market_code:'NYSE',currency_code:'USD'};};
+  const first=await(await cashDateFixture({mutate:marked})).run();
+  const real=await cashDateFixture({events,target:'2026-11-03',checkpoint:first,mutate:b=>{marked(b);if(b.report?.end_date==='2026-11-02'){b.report.holdings[0].value+=7.31;b.report.value+=7.31;b.report.holdings[0].instrument.code='SYN2';}}}).then(x=>x.run()).then(()=>assert.fail('expected a refusal'),e=>e);
+  assert.equal(real.code,'PAST_POINT_CHANGED');
+  const run=async error=>{
+    const prep=await prepareIbManagerReport({payload:data,targetDate:baseline.asOf,outputDir:dir,environ,reader:{async readStable(){throw error;}}});
+    const pending=(await loadIbManagerReport(prep.file,{environ})).apply(data,baseline.asOf);fs.unlinkSync(prep.file);let stderr='';const write=process.stderr.write;
+    try{process.stderr.write=chunk=>{stderr+=String(chunk);return true;};await assert.rejects(assertIbManagerPublication(pending,baseline.asOf,environ),/IB_INCOMPLETE/);}finally{process.stderr.write=write;}
+    return safeProducerFailureSummary(stderr+'FEE_CLOUD_IB_INCOMPLETE\n').diagnostic;
+  };
+  const named=await run(real);assert.equal(named.sourceReason,'IB_SOURCE_PAST_POINT_CHANGED');assert.equal(named.pastPointSite,'ANCHOR_TOTAL');assert.deepEqual(named.pastPointFields,['totalCents','marks','markValue','markIdentity']);
+  const plain=await run(new IbManagerSourceError('PAST_POINT_CHANGED'));assert.equal(Object.hasOwn(plain,'pastPointSite'),false);
+  const other=await run(new IbManagerSourceError('UNSTABLE'));assert.equal(Object.hasOwn(other,'pastPointSite'),false);
+  const base={schema:'fee-console.ib-publication-diagnostic.v1',code:'FEE_CLOUD_IB_INCOMPLETE',predicate:'SOURCE_CUTOFF',sourceReason:'IB_SOURCE_PAST_POINT_CHANGED',returnReason:'NOT_CHECKED',drawdownReason:'NOT_CHECKED'};
+  assert.equal(validateIbPublicationDiagnostic({...base,pastPointSite:'TRADE_PROOF_CHECKPOINT',pastPointFields:['totalCents','marks','markValue']}),true);
+  for(const bad of [{...base,pastPointSite:'TRADE_PROOF_CHECKPOINT'},{...base,pastPointFields:[]},{...base,pastPointSite:'PRIVATE_CANARY',pastPointFields:[]},{...base,pastPointSite:'ANCHOR_TOTAL',pastPointFields:['456.78']},
+    {...base,pastPointSite:'ANCHOR_TOTAL',pastPointFields:['marks','marks']},{...base,pastPointSite:'ANCHOR_TOTAL',pastPointFields:'marks'},{...base,sourceReason:'IB_SOURCE_UNSTABLE',pastPointSite:'ANCHOR_TOTAL',pastPointFields:[]},
+    {...base,pastPointSite:'ANCHOR_TOTAL',pastPointFields:[],cashSite:'DAILY_MOVEMENT',cashDateRole:'TARGET'}])assert.equal(validateIbPublicationDiagnostic(bad),false);
 });
 test('cash-date normalization rejects absent anchors, extra events, nonmatching amounts and all unrelated anomalies',async()=>{
   const changes=[
