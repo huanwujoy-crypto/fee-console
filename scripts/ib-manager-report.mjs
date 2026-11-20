@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {types} from 'node:util';
-import {SharesightIbManagerReader,ibSourceFailureCode,IB_BASELINE_WINDOW,validateIbBootstrapCoverage,validateIbManagerReportInput} from './ib-manager-source.mjs';
+import {SharesightIbManagerReader,ibSourceFailureCode,ibSourceCashSite,ibSourceCashDateRole,IB_CASH_RECONCILIATION_SITES,IB_CASH_DATE_ROLES,IB_BASELINE_WINDOW,validateIbBootstrapCoverage,validateIbManagerReportInput} from './ib-manager-source.mjs';
 import {buildIbManagerReportBundle,validateIbManagerReportState,validateIbOwnerBaselineState,createIbManagerReturnConsumer,createIbManagerDrawdownConsumer} from './ib-manager-return.mjs';
 import {validateFeeCalculationReceipt} from './fee-receipt-core.mjs';
 import {isCalendarDate,inclusiveDays} from './fee-engine.mjs';
@@ -35,8 +35,13 @@ const IB_SOURCE_REASONS=new Set(['NONE','UNKNOWN',...`CONFIG BASELINE_LOCK BASEL
 const IB_RETURN_REASONS=new Set(['NOT_CHECKED','VERIFIED','UNKNOWN','source-unavailable',
   'missing','invalid','fee-pending','period-mismatch']);
 const IB_DRAWDOWN_REASONS=new Set([...IB_RETURN_REASONS,'missing-daily-path','invalid-daily-path']);
+// A cash-reconciliation refusal may also name the reader's fixed check and date
+// role: two closed enums, never an amount, account, date or record id.
+let lastCashRefusal=null;
 export function validateIbPublicationDiagnostic(value){
-  return exact(value,['schema','code','predicate','sourceReason','returnReason','drawdownReason'])
+  const cash=value!==null&&typeof value==='object'&&Object.hasOwn(value,'cashSite');
+  return exact(value,['schema','code','predicate','sourceReason','returnReason','drawdownReason',...(cash?['cashSite','cashDateRole']:[])])
+    &&(!cash||value.sourceReason==='IB_SOURCE_CASH_RECONCILIATION'&&IB_CASH_RECONCILIATION_SITES.includes(value.cashSite)&&IB_CASH_DATE_ROLES.includes(value.cashDateRole))
     &&value.schema==='fee-console.ib-publication-diagnostic.v1'
     &&value.code==='FEE_CLOUD_IB_INCOMPLETE'&&IB_PREDICATES.has(value.predicate)
     &&IB_SOURCE_REASONS.has(value.sourceReason)&&IB_RETURN_REASONS.has(value.returnReason)
@@ -73,6 +78,8 @@ export async function assertIbManagerPublication(payload,targetDate,environ=proc
         predicate:IB_PREDICATES.has(predicate)?predicate:'VALIDATION_EXCEPTION',
         sourceReason:status?.state==='pending'?(IB_SOURCE_REASONS.has(status.reasonCode)&&status.reasonCode.startsWith('IB_SOURCE_')?status.reasonCode:'UNKNOWN'):'NONE',
         returnReason:ibViewReason(ret,IB_RETURN_REASONS),drawdownReason:ibViewReason(dd,IB_DRAWDOWN_REASONS)};
+      if(diagnostic.sourceReason==='IB_SOURCE_CASH_RECONCILIATION'&&lastCashRefusal&&lastCashRefusal.targetDate===targetDate&&lastCashRefusal.cashSite!=='UNCLASSIFIED')
+        Object.assign(diagnostic,{cashSite:lastCashRefusal.cashSite,cashDateRole:lastCashRefusal.cashDateRole});
       if(validateIbPublicationDiagnostic(diagnostic))process.stderr.write(IB_PUBLICATION_DIAGNOSTIC_PREFIX+JSON.stringify(diagnostic)+'\n');
     }catch{/* keep the original publication refusal even when stderr is unavailable */}
     throw Error('FEE_CLOUD_IB_INCOMPLETE');
@@ -146,6 +153,8 @@ export async function prepareIbManagerReportInput({payload,targetDate,environ,re
   }catch(error){
     const fixed=['IB_SOURCE_BASELINE_LOCK','IB_SOURCE_STATE_INVALID','IB_SOURCE_COVERAGE_UNVERIFIED'];
     request={state:'pending',reasonCode:fixed.includes(error?.message)?error.message:ibSourceFailureCode(error)};
+    // Kept in this process only, for the amount-free publication diagnostic.
+    lastCashRefusal=request.reasonCode==='IB_SOURCE_CASH_RECONCILIATION'?{targetDate,cashSite:ibSourceCashSite(error),cashDateRole:ibSourceCashDateRole(error)}:null;
   }
   return {schema:'fee-console.ib-manager-report-request.v1',targetDate,...request};
 }
