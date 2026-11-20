@@ -948,16 +948,26 @@ const calendarTerms = {
 test("the calendar orders deadlines, builds the ladder in whole cents and names what it could not place", async () => {
   const { c } = await calendarBox(), model = c.evergreenCalendarModel(calendarRows, calendarTerms, "2026-11-20");
   assert.deepEqual(plain(model.deadlines.map(d => [d.name, d.notice, d.days, d.dealing, d.cash, d.status, d.lots])), [
-    ["B", "2026-12-31", 41, "2027-03-31", "2027-05-15", "free", 1], ["A <x>", "2027-02-14", 86, "2027-03-31", "2027-04-30", "mixed", 3], ["C", "2027-10-21", 335, "2027-10-31", "2027-11-20", "locked", 1]]);
-  assert.deepEqual(plain(model.ladder), [{ quarter: "2027 Q2", freeCents: 6000 + 9900, feeCents: 4000 }, { quarter: "2027 Q4", freeCents: 9800, feeCents: 0 }]);
+    ["B", "2026-12-31", 41, "2027-03-31", "2027-05-15", "free", 1], ["A <x>", "2027-02-14", 86, "2027-03-31", "2027-04-30", "free", 3], ["C", "2027-10-21", 335, "2027-10-31", "2027-11-20", "locked", 1]]);
+  assert.deepEqual(plain(model.ladder), [{ quarter: "2027 Q2", cents: 10000 + 9900 }, { quarter: "2027 Q4", cents: 9800 }]);
   assert.equal(model.peak, 19900); assert.equal(model.missing, 1); assert.equal(model.unknownCents, 9600 + 5000); assert.equal(model.lockedFunds, 1); assert.equal(model.next.name, "B");
+  assert.deepEqual(plain(model.missingNames), ["D"]); assert.deepEqual(plain(model.undatedNames), ["E"]);
   // Every printed cent is either in the ladder or named as not placed.
-  assert.equal(model.ladder.reduce((n, b) => n + b.freeCents + b.feeCents, 0) + model.unknownCents, 10000 + 9900 + 9800 + 9600 + 5000);
+  assert.equal(model.ladder.reduce((n, b) => n + b.cents, 0) + model.unknownCents, 10000 + 9900 + 9800 + 9600 + 5000);
   const view = c.evergreenCalendarView(model);
   assert.match(view, /最近的通知截止日：<strong>2026-12-31<\/strong>（还有 41 天） · 1 只未录入条款/);
   assert.ok(view.includes("<strong>A &lt;x&gt;</strong>")); assert.equal(view.includes("<x>"), false);
-  assert.ok(view.includes("通知截止 <b>2027-02-14</b> → 赎回日 2027-03-31 → 约 2027-04-30 到账")); assert.ok(view.includes("各笔不同 · 3 笔")); assert.ok(view.includes("锁定中"));
-  assert.ok(view.includes("USD 199<small>其中 USD 40 有提前赎回费</small>")); assert.ok(view.includes("另有约 USD 146 因未录入条款或缺少买入日期，未排入上表。"));
+  assert.ok(view.includes("通知截止 <b>2027-02-14</b> → 赎回日 2027-03-31 → 约 2027-04-30 到账")); assert.ok(view.includes("可赎回 · 3 笔")); assert.ok(view.includes("锁定中"));
+  assert.ok(view.includes('<span class="evergreen-ladder-amount">USD 199</span>')); assert.ok(view.includes("另有约 USD 146 未排入上表。未录入条款：D；缺少买入日期：E。"));
+  // calendar-fold:v1 (owner request 2026-11-20): no early-fee wording or second bar in the calendar, and only
+  // deadlines within two weeks are on show; the rest sit in one folded list that remembers being opened.
+  assert.doesNotMatch(view, /提前赎回费|evergreen-fee|各笔不同/);
+  assert.ok(view.includes('<p class="evergreen-meta">两周内没有需要提交的赎回通知。</p><details class="evergreen-later"><summary>全部 3 只基金的截止日</summary>'));
+  assert.ok(c.evergreenCalendarView(model, true).includes('<details class="evergreen-later" open>'));
+  const near = c.evergreenCalendarView(c.evergreenCalendarModel(calendarRows, calendarTerms, "2026-12-20"));
+  assert.match(near, /<ul class="evergreen-deadlines"><li data-days="11" class="evergreen-soon">.*?<strong>B<\/strong>.*?<\/ul><details class="evergreen-later"><summary>其余 2 只基金的截止日<\/summary>/);
+  assert.equal(c.evergreenCalendarView(c.evergreenCalendarModel([calendarRows[1]], calendarTerms, "2026-12-20")).includes("evergreen-later"), false);
+  assert.ok(html.includes("desk.innerHTML=evergreenCalendarView(calendar,_evergreenLaterOpen)+")); assert.ok(html.includes("else if(event.target?.classList?.contains('evergreen-later'))_evergreenLaterOpen=event.target.open;"));
   assert.ok(view.includes("假设赎回申请全额获批")); assert.ok(view.includes("实际日期以平台通知为准"));
   assert.equal((view.match(/class="evergreen-soon"/g) || []).length, 0);
   assert.equal((c.evergreenCalendarView(c.evergreenCalendarModel(calendarRows, calendarTerms, "2026-12-10")).match(/class="evergreen-soon"/g) || []).length, 1);
