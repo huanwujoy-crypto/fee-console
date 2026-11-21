@@ -843,11 +843,11 @@ test("the evergreen page has its own tab on the verified allocation pane and is 
 test("evergreen labels are cleaned, counted and shown without touching any amount", async () => {
   const { t } = await evergreenBox();
   assert.deepEqual(JSON.parse(JSON.stringify(t.evergreenLabelClean({ state: "sell-now", note: "x".repeat(200), reviewBy: "soon", updatedAt: "2026-11-20", extra: 1 }))),
-    { state: "", note: "x".repeat(120), reviewBy: "", updatedAt: "2026-11-20" });
-  assert.deepEqual(JSON.parse(JSON.stringify(t.evergreenLabelClean(null))), { state: "", note: "", reviewBy: "", updatedAt: "" });
+    { state: "", note: "x".repeat(120), reviewBy: "", updatedAt: "2026-11-20", decided: "" });
+  assert.deepEqual(JSON.parse(JSON.stringify(t.evergreenLabelClean(null))), { state: "", note: "", reviewBy: "", updatedAt: "", decided: "" });
   const labels = { "P|Fund <A>": { state: "watch", note: "wait <b>", reviewBy: "2026-11-01", updatedAt: "2026-10-01" }, "Q|Fund C": { state: "hold", reviewBy: "2026-12-31" } };
   const model = t.evergreenDeskModel(evergreenRows, labels, "2026-11-20");
-  assert.deepEqual(JSON.parse(JSON.stringify(model.counts)), { all: 3, none: 1, hold: 1, watch: 1, prepare: 0, redeeming: 0 });
+  assert.deepEqual(JSON.parse(JSON.stringify(model.counts)), { all: 3, none: 1, pending: 0, hold: 1, watch: 1, prepare: 0, redeeming: 0 });
   assert.equal(model.platforms, 2); assert.equal(model.overdue, 1);
   assert.deepEqual(model.funds.map(x => [x.stateName, x.overdue]), [["观察", true], ["未标记", false], ["持有", false]]);
   const view = t.evergreenDeskView(model, "all", new Set(["P|Fund B"]));
@@ -871,7 +871,7 @@ test("an evergreen label is saved on this device only, dated, and survives a dam
   const { t, memory } = await evergreenBox();
   assert.equal(t.evergreenLabelSet("P|Fund B", { state: "prepare" }), true);
   assert.equal(t.evergreenLabelSet("P|Fund B", { note: "see Q4 report" }), true);
-  assert.deepEqual(JSON.parse(memory.get("feeConsole.evergreen.labels.v1")), { "P|Fund B": { state: "prepare", note: "see Q4 report", reviewBy: "", updatedAt: "2026-11-20" } });
+  assert.deepEqual(JSON.parse(memory.get("feeConsole.evergreen.labels.v1")), { "P|Fund B": { state: "prepare", note: "see Q4 report", reviewBy: "", updatedAt: "2026-11-20", decided: "" } });
   assert.equal(memory.size, 1);
   const damaged = await evergreenBox(); damaged.memory.set("feeConsole.evergreen.labels.v1", "{not json");
   assert.deepEqual(JSON.parse(JSON.stringify(damaged.t.evergreenLabels())), {});
@@ -889,7 +889,7 @@ async function calendarBox(saved = {}) {
   const memory = new Map(Object.entries(saved).map(([k, v]) => [k, JSON.stringify(v)]));
   const box = { store: { getItem: k => memory.get(k) ?? null, setItem: (k, v) => { memory.set(k, v); }, removeItem: k => { memory.delete(k); } }, todayStr: () => "2026-11-20", URL };
   vm.createContext(box);
-  vm.runInContext(profileBlock + "\n" + calendarBlock + "\n" + evergreenBlock + ";globalThis.c={evergreenProfileClean,evergreenReadingClean,evergreenProfiles,evergreenReading,evergreenProfileView,evergreenReadingView,evergreenUrl,evergreenPackApply,evergreenTermsClean,evergreenTerms,evergreenAddMonths,evergreenAddDays,evergreenDaysBetween,evergreenDealingDay,evergreenLotPlan,evergreenCents,evergreenUsd,evergreenQuarter,evergreenCalendarModel,evergreenCalendarView,evergreenTermsView,evergreenPackBuild,evergreenPackRead,evergreenPackView};", box);
+  vm.runInContext(profileBlock + "\n" + calendarBlock + "\n" + evergreenBlock + ";globalThis.c={evergreenProfileClean,evergreenReadingClean,evergreenProfiles,evergreenReading,evergreenProfileView,evergreenReadingView,evergreenUrl,evergreenPackApply,evergreenTermsClean,evergreenTerms,evergreenAddMonths,evergreenAddDays,evergreenDaysBetween,evergreenDealingDay,evergreenLotPlan,evergreenCents,evergreenUsd,evergreenQuarter,evergreenWeek,evergreenPending,evergreenAssessmentView,evergreenTermsView,evergreenPackBuild,evergreenPackRead,evergreenPackView};", box);
   return { c: box.c, memory };
 }
 const plain = v => JSON.parse(JSON.stringify(v));
@@ -945,35 +945,43 @@ const calendarTerms = {
   "P|C": { frequency: "monthly", noticeDays: 10, lockupMonths: 12, settlementDays: 20 },
   "P|E": { frequency: "quarterly", noticeDays: 45 },
 };
-test("the calendar orders deadlines, builds the ladder in whole cents and names what it could not place", async () => {
-  const { c } = await calendarBox(), model = c.evergreenCalendarModel(calendarRows, calendarTerms, "2026-11-20");
-  assert.deepEqual(plain(model.deadlines.map(d => [d.name, d.notice, d.days, d.dealing, d.cash, d.status, d.lots])), [
-    ["B", "2026-12-31", 41, "2027-03-31", "2027-05-15", "free", 1], ["A <x>", "2027-02-14", 86, "2027-03-31", "2027-04-30", "free", 3], ["C", "2027-10-21", 335, "2027-10-31", "2027-11-20", "locked", 1]]);
-  assert.deepEqual(plain(model.ladder), [{ quarter: "2027 Q2", cents: 10000 + 9900 }, { quarter: "2027 Q4", cents: 9800 }]);
-  assert.equal(model.peak, 19900); assert.equal(model.missing, 1); assert.equal(model.unknownCents, 9600 + 5000); assert.equal(model.lockedFunds, 1); assert.equal(model.next.name, "B");
-  assert.deepEqual(plain(model.missingNames), ["D"]); assert.deepEqual(plain(model.undatedNames), ["E"]);
-  // Every printed cent is either in the ladder or named as not placed.
-  assert.equal(model.ladder.reduce((n, b) => n + b.cents, 0) + model.unknownCents, 10000 + 9900 + 9800 + 9600 + 5000);
-  const view = c.evergreenCalendarView(model);
-  assert.match(view, /最近的通知截止日：<strong>2026-12-31<\/strong>（还有 41 天） · 1 只未录入条款/);
-  assert.ok(view.includes("<strong>A &lt;x&gt;</strong>")); assert.equal(view.includes("<x>"), false);
-  assert.ok(view.includes("通知截止 <b>2027-02-14</b> → 赎回日 2027-03-31 → 约 2027-04-30 到账")); assert.ok(view.includes("可赎回 · 3 笔")); assert.ok(view.includes("锁定中"));
-  assert.ok(view.includes('<span class="evergreen-ladder-amount">USD 199</span>')); assert.ok(view.includes("另有约 USD 146 未排入上表。未录入条款：D；缺少买入日期：E。"));
-  // calendar-fold:v1 (owner request 2026-11-20): no early-fee wording or second bar in the calendar, and only
-  // deadlines within two weeks are on show; the rest sit in one folded list that remembers being opened.
-  assert.doesNotMatch(view, /提前赎回费|evergreen-fee|各笔不同/);
-  assert.ok(view.includes('<p class="evergreen-meta">两周内没有需要提交的赎回通知。</p><details class="evergreen-later"><summary>全部 3 只基金的截止日</summary>'));
-  assert.ok(c.evergreenCalendarView(model, true).includes('<details class="evergreen-later" open>'));
-  const near = c.evergreenCalendarView(c.evergreenCalendarModel(calendarRows, calendarTerms, "2026-12-20"));
-  assert.match(near, /<ul class="evergreen-deadlines"><li data-days="11" class="evergreen-soon">.*?<strong>B<\/strong>.*?<\/ul><details class="evergreen-later"><summary>其余 2 只基金的截止日<\/summary>/);
-  assert.equal(c.evergreenCalendarView(c.evergreenCalendarModel([calendarRows[1]], calendarTerms, "2026-12-20")).includes("evergreen-later"), false);
-  assert.ok(html.includes("desk.innerHTML=evergreenCalendarView(calendar,_evergreenLaterOpen)+")); assert.ok(html.includes("else if(event.target?.classList?.contains('evergreen-later'))_evergreenLaterOpen=event.target.open;"));
-  assert.ok(view.includes("假设赎回申请全额获批")); assert.ok(view.includes("实际日期以平台通知为准"));
-  assert.equal((view.match(/class="evergreen-soon"/g) || []).length, 0);
-  assert.equal((c.evergreenCalendarView(c.evergreenCalendarModel(calendarRows, calendarTerms, "2026-12-10")).match(/class="evergreen-soon"/g) || []).length, 1);
-  // No terms at all: the card says how to add them. No funds: nothing is drawn.
-  assert.ok(c.evergreenCalendarView(c.evergreenCalendarModel(calendarRows, {}, "2026-11-20")).includes("还没有任何基金录入条款"));
-  assert.equal(c.evergreenCalendarView(c.evergreenCalendarModel([], {}, "2026-11-20")), "");
+// pending-week:v1 (owner request 2026-11-21): the calendar card is gone; a fund is pending when a lot can be filed
+// this week without an early-redemption fee, until the owner chooses a status for that deadline.
+test("the week being planned runs Monday to Sunday and becomes next week at the weekend", async () => {
+  const { c } = await calendarBox();
+  assert.deepEqual(plain(c.evergreenWeek("2026-11-18")), { monday: "2026-11-16", friday: "2026-11-20", from: "2026-11-18", to: "2026-11-22" });
+  assert.deepEqual(plain(c.evergreenWeek("2026-11-16")), { monday: "2026-11-16", friday: "2026-11-20", from: "2026-11-16", to: "2026-11-22" });
+  assert.deepEqual(plain(c.evergreenWeek("2026-11-21")), { monday: "2026-11-23", friday: "2026-11-27", from: "2026-11-23", to: "2026-11-29" });
+  assert.deepEqual(plain(c.evergreenWeek("2026-11-22")), { monday: "2026-11-23", friday: "2026-11-27", from: "2026-11-23", to: "2026-11-29" });
+  assert.equal(c.evergreenWeek("soon"), null);
+});
+test("a fund is pending only for lots that can be filed this week without an early-redemption fee", async () => {
+  const { c } = await calendarBox();
+  // B: quarterly, 90 days' notice, no fee period. Its deadline for 2027-03-31 is 2026-12-31, a Thursday.
+  assert.deepEqual(plain(c.evergreenPending(calendarRows[1], calendarTerms["P|B"], "2026-12-28")), { notice: "2026-12-31", dealing: "2027-03-31", cash: "2027-05-15", lots: 1, amounts: ["USD 99.00"], skipped: 0 });
+  assert.equal(c.evergreenPending(calendarRows[1], calendarTerms["P|B"], "2026-12-20"), null, "the week before, nothing is due");
+  assert.deepEqual(plain(c.evergreenPending(calendarRows[1], calendarTerms["P|B"], "2026-12-26")).notice, "2026-12-31", "on Saturday the coming week counts");
+  // A: 45 days' notice for 2027-03-31 falls on 2027-02-14, a Sunday of the week of 02-08. Only the lot past its
+  // 24-month fee period counts; the two newer lots are left out and counted as skipped.
+  assert.deepEqual(plain(c.evergreenPending(calendarRows[0], calendarTerms["P|A"], "2027-02-09")), { notice: "2027-02-14", dealing: "2027-03-31", cash: "2027-04-30", lots: 1, amounts: ["USD 60.00"], skipped: 2 });
+  // A fund whose every lot is inside the fee period, one with no terms and one with no purchase date are never pending.
+  assert.equal(c.evergreenPending({ lotList: [{ amount: "USD 30.00", date: "2026-05-27" }] }, calendarTerms["P|A"], "2027-02-09"), null);
+  assert.equal(c.evergreenPending(calendarRows[3], undefined, "2026-12-28"), null); assert.equal(c.evergreenPending(calendarRows[4], calendarTerms["P|E"], "2027-02-09"), null);
+  // The desk lists pending funds first, counts them, and drops one once a status is chosen for that deadline.
+  const { t: d } = await evergreenBox(), week = plain(c.evergreenWeek("2026-12-28")), due = { "P|B": plain(c.evergreenPending(calendarRows[1], calendarTerms["P|B"], "2026-12-28")) };
+  const model = d.evergreenDeskModel(calendarRows, {}, "2026-12-28", week, due);
+  assert.equal(model.funds[0].key, "P|B"); assert.equal(model.counts.pending, 1);
+  const view = d.evergreenDeskView(model, "pending", new Set(["P|B"]));
+  for (const text of ['data-evergreen-filter="pending" aria-pressed="true">待处理 1</button>', '<span class="evergreen-pill" data-state="pending">待处理</span>', 'data-evergreen-due="2026-12-31"', "12-28 至 01-01 这一周：<strong>1 只待处理</strong>",
+    "<strong>本周可申请赎回</strong><p>通知截止 <b>2026-12-31</b> → 赎回日 2027-03-31 → 约 2027-05-15 到账</p><p>1 笔：USD 99.00</p>", "选定任一状态后，这只基金本期不再列为待处理"]) assert.ok(view.includes(text), text);
+  assert.equal((view.match(/class="evergreen-fund"/g) || []).length, 1);
+  const decided = d.evergreenDeskModel(calendarRows, { "P|B": { state: "hold", decided: "2026-12-31" } }, "2026-12-28", week, due);
+  assert.equal(decided.counts.pending, 0); assert.ok(d.evergreenDeskView(decided, "all", new Set()).includes("这一周：没有待处理的基金"));
+  assert.equal(d.evergreenDeskModel(calendarRows, { "P|B": { state: "hold", decided: "2026-09-30" } }, "2026-12-28", week, due).counts.pending, 1, "a choice made for an earlier deadline does not cover this one");
+  // Choosing a status records the deadline it answers; clearing it brings the fund back.
+  assert.ok(html.includes("...(pressed?{decided:''}:dueFor?{decided:dueFor}:{})"));
+  assert.doesNotMatch(html, /evergreenCalendarModel|evergreenCalendarView|<h2>赎回日历<\/h2>|_evergreenLaterOpen/);
+  assert.ok(html.includes("for(const row of rows){const p=evergreenPending(row,terms[row.key],today);if(p)due[row.key]=p;}"));
 });
 test("a fund's sheet shows its terms, each lot's status and the source, escaped", async () => {
   const { c } = await calendarBox(), view = c.evergreenTermsView(calendarRows[0], calendarTerms["P|A"], "2026-11-20");
@@ -981,22 +989,22 @@ test("a fund's sheet shows its terms, each lot's status and the source, escaped"
     "<dt>到账</dt><dd>赎回日后约 30 天</dd>", "<dt>管理费</dt><dd>1.25%</dd>", "<dt>业绩报酬</dt><dd>12.5%（门槛 5%）</dd>", "出处：Prospectus &lt;b&gt; · 截至 2026-05-20",
     '<strong data-status="free">可赎回</strong>', '<strong data-status="fee">可赎回，2028-05-27 前有提前赎回费</strong>', "免费用最早 2028-06-30（通知截止 2028-05-16）", "USD 60.00 · 买入 2024-08-31"])
     assert.ok(view.includes(text), text);
-  assert.equal(view.includes("<dt>锁定期</dt>"), false, "a term that was not given is not shown as a value");
+  assert.ok(view.includes("<dt>锁定期</dt><dd>-</dd>"), "field-frame:v1: a term that was not given is a dash"); assert.ok(view.includes("<dt>服务费</dt><dd>-</dd>"));
   assert.equal(view.includes("<b>"), false);
   assert.ok(c.evergreenTermsView(calendarRows[2], calendarTerms["P|C"], "2026-11-20").includes('<strong data-status="locked">锁定至 2027-10-28</strong>'));
   assert.ok(c.evergreenTermsView(calendarRows[4], calendarTerms["P|E"], "2026-11-20").includes("缺少买入日期"));
-  assert.equal(c.evergreenTermsView(calendarRows[3], undefined, "2026-11-20"), "");
+  { const none = c.evergreenTermsView(calendarRows[3], undefined, "2026-11-20"); assert.equal((none.match(/<dd>-<\/dd>/g) || []).length, 10); assert.ok(none.includes("条款不足，无法推算")); }
 });
 test("the terms pack carries names, dates, terms and labels but no amount, and is read back strictly", async () => {
   const { c } = await calendarBox();
   const pack = c.evergreenPackBuild(calendarRows, calendarTerms, { "P|B": { state: "watch", note: "n", reviewBy: "2027-01-01", updatedAt: "2026-11-20" } }, "2026-11-20"), text = JSON.stringify(pack);
   assert.equal(pack.schema, "fee-console.evergreen-pack.v1"); assert.equal(pack.funds.length, 5);
-  assert.deepEqual(plain(pack.funds[0]), { key: "P|A", name: "A <x>", platform: "P", strategy: "S", purchases: ["2024-08-31", "2026-05-27", "2026-10-01"], terms: calendarTerms["P|A"], label: { state: "", note: "", reviewBy: "", updatedAt: "" } });
+  assert.deepEqual(plain(pack.funds[0]), { key: "P|A", name: "A <x>", platform: "P", strategy: "S", purchases: ["2024-08-31", "2026-05-27", "2026-10-01"], terms: calendarTerms["P|A"], label: { state: "", note: "", reviewBy: "", updatedAt: "", decided: "" } });
   assert.deepEqual(plain(pack.funds[3].terms), {}); assert.deepEqual(plain(pack.funds[4].purchases), []);
   assert.equal(/USD|\d+\.\d{2}"/.test(JSON.stringify(pack.funds.map(x => ({ ...x, terms: {} })))), false, "no printed amount leaves in the pack");
   const read = c.evergreenPackRead(text);
   assert.equal(read.ok, true); assert.equal(read.funds, 5); assert.deepEqual(plain(read.terms), calendarTerms);
-  assert.deepEqual(plain(read.labels), { "P|B": { state: "watch", note: "n", reviewBy: "2027-01-01", updatedAt: "2026-11-20" } });
+  assert.deepEqual(plain(read.labels), { "P|B": { state: "watch", note: "n", reviewBy: "2027-01-01", updatedAt: "2026-11-20", decided: "" } });
   // Edited values are cleaned on the way in; unknown keys are dropped.
   const edited = c.evergreenPackRead(JSON.stringify({ schema: "fee-console.evergreen-pack.v1", funds: [{ key: "P|D", terms: { frequency: "annual", noticeDays: 95, earlyFeePct: 500, password: "x" }, label: { state: "sell" } }] }));
   assert.deepEqual(plain(edited.terms), { "P|D": { frequency: "annual", noticeDays: 95 } }); assert.deepEqual(plain(edited.labels), {});
@@ -1041,7 +1049,7 @@ test("a dealing day can sit a whole number of months before or after the period 
   assert.equal(c.evergreenLotPlan("2024-04-01", terms, "2026-11-10").dealing, "2026-11-30");
   const view = c.evergreenTermsView({ lotList: [{ amount: "USD 1.00", date: "2024-04-01" }] }, terms, "2026-11-20");
   assert.ok(view.includes("<dt>赎回日</dt><dd>期末前 1 个月的月底</dd>")); assert.ok(view.includes("通知截止 2027-02-14 → 赎回日 2027-02-28"));
-  assert.equal(c.evergreenTermsView({ lotList: [] }, { frequency: "quarterly" }, "2026-11-20").includes("<dt>赎回日</dt>"), false);
+  assert.ok(c.evergreenTermsView({ lotList: [] }, { frequency: "quarterly" }, "2026-11-20").includes("<dt>赎回日</dt><dd>-</dd>"));
 });
 test("fields on the evergreen page are 16px so an iPhone does not enlarge the page when one is tapped", () => {
   assert.match(html, /\.evergreen-sheet input\{font-size:16px\}\.evergreen-pack-text\{width:100%;margin-top:8px;font:16px\/1\.4 ui-monospace,Menlo,monospace;/);
@@ -1063,35 +1071,42 @@ test("a pasted valid terms pack is imported at once; anything else waits for the
 // document links, and a reading list. Everything arrives in the pack and is cleaned on the way in.
 const profileFund = {
   key: "P|A",
-  profile: { asOf: "2026-04-30", source: "Fact Sheet <b>", summary: "投资全球<私募>股权。", size: "US$6.9bn", junk: 1,
+  profile: { asOf: "2026-04-30", source: "Fact Sheet <b>", summary: "投资全球<私募>股权。", size: "US$6.9bn", junk: 1, manager: "Manager <M>", inception: "2024-01", returnYtd: 4.2, return1y: "9", returnSi: 5000000,
     strategy: [{ name: "Buyout", pct: 62.5 }, { name: "Secondaries", pct: 6 }, { name: "", pct: 5 }, { name: "No pct" }, { name: "Bad", pct: 250 }],
     sector: "x", region: [{ name: "North America", pct: 74 }], holdings: Array.from({ length: 14 }, (_, i) => ({ name: "H" + i, pct: i })) },
   links: [{ title: "Prospectus", url: "https://drive.google.com/file/d/abc/view" }, { title: "Script", url: "javascript:alert(1)" }, { title: "Plain", url: "http://example.com/a" },
     { title: "Quote", url: 'https://example.com/"onclick="x' }, { title: "", url: "https://example.com/ok" }, { title: "Local", url: "https://localhost/x" }],
+  assessment: { date: "2026-11-21", sections: [{ title: "流动性", text: "上季赎回申请<全额>兑付。" }, { title: "", text: "x" }, { title: "No text" }], sources: ["季报 <p3>", "", 5] },
   updates: [{ date: "2026-03-01", text: "old" }, { date: "2026-09-30", text: "赎回申请超过上限，按比例兑付。", source: "季报 <p3>" }, { date: "soon", text: "x" }, { date: "2026-06-01", text: "" },
     { date: "2026-05-01", text: "mid" }, { date: "2026-01-01", text: "oldest" }],
 };
-test("a fund's profile keeps only well-formed text, mixes, https links and dated updates", async () => {
+test("a fund's profile keeps only well-formed values and shows one fixed frame of fields, dashes where empty", async () => {
   const { c } = await calendarBox(), clean = plain(c.evergreenProfileClean(profileFund));
-  assert.deepEqual(Object.keys(clean), ["source", "summary", "size", "asOf", "strategy", "region", "holdings", "links", "updates"]);
+  assert.deepEqual(Object.keys(clean), ["source", "summary", "size", "manager", "inception", "asOf", "returnYtd", "strategy", "region", "holdings", "updates", "assessment"]);
+  assert.deepEqual(clean.assessment, { date: "2026-11-21", sections: [{ title: "流动性", text: "上季赎回申请<全额>兑付。" }], sources: ["季报 <p3>"] });
+  assert.equal(c.evergreenProfileClean({ assessment: { date: "soon", sections: [{ title: "a", text: "b" }] } }).assessment, undefined);
   assert.deepEqual(clean.strategy, [{ name: "Buyout", pct: 62.5 }, { name: "Secondaries", pct: 6 }, { name: "No pct" }, { name: "Bad" }]);
   assert.equal(clean.holdings.length, 10);
-  assert.deepEqual(clean.links, [{ title: "Prospectus", url: "https://drive.google.com/file/d/abc/view" }]);
   assert.deepEqual(clean.updates.map(u => u.date), ["2026-09-30", "2026-05-01", "2026-03-01"]);
   for (const bad of ["javascript:alert(1)", "http://example.com", "https://localhost/x", "https://example.com/a b", 'https://example.com/"', "https://example.com/<x>", "//example.com", "", null, 5, "https://" + "a".repeat(600) + ".com"])
     assert.equal(c.evergreenUrl(bad), "", String(bad).slice(0, 30));
   assert.equal(c.evergreenUrl("https://www.reuters.com/commentary/breakingviews/x-2026-09-23/"), "https://www.reuters.com/commentary/breakingviews/x-2026-09-23/");
   assert.deepEqual(plain(c.evergreenProfileClean({})), {}); assert.deepEqual(plain(c.evergreenProfileClean(null)), {}); assert.deepEqual(plain(c.evergreenProfileClean({ profile: [1] })), {});
   const view = c.evergreenProfileView(c.evergreenProfileClean(profileFund));
-  for (const text of ["<h3>基金概况</h3>", '<p class="evergreen-summary">投资全球&lt;私募&gt;股权。</p>', "基金规模 US$6.9bn", "<h4>策略分布</h4>", '<i style="width:62.5%"></i></span><b>62.5%</b>', "<li><span>No pct</span></li>",
-    "<h4>地区分布</h4>", "<h4>主要持仓</h4>", "资料截至 2026-04-30 · Fact Sheet &lt;b&gt;", "<h3>最新动态</h3>", "<b>2026-09-30</b><span>赎回申请超过上限，按比例兑付。</span><small>季报 &lt;p3&gt;</small>",
-    "<h3>文件</h3>", '<a href="https://drive.google.com/file/d/abc/view" target="_blank" rel="noopener noreferrer">Prospectus</a>'])
+  for (const text of ["<h3>基金概况</h3>", '<p class="evergreen-summary">投资全球&lt;私募&gt;股权。</p>', "<dt>管理人</dt><dd>Manager &lt;M&gt;</dd>", "<dt>成立时间</dt><dd>2024-01</dd>", "<dt>基金规模</dt><dd>US$6.9bn</dd>",
+    "<dt>持仓数量</dt><dd>-</dd>", "<dt>杠杆</dt><dd>-</dd>", "<dt>今年以来</dt><dd>4.2%</dd>", "<dt>近一年</dt><dd>-</dd>", "<dt>成立以来年化</dt><dd>-</dd>", "<h4>策略分布</h4>", '<i style="width:62.5%"></i></span><b>62.5%</b>', "<li><span>No pct</span></li>",
+    '<h4>行业分布</h4><p class="evergreen-meta">-</p>', "<h4>地区分布</h4>", "<h4>主要持仓</h4>", "资料截至 2026-04-30 · Fact Sheet &lt;b&gt;", "<h3>最新动态</h3>", "<b>2026-09-30</b><span>赎回申请超过上限，按比例兑付。</span><small>季报 &lt;p3&gt;</small>"])
     assert.ok(view.includes(text), text);
-  assert.equal(view.includes("<h4>行业分布</h4>"), false); assert.equal(view.includes("javascript:"), false); assert.equal(view.includes("<b>\"") || view.includes("<p3>"), false);
-  assert.equal(c.evergreenProfileView({}), ""); assert.equal(c.evergreenProfileView(undefined), "");
-  // Links and updates alone still show, without an empty overview heading.
-  const bare = c.evergreenProfileView({ links: [{ title: "T", url: "https://drive.google.com/x" }] });
-  assert.ok(bare.includes("<h3>文件</h3>")); assert.equal(bare.includes("基金概况"), false);
+  assert.equal(view.includes("javascript:"), false); assert.equal(view.includes("<p3>"), false);
+  // field-frame:v1 (owner request 2026-11-21): a fund with nothing filled shows the same frame, all dashes, and filed documents are not linked.
+  const empty = c.evergreenProfileView(undefined);
+  assert.equal(empty, c.evergreenProfileView({})); assert.equal((empty.match(/<dd>-<\/dd>/g) || []).length, 8); assert.equal((empty.match(/<p class="evergreen-meta">-<\/p>/g) || []).length, 5);
+  assert.ok(empty.includes('<p class="evergreen-summary">-</p>')); assert.equal(view.includes("<h3>文件</h3>"), false); assert.equal(view.includes("<a "), false);
+  for (const label of ["管理人", "成立时间", "基金规模", "持仓数量", "杠杆", "今年以来", "近一年", "成立以来年化", "策略分布", "行业分布", "地区分布", "主要持仓", "最新动态"]) assert.ok(empty.includes(label), label);
+  // The assessment for a pending fund: dated, escaped, with its sources, and it says it is not a recommendation.
+  const report = c.evergreenAssessmentView(c.evergreenProfileClean(profileFund));
+  for (const text of ['<details class="evergreen-assessment" open><summary>评估报告 · 2026-11-21</summary>', "<h4>流动性</h4><p>上季赎回申请&lt;全额&gt;兑付。</p>", "<h4>依据</h4><ul><li>季报 &lt;p3&gt;</li></ul>", "不是买卖或赎回建议"]) assert.ok(report.includes(text), text);
+  assert.equal(c.evergreenAssessmentView({}), ""); assert.equal(c.evergreenAssessmentView(undefined), "");
 });
 test("the reading list is cleaned, newest first, and says it is about the product type, not a holding", async () => {
   const { c } = await calendarBox();
@@ -1115,7 +1130,7 @@ test("one pack may carry terms, profiles, labels and the reading list, and the p
   assert.equal(read.ok, true); assert.deepEqual(Object.keys(plain(read.profiles)), ["P|A"]); assert.deepEqual(Object.keys(plain(read.terms)), ["P|B"]); assert.deepEqual(Object.keys(plain(read.labels)), ["P|C"]); assert.equal(read.reading.length, 1);
   assert.equal(c.evergreenPackApply(text), "已导入 0 只基金的条款、1 只基金的资料、1 只基金的状态、阅读清单 1 篇；另有 1 只的名称与当前持仓对不上，已保存但不会显示。");
   assert.deepEqual(Object.keys(plain(c.evergreenProfiles())), ["P|A"]); assert.equal(c.evergreenReading().length, 1);
-  assert.equal(JSON.parse(memory.get("feeConsole.evergreen.profile.v1"))["P|A"].links.length, 1);
+  assert.equal(JSON.parse(memory.get("feeConsole.evergreen.profile.v1"))["P|A"].links, undefined); assert.equal(c.evergreenProfiles()["P|A"].assessment.date, "2026-11-21");
   // A labels-only pack no longer claims to have imported terms, and an empty one says so.
   assert.equal(c.evergreenPackApply(JSON.stringify({ schema: "fee-console.evergreen-pack.v1", funds: [{ key: "P|C", label: { state: "hold" } }] })), "已导入 1 只基金的状态。");
   assert.equal(c.evergreenPackApply(JSON.stringify({ schema: "fee-console.evergreen-pack.v1", funds: [{ key: "P|C" }] })), "文本里没有可导入的内容。");
@@ -1124,7 +1139,7 @@ test("one pack may carry terms, profiles, labels and the reading list, and the p
   assert.deepEqual(Object.keys(plain(c.evergreenProfiles())).sort(), ["P|A", "P|Z"]); assert.equal(c.evergreenReading().length, 1);
   // The export carries profiles and the reading list back out, still without any amount.
   const out = c.evergreenPackBuild([{ key: "P|A", name: "A", platform: "P", strategy: "S", amount: "USD 123.45", lotList: [] }], {}, {}, "2026-11-20", c.evergreenProfiles(), c.evergreenReading());
-  assert.equal(out.funds[0].profile.size, "US$6.9bn"); assert.equal(out.funds[0].links.length, 1); assert.equal(out.funds[0].updates.length, 3); assert.equal(out.reading.length, 1);
+  assert.equal(out.funds[0].profile.size, "US$6.9bn"); assert.equal(out.funds[0].links, undefined); assert.equal(out.funds[0].assessment.sections.length, 1); assert.equal(out.funds[0].profile.assessment, undefined); assert.equal(out.funds[0].updates.length, 3); assert.equal(out.reading.length, 1);
   assert.equal(JSON.stringify(out).includes("123.45"), false);
   // Damaged storage reads as empty.
   memory.set("feeConsole.evergreen.profile.v1", "[1]"); memory.set("feeConsole.evergreen.reading.v1", "{broken");
@@ -1137,5 +1152,6 @@ test("profiles and the reading list stay on the device, are shown in the sheet a
   assert.match(html, /fund\.profileHtml=evergreenProfileView\(profiles\[fund\.key\]\);/);
   assert.match(html, /evergreenDeskView\(model,_evergreenFilter,_evergreenOpen\)\+evergreenReadingView\(evergreenReading\(\)\)\+evergreenPackView\(/);
   // Every link the block writes opens in a new tab without handing the page to it.
-  assert.equal((profileBlock.match(/<a href=/g) || []).length, 2); assert.equal((profileBlock.match(/target="_blank" rel="noopener noreferrer"/g) || []).length, 2);
+  assert.equal((profileBlock.match(/<a href=/g) || []).length, 1); assert.equal((profileBlock.match(/target="_blank" rel="noopener noreferrer"/g) || []).length, 1);
+  assert.match(html, /fund\.assessmentHtml=evergreenAssessmentView\(profiles\[fund\.key\]\);/); assert.ok(html.includes("+(x.pending?due(x.pending):'')+(x.assessmentHtml||'')"));
 });
