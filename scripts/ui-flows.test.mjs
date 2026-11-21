@@ -830,7 +830,7 @@ const evergreenRows = [
 test("the evergreen page has its own tab on the verified allocation pane and is display only", () => {
   assert.ok(evergreenBlock.length > 1000, "index.html carries the evergreen-desk block");
   const tabs = html.slice(html.indexOf('<nav class="tabs" id="tabs"'), html.indexOf("</nav>", html.indexOf('<nav class="tabs" id="tabs"')));
-  assert.match(tabs, /<button data-p="p-ratio" class="mgr" id="evergreenTab" data-view="evergreen" hidden>常青<\/button>\n  <button data-p="p-ratio" class="mgr" id="ratioTab" hidden>资产配置<\/button>/);
+  assert.match(tabs, /<button data-p="p-ratio" class="mgr" id="evergreenTab" data-view="evergreen" hidden>基金<\/button>\n  <button data-p="p-ratio" class="mgr" id="ratioTab" hidden>资产配置<\/button>/);
   // The new tab is shown and hidden by the same permission as the allocation tab, never by the manager flag alone.
   assert.match(html, /const evergreen=document\.getElementById\('evergreenTab'\);if\(evergreen\)\{evergreen\.hidden=!allowed;evergreen\.style\.display=allowed\?'':'none';\}\n  document\.querySelectorAll\('#tabs button\.mgr'\)\.forEach\(b=>\{if\(b!==tab&&b!==evergreen\)b\.style\.display=isMgr\(\)\?'':'none';\}\);/);
   assert.match(html, /if\(b\.dataset\.p==="p-ratio"&&\(!ratioAuthorized\(\)\|\|b\.classList\.contains\("on"\)\)\)return;if\(b\.dataset\.p==="p-ratio"&&typeof setRatioView==='function'\)setRatioView\(b\.dataset\.view\);/);
@@ -865,7 +865,7 @@ test("evergreen labels are cleaned, counted and shown without touching any amoun
   const watch = t.evergreenDeskView(model, "watch", new Set());
   assert.equal((watch.match(/<details class="evergreen-fund"/g) || []).length, 1); assert.ok(watch.includes("Fund &lt;A&gt;"));
   assert.ok(t.evergreenDeskView(model, "prepare", new Set()).includes("这个状态下没有基金。"));
-  assert.ok(t.evergreenDeskView(t.evergreenDeskModel([], {}, "2026-11-20"), "all", new Set()).includes("此快照未包含常青基金的持仓明细。"));
+  assert.ok(t.evergreenDeskView(t.evergreenDeskModel([], {}, "2026-11-20"), "all", new Set()).includes("此快照未包含常青基金或对冲基金的持仓明细。"));
 });
 test("an evergreen label is saved on this device only, dated, and survives a damaged store", async () => {
   const { t, memory } = await evergreenBox();
@@ -1149,8 +1149,8 @@ test("profiles and the reading list stay on the device, are shown in the sheet a
   assert.ok(profileBlock.length > 1000);
   assert.doesNotMatch(profileBlock, /changeDraft|EDIT\.|saveLedger|writeRemote|ghRead|fetch\(|ghApi|ratioCore|deriveManager|XMLHttpRequest|innerHTML/i);
   assert.match(html, /\+\(x\.termsHtml\|\|'<p class="evergreen-meta">尚未录入条款。在页面底部“条款包”里导入后显示。<\/p>'\)\+\(x\.profileHtml\|\|''\)/);
-  assert.match(html, /fund\.profileHtml=evergreenProfileView\(profiles\[fund\.key\],fund\.own\);/);
-  assert.match(html, /evergreenDeskView\(model,_evergreenFilter,_evergreenOpen\)\+evergreenReadingView\(evergreenReading\(\)\)\+evergreenRemoteView\(evergreenStored\(EVERGREEN_REMOTE_KEY,\{\}\)\)\+evergreenPackView\(/);
+  assert.match(html, /fund\.profileHtml=evergreenProfileView\(profiles\[fund\.key\],fund\.own,fund\.kind\);/);
+  assert.match(html, /evergreenDeskView\(model,_evergreenFilter,_evergreenOpen,_evergreenKind\)\+evergreenReadingView\(evergreenReading\(\)\)\+evergreenRemoteView\(evergreenStored\(EVERGREEN_REMOTE_KEY,\{\}\)\)\+evergreenPackView\(/);
   // Every link the block writes opens in a new tab without handing the page to it.
   assert.equal((profileBlock.match(/<a href=/g) || []).length, 1); assert.equal((profileBlock.match(/target="_blank" rel="noopener noreferrer"/g) || []).length, 1);
   assert.match(html, /fund\.assessmentHtml=evergreenAssessmentView\(profiles\[fund\.key\]\);/); assert.ok(html.includes("+(x.pending?due(x.pending):'')+(x.assessmentHtml||'')"));
@@ -1235,4 +1235,43 @@ test("each fund shows its share of the evergreen total, and the owner's own retu
   assert.ok(filled.includes("标“你的”的来自 Sharesight，按你自己的买入计算"));
   // The desk reads the two printed figures of a single-lot fund as text and passes them on; nothing is recalculated.
   assert.ok(html.includes("own:lots?null:{all:figure(0),year:figure(1)}")); assert.ok(html.includes("fund.share=shares[fund.key]||'';"));
+});
+
+// fund-desk:v1 (owner request 2026-11-21): hedge funds join the evergreen funds on one page, renamed 基金.
+test("hedge funds share the page with evergreen funds: one switch, counts and shares within each class", async () => {
+  const { c } = await calendarBox(), { t: d } = await evergreenBox();
+  const rows = [
+    { key: "P|E1", kind: "evergreen", name: "E1", platform: "P", strategy: "私募股权", amount: "USD 600.00", lots: 1, lotList: [] },
+    { key: "P|E2", kind: "evergreen", name: "E2", platform: "Q", strategy: "基础设施", amount: "USD 400.00", lots: 1, lotList: [] },
+    { key: "P|H1", kind: "hedge", name: "H1", platform: "P", strategy: "多策略", amount: "USD 250.00", lots: 1, lotList: [] },
+    { key: "P|H2", kind: "hedge", name: "H2", platform: "P", strategy: "宏观", amount: "USD 750.00", lots: 1, lotList: [] }];
+  // A share is of the fund's own class, and one class with an unreadable amount does not blank the other.
+  assert.deepEqual(plain(c.evergreenShares(rows)), { "P|E1": "60.0%", "P|E2": "40.0%", "P|H1": "25.0%", "P|H2": "75.0%" });
+  assert.deepEqual(plain(c.evergreenShares([...rows, { key: "P|H3", kind: "hedge", amount: "未取得" }])), { "P|E1": "60.0%", "P|E2": "40.0%" });
+  const shares = c.evergreenShares(rows), model = d.evergreenDeskModel(rows, { "P|H1": { state: "watch" } }, "2026-11-21");
+  for (const fund of model.funds) fund.share = shares[fund.key];
+  const kinds = view => [...view.matchAll(/data-evergreen-kind="(\w+)" aria-pressed="(\w+)">([^<]+)</g)].map(m => m.slice(1));
+  const chips = view => [...view.matchAll(/data-evergreen-filter="(\w+)" aria-pressed="\w+">([^<]+)</g)].map(m => m[2]);
+  const all = d.evergreenDeskView(model, "all", new Set(), "all");
+  assert.ok(all.includes("<h2>基金管理</h2>")); assert.ok(all.includes("4 只基金 · 2 个平台"));
+  assert.deepEqual(kinds(all), [["all", "true", "全部 4"], ["evergreen", "false", "常青 2"], ["hedge", "false", "对冲 2"]]);
+  assert.deepEqual(chips(all), ["全部 4", "未标记 3", "观察 1"]);
+  assert.ok(all.includes("<small>P · 常青 · 私募股权 · 占常青 60.0%</small>")); assert.ok(all.includes("<small>P · 对冲 · 宏观 · 占对冲 75.0%</small>"));
+  // The hedge view counts and lists hedge funds only, and drops the class word from each row.
+  const hedge = d.evergreenDeskView(model, "all", new Set(["P|H2"]), "hedge");
+  assert.deepEqual(kinds(hedge).map(k => k[1]), ["false", "false", "true"]); assert.deepEqual(chips(hedge), ["全部 2", "未标记 1", "观察 1"]);
+  assert.ok(hedge.includes("2 只基金 · 1 个平台")); assert.equal((hedge.match(/class="evergreen-fund"/g) || []).length, 2); assert.equal(hedge.includes("E1"), false);
+  assert.ok(hedge.includes("<small>P · 宏观 · 占对冲 75.0%</small>")); assert.ok(hedge.includes("<span>P · 宏观 · 占对冲合计 75.0%</span>"));
+  // With one class only there is no switch, and an unknown class word falls back to everything.
+  const only = d.evergreenDeskView(d.evergreenDeskModel(rows.slice(0, 2), {}, "2026-11-21"), "all", new Set(), "hedge");
+  assert.deepEqual(kinds(only), []); assert.equal((only.match(/class="evergreen-fund"/g) || []).length, 2);
+  assert.deepEqual(kinds(d.evergreenDeskView(model, "all", new Set(), "<x>")).map(k => k[1]), ["true", "false", "false"]);
+  // A hedge fund's frame carries four more rows; an evergreen fund's does not.
+  const frame = c.evergreenProfileView(c.evergreenProfileClean({ profile: { netExposure: "净多 35%", grossExposure: "180%", volatility: "6.2%", maxDrawdown: "-8.4% <x>", junk: 1 } }), null, "hedge");
+  for (const text of ["<dt>净敞口</dt><dd>净多 35%</dd>", "<dt>总敞口</dt><dd>180%</dd>", "<dt>年化波动</dt><dd>6.2%</dd>", "<dt>最大回撤</dt><dd>-8.4% &lt;x&gt;</dd>"]) assert.ok(frame.includes(text), text);
+  assert.equal((c.evergreenProfileView(undefined, null, "hedge").match(/<dd>-<\/dd>/g) || []).length, 12); assert.equal(c.evergreenProfileView(undefined, null, "evergreen").includes("净敞口"), false);
+  // The page reads both printed sections, switching class resets the status filter, and the pack says which class a fund is.
+  assert.ok(html.includes("kind=title.startsWith('常青基金')?'evergreen':title.startsWith('对冲基金')?'hedge':'';"));
+  assert.ok(html.includes("if(kindButton){_evergreenKind=kindButton.getAttribute('data-evergreen-kind');_evergreenFilter='all';again();return;}"));
+  assert.equal(c.evergreenPackBuild(rows, {}, {}, "2026-11-21").funds[2].kind, "hedge");
 });
