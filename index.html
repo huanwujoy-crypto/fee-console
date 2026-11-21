@@ -10,7 +10,7 @@
 <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAABzUlEQVR42u3bsQ2AMAwAwczDhEzKOqGlCBIgBdnxRT+BfU0Kt20/pGHNCASH4BAcgkNwCA7BITgEh+CQ4BAcgkNwCA7BITgEh+AQHBIcgkNwCA7BITgEh+AQHIJDgkNwCA7BITgEh+AQHIJDcAgOCQ7BITgEh+AQHIJDcOi2/vjBwUQyJXAEkhHNBxyxZITyAQcccMABxwIy4viAAw444IADDjjggAMOOOCAAw444IBDcAgOwQEHHHDAAQcccMABBxxwwAEHHHAIDudocDDxeWFwOEeDg4z3a4MDDjjggKMOjh82BwcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAGHQ1Y4HLLCERPH1IHCkRjH7JnCAQcccMBRB8cam4MDDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAQxWDQ3AIDsEhOFQNR/eSfG7hgAMOOOCAAw444PCq4ZCvrOAQHIJDgkNwCA7BITgEh+AQHIJDcEhwCA7BITgEh+AQHIJDcAgOwSHBITgEh+AQHIJDcAgOwSE4pEsnhtvC417hqCsAAAAASUVORK5CYII=">
-<meta name="fee-console-build" content="4.10.37">
+<meta name="fee-console-build" content="4.10.38">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -1200,7 +1200,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.10.37";
+const UI_VERSION_LABEL=" · v4.10.38";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -3536,14 +3536,17 @@ function evergreenPackView(open,message){
     +'<textarea class="evergreen-pack-text" data-evergreen-pack-text rows="5" placeholder="把填好的条款包文本粘贴在这里，会自动导入"></textarea>'
     +(message?'<p class="evergreen-meta" role="status"><strong>'+e(message)+'</strong></p>':'')+'</details>';
 }
-function evergreenPackApply(text){
+function evergreenPackApply(text,remote){
   const read=evergreenPackRead(text);if(!read.ok)return read.reason;
+  if(remote)read.labels={};
+  // A pack adds to what a fund already has, field by field, so a small update never wipes the rest.
+  const merge=(old,add)=>{const out={...old};for(const [k,v] of Object.entries(add))out[k]={...(old[k]||{}),...v};return out;};
   if(typeof store==='undefined'||!store)return '本机无法保存';
   const known=new Set(_evergreenRows.map(r=>r.key)),matched=Object.keys(read.terms).filter(k=>known.has(k)).length,unmatched=Object.keys(read.terms).length-matched;
   const count=o=>Object.keys(o).length;
-  try{if(count(read.terms))store.setItem(EVERGREEN_TERMS_KEY,JSON.stringify({...evergreenTerms(),...read.terms}));
+  try{if(count(read.terms))store.setItem(EVERGREEN_TERMS_KEY,JSON.stringify(merge(evergreenTerms(),read.terms)));
     if(count(read.labels))store.setItem(EVERGREEN_KEY,JSON.stringify({...evergreenLabels(),...read.labels}));
-    if(count(read.profiles))store.setItem(EVERGREEN_PROFILE_KEY,JSON.stringify({...evergreenProfiles(),...read.profiles}));
+    if(count(read.profiles))store.setItem(EVERGREEN_PROFILE_KEY,JSON.stringify(merge(evergreenProfiles(),read.profiles)));
     if(read.reading.length)store.setItem(EVERGREEN_READING_KEY,JSON.stringify(read.reading));}catch{return '本机无法保存';}
   // Say what arrived, in the owner's words; a pack may carry any mix of the four.
   const parts=[count(read.terms)?matched+' 只基金的条款':'',count(read.profiles)?count(read.profiles)+' 只基金的资料':'',count(read.labels)?count(read.labels)+' 只基金的状态':'',read.reading.length?'阅读清单 '+read.reading.length+' 篇':''].filter(Boolean);
@@ -3652,7 +3655,7 @@ function renderEvergreenDesk(root){
   for(const row of rows){const p=evergreenPending(row,terms[row.key],today);if(p)due[row.key]=p;}
   const model=evergreenDeskModel(rows,evergreenLabels(),today,evergreenWeek(today),due),profiles=evergreenProfiles();
   for(const fund of model.funds){fund.termsHtml=evergreenTermsView(fund,terms[fund.key],today);fund.profileHtml=evergreenProfileView(profiles[fund.key]);fund.assessmentHtml=evergreenAssessmentView(profiles[fund.key]);}
-  desk.innerHTML=evergreenDeskView(model,_evergreenFilter,_evergreenOpen)+evergreenReadingView(evergreenReading())+evergreenPackView(_evergreenPackOpen,_evergreenPackMessage);
+  desk.innerHTML=evergreenDeskView(model,_evergreenFilter,_evergreenOpen)+evergreenReadingView(evergreenReading())+evergreenRemoteView(evergreenStored(EVERGREEN_REMOTE_KEY,{}))+evergreenPackView(_evergreenPackOpen,_evergreenPackMessage);
   _evergreenRows=rows;
 }
 function evergreenLabelSet(key,patch){
@@ -3684,6 +3687,54 @@ if(typeof document!=='undefined'&&typeof document.addEventListener==='function')
   document.addEventListener('toggle',event=>{if(event.target?.classList?.contains('evergreen-pack'))_evergreenPackOpen=event.target.open;},true);
 }
 /* evergreen-desk:v1:end */
+/* evergreen-remote:v1:start */
+// evergreen-remote:v1 (owner request 2026-11-21) — fund facts prepared on the owner's own computer reach this page
+// without a paste. They sit in the owner's private store as one more file, sealed to this device's registered
+// public key. The page opens it with the key it already derives, passes it through the same reader a pasted pack
+// goes through, and merges it. It never carries status labels: those stay the owner's. Nothing is sent anywhere.
+const EVERGREEN_REMOTE_FILE='fee-console-evergreen-pack.json',EVERGREEN_REMOTE_SCHEMA='fee-console.evergreen-sealed.v1',EVERGREEN_REMOTE_KEY='feeConsole.evergreen.remote.v1';
+let _evergreenRemoteBusy=false;
+function evergreenRemoteBytes(s,length){
+  if(typeof s!=='string'||!/^[A-Za-z0-9_-]+$/.test(s)||s.length%4===1)return null;
+  const alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_',out=[];let bits=0,v=0;
+  for(const c of s){v=(v<<6)|alphabet.indexOf(c);bits+=6;if(bits>=8){bits-=8;out.push((v>>>bits)&255);}}
+  return length&&out.length!==length?null:Uint8Array.from(out);
+}
+// One sealed text and this device's key in; the pack text and its time out. Anything unexpected throws.
+async function evergreenRemoteOpen(text,privateKey,recipient,cryptoImpl=globalThis.crypto){
+  const refuse=()=>{throw Error('EVERGREEN_REMOTE_REFUSED');};
+  if(typeof text!=='string'||text.length>800000)refuse();
+  const v=JSON.parse(text),keys=['algorithm','ciphertext','ephemeralPublicKey','generatedAt','iv','recipientId','salt','schema','scopeId'];
+  if(!v||typeof v!=='object'||Object.keys(v).sort().join()!==keys.join()||v.schema!==EVERGREEN_REMOTE_SCHEMA||v.algorithm!=='X25519-HKDF-SHA256-AES256GCM'||v.scopeId!==recipient?.scopeId||v.recipientId!==recipient?.recipientId
+    ||typeof v.generatedAt!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(v.generatedAt))refuse();
+  const peerBytes=evergreenRemoteBytes(v.ephemeralPublicKey,32),salt=evergreenRemoteBytes(v.salt,32),iv=evergreenRemoteBytes(v.iv,12),cipher=evergreenRemoteBytes(v.ciphertext);
+  if(!peerBytes||!salt||!iv||!cipher||cipher.length<17)refuse();
+  const subtle=cryptoImpl.subtle,peer=await subtle.importKey('raw',peerBytes,{name:'X25519'},false,[]);
+  const shared=new Uint8Array(await subtle.deriveBits({name:'X25519',public:peer},privateKey,256));
+  const info=new TextEncoder().encode(['fee-console/evergreen-pack/v1',v.scopeId,v.recipientId,v.generatedAt].join('|'));
+  let key;try{key=await subtle.deriveKey({name:'HKDF',hash:'SHA-256',salt,info},await subtle.importKey('raw',shared,'HKDF',false,['deriveKey']),{name:'AES-GCM',length:256},false,['decrypt']);}finally{shared.fill(0);}
+  const plain=new Uint8Array(await subtle.decrypt({name:'AES-GCM',iv,additionalData:info},key,cipher));
+  return {generatedAt:v.generatedAt,text:new TextDecoder('utf-8',{fatal:true}).decode(plain)};
+}
+// Called with the file from a read the page has already authenticated. Only a pack newer than the last one taken is
+// merged, and a failure of any kind leaves everything as it was.
+async function evergreenRemoteTake(file,privateKey,recipient){
+  if(_evergreenRemoteBusy||!file||file.truncated||typeof file.content!=='string'||typeof store==='undefined'||!store)return false;
+  _evergreenRemoteBusy=true;
+  try{
+    const opened=await evergreenRemoteOpen(file.content,privateKey,recipient),mark=evergreenStored(EVERGREEN_REMOTE_KEY,{});
+    if(typeof mark.generatedAt==='string'&&opened.generatedAt<=mark.generatedAt)return false;
+    const message=evergreenPackApply(opened.text,true);if(!message.startsWith('已导入'))return false;
+    store.setItem(EVERGREEN_REMOTE_KEY,JSON.stringify({generatedAt:opened.generatedAt}));
+    if(typeof document!=='undefined')renderEvergreenDesk(document.getElementById('ratioContent'));
+    return true;
+  }catch{return false;}finally{_evergreenRemoteBusy=false;}
+}
+function evergreenRemoteView(mark){
+  const at=typeof mark?.generatedAt==='string'&&/^\d{4}-\d{2}-\d{2}T/.test(mark.generatedAt)?mark.generatedAt.slice(0,10):'';
+  return at?'<p class="evergreen-meta">基金资料自动更新于 '+at+'（来自你自己电脑整理的资料，仅本机可解开）。</p>':'';
+}
+/* evergreen-remote:v1:end */
 function arrangeRatioRowDetails(report){
   // Move existing rendered nodes only; no financial recalculation or new data.
   const direct=(node,selector)=>Array.from(node.children).filter(n=>n.matches(selector));
@@ -4229,6 +4280,9 @@ async function readCurrentRatioSnapshot(who,guard=()=>{},reuseCipher=false){
   const manager=await ratioCore.deriveSnapshotManager(cfg(K.gid),cfg(K.key),cfg(K.tok));check();
   const registered=ratioSnapshotFile(gist,RATIO_RECIPIENT_FILE);
   if(registered===null||ratioCore.canonical(ratioSnapshotParse(registered))!==ratioCore.canonical(manager.recipient))throw Error('RATIO_SNAPSHOT_REFUSED');
+  // evergreen-remote:v1 — this authenticated read also carries the owner's sealed fund facts. Taking them is
+  // not awaited and cannot fail or delay the snapshot.
+  try{evergreenRemoteTake(gist.files[EVERGREEN_REMOTE_FILE],manager.privateKey,manager.recipient).catch(()=>{});}catch{}
   // Every background refresh still authenticates fresh Gist metadata. Only
   // encrypted bytes pinned to its identical immutable file revision are reused.
   // The separate bounded session view contains no keys and is never persisted.
