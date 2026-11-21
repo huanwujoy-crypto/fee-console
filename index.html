@@ -10,7 +10,7 @@
 <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAABzUlEQVR42u3bsQ2AMAwAwczDhEzKOqGlCBIgBdnxRT+BfU0Kt20/pGHNCASH4BAcgkNwCA7BITgEh+CQ4BAcgkNwCA7BITgEh+AQHBIcgkNwCA7BITgEh+AQHIJDgkNwCA7BITgEh+AQHIJDcAgOCQ7BITgEh+AQHIJDcOi2/vjBwUQyJXAEkhHNBxyxZITyAQcccMABxwIy4viAAw444IADDjjggAMOOOCAAw444IBDcAgOwQEHHHDAAQcccMABBxxwwAEHHHAIDudocDDxeWFwOEeDg4z3a4MDDjjggKMOjh82BwcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAGHQ1Y4HLLCERPH1IHCkRjH7JnCAQcccMBRB8cam4MDDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAQxWDQ3AIDsEhOFQNR/eSfG7hgAMOOOCAAw444PCq4ZCvrOAQHIJDgkNwCA7BITgEh+AQHIJDcEhwCA7BITgEh+AQHIJDcAgOwSHBITgEh+AQHIJDcAgOwSE4pEsnhtvC417hqCsAAAAASUVORK5CYII=">
-<meta name="fee-console-build" content="4.10.38">
+<meta name="fee-console-build" content="4.10.39">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -1200,7 +1200,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.10.38";
+const UI_VERSION_LABEL=" · v4.10.39";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -3393,16 +3393,18 @@ function evergreenProfiles(){
   return Object.fromEntries(Object.entries(v).map(([k,r])=>[k,evergreenProfileClean({profile:r,updates:r?.updates,assessment:r?.assessment})]).filter(([,r])=>Object.keys(r).length));
 }
 function evergreenReading(){return evergreenReadingClean(evergreenStored(EVERGREEN_READING_KEY,[]));}
-function evergreenProfileView(record){
+function evergreenProfileView(record,own){
   const e=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   // field-frame:v1 (owner request 2026-11-21) — every fund shows the same fields in the same order, so funds of one
   // strategy can be compared; a field nobody has filled is a dash. Filed documents are no longer linked.
   const r=record||{},dash='<p class="evergreen-meta">-</p>',row=(label,value)=>'<div><dt>'+label+'</dt><dd>'+(value===undefined||value===''?'-':e(value))+'</dd></div>',pct=v=>v===undefined?undefined:v+'%';
+  // own-figures:v1 — where the fund has published no return, the owner's own figure from Sharesight stands in, marked as theirs.
+  const mine=(f,since)=>f?f.value+'（你的'+(since?'，'+since:'')+(f.note?'，'+f.note:'')+'）':undefined;
   const mix=(title,list)=>'<h4>'+title+'</h4>'+(list?.length?'<ul class="evergreen-mix">'+list.map(x=>'<li><span>'+e(x.name)+'</span>'+(x.pct===undefined?'':'<span class="evergreen-mix-track"><i style="width:'+Math.min(100,x.pct)+'%"></i></span><b>'+e(x.pct)+'%</b>')+'</li>').join('')+'</ul>':dash);
   return '<h3>基金概况</h3><p class="evergreen-summary">'+(r.summary?e(r.summary):'-')+'</p>'
-    +'<dl class="evergreen-terms">'+row('管理人',r.manager)+row('成立时间',r.inception)+row('基金规模',r.size)+row('持仓数量',r.positions)+row('杠杆',r.leverage)+row('今年以来',pct(r.returnYtd))+row('近一年',pct(r.return1y))+row('成立以来年化',pct(r.returnSi))+'</dl>'
+    +'<dl class="evergreen-terms">'+row('管理人',r.manager)+row('成立时间',r.inception)+row('基金规模',r.size)+row('持仓数量',r.positions)+row('杠杆',r.leverage)+row('今年以来',pct(r.returnYtd))+row('近一年',pct(r.return1y)??mine(own?.year,''))+row('成立以来年化',pct(r.returnSi)??mine(own?.all,'自买入'))+'</dl>'
     +mix('策略分布',r.strategy)+mix('行业分布',r.sector)+mix('地区分布',r.region)+mix('主要持仓',r.holdings)
-    +'<p class="evergreen-meta">'+(r.asOf?'资料截至 '+e(r.asOf):'资料日期未填')+(r.source?' · '+e(r.source):'')+' · 回报为基金自己公布的数字</p>'
+    +'<p class="evergreen-meta">'+(r.asOf?'资料截至 '+e(r.asOf):'资料日期未填')+(r.source?' · '+e(r.source):'')+' · 回报为基金自己公布的数字；标“你的”的来自 Sharesight，按你自己的买入计算</p>'
     +'<h3>最新动态</h3>'+(r.updates?.length?'<ul class="evergreen-updates">'+r.updates.map(u=>'<li><b>'+e(u.date)+'</b><span>'+e(u.text)+'</span>'+(u.source?'<small>'+e(u.source)+'</small>':'')+'</li>').join('')+'</ul>':dash);
 }
 function evergreenAssessmentView(record){
@@ -3478,6 +3480,13 @@ function evergreenLotPlan(purchase,terms,today){
 function evergreenCents(text){const m=/^USD (\d{1,3}(?:,\d{3})*|\d+)\.(\d{2})$/.exec(String(text||'').trim());return m?Number(m[1].replaceAll(',',''))*100+Number(m[2]):null;}
 function evergreenUsd(cents){const dollars=Math.round(cents/100);return 'USD '+String(dollars).replace(/\B(?=(\d{3})+(?!\d))/g,',');}
 function evergreenQuarter(iso){const d=evergreenDate(iso);return d?d.getUTCFullYear()+' Q'+(Math.floor(d.getUTCMonth()/3)+1):'';}
+// own-figures:v1 (owner request 2026-11-21) — each fund's share of the evergreen total, from the amounts the report
+// printed, in whole cents. If any amount cannot be read, no share is shown for any fund rather than a wrong one.
+function evergreenShares(rows){
+  const list=(Array.isArray(rows)?rows:[]).map(r=>[r.key,evergreenCents(r.amount)]),total=list.reduce((n,[,c])=>n+(c||0),0);
+  if(!list.length||!total||list.some(([,c])=>c===null))return {};
+  return Object.fromEntries(list.map(([k,c])=>[k,(Math.round(c*1000/total)/10).toFixed(1)+'%']));
+}
 // pending-week:v1 (owner request 2026-11-21) — the calendar card is gone; what remains is one question per fund:
 // can a redemption be filed this week without an early-redemption fee? The week is Monday to Sunday, and from
 // Saturday on it is the coming week, because nothing can be filed at a weekend.
@@ -3616,10 +3625,10 @@ function evergreenDeskView(model,filter,open){
     +'<label class="f">理由（自己看的备注）<input data-evergreen-note maxlength="120" value="'+e(x.label.note)+'" placeholder="例如：等下一份季报"></label>'
     +'<label class="f">下次复核日<input data-evergreen-review type="date" value="'+e(x.label.reviewBy)+'"></label>'
     +'<p class="evergreen-meta">'+(x.label.updatedAt?'标记更新于 '+e(x.label.updatedAt):'尚未标记')+(x.overdue?' · <strong>已过复核日</strong>':'')+' · 仅保存在本机</p>'
-    +'<h3>我的持仓</h3><div class="evergreen-position"><p><span>'+e(x.platform)+' · '+e(x.strategy)+'</span><span>'+e(x.amount)+'</span></p>'+(x.figuresHtml||'<p class="evergreen-meta">此快照未包含这只基金的收益率。</p>')+'</div>'
+    +'<h3>我的持仓</h3><div class="evergreen-position"><p><span>'+e(x.platform)+' · '+e(x.strategy)+(x.share?' · 占常青合计 '+e(x.share):'')+'</span><span>'+e(x.amount)+'</span></p>'+(x.figuresHtml||'<p class="evergreen-meta">此快照未包含这只基金的收益率。</p>')+'</div>'
     +'<h3>条款与赎回</h3>'+(x.termsHtml||'<p class="evergreen-meta">尚未录入条款。在页面底部“条款包”里导入后显示。</p>')+(x.profileHtml||'')
     +'</div>';
-  const list=shown.map(x=>'<details class="evergreen-fund" data-evergreen-key="'+e(x.key)+'"'+(x.pending?' data-evergreen-due="'+e(x.pending.notice)+'"':'')+(open?.has(x.key)?' open':'')+'><summary><span class="evergreen-fund-main"><strong>'+e(x.name)+'</strong><small>'+e(x.platform)+' · '+e(x.strategy)+(x.lots>1?' · '+x.lots+' 笔':'')+'</small></span><span class="evergreen-fund-side"><span class="evergreen-amount">'+e(x.amount)+'</span><span class="evergreen-pill" data-state="'+(x.pending?'pending':x.label.state||'none')+'">'+(x.pending?'待处理':x.stateName+(x.overdue?' · 待复核':''))+'</span></span></summary>'+sheet(x)+'</details>').join('');
+  const list=shown.map(x=>'<details class="evergreen-fund" data-evergreen-key="'+e(x.key)+'"'+(x.pending?' data-evergreen-due="'+e(x.pending.notice)+'"':'')+(open?.has(x.key)?' open':'')+'><summary><span class="evergreen-fund-main"><strong>'+e(x.name)+'</strong><small>'+e(x.platform)+' · '+e(x.strategy)+(x.lots>1?' · '+x.lots+' 笔':'')+(x.share?' · 占常青 '+e(x.share):'')+'</small></span><span class="evergreen-fund-side"><span class="evergreen-amount">'+e(x.amount)+'</span><span class="evergreen-pill" data-state="'+(x.pending?'pending':x.label.state||'none')+'">'+(x.pending?'待处理':x.stateName+(x.overdue?' · 待复核':''))+'</span></span></summary>'+sheet(x)+'</details>').join('');
   return '<h2>常青基金管理</h2><p class="evergreen-sub">'+model.counts.all+' 只基金 · '+model.platforms+' 个平台'+(model.overdue?' · '+model.overdue+' 只已过复核日':'')+'</p>'
     +(model.week&&model.counts.all?'<p class="evergreen-sub evergreen-week">'+e(model.week.monday.slice(5))+' 至 '+e(model.week.friday.slice(5))+' 这一周：'+(model.counts.pending?'<strong>'+model.counts.pending+' 只待处理</strong>':'没有待处理的基金')+'</p>':'')
     +(model.counts.all?'<div class="evergreen-filter" role="group" aria-label="按状态筛选">'+chips+'</div><div class="evergreen-list">'+(list||'<p class="evergreen-meta">这个状态下没有基金。</p>')+'</div><p class="evergreen-meta">金额与收益率和“资产配置”页相同，来自 Sharesight。状态由你自己判断并设置，本页不提供买卖或赎回建议。</p>'
@@ -3640,7 +3649,8 @@ function evergreenRows(report){
         const figuresHtml=lots?'<ul class="evergreen-lots">'+lots.querySelector('ul').innerHTML+'</ul>':single?single.outerHTML:'';
         const since=el=>((el?.querySelector('.ratio-holding-yield-since')?.textContent||'').match(/\d{4}-\d{2}-\d{2}/)||[''])[0];
         const lotList=lots?Array.from(lots.querySelectorAll('li')).map(x=>({amount:x.querySelector('.ratio-holding-lot-amount')?.textContent||'',date:since(x)})):[{amount,date:since(single)}];
-        rows.push({key:platform+'|'+name,name,platform,strategy,amount,lots:lotList.length,lotList,figuresHtml});
+        const figure=i=>{const f=single?.querySelectorAll('.ratio-holding-yield-figure')[i],v=f?.querySelector('strong')?.textContent||'';return /^-?\d+\.\d{2}%$/.test(v)?{value:v,note:f.querySelector('small')?.textContent||''}:null;};
+        rows.push({key:platform+'|'+name,name,platform,strategy,amount,lots:lotList.length,lotList,figuresHtml,own:lots?null:{all:figure(0),year:figure(1)}});
       }
     }
   }
@@ -3653,8 +3663,8 @@ function renderEvergreenDesk(root){
   if(!desk){desk=document.createElement('section');desk.className='card evergreen-desk';desk.id='evergreenDesk';report.append(desk);}
   const rows=evergreenRows(report),today=todayStr(),terms=evergreenTerms(),due={};
   for(const row of rows){const p=evergreenPending(row,terms[row.key],today);if(p)due[row.key]=p;}
-  const model=evergreenDeskModel(rows,evergreenLabels(),today,evergreenWeek(today),due),profiles=evergreenProfiles();
-  for(const fund of model.funds){fund.termsHtml=evergreenTermsView(fund,terms[fund.key],today);fund.profileHtml=evergreenProfileView(profiles[fund.key]);fund.assessmentHtml=evergreenAssessmentView(profiles[fund.key]);}
+  const model=evergreenDeskModel(rows,evergreenLabels(),today,evergreenWeek(today),due),profiles=evergreenProfiles(),shares=evergreenShares(rows);
+  for(const fund of model.funds){fund.share=shares[fund.key]||'';fund.termsHtml=evergreenTermsView(fund,terms[fund.key],today);fund.profileHtml=evergreenProfileView(profiles[fund.key],fund.own);fund.assessmentHtml=evergreenAssessmentView(profiles[fund.key]);}
   desk.innerHTML=evergreenDeskView(model,_evergreenFilter,_evergreenOpen)+evergreenReadingView(evergreenReading())+evergreenRemoteView(evergreenStored(EVERGREEN_REMOTE_KEY,{}))+evergreenPackView(_evergreenPackOpen,_evergreenPackMessage);
   _evergreenRows=rows;
 }

@@ -889,7 +889,7 @@ async function calendarBox(saved = {}) {
   const memory = new Map(Object.entries(saved).map(([k, v]) => [k, JSON.stringify(v)]));
   const box = { store: { getItem: k => memory.get(k) ?? null, setItem: (k, v) => { memory.set(k, v); }, removeItem: k => { memory.delete(k); } }, todayStr: () => "2026-11-20", URL };
   vm.createContext(box);
-  vm.runInContext(profileBlock + "\n" + calendarBlock + "\n" + evergreenBlock + ";globalThis.c={evergreenProfileClean,evergreenReadingClean,evergreenProfiles,evergreenReading,evergreenProfileView,evergreenReadingView,evergreenUrl,evergreenPackApply,evergreenTermsClean,evergreenTerms,evergreenAddMonths,evergreenAddDays,evergreenDaysBetween,evergreenDealingDay,evergreenLotPlan,evergreenCents,evergreenUsd,evergreenQuarter,evergreenWeek,evergreenPending,evergreenAssessmentView,evergreenTermsView,evergreenPackBuild,evergreenPackRead,evergreenPackView};", box);
+  vm.runInContext(profileBlock + "\n" + calendarBlock + "\n" + evergreenBlock + ";globalThis.c={evergreenProfileClean,evergreenReadingClean,evergreenProfiles,evergreenReading,evergreenProfileView,evergreenReadingView,evergreenUrl,evergreenPackApply,evergreenTermsClean,evergreenTerms,evergreenAddMonths,evergreenAddDays,evergreenDaysBetween,evergreenDealingDay,evergreenLotPlan,evergreenCents,evergreenUsd,evergreenQuarter,evergreenWeek,evergreenPending,evergreenShares,evergreenAssessmentView,evergreenTermsView,evergreenPackBuild,evergreenPackRead,evergreenPackView};", box);
   return { c: box.c, memory };
 }
 const plain = v => JSON.parse(JSON.stringify(v));
@@ -1149,7 +1149,7 @@ test("profiles and the reading list stay on the device, are shown in the sheet a
   assert.ok(profileBlock.length > 1000);
   assert.doesNotMatch(profileBlock, /changeDraft|EDIT\.|saveLedger|writeRemote|ghRead|fetch\(|ghApi|ratioCore|deriveManager|XMLHttpRequest|innerHTML/i);
   assert.match(html, /\+\(x\.termsHtml\|\|'<p class="evergreen-meta">尚未录入条款。在页面底部“条款包”里导入后显示。<\/p>'\)\+\(x\.profileHtml\|\|''\)/);
-  assert.match(html, /fund\.profileHtml=evergreenProfileView\(profiles\[fund\.key\]\);/);
+  assert.match(html, /fund\.profileHtml=evergreenProfileView\(profiles\[fund\.key\],fund\.own\);/);
   assert.match(html, /evergreenDeskView\(model,_evergreenFilter,_evergreenOpen\)\+evergreenReadingView\(evergreenReading\(\)\)\+evergreenRemoteView\(evergreenStored\(EVERGREEN_REMOTE_KEY,\{\}\)\)\+evergreenPackView\(/);
   // Every link the block writes opens in a new tab without handing the page to it.
   assert.equal((profileBlock.match(/<a href=/g) || []).length, 1); assert.equal((profileBlock.match(/target="_blank" rel="noopener noreferrer"/g) || []).length, 1);
@@ -1207,4 +1207,32 @@ test("a sealed evergreen pack opens only with the device key, merges field by fi
   // The block only reads: it writes nothing remote and is reached from the snapshot read without being awaited.
   assert.doesNotMatch(remoteBlock, /atob|fetch\(|ghApi|PATCH|XMLHttpRequest|innerHTML|saveLedger|EDIT\./);
   assert.ok(html.includes("try{evergreenRemoteTake(gist.files[EVERGREEN_REMOTE_FILE],manager.privateKey,manager.recipient).catch(()=>{});}catch{}"));
+});
+
+// own-figures:v1 (owner request 2026-11-21): the page works out each fund's share of the evergreen total from the
+// printed amounts, and where a fund has published no return the owner's own Sharesight figure stands in, marked.
+test("each fund shows its share of the evergreen total, and the owner's own return fills an unpublished one", async () => {
+  const { c } = await calendarBox(), { t: d } = await evergreenBox();
+  const rows = [{ key: "P|A", amount: "USD 600.00" }, { key: "P|B", amount: "USD 300.00" }, { key: "P|C", amount: "USD 100.00" }];
+  assert.deepEqual(plain(c.evergreenShares(rows)), { "P|A": "60.0%", "P|B": "30.0%", "P|C": "10.0%" });
+  assert.deepEqual(plain(c.evergreenShares([{ key: "P|A", amount: "USD 1.00" }, { key: "P|B", amount: "USD 2.00" }])), { "P|A": "33.3%", "P|B": "66.7%" });
+  // One unreadable amount, no rows or a zero total: no share at all rather than a wrong one.
+  assert.deepEqual(plain(c.evergreenShares([...rows, { key: "P|D", amount: "未取得" }])), {}); assert.deepEqual(plain(c.evergreenShares([])), {}); assert.deepEqual(plain(c.evergreenShares([{ key: "P|A", amount: "USD 0.00" }])), {});
+  const model = d.evergreenDeskModel([{ key: "P|A", name: "A", platform: "P", strategy: "S", amount: "USD 600.00", lots: 1, lotList: [] }], {}, "2026-11-21");
+  model.funds[0].share = "60.0%";
+  const view = d.evergreenDeskView(model, "all", new Set(["P|A"]));
+  assert.ok(view.includes("<small>P · S · 占常青 60.0%</small>")); assert.ok(view.includes("<span>P · S · 占常青合计 60.0%</span><span>USD 600.00</span>"));
+  model.funds[0].share = ""; assert.equal(d.evergreenDeskView(model, "all", new Set()).includes("占常青"), false);
+  // The frame: a published return wins; otherwise the owner's own figure, marked as theirs; otherwise a dash.
+  const own = { all: { value: "8.19%", note: "年化" }, year: { value: "7.94%", note: "" } };
+  const filled = c.evergreenProfileView({}, own);
+  assert.ok(filled.includes("<dt>近一年</dt><dd>7.94%（你的）</dd>")); assert.ok(filled.includes("<dt>成立以来年化</dt><dd>8.19%（你的，自买入，年化）</dd>")); assert.ok(filled.includes("<dt>今年以来</dt><dd>-</dd>"));
+  const published = c.evergreenProfileView({ return1y: 18.2, returnSi: 17.1 }, own);
+  assert.ok(published.includes("<dt>近一年</dt><dd>18.2%</dd>")); assert.ok(published.includes("<dt>成立以来年化</dt><dd>17.1%</dd>")); assert.equal(published.includes("你的）"), false);
+  const young = c.evergreenProfileView({}, { all: { value: "4.91%", note: "未满一年" }, year: null });
+  assert.ok(young.includes("<dt>成立以来年化</dt><dd>4.91%（你的，自买入，未满一年）</dd>")); assert.ok(young.includes("<dt>近一年</dt><dd>-</dd>"));
+  assert.ok(c.evergreenProfileView({}, null).includes("<dt>成立以来年化</dt><dd>-</dd>"), "several lots have no single figure");
+  assert.ok(filled.includes("标“你的”的来自 Sharesight，按你自己的买入计算"));
+  // The desk reads the two printed figures of a single-lot fund as text and passes them on; nothing is recalculated.
+  assert.ok(html.includes("own:lots?null:{all:figure(0),year:figure(1)}")); assert.ok(html.includes("fund.share=shares[fund.key]||'';"));
 });
