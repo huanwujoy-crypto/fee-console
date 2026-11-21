@@ -1150,8 +1150,61 @@ test("profiles and the reading list stay on the device, are shown in the sheet a
   assert.doesNotMatch(profileBlock, /changeDraft|EDIT\.|saveLedger|writeRemote|ghRead|fetch\(|ghApi|ratioCore|deriveManager|XMLHttpRequest|innerHTML/i);
   assert.match(html, /\+\(x\.termsHtml\|\|'<p class="evergreen-meta">尚未录入条款。在页面底部“条款包”里导入后显示。<\/p>'\)\+\(x\.profileHtml\|\|''\)/);
   assert.match(html, /fund\.profileHtml=evergreenProfileView\(profiles\[fund\.key\]\);/);
-  assert.match(html, /evergreenDeskView\(model,_evergreenFilter,_evergreenOpen\)\+evergreenReadingView\(evergreenReading\(\)\)\+evergreenPackView\(/);
+  assert.match(html, /evergreenDeskView\(model,_evergreenFilter,_evergreenOpen\)\+evergreenReadingView\(evergreenReading\(\)\)\+evergreenRemoteView\(evergreenStored\(EVERGREEN_REMOTE_KEY,\{\}\)\)\+evergreenPackView\(/);
   // Every link the block writes opens in a new tab without handing the page to it.
   assert.equal((profileBlock.match(/<a href=/g) || []).length, 1); assert.equal((profileBlock.match(/target="_blank" rel="noopener noreferrer"/g) || []).length, 1);
   assert.match(html, /fund\.assessmentHtml=evergreenAssessmentView\(profiles\[fund\.key\]\);/); assert.ok(html.includes("+(x.pending?due(x.pending):'')+(x.assessmentHtml||'')"));
+});
+
+// evergreen-remote:v1 (owner request 2026-11-21): fund facts sealed on the owner's computer are opened by the device's
+// own key, cleaned by the pack reader and merged; nobody else can read them and they never carry a status label.
+test("a sealed evergreen pack opens only with the device key, merges field by field and never sets a label", async () => {
+  const vm = await import("node:vm"), subtle = globalThis.crypto.subtle;
+  // What the owner's computer does before storing the file: an ephemeral X25519 key, HKDF-SHA256 and AES-256-GCM,
+  // bound to the recipient and the time. It needs only the public recipient record.
+  const sealEvergreenPack = async (text, r, generatedAt) => {
+    const b64 = b => Buffer.from(b).toString("base64url"), eph = await subtle.generateKey({ name: "X25519" }, true, ["deriveBits"]);
+    const peer = await subtle.importKey("raw", Buffer.from(r.publicKey, "base64url"), { name: "X25519" }, false, []);
+    const shared = await subtle.deriveBits({ name: "X25519", public: peer }, eph.privateKey, 256), salt = crypto.getRandomValues(new Uint8Array(32)), iv = crypto.getRandomValues(new Uint8Array(12));
+    const info = new TextEncoder().encode(["fee-console/evergreen-pack/v1", r.scopeId, r.recipientId, generatedAt].join("|"));
+    const key = await subtle.deriveKey({ name: "HKDF", hash: "SHA-256", salt, info }, await subtle.importKey("raw", shared, "HKDF", false, ["deriveKey"]), { name: "AES-GCM", length: 256 }, false, ["encrypt"]);
+    return JSON.stringify({ schema: "fee-console.evergreen-sealed.v1", algorithm: "X25519-HKDF-SHA256-AES256GCM", scopeId: r.scopeId, recipientId: r.recipientId, generatedAt, ephemeralPublicKey: b64(await subtle.exportKey("raw", eph.publicKey)),
+      salt: b64(salt), iv: b64(iv), ciphertext: b64(await subtle.encrypt({ name: "AES-GCM", iv, additionalData: info }, key, new TextEncoder().encode(text))) });
+  };
+  const pair = await subtle.generateKey({ name: "X25519" }, true, ["deriveBits"]), other = await subtle.generateKey({ name: "X25519" }, true, ["deriveBits"]);
+  const recipient = { schema: "r", algorithm: "X25519-HKDF-SHA256-AES256GCM", scopeId: "a".repeat(64), recipientId: "b".repeat(64), publicKey: Buffer.from(await subtle.exportKey("raw", pair.publicKey)).toString("base64url") };
+  const pack = JSON.stringify({ schema: "fee-console.evergreen-pack.v1", funds: [{ key: "P|A", profile: { manager: "新管理人" }, terms: { noticeDays: 30 } }] });
+  const sealed = await sealEvergreenPack(pack, recipient, "2026-11-22T02:00:00.000Z");
+  assert.equal(sealed.includes("新管理人"), false); assert.equal(sealed.includes("P|A"), false);
+  const memory = new Map([["feeConsole.evergreen.profile.v1", JSON.stringify({ "P|A": { summary: "原有简介", manager: "旧" } })], ["feeConsole.evergreen.terms.v1", JSON.stringify({ "P|A": { frequency: "quarterly", noticeDays: 45 } })],
+    ["feeConsole.evergreen.labels.v1", JSON.stringify({ "P|A": { state: "watch" } })]]);
+  const box = { URL, atob, TextEncoder, TextDecoder, Uint8Array, crypto: globalThis.crypto, store: { getItem: k => memory.get(k) ?? null, setItem: (k, v) => memory.set(k, v), removeItem: k => memory.delete(k) } }; vm.createContext(box);
+  const remoteBlock = html.slice(html.indexOf("/* evergreen-remote:v1:start */"), html.indexOf("/* evergreen-remote:v1:end */"));
+  vm.runInContext('const todayStr=()=>"2026-11-22";' + profileBlock + "\n" + calendarBlock + "\n" + evergreenBlock + "\n" + remoteBlock + ";globalThis.r={evergreenRemoteOpen,evergreenRemoteTake,evergreenRemoteView,evergreenPackApply};", box);
+  const opened = await box.r.evergreenRemoteOpen(sealed, pair.privateKey, recipient);
+  assert.equal(opened.text, pack); assert.equal(opened.generatedAt, "2026-11-22T02:00:00.000Z");
+  // Another key, another recipient, a changed time or a flipped byte all refuse.
+  await assert.rejects(box.r.evergreenRemoteOpen(sealed, other.privateKey, recipient));
+  await assert.rejects(box.r.evergreenRemoteOpen(sealed, pair.privateKey, { ...recipient, recipientId: "c".repeat(64) }));
+  await assert.rejects(box.r.evergreenRemoteOpen(sealed.replace("02:00:00", "03:00:00"), pair.privateKey, recipient));
+  await assert.rejects(box.r.evergreenRemoteOpen(JSON.stringify({ ...JSON.parse(sealed), extra: 1 }), pair.privateKey, recipient)); await assert.rejects(box.r.evergreenRemoteOpen("{}", pair.privateKey, recipient));
+  // Taking it merges into what the fund already has, leaves the owner's label alone, and happens once.
+  assert.equal(await box.r.evergreenRemoteTake({ content: sealed }, pair.privateKey, recipient), true);
+  assert.deepEqual(JSON.parse(memory.get("feeConsole.evergreen.profile.v1"))["P|A"], { summary: "原有简介", manager: "新管理人" });
+  assert.deepEqual(JSON.parse(memory.get("feeConsole.evergreen.terms.v1"))["P|A"], { frequency: "quarterly", noticeDays: 30 });
+  assert.deepEqual(JSON.parse(memory.get("feeConsole.evergreen.labels.v1")), { "P|A": { state: "watch" } });
+  assert.deepEqual(JSON.parse(memory.get("feeConsole.evergreen.remote.v1")), { generatedAt: "2026-11-22T02:00:00.000Z" });
+  assert.equal(await box.r.evergreenRemoteTake({ content: sealed }, pair.privateKey, recipient), false, "the same pack is not taken twice");
+  assert.equal(await box.r.evergreenRemoteTake({ content: await sealEvergreenPack(pack, recipient, "2026-11-21T02:00:00.000Z") }, pair.privateKey, recipient), false, "an older pack is ignored");
+  for (const bad of [null, { truncated: true, content: sealed }, { content: 5 }, { content: "{broken" }]) assert.equal(await box.r.evergreenRemoteTake(bad, pair.privateKey, recipient), false);
+  assert.ok(box.r.evergreenRemoteView({ generatedAt: "2026-11-22T02:00:00.000Z" }).includes("基金资料自动更新于 2026-11-22")); assert.equal(box.r.evergreenRemoteView({}), ""); assert.equal(box.r.evergreenRemoteView({ generatedAt: "<b>" }), "");
+  // A sealed pack that carries a label anyway has it dropped.
+  assert.equal(await box.r.evergreenRemoteTake({ content: await sealEvergreenPack(JSON.stringify({ schema: "fee-console.evergreen-pack.v1", funds: [{ key: "P|A", profile: { leverage: "无" }, label: { state: "redeeming" } }] }), recipient, "2026-11-23T02:00:00.000Z") }, pair.privateKey, recipient), true);
+  assert.deepEqual(JSON.parse(memory.get("feeConsole.evergreen.labels.v1")), { "P|A": { state: "watch" } });
+  // A pasted pack merges the same way, and may still carry labels.
+  assert.equal(box.r.evergreenPackApply(JSON.stringify({ schema: "fee-console.evergreen-pack.v1", funds: [{ key: "P|A", profile: { size: "$1B" }, label: { state: "hold" } }] })), "已导入 1 只基金的资料、1 只基金的状态。");
+  assert.deepEqual(JSON.parse(memory.get("feeConsole.evergreen.profile.v1"))["P|A"], { summary: "原有简介", size: "$1B", manager: "新管理人", leverage: "无" });
+  // The block only reads: it writes nothing remote and is reached from the snapshot read without being awaited.
+  assert.doesNotMatch(remoteBlock, /fetch\(|ghApi|PATCH|XMLHttpRequest|innerHTML|saveLedger|EDIT\./);
+  assert.ok(html.includes("try{evergreenRemoteTake(gist.files[EVERGREEN_REMOTE_FILE],manager.privateKey,manager.recipient).catch(()=>{});}catch{}"));
 });
