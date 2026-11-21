@@ -10,7 +10,7 @@
 <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAABzUlEQVR42u3bsQ2AMAwAwczDhEzKOqGlCBIgBdnxRT+BfU0Kt20/pGHNCASH4BAcgkNwCA7BITgEh+CQ4BAcgkNwCA7BITgEh+AQHBIcgkNwCA7BITgEh+AQHIJDgkNwCA7BITgEh+AQHIJDcAgOCQ7BITgEh+AQHIJDcOi2/vjBwUQyJXAEkhHNBxyxZITyAQcccMABxwIy4viAAw444IADDjjggAMOOOCAAw444IBDcAgOwQEHHHDAAQcccMABBxxwwAEHHHAIDudocDDxeWFwOEeDg4z3a4MDDjjggKMOjh82BwcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAGHQ1Y4HLLCERPH1IHCkRjH7JnCAQcccMBRB8cam4MDDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAQxWDQ3AIDsEhOFQNR/eSfG7hgAMOOOCAAw444PCq4ZCvrOAQHIJDgkNwCA7BITgEh+AQHIJDcEhwCA7BITgEh+AQHIJDcAgOwSHBITgEh+AQHIJDcAgOwSE4pEsnhtvC417hqCsAAAAASUVORK5CYII=">
-<meta name="fee-console-build" content="4.10.36">
+<meta name="fee-console-build" content="4.10.37">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -203,7 +203,7 @@ section.pane{display:none} section.pane.on{display:block}
 .evergreen-reading li{display:flex;flex-direction:column;gap:2px;padding:8px 0;border-top:1px solid var(--grid)}.evergreen-reading a{font-weight:600;padding:2px 0}.evergreen-reading p{font-size:12px;line-height:1.55;margin:2px 0}.evergreen-tags{display:flex;flex-wrap:wrap;gap:4px}.evergreen-tags i{font-style:normal;font-size:10px;padding:2px 7px;border-radius:999px;background:var(--chip);color:var(--ink-2)}
 .evergreen-sub,.evergreen-meta{font-size:12px;color:var(--ink-2);line-height:1.6;margin:4px 0}.evergreen-filter{display:flex;gap:6px;overflow-x:auto;padding:6px 0 8px;scrollbar-width:none}.evergreen-filter button,.evergreen-states button{flex:none;font:inherit;font-size:12px;color:var(--ink-2);background:var(--chip);border:1px solid transparent;border-radius:999px;padding:6px 12px;min-height:32px;cursor:pointer}.evergreen-filter button[aria-pressed="true"],.evergreen-states button[aria-pressed="true"]{color:var(--ink-1);border-color:var(--series-1);font-weight:600}
 #p-ratio .evergreen-fund{margin:0;border-top:1px solid var(--grid)}#p-ratio .evergreen-fund>summary{display:flex;gap:8px;align-items:center;min-height:56px;padding:8px 0;list-style:none;color:var(--ink-1)}.evergreen-fund-main{display:flex;flex:1;flex-direction:column;gap:2px;min-width:0}.evergreen-fund-main strong{font-size:14px;font-weight:600;overflow-wrap:anywhere}.evergreen-fund-main small{font-size:11px;color:var(--ink-2)}.evergreen-fund-side{display:flex;flex-direction:column;align-items:flex-end;gap:4px}.evergreen-amount{font-size:13px;font-variant-numeric:tabular-nums;white-space:nowrap}
-.evergreen-pill{font-size:11px;line-height:1;padding:4px 8px;border-radius:999px;background:var(--chip);color:var(--ink-2);white-space:nowrap}.evergreen-pill[data-state="watch"]{background:color-mix(in srgb,#d99a2b 22%,transparent);color:var(--ink-1)}.evergreen-pill[data-state="prepare"],.evergreen-pill[data-state="redeeming"]{background:color-mix(in srgb,#c8553d 22%,transparent);color:var(--ink-1)}.evergreen-pill[data-state="hold"]{background:color-mix(in srgb,#3f9a78 22%,transparent);color:var(--ink-1)}
+.evergreen-pill{font-size:11px;line-height:1;padding:4px 8px;border-radius:999px;background:var(--chip);color:var(--ink-2);white-space:nowrap}.evergreen-pill[data-state="watch"]{background:color-mix(in srgb,#d99a2b 22%,transparent);color:var(--ink-1)}.evergreen-pill[data-state="prepare"],.evergreen-pill[data-state="redeeming"]{background:color-mix(in srgb,#c8553d 22%,transparent);color:var(--ink-1)}.evergreen-pill[data-state="pending"]{background:#c8553d;color:#fff;font-weight:600}.evergreen-week strong{color:#c8553d}.evergreen-due{margin:0 0 12px;padding:10px 12px;border-radius:10px;background:color-mix(in srgb,#c8553d 12%,transparent);font-size:12px;line-height:1.6}.evergreen-due strong{font-size:13px}.evergreen-due p{margin:2px 0 0}.evergreen-assessment{margin:0 0 12px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;font-size:12px;line-height:1.65}.evergreen-assessment>summary{font-size:13px;font-weight:600;cursor:pointer}.evergreen-assessment p{margin:0 0 4px}.evergreen-assessment ul{margin:0;padding-left:16px;color:var(--ink-2)}.evergreen-pill[data-state="hold"]{background:color-mix(in srgb,#3f9a78 22%,transparent);color:var(--ink-1)}
 .evergreen-sheet{padding:2px 0 14px}.evergreen-sheet h3{font-size:12px;margin:14px 0 6px;color:var(--ink-2);font-weight:600}.evergreen-states{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}.evergreen-sheet label.f{display:block;margin-top:8px}.evergreen-position>p{display:flex;justify-content:space-between;gap:10px;font-size:12px;margin:0 0 4px}.evergreen-position>p span:last-child{font-variant-numeric:tabular-nums;white-space:nowrap}.evergreen-position .ratio-holding-yield{font-size:12px}.evergreen-lots{list-style:none;margin:4px 0 0;padding:0 0 0 10px;border-left:2px solid var(--grid);font-size:12px}.evergreen-lots li{display:flex;flex-wrap:wrap;gap:2px 12px;padding:3px 0}.evergreen-lots li+li{border-top:1px dotted var(--grid);margin-top:3px;padding-top:5px}.evergreen-lots .ratio-holding-yield{flex:1 0 100%}.evergreen-lots .ratio-holding-yield-since{flex-basis:100%}
 .ratio-fund-holding+.ratio-fund-holding{border-top:1px dashed var(--grid);margin-top:2px;padding-top:6px}.ratio-holding-lots li+li{border-top:1px dotted var(--grid);margin-top:3px;padding-top:5px}.ratio-holding-lots ul{margin:2px 0 4px;padding:0 0 0 10px;border-left:2px solid var(--grid)}.ratio-holding-lots li{display:flex;flex-wrap:wrap;gap:2px 12px;align-items:baseline;padding:2px 0}.ratio-holding-lot-amount{white-space:nowrap;font-variant-numeric:tabular-nums}
 
@@ -1200,7 +1200,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.10.36";
+const UI_VERSION_LABEL=" · v4.10.37";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -3370,13 +3370,16 @@ function evergreenMix(list,max){
 // Pure: one fund's pack entry in, a clean record out; an empty record means there is nothing to show.
 function evergreenProfileClean(fund){
   const p=fund?.profile&&typeof fund.profile==='object'&&!Array.isArray(fund.profile)?fund.profile:{},out={};
-  for(const [k,max] of [['source',160],['summary',200],['size',40]]){const t=evergreenText(p[k],max);if(t)out[k]=t;}
+  for(const [k,max] of [['source',160],['summary',200],['size',40],['manager',60],['inception',20],['positions',20],['leverage',30]]){const t=evergreenText(p[k],max);if(t)out[k]=t;}
   if(typeof p.asOf==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(p.asOf))out.asOf=p.asOf;
+  for(const k of ['returnYtd','return1y','returnSi'])if(typeof p[k]==='number'&&Number.isFinite(p[k])&&p[k]>=-100&&p[k]<=10000)out[k]=p[k];
   for(const [k,max] of [['strategy',8],['sector',8],['region',6],['holdings',10]]){const mix=evergreenMix(p[k],max);if(mix.length)out[k]=mix;}
-  const links=(Array.isArray(fund?.links)?fund.links:[]).map(x=>({title:evergreenText(x?.title,60),url:evergreenUrl(x?.url)})).filter(x=>x.title&&x.url).slice(0,5);
   const updates=(Array.isArray(fund?.updates)?fund.updates:[]).map(x=>({date:typeof x?.date==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(x.date)?x.date:'',text:evergreenText(x?.text,160),source:evergreenText(x?.source,100)}))
     .filter(x=>x.date&&x.text).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,3);
-  if(links.length)out.links=links;if(updates.length)out.updates=updates;
+  if(updates.length)out.updates=updates;
+  // The one-page assessment prepared for a pending fund: dated, a few titled paragraphs, and where each came from.
+  const a=fund?.assessment&&typeof fund.assessment==='object'?fund.assessment:{},sections=(Array.isArray(a.sections)?a.sections:[]).map(x=>({title:evergreenText(x?.title,30),text:evergreenText(x?.text,500)})).filter(x=>x.title&&x.text).slice(0,8);
+  if(typeof a.date==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(a.date)&&sections.length)out.assessment={date:a.date,sections,sources:(Array.isArray(a.sources)?a.sources:[]).map(s=>evergreenText(s,160)).filter(Boolean).slice(0,10)};
   return out;
 }
 function evergreenReadingClean(list){
@@ -3387,17 +3390,27 @@ function evergreenReadingClean(list){
 function evergreenStored(key,fallback){try{const v=JSON.parse((typeof store!=='undefined'&&store?store.getItem(key):null)||'null');return v&&typeof v==='object'?v:fallback;}catch{return fallback;}}
 function evergreenProfiles(){
   const v=evergreenStored(EVERGREEN_PROFILE_KEY,{});if(Array.isArray(v))return {};
-  return Object.fromEntries(Object.entries(v).map(([k,r])=>[k,evergreenProfileClean({profile:r,links:r?.links,updates:r?.updates})]).filter(([,r])=>Object.keys(r).length));
+  return Object.fromEntries(Object.entries(v).map(([k,r])=>[k,evergreenProfileClean({profile:r,updates:r?.updates,assessment:r?.assessment})]).filter(([,r])=>Object.keys(r).length));
 }
 function evergreenReading(){return evergreenReadingClean(evergreenStored(EVERGREEN_READING_KEY,[]));}
 function evergreenProfileView(record){
   const e=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const r=record||{};if(!Object.keys(r).length)return '';
-  const mix=(title,list)=>list?.length?'<h4>'+title+'</h4><ul class="evergreen-mix">'+list.map(x=>'<li><span>'+e(x.name)+'</span>'+(x.pct===undefined?'':'<span class="evergreen-mix-track"><i style="width:'+Math.min(100,x.pct)+'%"></i></span><b>'+e(x.pct)+'%</b>')+'</li>').join('')+'</ul>':'';
-  const facts=(r.summary?'<p class="evergreen-summary">'+e(r.summary)+'</p>':'')+(r.size?'<p class="evergreen-meta">基金规模 '+e(r.size)+'</p>':'')+mix('策略分布',r.strategy)+mix('行业分布',r.sector)+mix('地区分布',r.region)+mix('主要持仓',r.holdings);
-  const updates=r.updates?.length?'<h3>最新动态</h3><ul class="evergreen-updates">'+r.updates.map(u=>'<li><b>'+e(u.date)+'</b><span>'+e(u.text)+'</span>'+(u.source?'<small>'+e(u.source)+'</small>':'')+'</li>').join('')+'</ul>':'';
-  const links=r.links?.length?'<h3>文件</h3><ul class="evergreen-links">'+r.links.map(l=>'<li><a href="'+e(l.url)+'" target="_blank" rel="noopener noreferrer">'+e(l.title)+'</a></li>').join('')+'</ul>':'';
-  return (facts?'<h3>基金概况</h3>'+facts+'<p class="evergreen-meta">'+(r.asOf?'资料截至 '+e(r.asOf):'资料日期未填')+(r.source?' · '+e(r.source):'')+'</p>':'')+updates+links;
+  // field-frame:v1 (owner request 2026-11-21) — every fund shows the same fields in the same order, so funds of one
+  // strategy can be compared; a field nobody has filled is a dash. Filed documents are no longer linked.
+  const r=record||{},dash='<p class="evergreen-meta">-</p>',row=(label,value)=>'<div><dt>'+label+'</dt><dd>'+(value===undefined||value===''?'-':e(value))+'</dd></div>',pct=v=>v===undefined?undefined:v+'%';
+  const mix=(title,list)=>'<h4>'+title+'</h4>'+(list?.length?'<ul class="evergreen-mix">'+list.map(x=>'<li><span>'+e(x.name)+'</span>'+(x.pct===undefined?'':'<span class="evergreen-mix-track"><i style="width:'+Math.min(100,x.pct)+'%"></i></span><b>'+e(x.pct)+'%</b>')+'</li>').join('')+'</ul>':dash);
+  return '<h3>基金概况</h3><p class="evergreen-summary">'+(r.summary?e(r.summary):'-')+'</p>'
+    +'<dl class="evergreen-terms">'+row('管理人',r.manager)+row('成立时间',r.inception)+row('基金规模',r.size)+row('持仓数量',r.positions)+row('杠杆',r.leverage)+row('今年以来',pct(r.returnYtd))+row('近一年',pct(r.return1y))+row('成立以来年化',pct(r.returnSi))+'</dl>'
+    +mix('策略分布',r.strategy)+mix('行业分布',r.sector)+mix('地区分布',r.region)+mix('主要持仓',r.holdings)
+    +'<p class="evergreen-meta">'+(r.asOf?'资料截至 '+e(r.asOf):'资料日期未填')+(r.source?' · '+e(r.source):'')+' · 回报为基金自己公布的数字</p>'
+    +'<h3>最新动态</h3>'+(r.updates?.length?'<ul class="evergreen-updates">'+r.updates.map(u=>'<li><b>'+e(u.date)+'</b><span>'+e(u.text)+'</span>'+(u.source?'<small>'+e(u.source)+'</small>':'')+'</li>').join('')+'</ul>':dash);
+}
+function evergreenAssessmentView(record){
+  const e=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const a=record?.assessment;if(!a)return '';
+  return '<details class="evergreen-assessment" open><summary>评估报告 · '+e(a.date)+'</summary>'+a.sections.map(s=>'<h4>'+e(s.title)+'</h4><p>'+e(s.text)+'</p>').join('')
+    +(a.sources.length?'<h4>依据</h4><ul>'+a.sources.map(s=>'<li>'+e(s)+'</li>').join('')+'</ul>':'')
+    +'<p class="evergreen-meta">根据基金文件、你的持仓记录和公开报道整理，列出事实和需要你判断的问题，不是买卖或赎回建议。</p></details>';
 }
 function evergreenReadingView(list){
   const e=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -3415,7 +3428,7 @@ function evergreenReadingView(list){
 // and the fund's dealing calendar decide.
 const EVERGREEN_TERMS_KEY='feeConsole.evergreen.terms.v1',EVERGREEN_PACK_SCHEMA='fee-console.evergreen-pack.v1';
 const EVERGREEN_FREQUENCY={monthly:['每月',1],quarterly:['每季度',3],semiannual:['每半年',6],annual:['每年',12]};
-let _evergreenRows=[],_evergreenLaterOpen=false,_evergreenPackOpen=false,_evergreenPackMessage='';
+let _evergreenRows=[],_evergreenPackOpen=false,_evergreenPackMessage='';
 // Pure: one fund's terms in, a clean record out. Anything out of range or of the wrong type is dropped, not guessed.
 function evergreenTermsClean(value){
   const v=value&&typeof value==='object'&&!Array.isArray(value)?value:{},out={};
@@ -3465,55 +3478,32 @@ function evergreenLotPlan(purchase,terms,today){
 function evergreenCents(text){const m=/^USD (\d{1,3}(?:,\d{3})*|\d+)\.(\d{2})$/.exec(String(text||'').trim());return m?Number(m[1].replaceAll(',',''))*100+Number(m[2]):null;}
 function evergreenUsd(cents){const dollars=Math.round(cents/100);return 'USD '+String(dollars).replace(/\B(?=(\d{3})+(?!\d))/g,',');}
 function evergreenQuarter(iso){const d=evergreenDate(iso);return d?d.getUTCFullYear()+' Q'+(Math.floor(d.getUTCMonth()/3)+1):'';}
-// Pure: every fund's lots and terms in, the deadline list and the liquidity ladder out.
-function evergreenCalendarModel(rows,termsByKey,today){
-  const deadlines=[],buckets=new Map(),missingNames=[],undatedNames=[];let missing=0,unknownCents=0,lockedFunds=0;
-  for(const row of Array.isArray(rows)?rows:[]){
-    const terms=termsByKey?.[row.key],plans=(row.lotList||[]).map(lot=>({lot,plan:evergreenLotPlan(lot.date,terms,today)}));
-    if(!terms||plans.some(p=>p.plan.status==='no-terms')){missing++;missingNames.push(row.name);for(const p of plans)unknownCents+=evergreenCents(p.lot.amount)||0;continue;}
-    for(const {lot,plan} of plans){
-      const cents=evergreenCents(lot.amount);
-      if(plan.status==='no-date'||cents===null){unknownCents+=cents||0;if(!undatedNames.includes(row.name))undatedNames.push(row.name);continue;}
-      // calendar-fold:v1 (owner request 2026-11-20): the ladder is one amount per quarter; an early-redemption fee is a fund-sheet matter.
-      const q=evergreenQuarter(plan.cash),b=buckets.get(q)||{quarter:q,cents:0};b.cents+=cents;buckets.set(q,b);
-    }
-    const dated=plans.map(p=>p.plan).filter(p=>p.dealing).sort((a,b)=>a.notice.localeCompare(b.notice));
-    if(!dated.length)continue;
-    if(dated.every(p=>p.status==='locked'))lockedFunds++;
-    const next=dated[0],states=new Set(dated.map(p=>p.status==='locked'?'locked':'free'));
-    deadlines.push({key:row.key,name:row.name,platform:row.platform,notice:next.notice,days:next.daysToNotice,dealing:next.dealing,cash:next.cash,
-      status:states.size>1?'mixed':[...states][0],lots:dated.length,earlyFeePct:terms.earlyFeePct||0,gatePct:terms.gatePct||0});
-  }
-  deadlines.sort((a,b)=>a.notice.localeCompare(b.notice)||a.name.localeCompare(b.name));
-  const ladder=[...buckets.values()].sort((a,b)=>a.quarter.localeCompare(b.quarter)),peak=Math.max(1,...ladder.map(b=>b.cents));
-  return {deadlines,ladder,peak,missing,missingNames,undatedNames,unknownCents,lockedFunds,funds:(rows||[]).length,next:deadlines[0]||null};
+// pending-week:v1 (owner request 2026-11-21) — the calendar card is gone; what remains is one question per fund:
+// can a redemption be filed this week without an early-redemption fee? The week is Monday to Sunday, and from
+// Saturday on it is the coming week, because nothing can be filed at a weekend.
+function evergreenWeek(today){
+  const d=evergreenDate(today);if(!d)return null;
+  const dow=d.getUTCDay(),monday=evergreenAddDays(today,dow===0?1:dow===6?2:1-dow);
+  return {monday,friday:evergreenAddDays(monday,4),from:today>monday?today:monday,to:evergreenAddDays(monday,6)};
 }
-function evergreenCalendarView(model,laterOpen){
-  const e=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  if(!model.funds)return '';
-  const state={locked:'锁定中',free:'可赎回',mixed:'部分锁定'};
-  const countdown=d=>d===null?'':d<=0?'今天截止':'还有 '+d+' 天';
-  const head='<h2>赎回日历</h2>';
-  if(!model.deadlines.length)return head+'<p class="evergreen-meta">还没有任何基金录入条款。请在页面底部“条款包”里导出清单、填好条款后导入。</p>';
-  const item=d=>'<li data-days="'+(d.days??'')+'"'+(d.days!==null&&d.days<=30?' class="evergreen-soon"':'')+'><span class="evergreen-deadline-top"><strong>'+e(d.name)+'</strong><span class="evergreen-days">'+countdown(d.days)+'</span></span><small class="evergreen-deadline-dates">通知截止 <b>'+e(d.notice)+'</b> → 赎回日 '+e(d.dealing)+(d.cash!==d.dealing?' → 约 '+e(d.cash)+' 到账':'')+'</small><small>'+e(d.platform)+' · '+state[d.status]+(d.lots>1?' · '+d.lots+' 笔':'')+'</small></li>';
-  // Only what needs action within two weeks is on show; the rest waits behind one tap.
-  const soon=model.deadlines.filter(d=>d.days!==null&&d.days<=14),later=model.deadlines.filter(d=>!soon.includes(d));
-  const ladder=model.ladder.map(b=>'<li><span class="evergreen-ladder-quarter">'+e(b.quarter)+'</span><span class="evergreen-ladder-track"><i class="evergreen-free" style="width:'+Math.max(2,Math.round(b.cents/model.peak*100))+'%"></i></span><span class="evergreen-ladder-amount">'+evergreenUsd(b.cents)+'</span></li>').join('');
-  const names=list=>list.map(e).join('、'),why=[model.missingNames?.length?'未录入条款：'+names(model.missingNames):'',model.undatedNames?.length?'缺少买入日期：'+names(model.undatedNames):''].filter(Boolean).join('；');
-  return head+'<p class="evergreen-sub">最近的通知截止日：<strong>'+e(model.next.notice)+'</strong>（'+countdown(model.next.days)+'）'+(model.missing?' · '+model.missing+' 只未录入条款':'')+'</p>'
-    +(soon.length?'<ul class="evergreen-deadlines">'+soon.map(item).join('')+'</ul>':'<p class="evergreen-meta">两周内没有需要提交的赎回通知。</p>')
-    +(later.length?'<details class="evergreen-later"'+(laterOpen?' open':'')+'><summary>'+(soon.length?'其余 ':'全部 ')+later.length+' 只基金的截止日</summary><ul class="evergreen-deadlines">'+later.map(item).join('')+'</ul></details>':'')
-    +'<h3 class="evergreen-ladder-title">如果今天全部提交，最早何时到账</h3><ul class="evergreen-ladder">'+ladder+'</ul>'
-    +(model.unknownCents||why?'<p class="evergreen-meta">'+(model.unknownCents?'另有约 '+evergreenUsd(model.unknownCents)+' 未排入上表。':'')+(why?why+'。':'')+'</p>':'')
-    +'<p class="evergreen-meta">按每一笔申购的买入日和已录入条款推算，假设赎回申请全额获批。多数常青基金设有每期赎回上限（常见为基金净值的 5% 左右），超额会按比例兑付或顺延；实际日期以平台通知为准。</p>';
+// Pure: one fund's lots and terms in; the lots whose notice deadline falls in the week and whose redemption day is
+// past both the lock-up and the early-fee period. Null when there is none.
+function evergreenPending(fund,terms,today){
+  const week=evergreenWeek(today);if(!week||!terms)return null;
+  const lots=(fund?.lotList||[]).map(lot=>({lot,plan:evergreenLotPlan(lot.date,terms,today)}))
+    .filter(x=>x.plan.dealing&&x.plan.dealing>=x.plan.softEnd&&x.plan.notice>=week.from&&x.plan.notice<=week.to);
+  if(!lots.length)return null;
+  const first=lots.map(x=>x.plan).sort((a,b)=>a.notice.localeCompare(b.notice))[0];
+  return {notice:first.notice,dealing:first.dealing,cash:first.cash,lots:lots.length,amounts:lots.map(x=>x.lot.amount),skipped:(fund.lotList||[]).length-lots.length};
 }
 // One fund's terms and each lot's plan, for its sheet.
 function evergreenTermsView(fund,terms,today){
   const e=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const t=terms||{};if(!Object.keys(t).length)return '';
-  const row=(label,value)=>value===undefined||value===''?'':'<div><dt>'+label+'</dt><dd>'+value+'</dd></div>',pct=v=>v===undefined?undefined:e(v)+'%',has=k=>t[k]!==undefined;
+  const t=terms||{};
+  // field-frame:v1 — every fund shows the same rows; a missing value is a dash, so the gaps are visible.
+  const row=(label,value)=>'<div><dt>'+label+'</dt><dd>'+(value===undefined||value===''?'-':value)+'</dd></div>',pct=v=>v===undefined?undefined:e(v)+'%',has=k=>t[k]!==undefined;
   const facts=row('赎回频率',t.frequency?EVERGREEN_FREQUENCY[t.frequency][0]:'')+row('赎回日',has('dealingOffsetMonths')?'期末'+(t.dealingOffsetMonths<0?'前 ':'后 ')+Math.abs(t.dealingOffsetMonths)+' 个月的月底':'')+row('通知期',has('noticeDays')?'提前 '+t.noticeDays+' 天':'')+row('锁定期',has('lockupMonths')?(t.lockupMonths?t.lockupMonths+' 个月':'无'):'')
-    +row('提前赎回费',has('softLockMonths')&&t.softLockMonths?'买入后 '+t.softLockMonths+' 个月内'+(has('earlyFeePct')?' '+e(t.earlyFeePct)+'%':''):'')+row('每期赎回上限',has('gatePct')?'基金净值的 '+e(t.gatePct)+'%':'')+row('到账',has('settlementDays')?'赎回日后约 '+t.settlementDays+' 天':'')
+    +row('提前赎回费',has('softLockMonths')?(t.softLockMonths?'买入后 '+t.softLockMonths+' 个月内'+(has('earlyFeePct')?' '+e(t.earlyFeePct)+'%':''):'无'):'')+row('每期赎回上限',has('gatePct')?'基金净值的 '+e(t.gatePct)+'%':'')+row('到账',has('settlementDays')?'赎回日后约 '+t.settlementDays+' 天':'')
     +row('管理费',pct(t.mgmtPct))+row('业绩报酬',has('perfPct')?e(t.perfPct)+'%'+(has('hurdlePct')?'（门槛 '+e(t.hurdlePct)+'%）':''):'')+row('服务费',pct(t.servicingPct));
   const label={locked:p=>'锁定至 '+e(p.hardUnlock),fee:p=>'可赎回，'+e(p.softEnd)+' 前有提前赎回费',free:()=>'可赎回','no-date':()=>'缺少买入日期','no-terms':()=>'条款不足，无法推算'};
   const lots=(fund.lotList||[]).map(lot=>{const p=evergreenLotPlan(lot.date,t,today);
@@ -3522,7 +3512,7 @@ function evergreenTermsView(fund,terms,today){
 }
 // The terms pack: one text the owner copies out, has filled in from the fund documents, and pastes back.
 function evergreenPackBuild(rows,termsByKey,labels,today,profiles,reading){
-  const record=k=>{const {links,updates,...profile}=profiles?.[k]||{};return {...(Object.keys(profile).length?{profile}:{}),...(links?{links}:{}),...(updates?{updates}:{})};};
+  const record=k=>{const {updates,assessment,...profile}=profiles?.[k]||{};return {...(Object.keys(profile).length?{profile}:{}),...(updates?{updates}:{}),...(assessment?{assessment}:{})};};
   return {schema:EVERGREEN_PACK_SCHEMA,exportedAt:today,funds:(rows||[]).map(r=>({key:r.key,name:r.name,platform:r.platform,strategy:r.strategy,purchases:(r.lotList||[]).map(l=>l.date).filter(Boolean),
     terms:termsByKey?.[r.key]||{},label:evergreenLabelClean(labels?.[r.key]),...record(r.key)})),...(reading?.length?{reading}:{})};
 }
@@ -3598,24 +3588,27 @@ function evergreenLabels(){
 // Pure: one label record in, a clean record out. Unknown states, long notes and malformed dates are dropped.
 function evergreenLabelClean(value){
   const v=value&&typeof value==='object'?value:{},date=x=>typeof x==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(x)?x:'';
-  return {state:EVERGREEN_STATES.some(([id])=>id===v.state)?v.state:'',note:typeof v.note==='string'?v.note.slice(0,120):'',reviewBy:date(v.reviewBy),updatedAt:date(v.updatedAt)};
+  return {state:EVERGREEN_STATES.some(([id])=>id===v.state)?v.state:'',note:typeof v.note==='string'?v.note.slice(0,120):'',reviewBy:date(v.reviewBy),updatedAt:date(v.updatedAt),decided:date(v.decided)};
 }
 // Pure: the printed fund rows and the owner's labels in, the list model out. No amount is parsed or summed.
-function evergreenDeskModel(rows,labels,today){
+// A fund is pending while it has lots that can be filed this week and the owner has not yet chosen a status for that deadline.
+function evergreenDeskModel(rows,labels,today,week,pendingByKey){
   const funds=(Array.isArray(rows)?rows:[]).map(r=>{
-    const label=evergreenLabelClean(labels?.[r.key]),state=label.state;
-    return {...r,label,stateName:(EVERGREEN_STATES.find(([id])=>id===state)||[,'未标记'])[1],overdue:Boolean(label.reviewBy&&today&&label.reviewBy<today)};
+    const label=evergreenLabelClean(labels?.[r.key]),state=label.state,due=pendingByKey?.[r.key]||null;
+    return {...r,label,pending:due&&label.decided!==due.notice?due:null,stateName:(EVERGREEN_STATES.find(([id])=>id===state)||[,'未标记'])[1],overdue:Boolean(label.reviewBy&&today&&label.reviewBy<today)};
   });
-  const counts={all:funds.length,none:funds.filter(x=>!x.label.state).length};
+  funds.sort((a,b)=>(b.pending?1:0)-(a.pending?1:0));
+  const counts={all:funds.length,none:funds.filter(x=>!x.label.state).length,pending:funds.filter(x=>x.pending).length};
   for(const [id] of EVERGREEN_STATES)counts[id]=funds.filter(x=>x.label.state===id).length;
-  return {funds,counts,platforms:new Set(funds.map(x=>x.platform)).size,overdue:funds.filter(x=>x.overdue).length};
+  return {funds,counts,week:week||null,platforms:new Set(funds.map(x=>x.platform)).size,overdue:funds.filter(x=>x.overdue).length};
 }
 function evergreenDeskView(model,filter,open){
   const e=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const chips=[['all','全部'],['none','未标记'],...EVERGREEN_STATES].filter(([id])=>id==='all'||model.counts[id]||id===filter)
+  const chips=[['pending','待处理'],['all','全部'],['none','未标记'],...EVERGREEN_STATES].filter(([id])=>id==='all'||model.counts[id]||id===filter)
     .map(([id,name])=>'<button type="button" data-evergreen-filter="'+id+'" aria-pressed="'+String(id===filter)+'">'+name+' '+model.counts[id]+'</button>').join('');
-  const shown=model.funds.filter(x=>filter==='all'||(filter==='none'?!x.label.state:x.label.state===filter));
-  const sheet=x=>'<div class="evergreen-sheet">'
+  const shown=model.funds.filter(x=>filter==='all'||(filter==='pending'?x.pending:filter==='none'?!x.label.state:x.label.state===filter));
+  const due=p=>'<div class="evergreen-due"><strong>本周可申请赎回</strong><p>通知截止 <b>'+e(p.notice)+'</b> → 赎回日 '+e(p.dealing)+(p.cash!==p.dealing?' → 约 '+e(p.cash)+' 到账':'')+'</p><p>'+p.lots+' 笔：'+p.amounts.map(e).join('、')+(p.skipped?'（另有 '+p.skipped+' 笔仍在锁定期或提前赎回费期内，未计入）':'')+'</p><p class="evergreen-meta">在下面选定任一状态后，这只基金本期不再列为待处理。</p></div>';
+  const sheet=x=>'<div class="evergreen-sheet">'+(x.pending?due(x.pending):'')+(x.assessmentHtml||'')
     +'<h3>状态</h3><div class="evergreen-states" role="group" aria-label="状态">'+EVERGREEN_STATES.map(([id,name])=>'<button type="button" data-evergreen-state="'+id+'" aria-pressed="'+String(x.label.state===id)+'">'+name+'</button>').join('')+'</div>'
     +'<label class="f">理由（自己看的备注）<input data-evergreen-note maxlength="120" value="'+e(x.label.note)+'" placeholder="例如：等下一份季报"></label>'
     +'<label class="f">下次复核日<input data-evergreen-review type="date" value="'+e(x.label.reviewBy)+'"></label>'
@@ -3623,8 +3616,9 @@ function evergreenDeskView(model,filter,open){
     +'<h3>我的持仓</h3><div class="evergreen-position"><p><span>'+e(x.platform)+' · '+e(x.strategy)+'</span><span>'+e(x.amount)+'</span></p>'+(x.figuresHtml||'<p class="evergreen-meta">此快照未包含这只基金的收益率。</p>')+'</div>'
     +'<h3>条款与赎回</h3>'+(x.termsHtml||'<p class="evergreen-meta">尚未录入条款。在页面底部“条款包”里导入后显示。</p>')+(x.profileHtml||'')
     +'</div>';
-  const list=shown.map(x=>'<details class="evergreen-fund" data-evergreen-key="'+e(x.key)+'"'+(open?.has(x.key)?' open':'')+'><summary><span class="evergreen-fund-main"><strong>'+e(x.name)+'</strong><small>'+e(x.platform)+' · '+e(x.strategy)+(x.lots>1?' · '+x.lots+' 笔':'')+'</small></span><span class="evergreen-fund-side"><span class="evergreen-amount">'+e(x.amount)+'</span><span class="evergreen-pill" data-state="'+(x.label.state||'none')+'">'+x.stateName+(x.overdue?' · 待复核':'')+'</span></span></summary>'+sheet(x)+'</details>').join('');
+  const list=shown.map(x=>'<details class="evergreen-fund" data-evergreen-key="'+e(x.key)+'"'+(x.pending?' data-evergreen-due="'+e(x.pending.notice)+'"':'')+(open?.has(x.key)?' open':'')+'><summary><span class="evergreen-fund-main"><strong>'+e(x.name)+'</strong><small>'+e(x.platform)+' · '+e(x.strategy)+(x.lots>1?' · '+x.lots+' 笔':'')+'</small></span><span class="evergreen-fund-side"><span class="evergreen-amount">'+e(x.amount)+'</span><span class="evergreen-pill" data-state="'+(x.pending?'pending':x.label.state||'none')+'">'+(x.pending?'待处理':x.stateName+(x.overdue?' · 待复核':''))+'</span></span></summary>'+sheet(x)+'</details>').join('');
   return '<h2>常青基金管理</h2><p class="evergreen-sub">'+model.counts.all+' 只基金 · '+model.platforms+' 个平台'+(model.overdue?' · '+model.overdue+' 只已过复核日':'')+'</p>'
+    +(model.week&&model.counts.all?'<p class="evergreen-sub evergreen-week">'+e(model.week.monday.slice(5))+' 至 '+e(model.week.friday.slice(5))+' 这一周：'+(model.counts.pending?'<strong>'+model.counts.pending+' 只待处理</strong>':'没有待处理的基金')+'</p>':'')
     +(model.counts.all?'<div class="evergreen-filter" role="group" aria-label="按状态筛选">'+chips+'</div><div class="evergreen-list">'+(list||'<p class="evergreen-meta">这个状态下没有基金。</p>')+'</div><p class="evergreen-meta">金额与收益率和“资产配置”页相同，来自 Sharesight。状态由你自己判断并设置，本页不提供买卖或赎回建议。</p>'
       :'<p class="evergreen-meta">此快照未包含常青基金的持仓明细。</p>');
 }
@@ -3654,11 +3648,11 @@ function renderEvergreenDesk(root){
   setRatioView(_ratioView);
   let desk=report.querySelector('.evergreen-desk');
   if(!desk){desk=document.createElement('section');desk.className='card evergreen-desk';desk.id='evergreenDesk';report.append(desk);}
-  const rows=evergreenRows(report),today=todayStr(),terms=evergreenTerms(),model=evergreenDeskModel(rows,evergreenLabels(),today);
-  const profiles=evergreenProfiles();
-  for(const fund of model.funds){fund.termsHtml=evergreenTermsView(fund,terms[fund.key],today);fund.profileHtml=evergreenProfileView(profiles[fund.key]);}
-  const calendar=evergreenCalendarModel(rows,terms,today);
-  desk.innerHTML=evergreenCalendarView(calendar,_evergreenLaterOpen)+evergreenDeskView(model,_evergreenFilter,_evergreenOpen)+evergreenReadingView(evergreenReading())+evergreenPackView(_evergreenPackOpen,_evergreenPackMessage);
+  const rows=evergreenRows(report),today=todayStr(),terms=evergreenTerms(),due={};
+  for(const row of rows){const p=evergreenPending(row,terms[row.key],today);if(p)due[row.key]=p;}
+  const model=evergreenDeskModel(rows,evergreenLabels(),today,evergreenWeek(today),due),profiles=evergreenProfiles();
+  for(const fund of model.funds){fund.termsHtml=evergreenTermsView(fund,terms[fund.key],today);fund.profileHtml=evergreenProfileView(profiles[fund.key]);fund.assessmentHtml=evergreenAssessmentView(profiles[fund.key]);}
+  desk.innerHTML=evergreenDeskView(model,_evergreenFilter,_evergreenOpen)+evergreenReadingView(evergreenReading())+evergreenPackView(_evergreenPackOpen,_evergreenPackMessage);
   _evergreenRows=rows;
 }
 function evergreenLabelSet(key,patch){
@@ -3673,7 +3667,8 @@ if(typeof document!=='undefined'&&typeof document.addEventListener==='function')
     if(filter){_evergreenFilter=filter.getAttribute('data-evergreen-filter');again();return;}
     if(state){const fund=fundOf(state),key=fund?.getAttribute('data-evergreen-key');if(!key)return;
       const pressed=state.getAttribute('aria-pressed')==='true';
-      if(!evergreenLabelSet(key,{state:pressed?'':state.getAttribute('data-evergreen-state')})){toast('本机无法保存标记');return;}
+      const dueFor=fund.getAttribute('data-evergreen-due');
+      if(!evergreenLabelSet(key,{state:pressed?'':state.getAttribute('data-evergreen-state'),...(pressed?{decided:''}:dueFor?{decided:dueFor}:{})})){toast('本机无法保存标记');return;}
       _evergreenOpen.add(key);again();}
   });
   document.addEventListener('change',event=>{
@@ -3686,7 +3681,7 @@ if(typeof document!=='undefined'&&typeof document.addEventListener==='function')
     const fund=event.target?.classList?.contains('evergreen-fund')?event.target:null,key=fund?.getAttribute('data-evergreen-key');if(!key)return;
     if(fund.open)_evergreenOpen.add(key);else _evergreenOpen.delete(key);
   },true);
-  document.addEventListener('toggle',event=>{if(event.target?.classList?.contains('evergreen-pack'))_evergreenPackOpen=event.target.open;else if(event.target?.classList?.contains('evergreen-later'))_evergreenLaterOpen=event.target.open;},true);
+  document.addEventListener('toggle',event=>{if(event.target?.classList?.contains('evergreen-pack'))_evergreenPackOpen=event.target.open;},true);
 }
 /* evergreen-desk:v1:end */
 function arrangeRatioRowDetails(report){
