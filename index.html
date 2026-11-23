@@ -10,7 +10,7 @@
 <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAABzUlEQVR42u3bsQ2AMAwAwczDhEzKOqGlCBIgBdnxRT+BfU0Kt20/pGHNCASH4BAcgkNwCA7BITgEh+CQ4BAcgkNwCA7BITgEh+AQHBIcgkNwCA7BITgEh+AQHIJDgkNwCA7BITgEh+AQHIJDcAgOCQ7BITgEh+AQHIJDcOi2/vjBwUQyJXAEkhHNBxyxZITyAQcccMABxwIy4viAAw444IADDjjggAMOOOCAAw444IBDcAgOwQEHHHDAAQcccMABBxxwwAEHHHAIDudocDDxeWFwOEeDg4z3a4MDDjjggKMOjh82BwcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAGHQ1Y4HLLCERPH1IHCkRjH7JnCAQcccMBRB8cam4MDDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAQxWDQ3AIDsEhOFQNR/eSfG7hgAMOOOCAAw444PCq4ZCvrOAQHIJDgkNwCA7BITgEh+AQHIJDcEhwCA7BITgEh+AQHIJDcAgOwSHBITgEh+AQHIJDcAgOwSE4pEsnhtvC417hqCsAAAAASUVORK5CYII=">
-<meta name="fee-console-build" content="4.10.41">
+<meta name="fee-console-build" content="4.10.42">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -1200,7 +1200,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.10.41";
+const UI_VERSION_LABEL=" · v4.10.42";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -1213,6 +1213,8 @@ if(HASH){
   if(HASH.k) setCfg(K.key,HASH.k);
   if(HASH.gid) setCfg(K.gid,HASH.gid);
 }
+// A device holding a token shows no name until the check settles, instead of the reader's name first.
+try{if(isMgr()){const appTitle=document.getElementById("appTitle");if(appTitle)appTitle.textContent="\u00a0";}}catch(_){}
 window.addEventListener("hashchange",()=>{ if(/(^|[#&])(tok|gid|k|fund|docs|archive)=/.test(location.hash)){invalidateReceiptSource();location.reload();} });
 
 /* fund-investor-core:start */
@@ -5164,9 +5166,11 @@ async function render(){
   if(!isMgr()&&["p-set"].some(id=>document.getElementById(id).classList.contains("on"))){document.querySelectorAll("section.pane").forEach(p=>p.classList.toggle("on",p.id==="p-investors"));document.querySelectorAll("#tabs button").forEach(b=>b.classList.toggle("on",b.dataset.p==="p-investors"));}
   const feeSummary=feeView.state==="verified"?` · 起算 ${feeView.start} · ${feeView.managementRatePpm/10000}% / ${feeView.carryRatePpm/10000}%`:` · ${feeView.message}`;
   document.getElementById("subTitle").textContent=`${DB.accounts.map(a=>a.name).join(" + ")}${feeSummary}${SHELL_BUILD?` · v${SHELL_BUILD}`:UI_VERSION_LABEL}`+(isMgr()?"":" · 只读");
-  // The manager sees the whole desk under one name; a reader keeps the fee title.
-  {const appName=isMgr()?"资产管理":"投资管理费",appTitle=document.getElementById("appTitle");if(appTitle)appTitle.textContent=appName;if(document.title==="资产管理"||document.title==="投资管理费")document.title=appName;}
-  renderReportPublication(reportView);
+  // Only a verified manager sees the desk's own name. While a saved token is still being checked the
+  // name is left as it is, so nobody who turns out to be a reader is shown the manager's name first.
+  {const settling=isMgr()&&!ratioAuthorized()&&(!_navigationReady||source.state==="loading"),appName=ratioAuthorized()?"资产管理":"投资管理费",appTitle=document.getElementById("appTitle");if(!settling){if(appTitle)appTitle.textContent=appName;if(document.title==="资产管理"||document.title==="投资管理费")document.title=appName;}}
+  // The report card waits for a verified source: a read in flight is not a report awaiting an update.
+  if(source.state==="verified")renderReportPublication(reportView);else{const reportBox=document.getElementById("reportPublicationBox");if(reportBox)reportBox.hidden=true;}
   renderKPIs(feeView,st,B,G);renderChart1(feeView,st);renderChart2(feeView,st);renderChart3(feeView,st);renderMonths(feeView,st);renderBal(feeView,st,B,G);renderBalForecast(feeView,st,B,G);renderRiskDesk(st,feeView);renderDayBrief();if(isMgr()){renderFees(feeView,st,B,G);renderSettings();renderFlows();}
   renderGiftRegistryStatus(documentsAuthorized,feeView.state==='verified',feeView.asOf);
   renderRatioManagement();renderInvestors(fundProfile,feeView);renderInvestorFundArchive(fundProfile,fundArchive);if(documentsAuthorized)renderFundDocuments(fundDocuments);renderSetup();renderA2hs();renderLedgerControls();renderStyleRegistryDiagnostic(documentsAuthorized);
