@@ -1277,14 +1277,13 @@ test("hedge funds share the page with evergreen funds: one switch, counts and sh
 });
 
 test("the verified manager lands on 资产配置 once, and only the manager sees the name 资产管理", () => {
-  // A reader's page keeps the fee title in the markup; the manager's name is set at render time.
-  assert.match(html, /<title>投资管理费<\/title>/); assert.match(html, /<h1 id="appTitle">投资管理费<\/h1>/);
+  // The markup carries no name, so no role is painted the other's name before the script starts.
+  assert.match(html, /<title>投资管理费<\/title>/); assert.match(html, /<h1 id="appTitle">&nbsp;<\/h1>/);
+  assert.ok(html.includes('try{const appTitle=document.getElementById("appTitle");if(appTitle)appTitle.textContent=isMgr()?"\\u00a0":"投资管理费";}catch(_){}'));
   // The name follows verification, not the mere presence of a token, and is left alone while the check runs.
   assert.ok(html.includes('{const settling=isMgr()&&!ratioAuthorized()&&(!_navigationReady||source.state==="loading"),appName=ratioAuthorized()?"资产管理":"投资管理费",appTitle=document.getElementById("appTitle");if(!settling){if(appTitle)appTitle.textContent=appName;'));
   // A print job borrows the document title; the name never overwrites it.
   assert.ok(html.includes('if(document.title==="资产管理"||document.title==="投资管理费")document.title=appName;}}'));
-  // A token-holding device starts with a blank name rather than the reader's.
-  assert.ok(html.includes('try{if(isMgr()){const appTitle=document.getElementById("appTitle");if(appTitle)appTitle.textContent="\\u00a0";}}catch(_){}'));
   // The report card is hidden until the source is verified, so a first open or a refresh never shows it as pending.
   assert.ok(html.includes('if(source.state==="verified")renderReportPublication(reportView);else{const reportBox=document.getElementById("reportPublicationBox");if(reportBox)reportBox.hidden=true;}'));
   // The landing waits for the same authorisation as the tab itself, happens once, and yields to any tab press.

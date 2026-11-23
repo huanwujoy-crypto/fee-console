@@ -10,7 +10,7 @@
 <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAABzUlEQVR42u3bsQ2AMAwAwczDhEzKOqGlCBIgBdnxRT+BfU0Kt20/pGHNCASH4BAcgkNwCA7BITgEh+CQ4BAcgkNwCA7BITgEh+AQHBIcgkNwCA7BITgEh+AQHIJDgkNwCA7BITgEh+AQHIJDcAgOCQ7BITgEh+AQHIJDcOi2/vjBwUQyJXAEkhHNBxyxZITyAQcccMABxwIy4viAAw444IADDjjggAMOOOCAAw444IBDcAgOwQEHHHDAAQcccMABBxxwwAEHHHAIDudocDDxeWFwOEeDg4z3a4MDDjjggKMOjh82BwcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAGHQ1Y4HLLCERPH1IHCkRjH7JnCAQcccMBRB8cam4MDDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAQxWDQ3AIDsEhOFQNR/eSfG7hgAMOOOCAAw444PCq4ZCvrOAQHIJDgkNwCA7BITgEh+AQHIJDcEhwCA7BITgEh+AQHIJDcAgOwSHBITgEh+AQHIJDcAgOwSE4pEsnhtvC417hqCsAAAAASUVORK5CYII=">
-<meta name="fee-console-build" content="4.10.42">
+<meta name="fee-console-build" content="4.10.43">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -342,7 +342,7 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
 <body>
 <div class="wrap">
 <header class="top">
-  <div><h1 id="appTitle">投资管理费</h1><div class="sub" id="subTitle"></div></div>
+  <div><h1 id="appTitle">&nbsp;</h1><div class="sub" id="subTitle"></div></div>
   <div class="row"><button class="btn sm" id="btnRefresh" type="button">↻ 刷新</button><span class="badge" id="syncBadge" style="display:none"></span></div>
 </header>
 <div id="reportPublicationBox" class="card" role="status" hidden></div>
@@ -1200,7 +1200,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.10.42";
+const UI_VERSION_LABEL=" · v4.10.43";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -1213,8 +1213,9 @@ if(HASH){
   if(HASH.k) setCfg(K.key,HASH.k);
   if(HASH.gid) setCfg(K.gid,HASH.gid);
 }
-// A device holding a token shows no name until the check settles, instead of the reader's name first.
-try{if(isMgr()){const appTitle=document.getElementById("appTitle");if(appTitle)appTitle.textContent="\u00a0";}}catch(_){}
+// The markup carries no name. A reader gets the fee title as soon as the script starts; a device
+// holding a token stays blank until its check settles, so neither is shown the other's name first.
+try{const appTitle=document.getElementById("appTitle");if(appTitle)appTitle.textContent=isMgr()?"\u00a0":"投资管理费";}catch(_){}
 window.addEventListener("hashchange",()=>{ if(/(^|[#&])(tok|gid|k|fund|docs|archive)=/.test(location.hash)){invalidateReceiptSource();location.reload();} });
 
 /* fund-investor-core:start */
