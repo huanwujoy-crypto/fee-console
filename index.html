@@ -342,7 +342,7 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
 <body>
 <div class="wrap">
 <header class="top">
-  <div><h1 id="appTitle">投资管理费</h1><script>/* first paint: a device holding a token shows no name until its check settles */try{if(localStorage.getItem("feeConsole.gh.token")&&!/(^|[#&])gid=[^&]+/.test(location.hash)){document.getElementById("appTitle").textContent="\u00a0";}}catch(_){}</script><div class="sub" id="subTitle"></div></div>
+  <div><h1 id="appTitle">&nbsp;</h1><div class="sub" id="subTitle"></div></div>
   <div class="row"><button class="btn sm" id="btnRefresh" type="button">↻ 刷新</button><span class="badge" id="syncBadge" style="display:none"></span></div>
 </header>
 <div id="reportPublicationBox" class="card" role="status" hidden></div>
@@ -1213,8 +1213,9 @@ if(HASH){
   if(HASH.k) setCfg(K.key,HASH.k);
   if(HASH.gid) setCfg(K.gid,HASH.gid);
 }
-// A device holding a token shows no name until the check settles, instead of the reader's name first.
-try{if(isMgr()){const appTitle=document.getElementById("appTitle");if(appTitle)appTitle.textContent="\u00a0";}}catch(_){}
+// The markup carries no name. A reader gets the fee title as soon as the script starts; a device
+// holding a token stays blank until its check settles, so neither is shown the other's name first.
+try{const appTitle=document.getElementById("appTitle");if(appTitle)appTitle.textContent=isMgr()?"\u00a0":"投资管理费";}catch(_){}
 window.addEventListener("hashchange",()=>{ if(/(^|[#&])(tok|gid|k|fund|docs|archive)=/.test(location.hash)){invalidateReceiptSource();location.reload();} });
 
 /* fund-investor-core:start */
