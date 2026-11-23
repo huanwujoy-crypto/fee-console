@@ -1279,6 +1279,9 @@ test("hedge funds share the page with evergreen funds: one switch, counts and sh
 test("the verified manager lands on 资产配置 once, and only the manager sees the name 资产管理", () => {
   // A reader's page keeps the fee title in the markup; the manager's name is set at render time.
   assert.match(html, /<title>投资管理费<\/title>/); assert.match(html, /<h1 id="appTitle">投资管理费<\/h1>/);
+  // Before the main script runs, a token-holding device already shows no name; a viewer link is left alone.
+  assert.ok(html.includes('<h1 id="appTitle">投资管理费</h1><script>/* first paint: a device holding a token shows no name until its check settles */try{if(localStorage.getItem("feeConsole.gh.token")&&!/(^|[#&])gid=[^&]+/.test(location.hash)){document.getElementById("appTitle").textContent="\\u00a0";}}catch(_){}</script>'));
+  assert.ok(html.includes('tok:"feeConsole.gh.token"'));
   // The name follows verification, not the mere presence of a token, and is left alone while the check runs.
   assert.ok(html.includes('{const settling=isMgr()&&!ratioAuthorized()&&(!_navigationReady||source.state==="loading"),appName=ratioAuthorized()?"资产管理":"投资管理费",appTitle=document.getElementById("appTitle");if(!settling){if(appTitle)appTitle.textContent=appName;'));
   // A print job borrows the document title; the name never overwrites it.
