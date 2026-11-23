@@ -1275,3 +1275,16 @@ test("hedge funds share the page with evergreen funds: one switch, counts and sh
   assert.ok(html.includes("if(kindButton){_evergreenKind=kindButton.getAttribute('data-evergreen-kind');_evergreenFilter='all';again();return;}"));
   assert.equal(c.evergreenPackBuild(rows, {}, {}, "2026-11-21").funds[2].kind, "hedge");
 });
+
+test("the verified manager lands on 资产配置 once, and only the manager sees the name 资产管理", () => {
+  // A reader's page keeps the fee title in the markup; the manager's name is set at render time.
+  assert.match(html, /<title>投资管理费<\/title>/); assert.match(html, /<h1 id="appTitle">投资管理费<\/h1>/);
+  assert.ok(html.includes('const appName=isMgr()?"资产管理":"投资管理费",appTitle=document.getElementById("appTitle");if(appTitle)appTitle.textContent=appName;'));
+  // A print job borrows the document title; the name never overwrites it.
+  assert.ok(html.includes('if(document.title==="资产管理"||document.title==="投资管理费")document.title=appName;'));
+  // The landing waits for the same authorisation as the tab itself, happens once, and yields to any tab press.
+  assert.ok(html.includes('let _managerLanding=true;\nasync function renderRatioManagement(){'));
+  assert.ok(html.includes('if(allowed&&_managerLanding){_managerLanding=false;if(document.getElementById("p-home").classList.contains("on")){setRatioView("all");'));
+  assert.ok(html.includes('const b=e.target.closest("button[data-p]");if(!b)return;_managerLanding=false;'));
+  assert.match(html, /<button data-p="p-home" class="on">管理人<\/button>/);
+});
