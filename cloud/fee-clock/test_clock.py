@@ -217,6 +217,34 @@ class ClockTests(unittest.TestCase):
         self.assertFalse(self.store.intents)
         self.assertEqual(self.github.post_count, 0)
 
+    def idle_natural(self):
+        self.github.day = [run_row(status='completed', event='schedule', created='2026-10-13T17:28:00Z')]
+        self.github.job[11] = [
+            {'id': 21, 'run_id': 11, 'name': 'period', 'status': 'completed', 'conclusion': 'success'},
+            {'id': 22, 'run_id': 11, 'name': 'Produce ${{ needs.period.outputs.kind }} ${{ needs.period.outputs.target }}',
+             'status': 'completed', 'conclusion': 'skipped'},
+            {'id': 23, 'run_id': 11, 'name': 'ratio', 'status': 'completed', 'conclusion': 'skipped'}]
+
+    def test_late_natural_run_that_produced_nothing_does_not_stand_the_clock_down(self):
+        self.idle_natural()
+        self.assertEqual(self.go()['outcome'], 'dispatch-accepted')
+        self.assertEqual(self.github.post_count, 1)
+        self.setUp(); self.idle_natural()
+        self.error('NOT_REQUESTED', mode='check-start', now=NOW + timedelta(minutes=5))
+
+    def test_natural_run_that_did_anything_or_is_unfinished_still_counts(self):
+        for change in (lambda j: j[1].update(conclusion='success'), lambda j: j[1].update(conclusion='failure'),
+                       lambda j: j[2].update(conclusion='success'), lambda j: j[0].update(conclusion='failure'),
+                       lambda j: j.pop(1)):
+            self.setUp(); self.idle_natural(); change(self.github.job[11])
+            self.assertEqual(self.go()['outcome'], 'already-requested')
+            self.assertEqual(self.github.post_count, 0)
+        self.setUp(); self.idle_natural(); self.github.day[0]['status'] = 'in_progress'
+        self.assertEqual(self.go()['outcome'], 'already-requested')
+        self.setUp(); self.idle_natural(); self.github.job[11][1]['run_id'] = 99
+        self.error('METADATA_INVALID')
+        self.assertEqual(self.github.post_count, 0)
+
     def test_early_reviewed_daily_prevents_nine_am_fallback_dispatch(self):
         for status in ('queued', 'in_progress', 'completed'):
             with self.subTest(status=status):

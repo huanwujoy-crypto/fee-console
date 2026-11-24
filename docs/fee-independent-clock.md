@@ -66,6 +66,12 @@ target while retained. Scheduler delivery is at least once. A GitHub natural run
 can still race after the final GET; existing concurrency and publication preflight
 handle that race. This is not an exactly-once promise across GitHub and Google.
 
+A completed natural run whose `period` job succeeded and whose every other job
+was skipped is not a request (2026-11-24): GitHub delivered a natural slot
+eleven hours late, after Hong Kong midnight, it found nothing due, and the clock
+stood down for it. A natural run that is unfinished, or in which any other job
+ran, still counts.
+
 ### Confirmed-sync first request
 
 `launch-confirmed` is the existing bounded entry for an operator who has checked
