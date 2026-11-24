@@ -1168,7 +1168,7 @@ test("profiles and the reading list stay on the device, are shown in the sheet a
   assert.doesNotMatch(profileBlock, /changeDraft|EDIT\.|saveLedger|writeRemote|ghRead|fetch\(|ghApi|ratioCore|deriveManager|XMLHttpRequest|innerHTML/i);
   assert.ok(html.includes("profile:x=>(x.profile?.summary||'<p class=\"evergreen-meta\">-</p>')+(x.profile?.meta||''),"));
   assert.match(html, /fund\.profile=evergreenProfileParts\(profiles\[fund\.key\],fund\.own,fund\.kind\);/);
-  assert.match(html, /evergreenDeskView\(model,_evergreenFilter,_evergreenOpen,_evergreenKind,_evergreenTab,cashHtml\)\+evergreenReadingView\(evergreenReading\(\)\)\+evergreenRemoteView\(evergreenStored\(EVERGREEN_REMOTE_KEY,\{\}\)\)\+evergreenPackView\(/);
+  assert.match(html, /evergreenDeskView\(model,_evergreenFilter,_evergreenOpen,_evergreenKind,_evergreenTab,cashHtml\)\+evergreenReadingView\(evergreenReading\(\)\)\+evergreenRemoteView\(evergreenStored\(EVERGREEN_REMOTE_KEY,\{\}\)\)\+\(typeof evergreenSyncView==='function'\?evergreenSyncView\(evergreenSyncStamps\(\),_evergreenSyncNote\):''\)\+evergreenPackView\(/);
   // Every link the block writes opens in a new tab without handing the page to it.
   assert.equal((profileBlock.match(/<a href=/g) || []).length, 1); assert.equal((profileBlock.match(/target="_blank" rel="noopener noreferrer"/g) || []).length, 1);
   assert.match(html, /fund\.assessmentHtml=evergreenAssessmentView\(profiles\[fund\.key\]\);/); assert.ok(html.includes("assessment:x=>x.assessmentHtml||''};"));
@@ -1322,7 +1322,7 @@ async function redeemBox(saved = {}) {
   vm.runInContext(profileBlock + "\n" + calendarBlock + "\n" + redeemBlock + "\n" + evergreenBlock + ";globalThis.r={evergreenRedeemClean,evergreenRedeems,evergreenWorkday,evergreenRedeemPlan,evergreenCashModel,evergreenCashBy,evergreenCashText,evergreenCashView,evergreenRedeemView,evergreenRedeemSave,evergreenRedeemEdit,evergreenPackBuild,evergreenLabels,evergreenTerms};", box);
   return { r: box.r, memory };
 }
-test("a redemption request keeps only well-formed values and stays on this device, outside the terms pack", async () => {
+test("a redemption request keeps only well-formed values and stays outside the terms pack", async () => {
   const { r, memory } = await redeemBox();
   assert.ok(redeemBlock.length > 3000); assert.ok(html.indexOf("/* evergreen-calendar:v1:end */") < html.indexOf("/* evergreen-redeem:v1:start */") && html.indexOf("/* evergreen-redeem:v1:end */") < html.indexOf("/* evergreen-desk:v1:start */"));
   assert.doesNotMatch(redeemBlock, /changeDraft|EDIT\.|saveLedger|writeRemote|ghRead|fetch\(|ghApi|ratioCore|deriveManager|XMLHttpRequest|innerHTML|gist/i);
@@ -1412,7 +1412,7 @@ test("a fund marked 赎回中 or 部分赎回 gets the request form in its 状�
   assert.ok(view.includes('<div class="evergreen-redeem" data-redeem-id="a1">'), "a request is still shown after the state is changed"); assert.ok(view.includes("<strong>第 1 笔 · USD 2,500</strong>")); assert.ok(view.includes('data-state="redeeming">已申请，等赎回日</span>'));
   assert.deepEqual([...view.matchAll(/<li( data-done="true")?><small>([^<]+)<\/small><b>([^<]+)<\/b><\/li>/g)].map(m => [m[2], m[3], Boolean(m[1])]), [["申请", "26-11-10", true], ["通知截止", "26-11-16", true], ["赎回日", "26-12-31", false], ["预计到账", "27-02-01", false]]);
   assert.deepEqual([...view.matchAll(/data-evergreen-redeem="(\w+)" type="(\w+)" value="([^"]*)"/g)].map(m => m.slice(1)), [["requested", "date", "2026-11-10"], ["cents", "number", "2500"], ["dealing", "date", ""], ["cashBy", "date", ""], ["acceptedPct", "number", ""], ["tailPct", "number", "10"], ["tailBy", "date", ""], ["receivedOn", "date", ""]]);
-  assert.ok(view.includes("<strong>尾款</strong>")); assert.ok(view.includes("尾款多在年度审计后支付，按次年 4 月底估计")); assert.ok(view.includes("data-evergreen-redeem-del>删除这笔</button>")); assert.ok(view.includes("金额只保存在本机，不进条款包。"));
+  assert.ok(view.includes("<strong>尾款</strong>")); assert.ok(view.includes("尾款多在年度审计后支付，按次年 4 月底估计")); assert.ok(view.includes("data-evergreen-redeem-del>删除这笔</button>")); assert.ok(view.includes("登记会加密后同步到你的其它管理人设备，不进条款包。"));
   const whole = r.evergreenRedeemView(fund("redeeming"), [{ id: "a1", requested: "2026-11-10" }], undefined, today);
   assert.ok(whole.includes("<strong>第 1 笔 · 全部</strong>")); assert.ok(whole.includes("已申请，赎回日待定")); assert.ok(whole.includes('placeholder="全部"')); assert.ok(whole.includes("<b>待定</b>"));
   assert.equal(r.evergreenRedeemView(fund("redeeming"), Array.from({ length: 6 }, (_, i) => ({ id: "x" + i, requested: "2026-11-10" })), q, today).includes("data-evergreen-redeem-add"), false, "six requests a fund at most");
@@ -1420,4 +1420,171 @@ test("a fund marked 赎回中 or 部分赎回 gets the request form in its 状�
   assert.match(html, /fund\.redeemHtml=evergreenRedeemView\(fund,redeems\[fund\.key\],terms\[fund\.key\],today\);/);
   assert.match(html, /const cashHtml=evergreenCashView\(evergreenCashModel\(model\.funds,redeems,terms,today\),today,_evergreenCashBy\);/);
   assert.match(html, /\.evergreen-cash input,\.evergreen-redeem input\{font-size:16px\}/); assert.match(html, /\.evergreen-note\{[^}]*width:100%[^}]*font-size:16px/);
+});
+
+// evergreen-sync:v1 (owner request 2026-11-24): the owner's marks and redemption requests follow the owner between
+// manager devices: sealed to the manager's key, stored as one file in the private store, merged mark by mark.
+const remoteBlockForSync = html.slice(html.indexOf("/* evergreen-remote:v1:start */"), html.indexOf("/* evergreen-remote:v1:end */"));
+const syncBlock = html.slice(html.indexOf("/* evergreen-sync:v1:start */"), html.indexOf("/* evergreen-sync:v1:end */"));
+async function syncBox(saved = {}) {
+  const vm = await import("node:vm");
+  const memory = new Map(Object.entries(saved).map(([k, v]) => [k, JSON.stringify(v)]));
+  const box = { URL, TextEncoder, TextDecoder, Uint8Array, crypto: globalThis.crypto, store: { getItem: k => memory.get(k) ?? null, setItem: (k, v) => { memory.set(k, v); } }, todayStr: () => "2026-11-24" };
+  vm.createContext(box);
+  vm.runInContext(profileBlock + "\n" + calendarBlock + "\n" + redeemBlock + "\n" + evergreenBlock + "\n" + remoteBlockForSync + "\n" + syncBlock
+    + ";globalThis.s={evergreenSyncStamps,evergreenSyncDoc,evergreenSyncClean,evergreenSyncMerge,evergreenSyncText,evergreenSyncLocal,evergreenSyncApply,evergreenSyncTouch,evergreenSyncQuiet,evergreenNotesSeal,evergreenNotesText,evergreenRemoteOpen,evergreenRemoteBytes,evergreenSyncRead,evergreenSyncTake,evergreenSyncView,evergreenLabelSet,evergreenRedeemSave,evergreenLabels,evergreenRedeems,EVERGREEN_NOTES_KIND};", box);
+  return { s: box.s, memory };
+}
+test("the owner's marks are sealed to the manager's key: only that key opens them, and never as a terms pack", async () => {
+  const { s } = await syncBox(), subtle = globalThis.crypto.subtle;
+  assert.ok(syncBlock.length > 3000); assert.doesNotMatch(syncBlock, /fetch\(|XMLHttpRequest|innerHTML|saveLedger|changeDraft|writeRemoteFundBundle|GH_FILE\b/);
+  const pair = await subtle.generateKey({ name: "X25519" }, true, ["deriveBits"]), other = await subtle.generateKey({ name: "X25519" }, true, ["deriveBits"]);
+  const recipient = { schema: "r", algorithm: "X25519-HKDF-SHA256-AES256GCM", scopeId: "a".repeat(64), recipientId: "b".repeat(64), publicKey: Buffer.from(await subtle.exportKey("raw", pair.publicKey)).toString("base64url") };
+  for (const bytes of [[], [0], [255, 254], [1, 2, 3], [250, 251, 252, 253, 254, 255, 0]]) assert.equal(s.evergreenNotesText(Uint8Array.from(bytes)), Buffer.from(bytes).toString("base64url"));
+  const text = JSON.stringify({ schema: "fee-console.evergreen-notes.v1", labels: { "P|基金甲": { state: "redeeming", note: "等回款" } }, redeems: { "P|基金甲": { items: [{ id: "a1", requested: "2026-11-10", cents: 12345600 }], gone: {} } } });
+  const sealed = await s.evergreenNotesSeal(text, recipient, "2026-11-24T03:00:00.000Z"), envelope = JSON.parse(sealed);
+  assert.deepEqual(Object.keys(envelope).sort(), ["algorithm", "ciphertext", "ephemeralPublicKey", "generatedAt", "iv", "recipientId", "salt", "schema", "scopeId"]);
+  assert.equal(envelope.schema, "fee-console.evergreen-notes-sealed.v1"); for (const secret of ["基金甲", "等回款", "12345600", "redeeming", "a1"]) assert.equal(sealed.includes(secret), false);
+  assert.notEqual(sealed, await s.evergreenNotesSeal(text, recipient, "2026-11-24T03:00:00.000Z"), "a fresh key, salt and nonce every time");
+  assert.equal((await s.evergreenRemoteOpen(sealed, pair.privateKey, recipient, globalThis.crypto, s.EVERGREEN_NOTES_KIND)).text, text);
+  await assert.rejects(s.evergreenRemoteOpen(sealed, other.privateKey, recipient, globalThis.crypto, s.EVERGREEN_NOTES_KIND), "another key");
+  await assert.rejects(s.evergreenRemoteOpen(sealed, pair.privateKey, recipient), "the pack reader refuses a notes file");
+  await assert.rejects(s.evergreenRemoteOpen(sealed, pair.privateKey, { ...recipient, recipientId: "c".repeat(64) }, globalThis.crypto, s.EVERGREEN_NOTES_KIND));
+  await assert.rejects(s.evergreenRemoteOpen(JSON.stringify({ ...envelope, generatedAt: "2026-11-24T03:00:01.000Z" }), pair.privateKey, recipient, globalThis.crypto, s.EVERGREEN_NOTES_KIND), "the time is bound");
+  for (const bad of [[text, { ...recipient, publicKey: "x" }, "2026-11-24T03:00:00.000Z"], [text, { ...recipient, scopeId: "z" }, "2026-11-24T03:00:00.000Z"], [text, recipient, "2026-11-24"], ["", recipient, "2026-11-24T03:00:00.000Z"]]) await assert.rejects(s.evergreenNotesSeal(...bad));
+  // A stored file this device cannot open counts as empty rather than as an error.
+  assert.deepEqual(plain(await s.evergreenSyncRead({ content: sealed }, pair.privateKey, recipient)), { schema: "fee-console.evergreen-notes.v1", labels: { "P|基金甲": { state: "redeeming", note: "等回款", reviewBy: "", updatedAt: "", decided: "", at: 0 } }, redeems: { "P|基金甲": { items: [{ id: "a1", requested: "2026-11-10", cents: 12345600, at: 0 }], gone: {} } } });
+  assert.equal(await s.evergreenSyncRead({ content: sealed }, other.privateKey, recipient), null); assert.equal(await s.evergreenSyncRead({ content: sealed, truncated: true }, pair.privateKey, recipient), null); assert.equal(await s.evergreenSyncRead(undefined, pair.privateKey, recipient), null);
+});
+test("every change is timed; two devices merge mark by mark, the later change wins and a deleted request stays deleted", async () => {
+  const { s, memory } = await syncBox({ "feeConsole.evergreen.labels.v1": { "P|Old": { state: "watch", note: "before sync" } } });
+  assert.deepEqual(plain(s.evergreenSyncStamps()), { labels: {}, redeems: {}, gone: {}, dirty: false, syncedAt: "" });
+  // Marks made before syncing existed travel too, with no time.
+  assert.deepEqual(plain(s.evergreenSyncLocal().labels), { "P|Old": { state: "watch", note: "before sync", reviewBy: "", updatedAt: "", decided: "", at: 0 } });
+  s.evergreenSyncTouch({ labels: ["P|A"] }, 1000);
+  assert.equal(s.evergreenRedeemSave("P|A", [{ id: "a1", requested: "2026-11-10" }, { id: "a2", requested: "2026-11-12", cents: 500 }]), true);
+  const first = plain(s.evergreenSyncStamps()); assert.equal(first.dirty, true); assert.equal(first.labels["P|A"], 1000); assert.deepEqual(Object.keys(first.redeems["P|A"]), ["a1", "a2"]);
+  s.evergreenSyncTouch({ redeem: { key: "P|A", before: [{ id: "a1", requested: "2026-11-10" }, { id: "a2", requested: "2026-11-12", cents: 500 }], after: [{ id: "a1", requested: "2026-11-10" }] } }, 5000);
+  const second = plain(s.evergreenSyncStamps()); assert.deepEqual(second.gone, { "P|A": { a2: 5000 } }); assert.equal(second.redeems["P|A"].a1, first.redeems["P|A"].a1, "an unchanged request keeps its time"); assert.equal("a2" in second.redeems["P|A"], false);
+  assert.equal(s.evergreenLabelSet("P|B", { state: "hold" }), true); assert.ok(s.evergreenSyncStamps().labels["P|B"] > 5000);
+  // Cleaning a stored document.
+  assert.equal(s.evergreenSyncClean({ schema: "other" }), null); assert.equal(s.evergreenSyncClean(null), null);
+  assert.deepEqual(plain(s.evergreenSyncClean({ schema: "fee-console.evergreen-notes.v1", labels: { "P|A": { state: "nope", note: 5, at: -1 }, "": { state: "hold" } }, redeems: { "P|A": { items: [{ id: "ok", requested: "2026-11-10", at: 7, extra: 1 }, { id: "BAD", requested: "2026-11-10" }, { id: "nodate" }], gone: { ok2: 9, "BAD ID": 9, zero: 0 } }, "P|E": { items: [], gone: {} } }, extra: 1 })),
+    { schema: "fee-console.evergreen-notes.v1", labels: { "P|A": { state: "", note: "", reviewBy: "", updatedAt: "", decided: "", at: 0 } }, redeems: { "P|A": { items: [{ id: "ok", requested: "2026-11-10", at: 7 }], gone: { ok2: 9 } } } });
+  const label = (state, at, note = "") => ({ state, note, reviewBy: "", updatedAt: "", decided: "", at }), doc = (labels, redeems = {}) => ({ schema: "fee-console.evergreen-notes.v1", labels, redeems });
+  const rec = (id, at, cents) => ({ id, requested: "2026-11-10", ...(cents ? { cents } : {}), at });
+  const mine = doc({ "P|A": label("hold", 10), "P|B": label("watch", 30), "P|C": label("", 0), "P|D": label("hold", 5) }, { "P|A": { items: [rec("x", 10, 100), rec("y", 20)], gone: {} }, "P|B": { items: [rec("k", 3)], gone: {} } });
+  const theirs = doc({ "P|A": label("redeeming", 20), "P|B": label("hold", 10), "P|C": label("partial", 0), "P|E": label("prepare", 1) }, { "P|A": { items: [rec("x", 15, 999), rec("z", 5)], gone: { y: 25 } }, "P|B": { items: [], gone: { k: 3 } } });
+  const merged = plain(s.evergreenSyncMerge(mine, theirs));
+  assert.deepEqual(Object.fromEntries(Object.entries(merged.labels).map(([k, l]) => [k, l.state + "@" + l.at])), { "P|A": "redeeming@20", "P|B": "watch@30", "P|C": "partial@0", "P|D": "hold@5", "P|E": "prepare@1" });
+  assert.deepEqual(merged.redeems["P|A"], { items: [rec("x", 15, 999), rec("z", 5)], gone: { y: 25 } }, "the later edit of x wins and y, deleted after its last change, stays deleted");
+  assert.deepEqual(merged.redeems["P|B"], { items: [], gone: { k: 3 } }, "a deletion at the same time as the last change wins");
+  // Whichever device merges, the result is the same, so two devices settle instead of overwriting each other for ever.
+  assert.equal(s.evergreenSyncText(s.evergreenSyncMerge(theirs, mine)), s.evergreenSyncText(merged)); assert.equal(s.evergreenSyncText(s.evergreenSyncMerge(merged, theirs)), s.evergreenSyncText(merged)); assert.equal(s.evergreenSyncText(s.evergreenSyncMerge(merged, mine)), s.evergreenSyncText(merged));
+  const tie = [doc({ "P|T": label("hold", 0, "a") }, { "P|T": { items: [rec("t", 0, 1)], gone: {} } }), doc({ "P|T": label("watch", 0, "b") }, { "P|T": { items: [rec("t", 0, 2)], gone: {} } })];
+  assert.equal(s.evergreenSyncText(s.evergreenSyncMerge(tie[0], tie[1])), s.evergreenSyncText(s.evergreenSyncMerge(tie[1], tie[0])));
+  // A request edited after it was deleted elsewhere comes back; key order never makes two documents differ.
+  assert.deepEqual(plain(s.evergreenSyncMerge(doc({}, { "P|A": { items: [rec("y", 30)], gone: {} } }), theirs)).redeems["P|A"].items.map(r => r.id), ["x", "y", "z"]);
+  assert.equal(s.evergreenSyncText({ b: 1, a: { d: 1, c: [2, 1] } }), '{"a":{"c":[2,1],"d":1},"b":1}');
+  // Applying a merged document replaces what the device holds, times included.
+  assert.equal(s.evergreenSyncApply(s.evergreenSyncMerge(mine, theirs), { dirty: false, syncedAt: "2026-11-24T03:00:00.000Z" }), true);
+  assert.equal(JSON.parse(memory.get("feeConsole.evergreen.labels.v1"))["P|A"].state, "redeeming"); assert.equal("at" in JSON.parse(memory.get("feeConsole.evergreen.labels.v1"))["P|A"], false);
+  assert.deepEqual(plain(s.evergreenRedeems()), { "P|A": [{ id: "x", requested: "2026-11-10", cents: 999 }, { id: "z", requested: "2026-11-10" }] });
+  assert.deepEqual(plain(s.evergreenSyncStamps()), { labels: { "P|A": 20, "P|B": 30, "P|D": 5, "P|E": 1 }, redeems: { "P|A": { x: 15, z: 5 } }, gone: { "P|A": { y: 25 }, "P|B": { k: 3 } }, dirty: false, syncedAt: "2026-11-24T03:00:00.000Z" });
+  assert.equal(s.evergreenSyncText(s.evergreenSyncLocal()), s.evergreenSyncText(merged), "what was applied reads back as the same document");
+});
+test("another device's changes arrive with the authenticated read, and this device's unsent ones are flagged", async () => {
+  const subtle = globalThis.crypto.subtle, pair = await subtle.generateKey({ name: "X25519" }, true, ["deriveBits"]);
+  const recipient = { schema: "r", algorithm: "X25519-HKDF-SHA256-AES256GCM", scopeId: "a".repeat(64), recipientId: "b".repeat(64), publicKey: Buffer.from(await subtle.exportKey("raw", pair.publicKey)).toString("base64url") };
+  const { s, memory } = await syncBox({ "feeConsole.evergreen.labels.v1": { "P|A": { state: "hold" } }, "feeConsole.evergreen.sync.v1": { labels: { "P|A": 10 } } });
+  const remote = { schema: "fee-console.evergreen-notes.v1", labels: { "P|A": { state: "partial", note: "手机上改的", at: 99 } }, redeems: { "P|A": { items: [{ id: "m1", requested: "2026-11-20", cents: 30000, at: 99 }], gone: {} } } };
+  const file = { content: await s.evergreenNotesSeal(JSON.stringify(remote), recipient, "2026-11-24T03:00:00.000Z") };
+  assert.equal(await s.evergreenSyncTake(file, pair.privateKey, recipient), true);
+  assert.equal(s.evergreenLabels()["P|A"].state, "partial"); assert.deepEqual(plain(s.evergreenRedeems()), { "P|A": [{ id: "m1", requested: "2026-11-20", cents: 30000 }] });
+  let stamps = plain(s.evergreenSyncStamps()); assert.equal(stamps.dirty, false); assert.match(stamps.syncedAt, /^\d{4}-\d{2}-\d{2}T/);
+  assert.equal(await s.evergreenSyncTake(file, pair.privateKey, recipient), false, "nothing new the second time");
+  // A change made here after that is newer than the store: kept, and flagged to be sent.
+  assert.equal(s.evergreenLabelSet("P|A", { state: "redeeming" }), true); assert.equal(await s.evergreenSyncTake(file, pair.privateKey, recipient), false);
+  assert.equal(s.evergreenLabels()["P|A"].state, "redeeming"); assert.equal(s.evergreenSyncStamps().dirty, true);
+  // No file yet, or one this device cannot open: nothing is lost, and what the device holds is flagged to be sent.
+  const fresh = await syncBox({ "feeConsole.evergreen.labels.v1": { "P|Z": { state: "watch" } } });
+  assert.equal(await fresh.s.evergreenSyncTake(undefined, pair.privateKey, recipient), false); assert.equal(fresh.s.evergreenLabels()["P|Z"].state, "watch"); assert.equal(fresh.s.evergreenSyncStamps().dirty, true);
+  assert.equal(await fresh.s.evergreenSyncTake({ content: "{broken" }, pair.privateKey, recipient), false); assert.equal(fresh.s.evergreenLabels()["P|Z"].state, "watch");
+  const empty = await syncBox(); assert.equal(await empty.s.evergreenSyncTake(undefined, pair.privateKey, recipient), false); assert.equal(empty.s.evergreenSyncStamps().dirty, false, "an empty device has nothing to send");
+  assert.ok(s.evergreenSyncView({ dirty: true, syncedAt: "" }, "稍后自动同步").includes('data-evergreen-sync="pending">状态、备注和赎回登记有改动待同步（稍后自动同步）'));
+  assert.ok(s.evergreenSyncView({ dirty: false, syncedAt: "2026-11-24T03:00:00.000Z" }, "").includes("已同步到你的私有存储（2026-11-24 03:00 UTC）；加密保存，只有管理人设备能打开。"));
+  assert.ok(s.evergreenSyncView({ dirty: false, syncedAt: "" }, "").includes("会自动同步到你的私有存储"));
+});
+test("the sync writes one file through the reviewed gate, never around the daily automatic publication", async () => {
+  const { s } = await syncBox(), at = (h, m) => new Date(Date.UTC(2026, 10, 24, h - 8, m));
+  // Hong Kong 07:45–09:00 and 22:40–23:15 are quiet.
+  for (const [h, m, quiet] of [[7, 44, false], [7, 45, true], [8, 0, true], [8, 59, true], [9, 0, false], [12, 0, false], [22, 39, false], [22, 40, true], [22, 56, true], [23, 14, true], [23, 15, false], [0, 0, false]]) assert.equal(s.evergreenSyncQuiet(at(h, m)), quiet, h + ":" + m);
+  assert.match(syncBlock, /if\(!ratioAuthorized\(\)\|\|EDIT\.draft\|\|EDIT\.pending\|\|_ledgerBusy\|\|_ratioRecipientWrite\|\|_ratioSnapshotWrite\)return 'later';\n  if\(evergreenSyncQuiet\(new Date\(\)\)\)return 'quiet';/);
+  assert.match(syncBlock, /if\(!await verifyRatioCapabilityNow\(\)\)throw Error\('EVERGREEN_SYNC_REFUSED'\);check\(\);\n    const gist=ratioSnapshotGist\(await ghApi\('\/gists\/'\+gid\)\);check\(\);/);
+  assert.match(syncBlock, /if\(registered===null\|\|ratioCore\.canonical\(ratioSnapshotParse\(registered\)\)!==ratioCore\.canonical\(manager\.recipient\)\)throw Error\('EVERGREEN_SYNC_REFUSED'\);/);
+  assert.equal((syncBlock.match(/ghApi\(/g) || []).length, 2, "one read and one write");
+  assert.match(syncBlock, /await ghApi\('\/gists\/'\+gid,\{method:'PATCH',body:JSON\.stringify\(\{files:\{\[EVERGREEN_NOTES_FILE\]:\{content:raw\}\}\}\),reviewedEvergreenNotes:op\}\);\}finally\{if\(_evergreenNotesWrite===op\)_evergreenNotesWrite=null;\}/);
+  assert.match(html, /try\{evergreenSyncTake\(gist\.files\[EVERGREEN_NOTES_FILE\],manager\.privateKey,manager\.recipient\)\.catch\(\(\)=>\{\}\);\}catch\{\}/);
+  assert.match(html, /if\(typeof evergreenSyncTouch==='function'\)evergreenSyncTouch\(\{labels:\[key\]\}\);/); assert.match(html, /evergreenSyncTouch\(\{redeem:\{key,before,after:evergreenRedeems\(\)\[key\]\|\|\[\]\}\}\);/);
+  assert.match(html, /const EVERGREEN_NOTES_FILE='fee-console-evergreen-notes\.json'/);
+});
+test('the fund-marks sync may PATCH only its own file with the exact sealed text it registered, as a verified manager with no ledger work open',async()=>{
+  const vm=await import('node:vm'),unifiedUiSource=html,a=unifiedUiSource.indexOf('async function ghApi('),b=unifiedUiSource.indexOf('\n}',a)+2,raw='{"syntheticSealedNotes":true}',gid='0'.repeat(32),op={gid,token:'invented-token',epoch:1,raw};
+  let calls=0,authorized=true;const values={gid,tok:'invented-token'},ctx={_ledgerBusy:false,_draftBlocked:false,EDIT:{},_fundRemoteWrite:null,_legacyMigrationPending:null,_ratioRecipientWrite:null,_ratioSnapshotWrite:null,_evergreenNotesWrite:op,_sourceEpoch:1,RATIO_RECIPIENT_FILE:'fee-console-ratio-recipient.json',RATIO_SNAPSHOT_FILE:'fee-console-ratio-snapshot.json',EVERGREEN_NOTES_FILE:'fee-console-evergreen-notes.json',ratioAuthorized:()=>authorized,managerDocumentsAuthorized:()=>true,cfg:k=>values[k]||'',K:{gid:'gid',tok:'tok'},Object,JSON,Error,String,Boolean,fetch:async(url,o)=>{calls++;assert.equal(url,'https://api.github.com/gists/'+gid);assert.equal(o.reviewedEvergreenNotes,undefined);assert.deepEqual(Object.keys(JSON.parse(o.body).files),['fee-console-evergreen-notes.json']);return {ok:true,status:200,json:async()=>({})};}};
+  vm.createContext(ctx);vm.runInContext(unifiedUiSource.slice(a,b)+'\nthis.run=ghApi;',ctx);
+  const body=JSON.stringify({files:{'fee-console-evergreen-notes.json':{content:raw}}}),file=name=>JSON.stringify({files:{[name]:{content:raw}}});
+  await ctx.run('/gists/'+gid,{method:'PATCH',body,reviewedEvergreenNotes:op});assert.equal(calls,1);
+  for(const opt of [{method:'PATCH',body},{method:'PATCH',body,reviewedEvergreenNotes:{...op}},{method:'PATCH',body:file('data.json'),reviewedEvergreenNotes:op},{method:'PATCH',body:file('fee-console-ratio-snapshot.json'),reviewedEvergreenNotes:op},{method:'PATCH',body:file('fee-console-evergreen-pack.json'),reviewedEvergreenNotes:op},
+    {method:'PATCH',body:JSON.stringify({files:{'fee-console-evergreen-notes.json':{content:raw},'data.json':{content:raw}}}),reviewedEvergreenNotes:op},{method:'PATCH',body:JSON.stringify({files:{'fee-console-evergreen-notes.json':{content:raw+' '}}}),reviewedEvergreenNotes:op},{method:'PATCH',body,headers:{},reviewedEvergreenNotes:op},{method:'DELETE',body,reviewedEvergreenNotes:op},{method:'POST',body,reviewedEvergreenNotes:op},
+    {method:'PATCH',body,reviewedRatioSnapshot:op},{method:'PATCH',body,reviewedFund:op}])await assert.rejects(ctx.run('/gists/'+gid,opt));
+  await assert.rejects(ctx.run('/gists/'+'1'.repeat(32),{method:'PATCH',body,reviewedEvergreenNotes:op}));
+  for(const change of [()=>{ctx.EDIT.draft={};},()=>{ctx.EDIT.pending={};},()=>{ctx._ledgerBusy=true;},()=>{authorized=false;},()=>{ctx._sourceEpoch=2;},()=>{values.tok='another-token';},()=>{ctx._evergreenNotesWrite=null;}]){
+    ctx.EDIT={};ctx._ledgerBusy=false;authorized=true;ctx._sourceEpoch=1;values.tok='invented-token';ctx._evergreenNotesWrite=op;change();await assert.rejects(ctx.run('/gists/'+gid,{method:'PATCH',body,reviewedEvergreenNotes:op}));}
+  assert.equal(calls,1);
+});
+test("two manager devices sharing one private store settle on the same marks, and nothing is written when it must not be", async () => {
+  const vm = await import("node:vm"), subtle = globalThis.crypto.subtle, pair = await subtle.generateKey({ name: "X25519" }, true, ["deriveBits"]);
+  const recipient = { schema: "r", algorithm: "X25519-HKDF-SHA256-AES256GCM", scopeId: "a".repeat(64), recipientId: "b".repeat(64), publicKey: Buffer.from(await subtle.exportKey("raw", pair.publicKey)).toString("base64url") };
+  const gist = { files: { "fee-console-ratio-recipient.json": { content: JSON.stringify(recipient) } } }, log = [];
+  let hour = 12, clock = Date.UTC(2026, 10, 24, 4, 0, 0);
+  class At extends Date { constructor(...a) { if (a.length) super(...a); else super(Date.UTC(2026, 10, 24, hour - 8, 0, 0)); } static now() { return clock += 1000; } }
+  const device = async () => {
+    const memory = new Map(), box = { URL, TextEncoder, TextDecoder, Uint8Array, crypto: globalThis.crypto, Date: At, store: { getItem: k => memory.get(k) ?? null, setItem: (k, v) => { memory.set(k, v); } }, todayStr: () => "2026-11-24",
+      EDIT: {}, _ledgerBusy: false, _ratioRecipientWrite: null, _ratioSnapshotWrite: null, _sourceEpoch: 1, authorized: true, K: { gid: "gid", key: "key", tok: "tok" }, cfg: k => ({ gid: "0".repeat(32), key: "k", tok: "t" })[k],
+      RATIO_RECIPIENT_FILE: "fee-console-ratio-recipient.json", ratioIdentity: () => "owner", verifyRatioCapabilityNow: async () => true, ratioSnapshotGist: g => g, ratioSnapshotFile: (g, n) => g.files?.[n]?.content ?? null, ratioSnapshotParse: JSON.parse,
+      ratioCore: { deriveSnapshotManager: async () => ({ privateKey: pair.privateKey, recipient }), canonical: v => JSON.stringify(v) } };
+    box.ratioAuthorized = () => box.authorized;
+    box.ghApi = async (path, opt = {}) => { assert.equal(path, "/gists/" + "0".repeat(32)); log.push(opt.method || "GET");
+      if (opt.method === "PATCH") { assert.equal(opt.reviewedEvergreenNotes, box.registered()); const files = JSON.parse(opt.body).files; assert.deepEqual(Object.keys(files), ["fee-console-evergreen-notes.json"]); gist.files["fee-console-evergreen-notes.json"] = { content: files["fee-console-evergreen-notes.json"].content }; return {}; }
+      return JSON.parse(JSON.stringify(gist)); };
+    vm.createContext(box);
+    vm.runInContext(profileBlock + "\n" + calendarBlock + "\n" + redeemBlock + "\n" + evergreenBlock + "\n" + remoteBlockForSync + "\n" + syncBlock + ";globalThis.registered=()=>_evergreenNotesWrite;globalThis.d={evergreenSyncPush,evergreenSyncTake,evergreenLabelSet,evergreenRedeemSave,evergreenLabels,evergreenRedeems,evergreenSyncStamps,evergreenSyncLocal,evergreenSyncText};", box);
+    return { box, d: box.d, take: () => box.d.evergreenSyncTake(gist.files["fee-console-evergreen-notes.json"], pair.privateKey, recipient) };
+  };
+  const phone = await device(), laptop = await device();
+  // Nothing to say and nothing stored: a read, no write.
+  assert.equal(await laptop.d.evergreenSyncPush(), "done"); assert.deepEqual(log, ["GET"]); assert.equal("fee-console-evergreen-notes.json" in gist.files, false);
+  phone.d.evergreenLabelSet("P|A", { state: "partial", note: "先赎一半" }); phone.d.evergreenRedeemSave("P|A", [{ id: "p1", requested: "2026-11-10", cents: 5000000 }]);
+  // Refused without touching the network: ledger work open, another write under way, not a verified manager, or the quiet hours.
+  for (const [set, unset, want] of [[b => { b.EDIT.draft = {}; }, b => { b.EDIT = {}; }, "later"], [b => { b._ledgerBusy = true; }, b => { b._ledgerBusy = false; }, "later"], [b => { b._ratioSnapshotWrite = {}; }, b => { b._ratioSnapshotWrite = null; }, "later"], [b => { b.authorized = false; }, b => { b.authorized = true; }, "later"], [() => { hour = 8; }, () => { hour = 12; }, "quiet"], [() => { hour = 23; }, () => { hour = 12; }, "quiet"]]) {
+    set(phone.box); assert.equal(await phone.d.evergreenSyncPush(), want); unset(phone.box); }
+  assert.deepEqual(log, ["GET"]); assert.equal(phone.d.evergreenSyncStamps().dirty, true);
+  assert.equal(await phone.d.evergreenSyncPush(), "done"); assert.deepEqual(log, ["GET", "GET", "PATCH"]); assert.equal(phone.d.evergreenSyncStamps().dirty, false); assert.equal(phone.box.registered(), null);
+  const stored = gist.files["fee-console-evergreen-notes.json"].content; for (const secret of ["P|A", "先赎一半", "5000000", "partial"]) assert.equal(stored.includes(secret), false);
+  assert.equal(await phone.d.evergreenSyncPush(), "done"); assert.deepEqual(log.slice(3), ["GET"], "already stored: no second write"); assert.equal(gist.files["fee-console-evergreen-notes.json"].content, stored);
+  // The laptop opens the page: the phone's marks arrive. It then changes one thing and deletes nothing.
+  assert.equal(await laptop.take(), true); assert.equal(laptop.d.evergreenLabels()["P|A"].note, "先赎一半"); assert.deepEqual(plain(laptop.d.evergreenRedeems()), { "P|A": [{ id: "p1", requested: "2026-11-10", cents: 5000000 }] }); assert.equal(laptop.d.evergreenSyncStamps().dirty, false);
+  laptop.d.evergreenRedeemSave("P|A", [{ id: "p1", requested: "2026-11-10", cents: 5000000, cashBy: "2027-02-03" }]); laptop.d.evergreenLabelSet("P|B", { state: "watch" });
+  // Meanwhile the phone adds a second request and changes its note; neither device has seen the other's change.
+  phone.d.evergreenRedeemSave("P|A", [{ id: "p1", requested: "2026-11-10", cents: 5000000 }, { id: "p2", requested: "2026-11-20", cents: 100000 }]); phone.d.evergreenLabelSet("P|A", { note: "两笔" });
+  assert.equal(await laptop.d.evergreenSyncPush(), "done"); assert.equal(await phone.d.evergreenSyncPush(), "done"); assert.equal(await laptop.take(), true);
+  const want = { "P|A": [{ id: "p1", requested: "2026-11-10", cashBy: "2027-02-03", cents: 5000000 }, { id: "p2", requested: "2026-11-20", cents: 100000 }] };
+  for (const x of [phone, laptop]) { assert.deepEqual(plain(x.d.evergreenRedeems()), want); assert.equal(x.d.evergreenLabels()["P|A"].note, "两笔"); assert.equal(x.d.evergreenLabels()["P|B"].state, "watch"); }
+  assert.equal(phone.d.evergreenSyncText(phone.d.evergreenSyncLocal()), laptop.d.evergreenSyncText(laptop.d.evergreenSyncLocal()));
+  // A deletion on one device removes the request on the other and does not come back.
+  laptop.d.evergreenRedeemSave("P|A", [want["P|A"][0]]); assert.equal(await laptop.d.evergreenSyncPush(), "done"); assert.equal(await phone.take(), true); assert.deepEqual(plain(phone.d.evergreenRedeems()["P|A"].map(r => r.id)), ["p1"]);
+  assert.equal(await phone.d.evergreenSyncPush(), "done"); assert.equal(await laptop.take(), false); assert.deepEqual(plain(laptop.d.evergreenRedeems()["P|A"].map(r => r.id)), ["p1"]);
+  // A failed write leaves the marks on the device, still flagged.
+  phone.d.evergreenLabelSet("P|C", { state: "hold" }); phone.box.ghApi = async () => { throw Error("offline"); };
+  assert.equal(await phone.d.evergreenSyncPush(), "failed"); assert.equal(phone.d.evergreenLabels()["P|C"].state, "hold"); assert.equal(phone.d.evergreenSyncStamps().dirty, true); assert.equal(phone.box.registered(), null);
 });
