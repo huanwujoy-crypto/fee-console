@@ -1305,7 +1305,16 @@ test("the verified manager lands on 资产配置 once, and only the manager sees
   // The report card is hidden until the source is verified, so a first open or a refresh never shows it as pending.
   assert.ok(html.includes('if(source.state==="verified")renderReportPublication(reportView);else{const reportBox=document.getElementById("reportPublicationBox");if(reportBox)reportBox.hidden=true;}'));
   // The landing waits for the same authorisation as the tab itself, happens once, and yields to any tab press.
-  assert.ok(html.includes('let _managerLanding=true;\n'));assert.ok(html.includes('const keep=loading||away;return allowed?null:onRatio&&keep?view:keep?held:null;}\nasync function renderRatioManagement(){'));
+  assert.ok(html.includes('let _managerLanding=true;\n'));assert.ok(html.includes('const keep=loading||away;return allowed?null:onRatio&&keep?view:keep?held:null;}\n// ratio-renew:v1'));
+  // ratio-renew:v1 — shortly before the ten-minute lock the page runs the ordinary full read again, so an open manager view is re-verified instead of cleared.
+  {const delay=new Function(html.match(/function ratioRenewDelay\([^\n]+/)[0]+';return ratioRenewDelay')();
+    assert.equal(delay(1000,1000,600000),570000);assert.equal(delay(1000,301000,600000),270000);
+    assert.equal(delay(1000,599000,600000),60000);assert.equal(delay(1000,9999999,600000),60000);   // never more often than once a minute
+    assert.equal(delay(undefined,1000,600000),null);
+    assert.ok(html.includes('if(document.visibilityState!=="visible"||!ratioAuthorized()||!document.getElementById("p-ratio").classList.contains("on")||EDIT.draft||EDIT.pending||_ledgerBusy||_manualRefreshing)return;'));
+    assert.ok(html.includes('Promise.resolve(requestAutomaticPull()).then('));
+    const kick=html.indexOf('if(!allowed){clearRatioManagement();notice.textContent='),plan=html.indexOf('  scheduleRatioRenewal();\n  if(!pane.classList.contains("on"))');assert.ok(kick>0&&plan>kick);   // only an authorised manager is renewed
+  }
   assert.ok(html.includes('if(allowed&&_managerLanding){_managerLanding=false;if(document.getElementById("p-home").classList.contains("on")){setRatioView("all");'));
   assert.ok(html.includes('const b=e.target.closest("button[data-p]");if(!b)return;_managerLanding=false;_ratioReturn=null;_ratioAway=false;'));
   // refresh-return:v1 — a refresh that moves the manager off the pane brings them back to the same view once it verifies.

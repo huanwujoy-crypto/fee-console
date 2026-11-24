@@ -10,7 +10,7 @@
 <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAABzUlEQVR42u3bsQ2AMAwAwczDhEzKOqGlCBIgBdnxRT+BfU0Kt20/pGHNCASH4BAcgkNwCA7BITgEh+CQ4BAcgkNwCA7BITgEh+AQHBIcgkNwCA7BITgEh+AQHIJDgkNwCA7BITgEh+AQHIJDcAgOCQ7BITgEh+AQHIJDcOi2/vjBwUQyJXAEkhHNBxyxZITyAQcccMABxwIy4viAAw444IADDjjggAMOOOCAAw444IBDcAgOwQEHHHDAAQcccMABBxxwwAEHHHAIDudocDDxeWFwOEeDg4z3a4MDDjjggKMOjh82BwcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAGHQ1Y4HLLCERPH1IHCkRjH7JnCAQcccMBRB8cam4MDDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAQxWDQ3AIDsEhOFQNR/eSfG7hgAMOOOCAAw444PCq4ZCvrOAQHIJDgkNwCA7BITgEh+AQHIJDcEhwCA7BITgEh+AQHIJDcAgOwSHBITgEh+AQHIJDcAgOwSE4pEsnhtvC417hqCsAAAAASUVORK5CYII=">
-<meta name="fee-console-build" content="4.10.53">
+<meta name="fee-console-build" content="4.10.54">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -1211,7 +1211,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.10.53";
+const UI_VERSION_LABEL=" · v4.10.54";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -4647,6 +4647,19 @@ let _managerLanding=true;
 // away-return:v1 (owner report 2026-11-24) — leaving the page (another app, a locked screen) withdraws authorisation the same way with no read under way, so the note was dropped and the manager came back to 投资人. The note is now also kept while away, until the read on return begins.
 let _ratioReturn=null,_ratioAway=false;
 function ratioReturnNote(allowed,onRatio,loading,view,held,away){const keep=loading||away;return allowed?null:onRatio&&keep?view:keep?held:null;}
+// ratio-renew:v1 (owner request 2026-11-24) — the manager view is cleared ten minutes after the identity check, which reads as a lost connection while the page is simply left open. Shortly before that, with the page in front and this pane open, run the same full authenticated read as on returning to the page: identity is checked again and the view stays. If the read fails, or the page is hidden or a ledger draft is open, nothing is renewed and the lock applies as before.
+let _ratioRenew=null,_ratioRenewFor=0;
+function ratioRenewDelay(verifiedAt,now,session){const wait=verifiedAt+session-30000-now;return Number.isFinite(wait)?Math.max(wait,60000):null;}
+function scheduleRatioRenewal(){
+  const at=_managerCapability.verifiedAt;if(_ratioRenew&&_ratioRenewFor===at)return;
+  clearTimeout(_ratioRenew);_ratioRenew=null;_ratioRenewFor=at;const wait=ratioRenewDelay(at,Date.now(),RATIO_SESSION_MS);if(wait===null)return;
+  _ratioRenew=setTimeout(()=>{
+    _ratioRenew=null;
+    if(document.visibilityState!=="visible"||!ratioAuthorized()||!document.getElementById("p-ratio").classList.contains("on")||EDIT.draft||EDIT.pending||_ledgerBusy||_manualRefreshing)return;
+    const y=globalThis.scrollY||0;
+    Promise.resolve(requestAutomaticPull()).then(()=>{if(!y)return;let tries=0;const back=()=>{if(!document.getElementById("p-ratio").classList.contains("on"))return;if(document.documentElement.scrollHeight>=y+globalThis.innerHeight){globalThis.scrollTo(0,y);return;}if(++tries<20)setTimeout(back,150);};back();}).catch(()=>{});
+  },wait);
+}
 async function renderRatioManagement(){
   syncRatioNavigation();
   const allowed=ratioAuthorized(),tab=document.getElementById("ratioTab"),pane=document.getElementById("p-ratio"),notice=document.getElementById("ratioNotice");
@@ -4655,6 +4668,7 @@ async function renderRatioManagement(){
   if(allowed&&_ratioReturn){const view=_ratioReturn,back=view==="evergreen"?document.getElementById("evergreenTab"):tab;_ratioReturn=null;if(document.getElementById("p-investors").classList.contains("on")){setRatioView(view);document.querySelectorAll("#tabs button").forEach(b=>b.classList.toggle("on",b===back));document.querySelectorAll("section.pane").forEach(s=>s.classList.toggle("on",s===pane));}}
   {const loading=isMgr()&&_receiptSource.state==="loading";if(loading)_ratioAway=false;_ratioReturn=ratioReturnNote(allowed,pane.classList.contains("on"),loading,_ratioView,_ratioReturn,_ratioAway);}
   if(!allowed){clearRatioManagement();notice.textContent="核验管理人身份后读取。";if(pane.classList.contains("on")){pane.classList.remove("on");document.getElementById("p-investors").classList.add("on");document.querySelectorAll("#tabs button").forEach(b=>b.classList.toggle("on",b.dataset.p==="p-investors"));}return;}
+  scheduleRatioRenewal();
   if(!pane.classList.contains("on")){clearRatioManagement(false);if(!_ratioPreview)preloadRatioSessionView();return;}
   if(!_ratioPreview&&typeof renderIndependentRatio==='function'&&await renderIndependentRatio())return;
   const envelope=_ratioPreview||DAILY.ratioManagerEnvelope;
