@@ -10,7 +10,7 @@
 <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAABzUlEQVR42u3bsQ2AMAwAwczDhEzKOqGlCBIgBdnxRT+BfU0Kt20/pGHNCASH4BAcgkNwCA7BITgEh+CQ4BAcgkNwCA7BITgEh+AQHBIcgkNwCA7BITgEh+AQHIJDgkNwCA7BITgEh+AQHIJDcAgOCQ7BITgEh+AQHIJDcOi2/vjBwUQyJXAEkhHNBxyxZITyAQcccMABxwIy4viAAw444IADDjjggAMOOOCAAw444IBDcAgOwQEHHHDAAQcccMABBxxwwAEHHHAIDudocDDxeWFwOEeDg4z3a4MDDjjggKMOjh82BwcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAGHQ1Y4HLLCERPH1IHCkRjH7JnCAQcccMBRB8cam4MDDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAQxWDQ3AIDsEhOFQNR/eSfG7hgAMOOOCAAw444PCq4ZCvrOAQHIJDgkNwCA7BITgEh+AQHIJDcEhwCA7BITgEh+AQHIJDcAgOwSHBITgEh+AQHIJDcAgOwSE4pEsnhtvC417hqCsAAAAASUVORK5CYII=">
-<meta name="fee-console-build" content="4.10.45">
+<meta name="fee-console-build" content="4.10.46">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -205,7 +205,7 @@ section.pane{display:none} section.pane.on{display:block}
 #p-ratio .evergreen-fund{margin:0;border-top:1px solid var(--grid)}#p-ratio .evergreen-fund>summary{display:flex;gap:8px;align-items:center;min-height:56px;padding:8px 0;list-style:none;color:var(--ink-1)}.evergreen-fund-main{display:flex;flex:1;flex-direction:column;gap:2px;min-width:0}.evergreen-fund-main strong{font-size:14px;font-weight:600;overflow-wrap:anywhere}.evergreen-fund-main small{font-size:11px;color:var(--ink-2)}.evergreen-fund-side{display:flex;flex-direction:column;align-items:flex-end;gap:4px}.evergreen-amount{font-size:13px;font-variant-numeric:tabular-nums;white-space:nowrap}
 .evergreen-pill{font-size:11px;line-height:1;padding:4px 8px;border-radius:999px;background:var(--chip);color:var(--ink-2);white-space:nowrap}.evergreen-pill[data-state="watch"]{background:color-mix(in srgb,#d99a2b 22%,transparent);color:var(--ink-1)}.evergreen-pill[data-state="prepare"],.evergreen-pill[data-state="partial"],.evergreen-pill[data-state="redeeming"]{background:color-mix(in srgb,#c8553d 22%,transparent);color:var(--ink-1)}.evergreen-kind{margin-bottom:2px}.evergreen-kind button[aria-pressed="true"]{font-weight:600}.evergreen-pill[data-state="pending"]{background:#c8553d;color:#fff;font-weight:600}.evergreen-week strong{color:#c8553d}.evergreen-due{margin:0 0 12px;padding:10px 12px;border-radius:10px;background:color-mix(in srgb,#c8553d 12%,transparent);font-size:12px;line-height:1.6}.evergreen-due strong{font-size:13px}.evergreen-due p{margin:2px 0 0}.evergreen-assessment{margin:0 0 12px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;font-size:12px;line-height:1.65}.evergreen-assessment>summary{font-size:13px;font-weight:600;cursor:pointer}.evergreen-assessment p{margin:0 0 4px}.evergreen-assessment ul{margin:0;padding-left:16px;color:var(--ink-2)}.evergreen-pill[data-state="hold"]{background:color-mix(in srgb,#3f9a78 22%,transparent);color:var(--ink-1)}
 .evergreen-tabs{margin:0 0 6px;border-bottom:1px solid var(--grid)}.evergreen-tabs button{padding:6px 10px}.evergreen-note{display:block;width:100%;box-sizing:border-box;margin-top:4px;font:inherit;font-size:16px;line-height:1.5;border:1px solid var(--border);border-radius:9px;padding:8px 10px;background:var(--surface-1);color:var(--ink-1);resize:vertical}.evergreen-panel>h4:first-child{margin-top:4px}.evergreen-cash{margin:8px 0 10px;padding:10px 12px;border:1px solid var(--border);border-radius:10px}.evergreen-cash>summary{font-size:13px;font-weight:600;cursor:pointer;color:var(--ink-1)}.evergreen-cash h4{font-size:11px;font-weight:600;color:var(--ink-2);margin:12px 0 2px}.evergreen-cash-list{list-style:none;margin:6px 0;padding:0}.evergreen-cash-list li{display:grid;grid-template-columns:84px minmax(0,1fr) auto;gap:8px;align-items:start;padding:7px 0;border-top:1px solid var(--grid);font-size:12px}.evergreen-cash-date{font-variant-numeric:tabular-nums;color:var(--ink-1)}.evergreen-cash-what{display:flex;flex-direction:column;gap:2px;min-width:0}.evergreen-cash-what strong{font-weight:600;overflow-wrap:anywhere}.evergreen-cash-what small{font-size:11px;color:var(--ink-2);line-height:1.5}.evergreen-cash-what small b{color:#c8553d}.evergreen-cash-amount{font-variant-numeric:tabular-nums;white-space:nowrap}.evergreen-cash-list li[data-basis="platform"] .evergreen-cash-date{font-weight:600}.evergreen-cash-list li[data-basis="typical"] .evergreen-cash-date,.evergreen-cash-list li[data-basis="rollover"] .evergreen-cash-date,.evergreen-cash-list li[data-basis="audit"] .evergreen-cash-date,.evergreen-cash-list li[data-basis="whatif"] .evergreen-cash-date{color:var(--ink-2);font-style:italic}.evergreen-cash-list li[data-overdue="true"] .evergreen-cash-date{color:#c8553d}.evergreen-cash-answer{font-size:13px;line-height:1.6;margin:6px 0}.evergreen-cash input,.evergreen-redeem input{font-size:16px}
-.evergreen-redeem{margin:8px 0;padding:10px 12px;border:1px solid var(--border);border-radius:10px}.evergreen-redeem-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:0 0 6px;font-size:13px}.evergreen-steps{list-style:none;display:flex;gap:4px;margin:0 0 4px;padding:0}.evergreen-steps li{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;padding-top:6px;border-top:3px solid var(--line)}.evergreen-steps li[data-done="true"]{border-top-color:#3f9a78}.evergreen-steps small{font-size:10px;color:var(--ink-2)}.evergreen-steps b{font-size:12px;font-weight:600;font-variant-numeric:tabular-nums}.evergreen-redeem-fields{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}.evergreen-redeem-fields label.f{min-width:0}.evergreen-redeem-fields input{width:100%;box-sizing:border-box}
+.evergreen-redeem{margin:8px 0;padding:10px 12px;border:1px solid var(--border);border-radius:10px}.evergreen-redeem-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:0 0 6px;font-size:13px}.evergreen-steps{list-style:none;display:flex;gap:4px;margin:0 0 4px;padding:0}.evergreen-steps li{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;padding-top:6px;border-top:3px solid var(--line)}.evergreen-steps li[data-done="true"]{border-top-color:#3f9a78}.evergreen-steps small{font-size:10px;color:var(--ink-2)}.evergreen-steps b{font-size:12px;font-weight:600;font-variant-numeric:tabular-nums}.evergreen-redeem-fields{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}.evergreen-redeem-fields label.f{min-width:0}.evergreen-redeem-fields input{width:100%;box-sizing:border-box}.evergreen-redeem input[type="text"]{width:100%;box-sizing:border-box}.evergreen-ticks{display:flex;flex-direction:column;gap:8px;margin:10px 0 4px}.evergreen-tick{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-1)}.evergreen-tick input{width:20px;height:20px;flex:none}.evergreen-cash-amount small{margin-left:3px;font-size:10px;color:var(--ink-2)}.evergreen-cash-list li[data-basis="hold"] .evergreen-cash-date{color:var(--ink-2)}
 .evergreen-sheet{padding:2px 0 14px}.evergreen-sheet h3{font-size:12px;margin:14px 0 6px;color:var(--ink-2);font-weight:600}.evergreen-states{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}.evergreen-sheet label.f{display:block;margin-top:8px}.evergreen-position>p{display:flex;justify-content:space-between;gap:10px;font-size:12px;margin:0 0 4px}.evergreen-position>p span:last-child{font-variant-numeric:tabular-nums;white-space:nowrap}.evergreen-position .ratio-holding-yield{font-size:12px}.evergreen-lots{list-style:none;margin:4px 0 0;padding:0 0 0 10px;border-left:2px solid var(--grid);font-size:12px}.evergreen-lots li{display:flex;flex-wrap:wrap;gap:2px 12px;padding:3px 0}.evergreen-lots li+li{border-top:1px dotted var(--grid);margin-top:3px;padding-top:5px}.evergreen-lots .ratio-holding-yield{flex:1 0 100%}.evergreen-lots .ratio-holding-yield-since{flex-basis:100%}
 .ratio-fund-holding+.ratio-fund-holding{border-top:1px dashed var(--grid);margin-top:2px;padding-top:6px}.ratio-holding-lots li+li{border-top:1px dotted var(--grid);margin-top:3px;padding-top:5px}.ratio-holding-lots ul{margin:2px 0 4px;padding:0 0 0 10px;border-left:2px solid var(--grid)}.ratio-holding-lots li{display:flex;flex-wrap:wrap;gap:2px 12px;align-items:baseline;padding:2px 0}.ratio-holding-lot-amount{white-space:nowrap;font-variant-numeric:tabular-nums}
 
@@ -1202,7 +1202,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.10.45";
+const UI_VERSION_LABEL=" · v4.10.46";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -3616,11 +3616,18 @@ function evergreenRedeemClean(value){
   if(Number.isSafeInteger(v.cents)&&v.cents>0&&v.cents<=1e12)out.cents=v.cents;
   if(typeof v.acceptedPct==='number'&&Number.isFinite(v.acceptedPct)&&v.acceptedPct>0&&v.acceptedPct<100)out.acceptedPct=v.acceptedPct;
   if(typeof v.tailPct==='number'&&Number.isFinite(v.tailPct)&&v.tailPct>0&&v.tailPct<=50)out.tailPct=v.tailPct;
+  // redeem-facts:v1 (owner request 2026-11-24) — what a real request often is: filed in shares, with only a reference
+  // estimate of its value; a date nobody has confirmed yet; a payment reported as received with no booking date; a
+  // part that must be filed again. Each is recorded as what it is and nothing stands in for a missing value.
+  if(typeof v.shares==='number'&&Number.isFinite(v.shares)&&v.shares>0&&v.shares<=1e12)out.shares=v.shares;
+  if(Number.isSafeInteger(v.estCents)&&v.estCents>0&&v.estCents<=1e12)out.estCents=v.estCents;
+  if(typeof v.note==='string'&&v.note.trim())out.note=v.note.trim().slice(0,300);
+  for(const k of ['received','hold'])if(v[k]===true)out[k]=true;
   return out;
 }
 function evergreenRedeems(){
   const v=evergreenStored(EVERGREEN_REDEEM_KEY,{});if(Array.isArray(v))return {};
-  return Object.fromEntries(Object.entries(v).map(([k,list])=>[k,(Array.isArray(list)?list:[]).map(evergreenRedeemClean).filter(r=>r.id&&r.requested).slice(0,6)]).filter(([,list])=>list.length));
+  return Object.fromEntries(Object.entries(v).map(([k,list])=>[k,(Array.isArray(list)?list:[]).map(evergreenRedeemClean).filter(r=>r.id).slice(0,6)]).filter(([,list])=>list.length));
 }
 // Money is not paid at a weekend: a Saturday or Sunday becomes the Monday after.
 function evergreenWorkday(iso){const d=evergreenDate(iso);if(!d)return '';const dow=d.getUTCDay();return dow===6?evergreenAddDays(iso,2):dow===0?evergreenAddDays(iso,1):iso;}
@@ -3628,31 +3635,35 @@ function evergreenWorkday(iso){const d=evergreenDate(iso);if(!d)return '';const 
 // payments expected from it. Each payment has an expected date with an earliest and a latest, and says what it rests on.
 function evergreenRedeemPlan(record,terms,fundCents,kind,today){
   const r=record||{},t=terms||{},cycle=Boolean(t.frequency&&Number.isInteger(t.noticeDays));
-  const dealing=r.dealing||(cycle?evergreenDealingDay(evergreenAddDays(r.requested,t.noticeDays),t.frequency,t.dealingOffsetMonths):'');
+  const dealing=r.dealing||(cycle&&r.requested?evergreenDealingDay(evergreenAddDays(r.requested,t.noticeDays),t.frequency,t.dealingOffsetMonths):'');
   const known=Number.isInteger(t.settlementDays),usual=EVERGREEN_SETTLE_USUAL[kind==='hedge'?'hedge':'evergreen'],settle=known?t.settlementDays:usual;
-  const total=r.cents??(Number.isSafeInteger(fundCents)?fundCents:null),part=(n,pct)=>n===null?null:Math.round(n*pct/100);
+  // The amount: what was applied for; else the reference estimate; else, for a request with neither an amount nor a
+  // number of shares, the whole holding at its printed value. A request in shares with no estimate has no amount.
+  const total=r.cents??r.estCents??(r.shares?null:Number.isSafeInteger(fundCents)?fundCents:null),est=!r.cents&&Boolean(r.estCents),got=r.receivedOn||(r.received?'日期待核':''),part=(n,pct)=>n===null?null:Math.round(n*pct/100);
   const accepted=part(total,r.acceptedPct??100),tail=r.tailPct?part(accepted,r.tailPct):0,main=accepted===null?null:accepted-tail,rest=total===null?null:total-accepted;
   const after=d=>evergreenWorkday(evergreenAddDays(d,settle)),slack=Math.min(30,Math.max(7,Math.round(settle/2))),tranches=[];
-  const push=(label,cents,date,early,late,basis,received)=>tranches.push({label,cents,date,early,late,basis,...(received?{received}:{})});
-  if(r.cashBy){const d=evergreenWorkday(r.cashBy);push('首笔',main,d,d,evergreenAddDays(d,5),'platform',r.receivedOn);}
+  const push=(label,cents,date,early,late,basis,received)=>tranches.push({label,cents,date,early,late,basis,...(est?{est}:{}),...(received?{received}:{})});
+  // A request on hold (to be filed again, or not yet verified) is kept but given no payment at all.
+  if(r.hold)return {dealing,dealingBasis:r.dealing?'entered':dealing?'terms':'',noticeBy:'',total,est,stage:'hold',tranches};
+  if(r.cashBy){const d=evergreenWorkday(r.cashBy);push('首笔',main,d,d,evergreenAddDays(d,5),'platform',got);}
   else if(dealing){const d=after(dealing);
-    if(known)push('首笔',main,d,d,evergreenAddDays(d,slack),'terms',r.receivedOn);
-    else push('首笔',main,d,evergreenWorkday(evergreenAddDays(dealing,Math.round(usual/2))),evergreenAddDays(d,45),'typical',r.receivedOn);}
-  else push('首笔',main,'','','','unknown',r.receivedOn);
+    if(known)push('首笔',main,d,d,evergreenAddDays(d,slack),'terms',got);
+    else push('首笔',main,d,evergreenWorkday(evergreenAddDays(dealing,Math.round(usual/2))),evergreenAddDays(d,45),'typical',got);}
+  else push('首笔',main,'','','','unknown',got);
   // A held-back tail is usually paid once the fund's yearly accounts are audited: taken as the end of April after the dealing year.
   if(r.tailPct){const audit=dealing?evergreenWorkday(String(Number(dealing.slice(0,4))+1)+'-04-30'):'';
     if(r.tailBy){const d=evergreenWorkday(r.tailBy);push('尾款',tail,d,d,evergreenAddDays(d,5),'platform');}
     else if(audit)push('尾款',tail,audit,audit,evergreenAddDays(audit,60),'audit');else push('尾款',tail,'','','','unknown');}
   if(r.acceptedPct){const next=cycle&&dealing?evergreenDealingDay(evergreenAddDays(dealing,1),t.frequency,t.dealingOffsetMonths):'';
     if(next){const d=after(next);push('顺延部分',rest,d,d,evergreenAddDays(d,45),'rollover');}else push('顺延部分',rest,'','','','unknown');}
-  const first=tranches[0],stage=r.receivedOn?'received':!dealing?'filed':today<dealing?'waiting':first.date&&today>first.late?'late':'priced';
-  return {dealing,dealingBasis:r.dealing?'entered':cycle?'terms':'',noticeBy:!r.dealing&&cycle&&dealing?evergreenAddDays(dealing,-t.noticeDays):'',total,stage,tranches};
+  const first=tranches[0],stage=got?'received':!dealing?'filed':today<dealing?'waiting':first.date&&today>first.late?'late':'priced';
+  return {dealing,dealingBasis:r.dealing?'entered':dealing?'terms':'',noticeBy:!r.dealing&&cycle&&dealing?evergreenAddDays(dealing,-t.noticeDays):'',total,est,stage,tranches};
 }
 // Pure: every fund with its label, the stored requests and the terms in; the forecast out. A payment already received
 // is left out. Funds marked as being redeemed with nothing filed are named, and a fund marked 准备赎回 gets a
 // what-if line from its fee-free lots that is never added into a total.
 function evergreenCashModel(funds,redeems,termsByKey,today){
-  const items=[],missing=[],whatIf=[];
+  const items=[],missing=[],whatIf=[],held=[];
   for(const f of Array.isArray(funds)?funds:[]){
     const list=redeems?.[f.key]||[],state=f.label?.state,terms=termsByKey?.[f.key];
     if(!list.length){
@@ -3665,13 +3676,15 @@ function evergreenCashModel(funds,redeems,termsByKey,today){
       continue;
     }
     const fundCents=evergreenCents(f.amount);
-    for(const record of list)for(const t of evergreenRedeemPlan(record,terms,fundCents,f.kind,today).tranches)if(!t.received)items.push({key:f.key,name:f.name,...t,overdue:Boolean(t.late&&t.late<today)});
+    for(const record of list){const plan=evergreenRedeemPlan(record,terms,fundCents,f.kind,today);
+      if(plan.stage==='hold')held.push({name:f.name,cents:plan.total,est:plan.est,note:record.note||''});
+      for(const t of plan.tranches)if(!t.received)items.push({key:f.key,name:f.name,...t,overdue:Boolean(t.late&&t.late<today)});}
   }
   const dated=items.filter(x=>x.date).sort((a,b)=>a.date.localeCompare(b.date)||a.name.localeCompare(b.name)),undated=items.filter(x=>!x.date),months=[];
   let running=0;
   for(const x of dated){const ym=x.date.slice(0,7);let m=months[months.length-1];if(!m||m.ym!==ym){m={ym,cents:0,count:0,blank:0,running:0};months.push(m);}
     m.count++;if(x.cents===null)m.blank++;else{m.cents+=x.cents;running+=x.cents;}m.running=running;}
-  return {items:dated,undated,missing,whatIf,months,total:running,blank:items.filter(x=>x.cents===null).length};
+  return {items:dated,undated,missing,whatIf,held,months,total:running,blank:items.filter(x=>x.cents===null).length,est:items.filter(x=>x.est).length};
 }
 // Pure: by a given day, what is expected to have arrived, and what has arrived even if every payment runs to its latest date.
 function evergreenCashBy(model,by){
@@ -3680,25 +3693,27 @@ function evergreenCashBy(model,by){
   return {by,expected:sum(model.items.filter(x=>x.date<=by)),safe:sum(model.items.filter(x=>x.late<=by)),later:model.items.filter(x=>x.date>by).length+model.undated.length};
 }
 function evergreenCashText(model,today){
-  const money=c=>c===null?'金额未填':evergreenUsd(c),line=x=>(x.date||'日期待定')+' '+x.name+' '+x.label+' '+money(x.cents)+(x.date?'（最早 '+x.early+'，最晚 '+x.late+'，'+EVERGREEN_BASIS[x.basis]+'）':'');
-  return ['赎回到账计划（'+today+' 整理，方向性估计，以平台通知为准）',...model.items.map(line),...model.undated.map(line),model.items.length?'合计 '+evergreenUsd(model.total)+(model.blank?'（另有 '+model.blank+' 笔金额未知）':''):''].filter(Boolean).join('\n');
+  const money=(c,est)=>c===null?'金额未填':evergreenUsd(c)+(est?'（估）':''),line=x=>(x.date||'日期待定')+' '+x.name+' '+x.label+' '+money(x.cents,x.est)+(x.date?'（最早 '+x.early+'，最晚 '+x.late+'，'+EVERGREEN_BASIS[x.basis]+'）':'');
+  return ['赎回到账计划（'+today+' 整理，方向性估计，以平台通知为准）',...model.items.map(line),...model.undated.map(line),model.items.length?'合计 '+evergreenUsd(model.total)+(model.est?'（其中 '+model.est+' 笔为参考估算）':'')+(model.blank?'（另有 '+model.blank+' 笔金额未知）':''):'',
+    ...(model.held?.length?['待处理（未排期，不计入合计）：'+model.held.map(h=>h.name+' '+money(h.cents,h.est)).join('、')]:[])].filter(Boolean).join('\n');
 }
 function evergreenCashView(model,today,by){
   const e=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  if(!model.items.length&&!model.undated.length&&!model.missing.length&&!model.whatIf.length)return '';
-  const money=c=>c===null?'金额未填':evergreenUsd(c),md=d=>d.slice(5),top=Math.max(1,...model.months.map(m=>m.cents));
+  if(!model.items.length&&!model.undated.length&&!model.missing.length&&!model.whatIf.length&&!model.held?.length)return '';
+  const money=(c,est)=>c===null?'金额未填':evergreenUsd(c)+(est?'<small>估</small>':''),md=d=>d.slice(5),top=Math.max(1,...model.months.map(m=>m.cents));
   const within=days=>{const end=evergreenAddDays(today,days);return evergreenUsd(model.items.filter(x=>x.date<=end).reduce((a,x)=>a+(x.cents||0),0));};
   const row=x=>'<li data-basis="'+x.basis+'"'+(x.overdue?' data-overdue="true"':'')+'><span class="evergreen-cash-date">'+(x.date?e(x.date):'待定')+'</span><span class="evergreen-cash-what"><strong>'+e(x.name)+' · '+x.label+'</strong><small>'
-    +(x.date?'最早 '+e(md(x.early))+' · 最晚 '+e(md(x.late))+' · ':'')+EVERGREEN_BASIS[x.basis]+(x.overdue?' · <b>已过最晚日期，请向平台核对</b>':'')+'</small></span><span class="evergreen-cash-amount">'+money(x.cents)+'</span></li>';
+    +(x.date?'最早 '+e(md(x.early))+' · 最晚 '+e(md(x.late))+' · ':'')+EVERGREEN_BASIS[x.basis]+(x.overdue?' · <b>已过最晚日期，请向平台核对</b>':'')+'</small></span><span class="evergreen-cash-amount">'+money(x.cents,x.est)+'</span></li>';
   const answer=evergreenCashBy(model,by);
   return '<details class="evergreen-cash" open><summary>赎回到账预测'+(model.items.length?' · '+model.items.length+' 笔 · '+evergreenUsd(model.total):'')+'</summary>'
     +(model.missing.length?'<p class="evergreen-meta"><strong>还没登记申请：</strong>'+model.missing.map(e).join('、')+'。在基金的“状态”页签里登记后才会排进来。</p>':'')
-    +(model.items.length?'<p class="evergreen-sub">30 天内 '+within(30)+' · 90 天内 '+within(90)+' · 180 天内 '+within(180)+(model.blank?' · 另有 '+model.blank+' 笔金额未知':'')+'</p>'
+    +(model.items.length?'<p class="evergreen-sub">30 天内 '+within(30)+' · 90 天内 '+within(90)+' · 180 天内 '+within(180)+(model.est?' · 其中 '+model.est+' 笔为参考估算':'')+(model.blank?' · 另有 '+model.blank+' 笔金额未知':'')+'</p>'
       +'<ul class="evergreen-ladder">'+model.months.map(m=>'<li><span class="evergreen-ladder-quarter">'+e(m.ym)+'</span><span class="evergreen-ladder-track"><i class="evergreen-free" style="width:'+Math.round(m.cents*100/top)+'%"></i></span><span class="evergreen-ladder-amount">'+evergreenUsd(m.cents)+'<small>累计 '+evergreenUsd(m.running)+'</small></span></li>').join('')+'</ul>':'')
     +(model.items.length||model.undated.length?'<ul class="evergreen-cash-list">'+model.items.map(row).join('')+model.undated.map(row).join('')+'</ul>':'')
     +(model.items.length?'<label class="f">截至这一天，累计能到账多少<input data-evergreen-cash-by type="date" value="'+e(evergreenDate(by)?by:'')+'"></label>'
       +(answer?'<p class="evergreen-cash-answer">到 '+e(answer.by)+'：预计 <b>'+evergreenUsd(answer.expected)+'</b>，保守 <b>'+evergreenUsd(answer.safe)+'</b>（每笔都按最晚日期）'+(answer.later?'；之后还有 '+answer.later+' 笔':'')+'</p>':'')
       +'<div class="row"><button class="btn" type="button" data-evergreen-cash-copy>复制到账计划</button></div>':'')
+    +(model.held?.length?'<h4>待处理：未排期，不计入合计</h4><ul class="evergreen-cash-list">'+model.held.map(h=>'<li data-basis="hold"><span class="evergreen-cash-date">待处理</span><span class="evergreen-cash-what"><strong>'+e(h.name)+'</strong><small>'+(h.note?e(h.note):'需重新提交或尚待核实')+'</small></span><span class="evergreen-cash-amount">'+money(h.cents,h.est)+'</span></li>').join('')+'</ul>':'')
     +(model.whatIf.length?'<h4>准备赎回的基金：如果赶本期申请</h4><ul class="evergreen-cash-list">'+model.whatIf.map(w=>'<li data-basis="whatif"><span class="evergreen-cash-date">'+e(w.cash)+'</span><span class="evergreen-cash-what"><strong>'+e(w.name)+'</strong><small>通知截止 '+e(w.notice)+' → 赎回日 '+e(w.dealing)+(w.settled?'':' · 无到账条款，到账日未加天数')+' · '+w.lots+' 笔已过费用期 · 不计入上面的合计</small></span><span class="evergreen-cash-amount">'+money(w.cents)+'</span></li>').join('')+'</ul>':'')
     +'<p class="evergreen-meta">按你登记的申请和各基金条款推算，是方向性的估计；周末顺延到周一，未考虑节假日。金额是申请时的数字或当前市值，实际到账按赎回日净值并可能扣费。以平台通知为准。</p></details>';
 }
@@ -3706,19 +3721,23 @@ function evergreenCashView(model,today,by){
 function evergreenRedeemView(fund,records,terms,today){
   const e=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const list=records||[],state=fund?.label?.state;if(!list.length&&state!=='redeeming'&&state!=='partial')return '';
-  const fundCents=evergreenCents(fund.amount),money=c=>c===null?'金额未填':evergreenUsd(c);
-  const stageName={filed:'已申请，赎回日待定',waiting:'已申请，等赎回日',priced:'已过赎回日，等到账',late:'已过最晚日期，请核对',received:'首笔已到账'};
+  const fundCents=evergreenCents(fund.amount),money=(c,est)=>c===null?'金额未填':evergreenUsd(c)+(est?'<small>估</small>':'');
+  const tick=(label,name,on)=>'<label class="evergreen-tick"><input data-evergreen-redeem="'+name+'" type="checkbox"'+(on?' checked':'')+'>'+label+'</label>';
+  const stageName={hold:'待处理，未排期',filed:'已申请，赎回日待定',waiting:'已申请，等赎回日',priced:'已过赎回日，等到账',late:'已过最晚日期，请核对',received:'首笔已到账'};
   const field=(label,name,type,value,more)=>'<label class="f">'+label+'<input data-evergreen-redeem="'+name+'" type="'+type+'" value="'+e(value??'')+'"'+(more||'')+'></label>';
   const blocks=list.map((r,i)=>{
     const p=evergreenRedeemPlan(r,terms,fundCents,fund.kind,today),first=p.tranches[0];
-    const steps=[['申请',r.requested],...(p.noticeBy?[['通知截止',p.noticeBy]]:[]),['赎回日',p.dealing],['预计到账',first.date]].map(([name,d])=>'<li'+(d&&d<=today?' data-done="true"':'')+'><small>'+name+'</small><b>'+(d?e(d.slice(2)):'待定')+'</b></li>').join('');
-    return '<div class="evergreen-redeem" data-redeem-id="'+e(r.id)+'"><p class="evergreen-redeem-head"><strong>第 '+(i+1)+' 笔 · '+(r.cents?evergreenUsd(r.cents):'全部')+'</strong><span class="evergreen-pill" data-state="'+(p.stage==='late'?'pending':p.stage==='received'?'hold':'redeeming')+'">'+stageName[p.stage]+'</span></p>'
+    const steps=[['申请',r.requested],...(p.noticeBy?[['通知截止',p.noticeBy]]:[]),['赎回日',p.dealing],['预计到账',first?.date||'']].map(([name,d])=>'<li'+(d&&d<=today?' data-done="true"':'')+'><small>'+name+'</small><b>'+(d?e(d.slice(2)):'待定')+'</b></li>').join('');
+    return '<div class="evergreen-redeem" data-redeem-id="'+e(r.id)+'"><p class="evergreen-redeem-head"><strong>第 '+(i+1)+' 笔 · '+(r.cents?evergreenUsd(r.cents):r.shares?e(r.shares)+' 份'+(r.estCents?'（约 '+evergreenUsd(r.estCents)+'）':''):'全部')+'</strong><span class="evergreen-pill" data-state="'+(p.stage==='late'?'pending':p.stage==='received'?'hold':p.stage==='hold'?'watch':'redeeming')+'">'+stageName[p.stage]+'</span></p>'+(r.note?'<p class="evergreen-meta">'+e(r.note)+'</p>':'')
       +'<ol class="evergreen-steps">'+steps+'</ol>'
-      +'<ul class="evergreen-cash-list">'+p.tranches.map(t=>'<li data-basis="'+t.basis+'"><span class="evergreen-cash-date">'+(t.received?'已到账':t.date?e(t.date):'待定')+'</span><span class="evergreen-cash-what"><strong>'+t.label+'</strong><small>'+(t.received?e(t.received):(t.date?'最早 '+e(t.early.slice(5))+' · 最晚 '+e(t.late.slice(5))+' · ':'')+EVERGREEN_BASIS[t.basis])+'</small></span><span class="evergreen-cash-amount">'+money(t.cents)+'</span></li>').join('')+'</ul>'
-      +'<div class="evergreen-redeem-fields">'+field('申请日期','requested','date',r.requested)+field('申请金额 USD（留空＝全部）','cents','number',r.cents?String(r.cents/100):'',' inputmode="decimal" min="0" step="0.01" placeholder="全部"')
+      +'<ul class="evergreen-cash-list">'+p.tranches.map(t=>'<li data-basis="'+t.basis+'"><span class="evergreen-cash-date">'+(t.received?'已到账':t.date?e(t.date):'待定')+'</span><span class="evergreen-cash-what"><strong>'+t.label+'</strong><small>'+(t.received?e(t.received):(t.date?'最早 '+e(t.early.slice(5))+' · 最晚 '+e(t.late.slice(5))+' · ':'')+EVERGREEN_BASIS[t.basis])+'</small></span><span class="evergreen-cash-amount">'+money(t.cents,t.est)+'</span></li>').join('')+'</ul>'
+      +'<div class="evergreen-redeem-fields">'+field('申请日期（未知可留空）','requested','date',r.requested)+field('申请金额 USD（留空＝全部）','cents','number',r.cents?String(r.cents/100):'',' inputmode="decimal" min="0" step="0.01" placeholder="全部"')
+      +field('申请份额（按份额申请时）','shares','number',r.shares,' inputmode="decimal" min="0" step="any"')+field('参考估算金额 USD','estCents','number',r.estCents?String(r.estCents/100):'',' inputmode="decimal" min="0" step="0.01"')
       +field('赎回日（留空＝按条款）','dealing','date',r.dealing)+field('平台通知的到账日','cashBy','date',r.cashBy)
       +field('确认比例 %（留空＝足额）','acceptedPct','number',r.acceptedPct,' inputmode="decimal" min="0" max="100" step="0.1" placeholder="100"')+field('尾款比例 %','tailPct','number',r.tailPct,' inputmode="decimal" min="0" max="50" step="0.1" placeholder="0"')
       +field('尾款到账日','tailBy','date',r.tailBy)+field('首笔已到账日期','receivedOn','date',r.receivedOn)+'</div>'
+      +'<label class="f">备注（订单号、平台说法等）<input data-evergreen-redeem="note" type="text" maxlength="300" value="'+e(r.note??'')+'"></label>'
+      +'<div class="evergreen-ticks">'+tick('首笔已到账，日期待核','received',r.received)+tick('暂不排期（需重提或待核实）','hold',r.hold)+'</div>'
       +'<div class="row"><button class="btn" type="button" data-evergreen-redeem-del>'+(_evergreenRedeemAsk===r.id?'再点一次确认删除':'删除这笔')+'</button></div></div>';
   }).join('');
   return '<h3>赎回登记</h3>'+blocks+(list.length<6?'<div class="row"><button class="btn primary" type="button" data-evergreen-redeem-add>登记一笔赎回申请</button></div>':'')
@@ -3735,8 +3754,9 @@ function evergreenRedeemSave(key,list){
 function evergreenRedeemEdit(record,name,text){
   const out={...record},value=String(text??'').trim(),number=Number(value);delete out[name];
   if(!value)return evergreenRedeemClean(out);
-  if(name==='cents'){if(Number.isFinite(number))out.cents=Math.round(number*100);}
-  else if(name==='acceptedPct'||name==='tailPct'){if(Number.isFinite(number))out[name]=number;}
+  if(name==='cents'||name==='estCents'){if(Number.isFinite(number))out[name]=Math.round(number*100);}
+  else if(name==='received'||name==='hold')out[name]=true;
+  else if(name==='acceptedPct'||name==='tailPct'||name==='shares'){if(Number.isFinite(number))out[name]=number;}
   else out[name]=value;
   return evergreenRedeemClean(out);
 }
@@ -3763,9 +3783,7 @@ if(typeof document!=='undefined'&&typeof document.addEventListener==='function')
     if(by){_evergreenCashBy=by.value;again('');return;}
     const key=keyOf(input),id=input?.closest?.('.evergreen-redeem')?.getAttribute('data-redeem-id');if(!key||!id)return;
     const list=evergreenRedeems()[key]||[],at=list.findIndex(r=>r.id===id);if(at<0)return;
-    const next=evergreenRedeemEdit(list[at],input.getAttribute('data-evergreen-redeem'),input.value);
-    // A request without its date is not a request: clearing the date is refused rather than silently deleting the entry.
-    if(!next.requested){toast('申请日期不能为空');again(key);return;}
+    const next=evergreenRedeemEdit(list[at],input.getAttribute('data-evergreen-redeem'),input.type==='checkbox'?(input.checked?'1':''):input.value);
     list[at]=next;if(!evergreenRedeemSave(key,list)){toast('本机无法保存');return;}
     again(key);
   });
@@ -3996,7 +4014,7 @@ function evergreenSyncClean(value){
   const obj=o=>o&&typeof o==='object'&&!Array.isArray(o)?o:{},doc={schema:EVERGREEN_NOTES_SCHEMA,labels:{},redeems:{}},okKey=k=>typeof k==='string'&&k.length>0&&k.length<=300;
   for(const [key,l] of Object.entries(obj(value.labels)).slice(0,400))if(okKey(key))doc.labels[key]={...evergreenLabelClean(l),at:evergreenSyncAt(l?.at)};
   for(const [key,f] of Object.entries(obj(value.redeems)).slice(0,400)){if(!okKey(key))continue;
-    const items=(Array.isArray(f?.items)?f.items:[]).map(r=>({...evergreenRedeemClean(r),at:evergreenSyncAt(r?.at)})).filter(r=>r.id&&r.requested).slice(0,6);
+    const items=(Array.isArray(f?.items)?f.items:[]).map(r=>({...evergreenRedeemClean(r),at:evergreenSyncAt(r?.at)})).filter(r=>r.id).slice(0,6);
     const gone=Object.fromEntries(Object.entries(obj(f?.gone)).filter(([id,t])=>/^[a-z0-9]{1,16}$/.test(id)&&evergreenSyncAt(t)).slice(0,40));
     if(items.length||Object.keys(gone).length)doc.redeems[key]={items,gone};
   }
@@ -4013,7 +4031,7 @@ function evergreenSyncMerge(mine,theirs){
     const x=a.redeems[key]||{items:[],gone:{}},y=b.redeems[key]||{items:[],gone:{}},gone={...x.gone};
     for(const [id,t] of Object.entries(y.gone))if(!(gone[id]>=t))gone[id]=t;
     const byId=new Map();for(const r of [...y.items,...x.items]){const old=byId.get(r.id);if(!old||r.at>old.at||r.at===old.at&&evergreenSyncText(r)>evergreenSyncText(old))byId.set(r.id,r);}
-    const items=[...byId.values()].filter(r=>!(gone[r.id]>=r.at)).sort((p,q)=>p.requested.localeCompare(q.requested)||p.id.localeCompare(q.id)).slice(0,6);
+    const items=[...byId.values()].filter(r=>!(gone[r.id]>=r.at)).sort((p,q)=>(p.requested||'').localeCompare(q.requested||'')||p.id.localeCompare(q.id)).slice(0,6);
     const kept=Object.fromEntries(Object.entries(gone).sort((p,q)=>q[1]-p[1]).slice(0,40));
     if(items.length||Object.keys(kept).length)doc.redeems[key]={items,gone:kept};
   }
@@ -4141,7 +4159,8 @@ function evergreenSyncSoon(ms){
   },ms);
 }
 function evergreenSyncView(stamps,note){
-  const at=stamps?.syncedAt?stamps.syncedAt.slice(0,16).replace('T',' ')+' UTC':'';
+  // Shown in Hong Kong time, where the owner is, whatever the device's own zone.
+  const stamp=Date.parse(stamps?.syncedAt||''),at=Number.isFinite(stamp)?new Date(stamp+8*3600000).toISOString().slice(0,16).replace('T',' ')+' 香港时间':'';
   return '<p class="evergreen-meta" data-evergreen-sync="'+(stamps?.dirty?'pending':'synced')+'">状态、备注和赎回登记'+(stamps?.dirty?'有改动待同步'+(note?'（'+note+'）':''):at?'已同步到你的私有存储（'+at+'）':'会自动同步到你的私有存储')+'；加密保存，只有管理人设备能打开。</p>';
 }
 /* evergreen-sync:v1:end */
