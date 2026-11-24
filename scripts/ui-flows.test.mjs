@@ -1168,7 +1168,7 @@ test("profiles and the reading list stay on the device, are shown in the sheet a
   assert.doesNotMatch(profileBlock, /changeDraft|EDIT\.|saveLedger|writeRemote|ghRead|fetch\(|ghApi|ratioCore|deriveManager|XMLHttpRequest|innerHTML/i);
   assert.ok(html.includes("profile:x=>(x.profile?.summary||'<p class=\"evergreen-meta\">-</p>')+(x.profile?.meta||''),"));
   assert.match(html, /fund\.profile=evergreenProfileParts\(profiles\[fund\.key\],fund\.own,fund\.kind\);/);
-  assert.match(html, /evergreenDeskView\(model,_evergreenFilter,_evergreenOpen,_evergreenKind,_evergreenTab,cashHtml\)\+evergreenReadingView\(evergreenReading\(\)\)\+evergreenRemoteView\(evergreenStored\(EVERGREEN_REMOTE_KEY,\{\}\)\)\+\(typeof evergreenSyncView==='function'\?evergreenSyncView\(evergreenSyncStamps\(\),_evergreenSyncNote\):''\)\+evergreenPackView\(/);
+  assert.match(html, /evergreenDeskView\(model,_evergreenFilter,_evergreenOpen,_evergreenKind,_evergreenTab,''\)\+evergreenReadingView\(evergreenReading\(\)\)\+evergreenRemoteView\(evergreenStored\(EVERGREEN_REMOTE_KEY,\{\}\)\)\+\(typeof evergreenSyncView==='function'\?evergreenSyncView\(evergreenSyncStamps\(\),_evergreenSyncNote\):''\)\+evergreenPackView\(/);
   // Every link the block writes opens in a new tab without handing the page to it.
   assert.equal((profileBlock.match(/<a href=/g) || []).length, 1); assert.equal((profileBlock.match(/target="_blank" rel="noopener noreferrer"/g) || []).length, 1);
   assert.match(html, /fund\.assessmentHtml=evergreenAssessmentView\(profiles\[fund\.key\]\);/); assert.ok(html.includes("assessment:x=>x.assessmentHtml||''};"));
@@ -1479,7 +1479,19 @@ test("a fund marked 赎回中 or 部分赎回 gets the request form in its 状�
   assert.equal(r.evergreenRedeemView(fund("redeeming"), Array.from({ length: 6 }, (_, i) => ({ id: "x" + i, requested: "2026-11-10" })), q, today).includes("data-evergreen-redeem-add"), false, "six requests a fund at most");
   // Wiring: the desk hands each fund its form and puts the forecast above the list; fields are 16px so an iPhone does not zoom.
   assert.match(html, /fund\.redeemHtml=evergreenRedeemView\(fund,redeems\[fund\.key\],terms\[fund\.key\],today,\{open:_evergreenRedeemOpen,edit:_evergreenRedeemEdit,ask:_evergreenRedeemAsk\}\);/);
-  assert.match(html, /const cashHtml=evergreenCashView\(evergreenCashModel\(model\.funds,redeems,terms,today\),today,_evergreenCashBy,\{open:_evergreenCashOpen,tab:_evergreenCashTab,month:_evergreenCashMonth\}\);/);
+  assert.match(html, /const cashHtml=evergreenCashView\(evergreenCashModel\(model\.funds,redeems,terms,today\),today,_evergreenCashBy,\{open:true,tab:_evergreenCashTab,month:_evergreenCashMonth\}\);/);
+  // cash-section:v1 — the forecast is its own section beside the fund list; one is shown at a time and the fund list no longer carries the card.
+  {const view=new Function(html.match(/const EVERGREEN_SECTIONS=[^\n]+\nfunction evergreenSectionView[\s\S]*?\n}\n/)[0]+';return evergreenSectionView')();
+    const funds=view('funds','<details class="evergreen-cash" open></details>'),cash=view('cash','<details class="evergreen-cash" open></details>'),empty=view('cash',''),odd=view('zzz','x');
+    assert.equal(funds.section,'funds');assert.equal(odd.section,'funds');assert.equal(cash.section,'cash');
+    assert.ok(funds.html.includes('data-evergreen-section="funds" aria-pressed="true">基金管理</button>'));assert.ok(funds.html.includes('data-evergreen-section="cash" aria-pressed="false">赎回到账预测</button>'));
+    assert.ok(!funds.html.includes('evergreen-cash"'));assert.ok(cash.html.includes('<details class="evergreen-cash" open>'));assert.ok(cash.html.includes('aria-pressed="true">赎回到账预测'));
+    assert.ok(empty.html.includes('还没有赎回登记'));
+    assert.ok(html.includes("const head=evergreenSectionView(_evergreenSection,cashHtml);desk.setAttribute('data-evergreen-part',head.section);\n  if(head.section==='cash'){desk.innerHTML=head.html;_evergreenRows=rows;return;}"));
+    assert.ok(html.includes("if(part){_evergreenSection=part.getAttribute('data-evergreen-section');again();return;}"));
+    assert.ok(html.includes('.evergreen-desk>.evergreen-section+h2{display:none}'));
+    // The card must not carry the attribute the buttons are found by, or every tap inside it would switch section.
+    assert.ok(!html.includes("setAttribute('data-evergreen-section'"));}
   assert.match(html, /if\(has\('evergreen-cash'\)\)_evergreenCashOpen=el\.open;/); assert.match(html, /if\(cashTab\)\{_evergreenCashTab=cashTab\.getAttribute\('data-evergreen-cash-tab'\);_evergreenCashOpen=true;again\(''\);return;\}/);
   assert.match(html, /\.evergreen-cash input,\.evergreen-redeem input\{font-size:16px\}/); assert.match(html, /\.evergreen-note\{[^}]*width:100%[^}]*font-size:16px/);
 });
