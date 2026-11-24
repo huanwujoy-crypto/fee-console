@@ -10,7 +10,7 @@
 <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAABzUlEQVR42u3bsQ2AMAwAwczDhEzKOqGlCBIgBdnxRT+BfU0Kt20/pGHNCASH4BAcgkNwCA7BITgEh+CQ4BAcgkNwCA7BITgEh+AQHBIcgkNwCA7BITgEh+AQHIJDgkNwCA7BITgEh+AQHIJDcAgOCQ7BITgEh+AQHIJDcOi2/vjBwUQyJXAEkhHNBxyxZITyAQcccMABxwIy4viAAw444IADDjjggAMOOOCAAw444IBDcAgOwQEHHHDAAQcccMABBxxwwAEHHHAIDudocDDxeWFwOEeDg4z3a4MDDjjggKMOjh82BwcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAGHQ1Y4HLLCERPH1IHCkRjH7JnCAQcccMBRB8cam4MDDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAQxWDQ3AIDsEhOFQNR/eSfG7hgAMOOOCAAw444PCq4ZCvrOAQHIJDgkNwCA7BITgEh+AQHIJDcEhwCA7BITgEh+AQHIJDcAgOwSHBITgEh+AQHIJDcAgOwSE4pEsnhtvC417hqCsAAAAASUVORK5CYII=">
-<meta name="fee-console-build" content="4.10.44">
+<meta name="fee-console-build" content="4.10.45">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -1202,7 +1202,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.10.44";
+const UI_VERSION_LABEL=" · v4.10.45";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -3569,7 +3569,7 @@ function evergreenPackApply(text,remote){
   const known=new Set(_evergreenRows.map(r=>r.key)),matched=Object.keys(read.terms).filter(k=>known.has(k)).length,unmatched=Object.keys(read.terms).length-matched;
   const count=o=>Object.keys(o).length;
   try{if(count(read.terms))store.setItem(EVERGREEN_TERMS_KEY,JSON.stringify(merge(evergreenTerms(),read.terms)));
-    if(count(read.labels))store.setItem(EVERGREEN_KEY,JSON.stringify({...evergreenLabels(),...read.labels}));
+    if(count(read.labels)){store.setItem(EVERGREEN_KEY,JSON.stringify({...evergreenLabels(),...read.labels}));if(typeof evergreenSyncTouch==='function')evergreenSyncTouch({labels:Object.keys(read.labels)});}
     if(count(read.profiles))store.setItem(EVERGREEN_PROFILE_KEY,JSON.stringify(merge(evergreenProfiles(),read.profiles)));
     if(read.reading.length)store.setItem(EVERGREEN_READING_KEY,JSON.stringify(read.reading));}catch{return '本机无法保存';}
   // Say what arrived, in the owner's words; a pack may carry any mix of the four.
@@ -3603,8 +3603,8 @@ if(typeof document!=='undefined'&&typeof document.addEventListener==='function')
 // date, an amount (none means the whole holding at the printed value), and whatever the platform has since told
 // the owner: the dealing day, the payment date, a scaled-back acceptance, a held-back tail. Every date the owner
 // has not been given is worked out from the fund's terms and says so; with no terms a usual number of days stands
-// in and says that too. Requests and their amounts stay on this device: they are not in the terms pack and are
-// never sent anywhere. Directional only; the platform's own notice decides.
+// in and says that too. Requests and their amounts are not in the terms pack; evergreen-sync:v1 carries them, sealed,
+// to the owner's other manager devices. Directional only; the platform's own notice decides.
 const EVERGREEN_REDEEM_KEY='feeConsole.evergreen.redeem.v1',EVERGREEN_SETTLE_USUAL={evergreen:45,hedge:30};
 const EVERGREEN_BASIS={platform:'平台通知',terms:'按条款推算',typical:'无到账条款，按常见天数估计',audit:'尾款多在年度审计后支付，按次年 4 月底估计',rollover:'未获确认部分，顺延下一期（是否顺延以基金为准）',unknown:'日期待定'};
 let _evergreenCashBy='',_evergreenRedeemAsk='',_evergreenRedeemSeq=0;
@@ -3722,12 +3722,14 @@ function evergreenRedeemView(fund,records,terms,today){
       +'<div class="row"><button class="btn" type="button" data-evergreen-redeem-del>'+(_evergreenRedeemAsk===r.id?'再点一次确认删除':'删除这笔')+'</button></div></div>';
   }).join('');
   return '<h3>赎回登记</h3>'+blocks+(list.length<6?'<div class="row"><button class="btn primary" type="button" data-evergreen-redeem-add>登记一笔赎回申请</button></div>':'')
-    +'<p class="evergreen-meta">只填你知道的；没填的日期按条款推算，并排进页面上方的“赎回到账预测”。金额只保存在本机，不进条款包。</p>';
+    +'<p class="evergreen-meta">只填你知道的；没填的日期按条款推算，并排进页面上方的“赎回到账预测”。登记会加密后同步到你的其它管理人设备，不进条款包。</p>';
 }
 function evergreenRedeemSave(key,list){
   if(typeof store==='undefined'||!store)return false;
-  const all=evergreenRedeems();if(list.length)all[key]=list;else delete all[key];
-  try{store.setItem(EVERGREEN_REDEEM_KEY,JSON.stringify(all));return true;}catch{return false;}
+  const all=evergreenRedeems(),before=all[key]||[];if(list.length)all[key]=list;else delete all[key];
+  try{store.setItem(EVERGREEN_REDEEM_KEY,JSON.stringify(all));}catch{return false;}
+  if(typeof evergreenSyncTouch==='function')evergreenSyncTouch({redeem:{key,before,after:evergreenRedeems()[key]||[]}});
+  return true;
 }
 // Pure: one field of one request changed by the form. An empty or malformed entry clears the field.
 function evergreenRedeemEdit(record,name,text){
@@ -3773,7 +3775,7 @@ if(typeof document!=='undefined'&&typeof document.addEventListener==='function')
 // evergreen-desk:v1 — the manager's working view of the evergreen funds, opened from its own tab on the same
 // verified pane as the allocation report. Display only: it rereads the holdings the report has already printed
 // (names, amounts, figures, lots) and never recalculates one. The status label and its note are
-// the owner's own judgement, kept on this device; nothing here recommends an action.
+// the owner's own judgement, kept on this device and synced to the owner's other devices; nothing here recommends an action.
 const EVERGREEN_STATES=[['hold','持有'],['watch','观察'],['prepare','准备赎回'],['partial','部分赎回'],['redeeming','赎回中']];
 // fund-tabs:v1 (owner request 2026-11-24) — one fund's sheet is cut into tabs, so nothing needs scrolling to reach.
 const EVERGREEN_TABS=[['status','状态'],['position','持仓'],['terms','条款'],['profile','概况'],['mix','分布'],['news','动态'],['assessment','评估']];
@@ -3819,7 +3821,7 @@ function evergreenDeskView(model,filter,open,kind,tab,cashHtml){
     status:x=>(x.pending?due(x.pending):'')
       +'<div class="evergreen-states" role="group" aria-label="状态">'+EVERGREEN_STATES.map(([id,name])=>'<button type="button" data-evergreen-state="'+id+'" aria-pressed="'+String(x.label.state===id)+'">'+name+'</button>').join('')+'</div>'
       +'<label class="f">理由（自己看的备注）<textarea class="evergreen-note" data-evergreen-note maxlength="300" rows="3" placeholder="例如：等下一份季报">'+e(x.label.note)+'</textarea></label>'
-      +'<p class="evergreen-meta">'+(x.label.updatedAt?'标记更新于 '+e(x.label.updatedAt):'尚未标记')+' · 仅保存在本机</p>'+(x.redeemHtml||''),
+      +'<p class="evergreen-meta">'+(x.label.updatedAt?'标记更新于 '+e(x.label.updatedAt):'尚未标记')+' · 自动同步到你的其它管理人设备</p>'+(x.redeemHtml||''),
     position:x=>'<div class="evergreen-position"><p><span>'+e(x.platform)+' · '+e(x.strategy)+(x.share?' · 占'+kindName[kindOf(x)]+'合计 '+e(x.share):'')+'</span><span>'+e(x.amount)+'</span></p>'+(x.figuresHtml||'<p class="evergreen-meta">此快照未包含这只基金的收益率。</p>')+'</div>',
     terms:x=>x.termsHtml||'<p class="evergreen-meta">尚未录入条款。在页面底部“条款包”里导入后显示。</p>',
     profile:x=>(x.profile?.summary||'<p class="evergreen-meta">-</p>')+(x.profile?.meta||''),
@@ -3875,13 +3877,15 @@ function renderEvergreenDesk(root){
   for(const fund of model.funds){fund.share=shares[fund.key]||'';fund.termsHtml=evergreenTermsView(fund,terms[fund.key],today);fund.profile=evergreenProfileParts(profiles[fund.key],fund.own,fund.kind);fund.assessmentHtml=evergreenAssessmentView(profiles[fund.key]);
     fund.redeemHtml=evergreenRedeemView(fund,redeems[fund.key],terms[fund.key],today);}
   const cashHtml=evergreenCashView(evergreenCashModel(model.funds,redeems,terms,today),today,_evergreenCashBy);
-  desk.innerHTML=evergreenDeskView(model,_evergreenFilter,_evergreenOpen,_evergreenKind,_evergreenTab,cashHtml)+evergreenReadingView(evergreenReading())+evergreenRemoteView(evergreenStored(EVERGREEN_REMOTE_KEY,{}))+evergreenPackView(_evergreenPackOpen,_evergreenPackMessage);
+  desk.innerHTML=evergreenDeskView(model,_evergreenFilter,_evergreenOpen,_evergreenKind,_evergreenTab,cashHtml)+evergreenReadingView(evergreenReading())+evergreenRemoteView(evergreenStored(EVERGREEN_REMOTE_KEY,{}))+(typeof evergreenSyncView==='function'?evergreenSyncView(evergreenSyncStamps(),_evergreenSyncNote):'')+evergreenPackView(_evergreenPackOpen,_evergreenPackMessage);
   _evergreenRows=rows;
 }
 function evergreenLabelSet(key,patch){
   if(typeof store==='undefined'||!store)return false;
   const all=evergreenLabels();all[key]=evergreenLabelClean({...evergreenLabelClean(all[key]),...patch,updatedAt:todayStr()});
-  try{store.setItem(EVERGREEN_KEY,JSON.stringify(all));return true;}catch{return false;}
+  try{store.setItem(EVERGREEN_KEY,JSON.stringify(all));}catch{return false;}
+  if(typeof evergreenSyncTouch==='function')evergreenSyncTouch({labels:[key]});
+  return true;
 }
 if(typeof document!=='undefined'&&typeof document.addEventListener==='function'){
   const fundOf=el=>el?.closest?.('.evergreen-fund'),again=()=>renderEvergreenDesk(document.getElementById('ratioContent'));
@@ -3924,17 +3928,17 @@ function evergreenRemoteBytes(s,length){
   return length&&out.length!==length?null:Uint8Array.from(out);
 }
 // One sealed text and this device's key in; the pack text and its time out. Anything unexpected throws.
-async function evergreenRemoteOpen(text,privateKey,recipient,cryptoImpl=globalThis.crypto){
+async function evergreenRemoteOpen(text,privateKey,recipient,cryptoImpl=globalThis.crypto,kind={schema:EVERGREEN_REMOTE_SCHEMA,domain:'fee-console/evergreen-pack/v1'}){
   const refuse=()=>{throw Error('EVERGREEN_REMOTE_REFUSED');};
   if(typeof text!=='string'||text.length>800000)refuse();
   const v=JSON.parse(text),keys=['algorithm','ciphertext','ephemeralPublicKey','generatedAt','iv','recipientId','salt','schema','scopeId'];
-  if(!v||typeof v!=='object'||Object.keys(v).sort().join()!==keys.join()||v.schema!==EVERGREEN_REMOTE_SCHEMA||v.algorithm!=='X25519-HKDF-SHA256-AES256GCM'||v.scopeId!==recipient?.scopeId||v.recipientId!==recipient?.recipientId
+  if(!v||typeof v!=='object'||Object.keys(v).sort().join()!==keys.join()||v.schema!==kind.schema||v.algorithm!=='X25519-HKDF-SHA256-AES256GCM'||v.scopeId!==recipient?.scopeId||v.recipientId!==recipient?.recipientId
     ||typeof v.generatedAt!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(v.generatedAt))refuse();
   const peerBytes=evergreenRemoteBytes(v.ephemeralPublicKey,32),salt=evergreenRemoteBytes(v.salt,32),iv=evergreenRemoteBytes(v.iv,12),cipher=evergreenRemoteBytes(v.ciphertext);
   if(!peerBytes||!salt||!iv||!cipher||cipher.length<17)refuse();
   const subtle=cryptoImpl.subtle,peer=await subtle.importKey('raw',peerBytes,{name:'X25519'},false,[]);
   const shared=new Uint8Array(await subtle.deriveBits({name:'X25519',public:peer},privateKey,256));
-  const info=new TextEncoder().encode(['fee-console/evergreen-pack/v1',v.scopeId,v.recipientId,v.generatedAt].join('|'));
+  const info=new TextEncoder().encode([kind.domain,v.scopeId,v.recipientId,v.generatedAt].join('|'));
   let key;try{key=await subtle.deriveKey({name:'HKDF',hash:'SHA-256',salt,info},await subtle.importKey('raw',shared,'HKDF',false,['deriveKey']),{name:'AES-GCM',length:256},false,['decrypt']);}finally{shared.fill(0);}
   const plain=new Uint8Array(await subtle.decrypt({name:'AES-GCM',iv,additionalData:info},key,cipher));
   return {generatedAt:v.generatedAt,text:new TextDecoder('utf-8',{fatal:true}).decode(plain)};
@@ -3958,6 +3962,189 @@ function evergreenRemoteView(mark){
   return at?'<p class="evergreen-meta">基金资料自动更新于 '+at+'（来自你自己电脑整理的资料，仅本机可解开）。</p>':'';
 }
 /* evergreen-remote:v1:end */
+/* evergreen-sync:v1:start */
+// evergreen-sync:v1 (owner request 2026-11-24) — the owner's own marks on the fund page (each fund's status and note,
+// and the redemption requests with their amounts) follow the owner from one manager device to another. They are kept
+// on the device as before and, in addition, sealed to the manager's registered public key and stored as one more
+// file in the owner's private store, which only a manager device can open. Each mark carries the time it was last
+// changed; when two devices differ the later change wins, mark by mark, and a deleted request stays deleted.
+// The page writes that one file only, through its own reviewed-write gate, and never while the daily automatic
+// publication is due, because that publication refuses to write if the store changed under it.
+const EVERGREEN_NOTES_FILE='fee-console-evergreen-notes.json',EVERGREEN_NOTES_SCHEMA='fee-console.evergreen-notes.v1',EVERGREEN_SYNC_KEY='feeConsole.evergreen.sync.v1';
+const EVERGREEN_NOTES_KIND={schema:'fee-console.evergreen-notes-sealed.v1',domain:'fee-console/evergreen-notes/v1'};
+let _evergreenNotesWrite=null,_evergreenSyncBusy=false,_evergreenSyncTimer=null,_evergreenSyncNote='';
+const evergreenSyncAt=v=>Number.isSafeInteger(v)&&v>0&&v<1e14?v:0;
+// What this device knows about when each mark was last changed. A mark made before syncing existed has no time (0).
+function evergreenSyncStamps(){
+  const v=evergreenStored(EVERGREEN_SYNC_KEY,{}),map=o=>Object.fromEntries(Object.entries(o&&typeof o==='object'&&!Array.isArray(o)?o:{}).map(([k,t])=>[k,evergreenSyncAt(t)]).filter(([,t])=>t));
+  const nested=o=>Object.fromEntries(Object.entries(o&&typeof o==='object'&&!Array.isArray(o)?o:{}).map(([k,m])=>[k,map(m)]).filter(([,m])=>Object.keys(m).length));
+  return {labels:map(v.labels),redeems:nested(v.redeems),gone:nested(v.gone),dirty:v.dirty===true,syncedAt:typeof v.syncedAt==='string'&&/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(v.syncedAt)?v.syncedAt.slice(0,24):''};
+}
+// Pure: what is on the device, as the one document that travels.
+function evergreenSyncDoc(labels,redeems,stamps){
+  const doc={schema:EVERGREEN_NOTES_SCHEMA,labels:{},redeems:{}};
+  for(const [key,value] of Object.entries(labels||{})){const l=evergreenLabelClean(value),at=evergreenSyncAt(stamps?.labels?.[key]);if(l.state||l.note||l.reviewBy||l.decided||at)doc.labels[key]={...l,at};}
+  for(const key of new Set([...Object.keys(redeems||{}),...Object.keys(stamps?.gone||{})])){
+    const items=(redeems?.[key]||[]).map(r=>({...evergreenRedeemClean(r),at:evergreenSyncAt(stamps?.redeems?.[key]?.[r.id])})),gone={...(stamps?.gone?.[key]||{})};
+    if(items.length||Object.keys(gone).length)doc.redeems[key]={items,gone};
+  }
+  return doc;
+}
+// Pure: a document from the store in, a clean one out; anything of the wrong shape is dropped. Null when it is not one.
+function evergreenSyncClean(value){
+  if(!value||typeof value!=='object'||value.schema!==EVERGREEN_NOTES_SCHEMA)return null;
+  const obj=o=>o&&typeof o==='object'&&!Array.isArray(o)?o:{},doc={schema:EVERGREEN_NOTES_SCHEMA,labels:{},redeems:{}},okKey=k=>typeof k==='string'&&k.length>0&&k.length<=300;
+  for(const [key,l] of Object.entries(obj(value.labels)).slice(0,400))if(okKey(key))doc.labels[key]={...evergreenLabelClean(l),at:evergreenSyncAt(l?.at)};
+  for(const [key,f] of Object.entries(obj(value.redeems)).slice(0,400)){if(!okKey(key))continue;
+    const items=(Array.isArray(f?.items)?f.items:[]).map(r=>({...evergreenRedeemClean(r),at:evergreenSyncAt(r?.at)})).filter(r=>r.id&&r.requested).slice(0,6);
+    const gone=Object.fromEntries(Object.entries(obj(f?.gone)).filter(([id,t])=>/^[a-z0-9]{1,16}$/.test(id)&&evergreenSyncAt(t)).slice(0,40));
+    if(items.length||Object.keys(gone).length)doc.redeems[key]={items,gone};
+  }
+  return doc;
+}
+// Pure: two documents in, one out. Mark by mark the later change wins; with the same time on both sides the one that
+// says something wins, and otherwise a fixed rule picks the same one on every device, so two devices always settle. A request deleted at or after its last change stays deleted.
+function evergreenSyncMerge(mine,theirs){
+  const a=mine||{labels:{},redeems:{}},b=theirs||{labels:{},redeems:{}},doc={schema:EVERGREEN_NOTES_SCHEMA,labels:{},redeems:{}};
+  const said=l=>Boolean(l&&(l.state||l.note||l.decided||l.reviewBy));
+  for(const key of new Set([...Object.keys(a.labels),...Object.keys(b.labels)])){const x=a.labels[key],y=b.labels[key];
+    doc.labels[key]=!y?x:!x?y:y.at>x.at?y:x.at>y.at?x:said(x)!==said(y)?(said(x)?x:y):evergreenSyncText(x)>=evergreenSyncText(y)?x:y;}
+  for(const key of new Set([...Object.keys(a.redeems),...Object.keys(b.redeems)])){
+    const x=a.redeems[key]||{items:[],gone:{}},y=b.redeems[key]||{items:[],gone:{}},gone={...x.gone};
+    for(const [id,t] of Object.entries(y.gone))if(!(gone[id]>=t))gone[id]=t;
+    const byId=new Map();for(const r of [...y.items,...x.items]){const old=byId.get(r.id);if(!old||r.at>old.at||r.at===old.at&&evergreenSyncText(r)>evergreenSyncText(old))byId.set(r.id,r);}
+    const items=[...byId.values()].filter(r=>!(gone[r.id]>=r.at)).sort((p,q)=>p.requested.localeCompare(q.requested)||p.id.localeCompare(q.id)).slice(0,6);
+    const kept=Object.fromEntries(Object.entries(gone).sort((p,q)=>q[1]-p[1]).slice(0,40));
+    if(items.length||Object.keys(kept).length)doc.redeems[key]={items,gone:kept};
+  }
+  return doc;
+}
+// Key order does not matter when two documents are compared.
+function evergreenSyncText(v){return JSON.stringify(v,(k,x)=>x&&typeof x==='object'&&!Array.isArray(x)?Object.fromEntries(Object.keys(x).sort().map(n=>[n,x[n]])):x);}
+function evergreenSyncLocal(){return evergreenSyncDoc(evergreenLabels(),evergreenRedeems(),evergreenSyncStamps());}
+// A merged document becomes what the device holds: labels, requests and their times.
+function evergreenSyncApply(doc,extra){
+  if(typeof store==='undefined'||!store)return false;
+  const labels={},redeems={},stamps={labels:{},redeems:{},gone:{}};
+  for(const [key,{at,...l}] of Object.entries(doc.labels)){labels[key]=l;if(at)stamps.labels[key]=at;}
+  for(const [key,f] of Object.entries(doc.redeems)){
+    if(f.items.length)redeems[key]=f.items.map(({at,...r})=>r);
+    const times=Object.fromEntries(f.items.filter(r=>r.at).map(r=>[r.id,r.at]));if(Object.keys(times).length)stamps.redeems[key]=times;
+    if(Object.keys(f.gone).length)stamps.gone[key]=f.gone;
+  }
+  const old=evergreenSyncStamps();
+  try{store.setItem(EVERGREEN_KEY,JSON.stringify(labels));store.setItem(EVERGREEN_REDEEM_KEY,JSON.stringify(redeems));
+    store.setItem(EVERGREEN_SYNC_KEY,JSON.stringify({...stamps,dirty:old.dirty,syncedAt:old.syncedAt,...extra}));return true;}catch{return false;}
+}
+function evergreenSyncMark(patch){
+  if(typeof store==='undefined'||!store)return;
+  try{store.setItem(EVERGREEN_SYNC_KEY,JSON.stringify({...evergreenSyncStamps(),...patch}));}catch{}
+}
+// Called by the page whenever the owner changes a mark here: it records when, and asks for a sync soon.
+function evergreenSyncTouch(change,now=Date.now()){
+  if(typeof store==='undefined'||!store)return;
+  const s=evergreenSyncStamps();
+  for(const key of change?.labels||[])s.labels[key]=now;
+  if(change?.redeem){const {key,before,after}=change.redeem,was=new Map((before||[]).map(r=>[r.id,JSON.stringify(r)])),ids=new Set((after||[]).map(r=>r.id));
+    const times={...(s.redeems[key]||{})},gone={...(s.gone[key]||{})};
+    for(const r of after||[])if(was.get(r.id)!==JSON.stringify(r))times[r.id]=now;
+    for(const id of was.keys())if(!ids.has(id)){delete times[id];gone[id]=now;}
+    if(Object.keys(times).length)s.redeems[key]=times;else delete s.redeems[key];
+    if(Object.keys(gone).length)s.gone[key]=gone;else delete s.gone[key];}
+  try{store.setItem(EVERGREEN_SYNC_KEY,JSON.stringify({...s,dirty:true}));}catch{return;}
+  evergreenSyncSoon(4000);
+}
+// The daily automatic publication runs at 08:00 (and may be sent again within the hour) and a second job near 22:56,
+// Hong Kong time; no write goes out from 07:45 to 09:00 or from 22:40 to 23:15.
+function evergreenSyncQuiet(date){
+  const minute=((date.getUTCHours()+8)%24)*60+date.getUTCMinutes();
+  return minute>=465&&minute<540||minute>=1360&&minute<1395;
+}
+function evergreenNotesText(bytes){
+  const alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';let out='',bits=0,v=0;
+  for(const b of bytes){v=(v<<8)|b;bits+=8;while(bits>=6){bits-=6;out+=alphabet[(v>>>bits)&63];}v&=(1<<bits)-1;}
+  return bits?out+alphabet[(v<<(6-bits))&63]:out;
+}
+// One document text and the manager's public recipient in, a sealed envelope out. evergreenRemoteOpen reads it back.
+async function evergreenNotesSeal(text,recipient,generatedAt,cryptoImpl=globalThis.crypto){
+  const refuse=()=>{throw Error('EVERGREEN_SYNC_REFUSED');};
+  if(typeof text!=='string'||text.length<2||text.length>400000||!recipient||recipient.algorithm!=='X25519-HKDF-SHA256-AES256GCM'||!/^[a-f0-9]{64}$/.test(recipient.scopeId||'')||!/^[a-f0-9]{64}$/.test(recipient.recipientId||'')
+    ||typeof generatedAt!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(generatedAt))refuse();
+  const peerBytes=evergreenRemoteBytes(recipient.publicKey,32);if(!peerBytes)refuse();
+  const subtle=cryptoImpl.subtle,pair=await subtle.generateKey({name:'X25519'},true,['deriveBits']),peer=await subtle.importKey('raw',peerBytes,{name:'X25519'},false,[]);
+  const shared=new Uint8Array(await subtle.deriveBits({name:'X25519',public:peer},pair.privateKey,256));
+  const salt=cryptoImpl.getRandomValues(new Uint8Array(32)),iv=cryptoImpl.getRandomValues(new Uint8Array(12));
+  const info=new TextEncoder().encode([EVERGREEN_NOTES_KIND.domain,recipient.scopeId,recipient.recipientId,generatedAt].join('|'));
+  let key;try{key=await subtle.deriveKey({name:'HKDF',hash:'SHA-256',salt,info},await subtle.importKey('raw',shared,'HKDF',false,['deriveKey']),{name:'AES-GCM',length:256},false,['encrypt']);}finally{shared.fill(0);}
+  const ciphertext=new Uint8Array(await subtle.encrypt({name:'AES-GCM',iv,additionalData:info},key,new TextEncoder().encode(text)));
+  return JSON.stringify({schema:EVERGREEN_NOTES_KIND.schema,algorithm:recipient.algorithm,scopeId:recipient.scopeId,recipientId:recipient.recipientId,generatedAt,
+    ephemeralPublicKey:evergreenNotesText(new Uint8Array(await subtle.exportKey('raw',pair.publicKey))),salt:evergreenNotesText(salt),iv:evergreenNotesText(iv),ciphertext:evergreenNotesText(ciphertext)});
+}
+// The stored file in, its document out. A file this device cannot open (a key that has since changed, a damaged
+// file) counts as empty: the device keeps what it has and writes it again.
+async function evergreenSyncRead(file,privateKey,recipient){
+  if(!file||file.truncated||typeof file.content!=='string')return null;
+  try{return evergreenSyncClean(JSON.parse((await evergreenRemoteOpen(file.content,privateKey,recipient,globalThis.crypto,EVERGREEN_NOTES_KIND)).text));}catch{return null;}
+}
+function evergreenSyncRedraw(){if(typeof document!=='undefined'&&typeof renderEvergreenDesk==='function')try{renderEvergreenDesk(document.getElementById('ratioContent'));}catch{}}
+// Called with the file from a read the page has already authenticated: what another device changed arrives here.
+async function evergreenSyncTake(file,privateKey,recipient){
+  if(_evergreenSyncBusy||typeof store==='undefined'||!store)return false;
+  _evergreenSyncBusy=true;
+  try{
+    const remote=await evergreenSyncRead(file,privateKey,recipient)||{schema:EVERGREEN_NOTES_SCHEMA,labels:{},redeems:{}},local=evergreenSyncLocal(),merged=evergreenSyncMerge(local,remote);
+    const changed=evergreenSyncText(merged)!==evergreenSyncText(local),behind=evergreenSyncText(merged)!==evergreenSyncText(remote);
+    if(changed&&!evergreenSyncApply(merged))return false;
+    evergreenSyncMark({dirty:behind,...(behind?{}:{syncedAt:new Date().toISOString()})});
+    if(changed)evergreenSyncRedraw();
+    if(behind)evergreenSyncSoon(4000);
+    return changed;
+  }catch{return false;}finally{_evergreenSyncBusy=false;}
+}
+// The one write: read the store afresh, merge, and store the merged document if the store does not already hold it.
+async function evergreenSyncPush(){
+  if(_evergreenSyncBusy||_evergreenNotesWrite)return 'busy';
+  if(!ratioAuthorized()||EDIT.draft||EDIT.pending||_ledgerBusy||_ratioRecipientWrite||_ratioSnapshotWrite)return 'later';
+  if(evergreenSyncQuiet(new Date()))return 'quiet';
+  _evergreenSyncBusy=true;
+  try{
+    const who=ratioIdentity(),epoch=_sourceEpoch,gid=cfg(K.gid),token=cfg(K.tok);
+    const check=()=>{if(who!==ratioIdentity()||!ratioAuthorized()||epoch!==_sourceEpoch||gid!==cfg(K.gid)||token!==cfg(K.tok)||EDIT.draft||EDIT.pending||_ledgerBusy||_ratioRecipientWrite||_ratioSnapshotWrite)throw Error('EVERGREEN_SYNC_REFUSED');};
+    if(!await verifyRatioCapabilityNow())throw Error('EVERGREEN_SYNC_REFUSED');check();
+    const gist=ratioSnapshotGist(await ghApi('/gists/'+gid));check();
+    const manager=await ratioCore.deriveSnapshotManager(gid,cfg(K.key),token);check();
+    const registered=ratioSnapshotFile(gist,RATIO_RECIPIENT_FILE);
+    if(registered===null||ratioCore.canonical(ratioSnapshotParse(registered))!==ratioCore.canonical(manager.recipient))throw Error('EVERGREEN_SYNC_REFUSED');
+    const remote=await evergreenSyncRead(gist.files?.[EVERGREEN_NOTES_FILE],manager.privateKey,manager.recipient)||{schema:EVERGREEN_NOTES_SCHEMA,labels:{},redeems:{}};check();
+    const local=evergreenSyncLocal(),merged=evergreenSyncMerge(local,remote),text=evergreenSyncText(merged);
+    if(text!==evergreenSyncText(local)){if(!evergreenSyncApply(merged))throw Error('EVERGREEN_SYNC_REFUSED');evergreenSyncRedraw();}
+    if(text!==evergreenSyncText(remote)){
+      const raw=await evergreenNotesSeal(text,manager.recipient,new Date().toISOString());check();
+      if(evergreenSyncQuiet(new Date()))return 'quiet';
+      const op={gid,token,epoch,raw};_evergreenNotesWrite=op;
+      try{check();await ghApi('/gists/'+gid,{method:'PATCH',body:JSON.stringify({files:{[EVERGREEN_NOTES_FILE]:{content:raw}}}),reviewedEvergreenNotes:op});}finally{if(_evergreenNotesWrite===op)_evergreenNotesWrite=null;}
+    }
+    // A mark changed while the write was under way stays to be sent.
+    evergreenSyncMark({dirty:evergreenSyncText(evergreenSyncLocal())!==text,syncedAt:new Date().toISOString()});
+    return 'done';
+  }catch{return 'failed';}finally{_evergreenSyncBusy=false;}
+}
+function evergreenSyncSoon(ms){
+  if(typeof setTimeout!=='function'||typeof document==='undefined')return;
+  if(_evergreenSyncTimer)clearTimeout(_evergreenSyncTimer);
+  _evergreenSyncTimer=setTimeout(async()=>{
+    _evergreenSyncTimer=null;
+    const result=await evergreenSyncPush(),dirty=evergreenSyncStamps().dirty;
+    _evergreenSyncNote=result==='done'?'':result==='quiet'?'自动发布时段内暂不同步，稍后自动重试':result==='failed'?'这次没有同步成功，稍后自动重试':'稍后自动同步';
+    if(result!=='done'||dirty)evergreenSyncSoon(result==='done'||result==='busy'?4000:300000);
+    evergreenSyncRedraw();
+  },ms);
+}
+function evergreenSyncView(stamps,note){
+  const at=stamps?.syncedAt?stamps.syncedAt.slice(0,16).replace('T',' ')+' UTC':'';
+  return '<p class="evergreen-meta" data-evergreen-sync="'+(stamps?.dirty?'pending':'synced')+'">状态、备注和赎回登记'+(stamps?.dirty?'有改动待同步'+(note?'（'+note+'）':''):at?'已同步到你的私有存储（'+at+'）':'会自动同步到你的私有存储')+'；加密保存，只有管理人设备能打开。</p>';
+}
+/* evergreen-sync:v1:end */
 function arrangeRatioRowDetails(report){
   // Move existing rendered nodes only; no financial recalculation or new data.
   const direct=(node,selector)=>Array.from(node.children).filter(n=>n.matches(selector));
@@ -4509,6 +4696,8 @@ async function readCurrentRatioSnapshot(who,guard=()=>{},reuseCipher=false){
   // evergreen-remote:v1 — this authenticated read also carries the owner's sealed fund facts. Taking them is
   // not awaited and cannot fail or delay the snapshot.
   try{evergreenRemoteTake(gist.files[EVERGREEN_REMOTE_FILE],manager.privateKey,manager.recipient).catch(()=>{});}catch{}
+  // evergreen-sync:v1 — and the owner's own marks as another manager device left them; likewise never awaited.
+  try{evergreenSyncTake(gist.files[EVERGREEN_NOTES_FILE],manager.privateKey,manager.recipient).catch(()=>{});}catch{}
   // Every background refresh still authenticates fresh Gist metadata. Only
   // encrypted bytes pinned to its identical immutable file revision are reused.
   // The separate bounded session view contains no keys and is never persisted.
@@ -6206,7 +6395,7 @@ function setSync(msg,err){const b=document.getElementById("syncBadge");if(!store
   if(!msg){b.style.display=(isMgr()||cfg(K.gid))?"":"none";b.textContent=isMgr()?"☁ 已连接":"👁 只读";b.className="badge";return;}
   b.style.display="";b.textContent="☁ "+msg;b.className="badge "+(err?"hwm":(/中/.test(msg)?"est":"ok"));const s=document.getElementById("ghStatus");if(s)s.textContent=msg;}
 async function ghApi(path,opt={},auth=true){
-  const method=String(opt.method||"GET").toUpperCase(),{reviewedLedger,reviewedFund,reviewedMigration,reviewedRatioRecipient,reviewedRatioSnapshot,...request}=opt;
+  const method=String(opt.method||"GET").toUpperCase(),{reviewedLedger,reviewedFund,reviewedMigration,reviewedRatioRecipient,reviewedRatioSnapshot,reviewedEvergreenNotes,...request}=opt;
   const ledgerWrite=method==="PATCH"&&_ledgerBusy&&!_draftBlocked&&EDIT.mode==="saving"&&EDIT.base?.envelopeVersion===4&&EDIT.base.db.v===4&&reviewedLedger===EDIT.pending&&EDIT.pending?.content&&path==="/gists/"+EDIT.base?.gid&&cfg(K.gid)===EDIT.base?.gid;
   const expectedFundBody=reviewedFund?JSON.stringify({files:{[GH_FUND_FILE]:{content:reviewedFund.raw}}}):"";
   const fundWrite=method==="PATCH"&&reviewedFund&&reviewedFund===_fundRemoteWrite&&reviewedFund.gid===cfg(K.gid)&&reviewedFund.token===cfg(K.tok)&&reviewedFund.raw&&path==="/gists/"+reviewedFund.gid&&request.body===expectedFundBody&&Object.keys(request).sort().join(",")==="body,method"&&managerDocumentsAuthorized();
@@ -6214,7 +6403,9 @@ async function ghApi(path,opt={},auth=true){
   const migrationWrite=method==="PATCH"&&reviewedMigration===_legacyMigrationPending&&reviewedMigration?.gid===cfg(K.gid)&&reviewedMigration?.token===cfg(K.tok)&&reviewedMigration?.keyValue===cfg(K.key)&&reviewedMigration?.sourceEpoch===_sourceEpoch&&reviewedMigration?.content&&reviewedMigration?.original&&path==="/gists/"+reviewedMigration.gid&&request.body===expectedMigrationBody&&Object.keys(request).sort().join(",")==="body,method"&&managerDocumentsAuthorized()&&!EDIT.draft&&!_draftBlocked;
   const ratioRecipientWrite=method==="PATCH"&&reviewedRatioRecipient===_ratioRecipientWrite&&reviewedRatioRecipient?.gid===cfg(K.gid)&&reviewedRatioRecipient?.token===cfg(K.tok)&&reviewedRatioRecipient?.epoch===_sourceEpoch&&ratioAuthorized()&&!EDIT.draft&&!EDIT.pending&&!_ledgerBusy&&path==="/gists/"+cfg(K.gid)&&request.body===JSON.stringify({files:{[RATIO_RECIPIENT_FILE]:{content:reviewedRatioRecipient.raw}}})&&Object.keys(request).sort().join(",")==="body,method";
   const ratioSnapshotWrite=method==="PATCH"&&reviewedRatioSnapshot===_ratioSnapshotWrite&&reviewedRatioSnapshot?.gid===cfg(K.gid)&&reviewedRatioSnapshot?.token===cfg(K.tok)&&reviewedRatioSnapshot?.epoch===_sourceEpoch&&ratioAuthorized()&&!EDIT.draft&&!EDIT.pending&&!_ledgerBusy&&path==="/gists/"+cfg(K.gid)&&request.body===JSON.stringify({files:{[RATIO_SNAPSHOT_FILE]:{content:reviewedRatioSnapshot.raw}}})&&Object.keys(request).sort().join(",")==="body,method";
-  if(method!=="GET"&&!ledgerWrite&&!fundWrite&&!migrationWrite&&!ratioRecipientWrite&&!ratioSnapshotWrite)throw new Error("只有已复核的账本或基金档案保存可以写入远端");
+  // evergreen-sync:v1 — the owner's fund marks: this one file, this exact sealed text, by a verified manager with no ledger work open.
+  const evergreenNotesWrite=method==="PATCH"&&Boolean(reviewedEvergreenNotes)&&reviewedEvergreenNotes===_evergreenNotesWrite&&reviewedEvergreenNotes.gid===cfg(K.gid)&&reviewedEvergreenNotes.token===cfg(K.tok)&&reviewedEvergreenNotes.epoch===_sourceEpoch&&typeof reviewedEvergreenNotes.raw==="string"&&reviewedEvergreenNotes.raw.length>0&&ratioAuthorized()&&!EDIT.draft&&!EDIT.pending&&!_ledgerBusy&&path==="/gists/"+cfg(K.gid)&&request.body===JSON.stringify({files:{[EVERGREEN_NOTES_FILE]:{content:reviewedEvergreenNotes.raw}}})&&Object.keys(request).sort().join(",")==="body,method";
+  if(method!=="GET"&&!ledgerWrite&&!fundWrite&&!migrationWrite&&!ratioRecipientWrite&&!ratioSnapshotWrite&&!evergreenNotesWrite)throw new Error("只有已复核的账本或基金档案保存可以写入远端");
   const h={"Accept":"application/vnd.github+json","Content-Type":"application/json"};if(auth&&cfg(K.tok))h["Authorization"]="Bearer "+cfg(K.tok);
   let r;try{r=await fetch("https://api.github.com"+path,{...request,headers:h});}
   catch(cause){const e=new Error("网络暂不可用");e.transient=true;e.cause=cause;throw e;}
