@@ -842,24 +842,42 @@ test("the evergreen page has its own tab on the verified allocation pane and is 
 });
 test("evergreen labels are cleaned, counted and shown without touching any amount", async () => {
   const { t } = await evergreenBox();
-  assert.deepEqual(JSON.parse(JSON.stringify(t.evergreenLabelClean({ state: "sell-now", note: "x".repeat(200), reviewBy: "soon", updatedAt: "2026-11-20", extra: 1 }))),
-    { state: "", note: "x".repeat(120), reviewBy: "", updatedAt: "2026-11-20", decided: "" });
+  assert.deepEqual(JSON.parse(JSON.stringify(t.evergreenLabelClean({ state: "sell-now", note: "x".repeat(400), reviewBy: "soon", updatedAt: "2026-11-20", extra: 1 }))),
+    { state: "", note: "x".repeat(300), reviewBy: "", updatedAt: "2026-11-20", decided: "" });
   assert.deepEqual(JSON.parse(JSON.stringify(t.evergreenLabelClean(null))), { state: "", note: "", reviewBy: "", updatedAt: "", decided: "" });
   const labels = { "P|Fund <A>": { state: "watch", note: "wait <b>", reviewBy: "2026-11-01", updatedAt: "2026-10-01" }, "Q|Fund C": { state: "hold", reviewBy: "2026-12-31" } };
   const model = t.evergreenDeskModel(evergreenRows, labels, "2026-11-20");
-  assert.deepEqual(JSON.parse(JSON.stringify(model.counts)), { all: 3, none: 1, pending: 0, hold: 1, watch: 1, prepare: 0, redeeming: 0 });
-  assert.equal(model.platforms, 2); assert.equal(model.overdue, 1);
-  assert.deepEqual(model.funds.map(x => [x.stateName, x.overdue]), [["观察", true], ["未标记", false], ["持有", false]]);
+  assert.deepEqual(JSON.parse(JSON.stringify(model.counts)), { all: 3, none: 1, pending: 0, hold: 1, watch: 1, prepare: 0, partial: 0, redeeming: 0 });
+  // Owner request 2026-11-24: 部分赎回 joins the states, and the review date is gone: a stored one marks nothing.
+  assert.deepEqual(plain(t.EVERGREEN_STATES), [["hold", "持有"], ["watch", "观察"], ["prepare", "准备赎回"], ["partial", "部分赎回"], ["redeeming", "赎回中"]]);
+  assert.equal(model.platforms, 2); assert.equal("overdue" in model, false);
+  assert.deepEqual(model.funds.map(x => [x.stateName, "overdue" in x]), [["观察", false], ["未标记", false], ["持有", false]]);
   const view = t.evergreenDeskView(model, "all", new Set(["P|Fund B"]));
-  assert.match(view, /3 只基金 · 2 个平台 · 1 只已过复核日/);
+  assert.match(view, /3 只基金 · 2 个平台<\/p>/); assert.equal(/复核/.test(view), false); assert.equal(view.includes("data-evergreen-review"), false);
   // Only states in use get a filter chip; names and notes are escaped; figures come through as the report printed them.
   assert.deepEqual([...view.matchAll(/data-evergreen-filter="(\w+)" aria-pressed="(\w+)">([^<]+)</g)].map(m => m.slice(1)), [["all", "true", "全部 3"], ["none", "false", "未标记 1"], ["hold", "false", "持有 1"], ["watch", "false", "观察 1"]]);
-  assert.ok(view.includes("<strong>Fund &lt;A&gt;</strong>")); assert.ok(view.includes('value="wait &lt;b&gt;"')); assert.equal(view.includes("<b>"), false);
-  assert.ok(view.includes('<ul class="evergreen-lots"><li>x</li></ul>')); assert.ok(view.includes('<span class="ratio-holding-yield">y</span>'));
-  assert.ok(view.includes("此快照未包含这只基金的收益率。")); assert.ok(view.includes("P · S1 · 3 笔"));
+  assert.ok(view.includes("<strong>Fund &lt;A&gt;</strong>")); assert.equal(view.includes("<b>"), false);
+  // The note is a full-width box of up to 300 characters.
+  assert.ok(view.includes('<textarea class="evergreen-note" data-evergreen-note maxlength="300" rows="3" placeholder="例如：等下一份季报">wait &lt;b&gt;</textarea>'));
+  // fund-tabs:v1 — a sheet shows one tab at a time; the first is 状态, and 评估 appears only for a fund that has one.
+  const tabsOf = v => [...v.matchAll(/data-evergreen-tab="(\w+)" aria-pressed="(\w+)">([^<]+)</g)].slice(0, 6).map(m => m.slice(1).join(" "));
+  assert.deepEqual(tabsOf(view), ["status true 状态", "position false 持仓", "terms false 条款", "profile false 概况", "mix false 分布", "news false 动态"]);
+  assert.equal((view.match(/data-evergreen-panel="status"/g) || []).length, 3); assert.equal(view.includes('<ul class="evergreen-lots">'), false);
+  const position = t.evergreenDeskView(model, "all", new Set(), "all", "position");
+  assert.equal((position.match(/data-evergreen-panel="position"/g) || []).length, 3); assert.equal(position.includes("data-evergreen-state"), false);
+  assert.ok(position.includes('<ul class="evergreen-lots"><li>x</li></ul>')); assert.ok(position.includes('<span class="ratio-holding-yield">y</span>'));
+  assert.ok(position.includes("此快照未包含这只基金的收益率。")); assert.ok(view.includes("P · S1 · 3 笔"));
+  assert.ok(t.evergreenDeskView(model, "all", new Set(), "all", "terms").includes("尚未录入条款。在页面底部“条款包”里导入后显示。"));
+  assert.equal(tabsOf(t.evergreenDeskView(model, "all", new Set(), "all", "assessment"))[0], "status true 状态", "a tab the fund lacks falls back to 状态");
+  model.funds[0].assessmentHtml = "<i>report</i>";
+  const assessed = t.evergreenDeskView(model, "all", new Set(), "all", "assessment");
+  assert.ok(assessed.includes('data-evergreen-tab="assessment" aria-pressed="true">评估<')); assert.ok(assessed.includes('data-evergreen-panel="assessment"><i>report</i>'));
+  delete model.funds[0].assessmentHtml;
+  assert.ok(t.evergreenDeskView(model, "all", new Set(), "all", "status", "<aside>cash</aside>").includes("<aside>cash</aside><div class=\"evergreen-filter\" role=\"group\" aria-label=\"按状态筛选\">"));
+  assert.match(html, /if\(tabButton\)\{_evergreenTab=tabButton\.getAttribute\('data-evergreen-tab'\);/);
   assert.match(view, /<details class="evergreen-fund" data-evergreen-key="P\|Fund B" open>/);
   assert.equal((view.match(/<details class="evergreen-fund"/g) || []).length, 3);
-  assert.ok(view.includes('data-state="watch">观察 · 待复核<')); assert.ok(view.includes("本页不提供买卖或赎回建议"));
+  assert.ok(view.includes('data-state="watch">观察<')); assert.ok(view.includes("本页不提供买卖或赎回建议"));
   for (const amount of ["USD 100.00", "USD 99.00", "USD 98.00"]) assert.ok(view.includes(amount));
   // A filter narrows the list; an empty snapshot says so.
   const watch = t.evergreenDeskView(model, "watch", new Set());
@@ -1148,12 +1166,12 @@ test("one pack may carry terms, profiles, labels and the reading list, and the p
 test("profiles and the reading list stay on the device, are shown in the sheet and page, and fetch nothing", () => {
   assert.ok(profileBlock.length > 1000);
   assert.doesNotMatch(profileBlock, /changeDraft|EDIT\.|saveLedger|writeRemote|ghRead|fetch\(|ghApi|ratioCore|deriveManager|XMLHttpRequest|innerHTML/i);
-  assert.match(html, /\+\(x\.termsHtml\|\|'<p class="evergreen-meta">尚未录入条款。在页面底部“条款包”里导入后显示。<\/p>'\)\+\(x\.profileHtml\|\|''\)/);
-  assert.match(html, /fund\.profileHtml=evergreenProfileView\(profiles\[fund\.key\],fund\.own,fund\.kind\);/);
-  assert.match(html, /evergreenDeskView\(model,_evergreenFilter,_evergreenOpen,_evergreenKind\)\+evergreenReadingView\(evergreenReading\(\)\)\+evergreenRemoteView\(evergreenStored\(EVERGREEN_REMOTE_KEY,\{\}\)\)\+evergreenPackView\(/);
+  assert.ok(html.includes("profile:x=>(x.profile?.summary||'<p class=\"evergreen-meta\">-</p>')+(x.profile?.meta||''),"));
+  assert.match(html, /fund\.profile=evergreenProfileParts\(profiles\[fund\.key\],fund\.own,fund\.kind\);/);
+  assert.match(html, /evergreenDeskView\(model,_evergreenFilter,_evergreenOpen,_evergreenKind,_evergreenTab,cashHtml\)\+evergreenReadingView\(evergreenReading\(\)\)\+evergreenRemoteView\(evergreenStored\(EVERGREEN_REMOTE_KEY,\{\}\)\)\+evergreenPackView\(/);
   // Every link the block writes opens in a new tab without handing the page to it.
   assert.equal((profileBlock.match(/<a href=/g) || []).length, 1); assert.equal((profileBlock.match(/target="_blank" rel="noopener noreferrer"/g) || []).length, 1);
-  assert.match(html, /fund\.assessmentHtml=evergreenAssessmentView\(profiles\[fund\.key\]\);/); assert.ok(html.includes("+(x.pending?due(x.pending):'')+(x.assessmentHtml||'')"));
+  assert.match(html, /fund\.assessmentHtml=evergreenAssessmentView\(profiles\[fund\.key\]\);/); assert.ok(html.includes("assessment:x=>x.assessmentHtml||''};"));
 });
 
 // evergreen-remote:v1 (owner request 2026-11-21): fund facts sealed on the owner's computer are opened by the device's
@@ -1221,7 +1239,7 @@ test("each fund shows its share of the evergreen total, and the owner's own retu
   const model = d.evergreenDeskModel([{ key: "P|A", name: "A", platform: "P", strategy: "S", amount: "USD 600.00", lots: 1, lotList: [] }], {}, "2026-11-21");
   model.funds[0].share = "60.0%";
   const view = d.evergreenDeskView(model, "all", new Set(["P|A"]));
-  assert.ok(view.includes("<small>P · S · 占常青 60.0%</small>")); assert.ok(view.includes("<span>P · S · 占常青合计 60.0%</span><span>USD 600.00</span>"));
+  assert.ok(view.includes("<small>P · S · 占常青 60.0%</small>")); assert.ok(d.evergreenDeskView(model, "all", new Set(["P|A"]), "all", "position").includes("<span>P · S · 占常青合计 60.0%</span><span>USD 600.00</span>"));
   model.funds[0].share = ""; assert.equal(d.evergreenDeskView(model, "all", new Set()).includes("占常青"), false);
   // The frame: a published return wins; otherwise the owner's own figure, marked as theirs; otherwise a dash.
   const own = { all: { value: "8.19%", note: "年化" }, year: { value: "7.94%", note: "" } };
@@ -1261,7 +1279,7 @@ test("hedge funds share the page with evergreen funds: one switch, counts and sh
   const hedge = d.evergreenDeskView(model, "all", new Set(["P|H2"]), "hedge");
   assert.deepEqual(kinds(hedge).map(k => k[1]), ["false", "false", "true"]); assert.deepEqual(chips(hedge), ["全部 2", "未标记 1", "观察 1"]);
   assert.ok(hedge.includes("2 只基金 · 1 个平台")); assert.equal((hedge.match(/class="evergreen-fund"/g) || []).length, 2); assert.equal(hedge.includes("E1"), false);
-  assert.ok(hedge.includes("<small>P · 宏观 · 占对冲 75.0%</small>")); assert.ok(hedge.includes("<span>P · 宏观 · 占对冲合计 75.0%</span>"));
+  assert.ok(hedge.includes("<small>P · 宏观 · 占对冲 75.0%</small>")); assert.ok(d.evergreenDeskView(model, "all", new Set(["P|H2"]), "hedge", "position").includes("<span>P · 宏观 · 占对冲合计 75.0%</span>"));
   // With one class only there is no switch, and an unknown class word falls back to everything.
   const only = d.evergreenDeskView(d.evergreenDeskModel(rows.slice(0, 2), {}, "2026-11-21"), "all", new Set(), "hedge");
   assert.deepEqual(kinds(only), []); assert.equal((only.match(/class="evergreen-fund"/g) || []).length, 2);
@@ -1291,4 +1309,115 @@ test("the verified manager lands on 资产配置 once, and only the manager sees
   assert.ok(html.includes('if(allowed&&_managerLanding){_managerLanding=false;if(document.getElementById("p-home").classList.contains("on")){setRatioView("all");'));
   assert.ok(html.includes('const b=e.target.closest("button[data-p]");if(!b)return;_managerLanding=false;'));
   assert.match(html, /<button data-p="p-home" class="on">管理人<\/button>/);
+});
+
+// evergreen-redeem:v1 (owner request 2026-11-24): the owner's filed redemption requests, and from them a forecast of
+// when the cash arrives. Requests and amounts stay on the device.
+const redeemBlock = html.slice(html.indexOf("/* evergreen-redeem:v1:start */"), html.indexOf("/* evergreen-redeem:v1:end */"));
+async function redeemBox(saved = {}) {
+  const vm = await import("node:vm");
+  const memory = new Map(Object.entries(saved).map(([k, v]) => [k, JSON.stringify(v)]));
+  const box = { store: { getItem: k => memory.get(k) ?? null, setItem: (k, v) => { memory.set(k, v); } }, todayStr: () => "2026-11-24", URL };
+  vm.createContext(box);
+  vm.runInContext(profileBlock + "\n" + calendarBlock + "\n" + redeemBlock + "\n" + evergreenBlock + ";globalThis.r={evergreenRedeemClean,evergreenRedeems,evergreenWorkday,evergreenRedeemPlan,evergreenCashModel,evergreenCashBy,evergreenCashText,evergreenCashView,evergreenRedeemView,evergreenRedeemSave,evergreenRedeemEdit,evergreenPackBuild,evergreenLabels,evergreenTerms};", box);
+  return { r: box.r, memory };
+}
+test("a redemption request keeps only well-formed values and stays on this device, outside the terms pack", async () => {
+  const { r, memory } = await redeemBox();
+  assert.ok(redeemBlock.length > 3000); assert.ok(html.indexOf("/* evergreen-calendar:v1:end */") < html.indexOf("/* evergreen-redeem:v1:start */") && html.indexOf("/* evergreen-redeem:v1:end */") < html.indexOf("/* evergreen-desk:v1:start */"));
+  assert.doesNotMatch(redeemBlock, /changeDraft|EDIT\.|saveLedger|writeRemote|ghRead|fetch\(|ghApi|ratioCore|deriveManager|XMLHttpRequest|innerHTML|gist/i);
+  assert.deepEqual(plain(r.evergreenRedeemClean({ id: "a1", requested: "2026-11-10", dealing: "2026-02-30", cashBy: "soon", tailBy: "2027-04-30", receivedOn: "", cents: 12345, acceptedPct: 100, tailPct: 60, extra: 1 })), { id: "a1", requested: "2026-11-10", tailBy: "2027-04-30", cents: 12345 });
+  assert.deepEqual(plain(r.evergreenRedeemClean({ id: "A 1", cents: -5, acceptedPct: 62.5, tailPct: 10 })), { acceptedPct: 62.5, tailPct: 10 });
+  assert.deepEqual(plain(r.evergreenRedeemClean([1])), {}); assert.deepEqual(plain(r.evergreenRedeemClean(null)), {});
+  assert.equal(r.evergreenRedeemSave("P|A", [{ id: "a1", requested: "2026-11-10", cents: 500000 }, { id: "bad" }]), true);
+  assert.deepEqual(plain(r.evergreenRedeems()), { "P|A": [{ id: "a1", requested: "2026-11-10", cents: 500000 }] }, "an entry without its request date is not a request");
+  assert.equal(r.evergreenRedeemSave("P|A", []), true); assert.deepEqual(plain(r.evergreenRedeems()), {}); assert.equal(memory.get("feeConsole.evergreen.redeem.v1"), "{}");
+  memory.set("feeConsole.evergreen.redeem.v1", "{not json"); assert.deepEqual(plain(r.evergreenRedeems()), {});
+  memory.set("feeConsole.evergreen.redeem.v1", "[1]"); assert.deepEqual(plain(r.evergreenRedeems()), {});
+  // The form's edits: an empty or malformed entry clears the field; an amount is kept in whole cents.
+  const rec = { id: "a1", requested: "2026-11-10", cents: 500000 };
+  assert.deepEqual(plain(r.evergreenRedeemEdit(rec, "cents", "1234.567")), { id: "a1", requested: "2026-11-10", cents: 123457 });
+  assert.deepEqual(plain(r.evergreenRedeemEdit(rec, "cents", "")), { id: "a1", requested: "2026-11-10" }); assert.deepEqual(plain(r.evergreenRedeemEdit(rec, "cents", "abc")), { id: "a1", requested: "2026-11-10" });
+  assert.deepEqual(plain(r.evergreenRedeemEdit(rec, "acceptedPct", "60")), { id: "a1", requested: "2026-11-10", cents: 500000, acceptedPct: 60 });
+  assert.deepEqual(plain(r.evergreenRedeemEdit(rec, "cashBy", "2027-02-03")), { id: "a1", requested: "2026-11-10", cashBy: "2027-02-03", cents: 500000 });
+  assert.equal(r.evergreenRedeemEdit(rec, "requested", "").requested, undefined); assert.match(html, /if\(!next\.requested\)\{toast\('申请日期不能为空'\);/);
+  // The pack the owner hands to others never carries a request or an amount.
+  memory.set("feeConsole.evergreen.redeem.v1", JSON.stringify({ "P|A": [rec] }));
+  const pack = JSON.stringify(r.evergreenPackBuild([{ key: "P|A", name: "A", platform: "P", strategy: "S", amount: "USD 9.00", lotList: [] }], {}, {}, "2026-11-24", {}, []));
+  assert.equal(/cents|500000|redeem|requested/.test(pack), false);
+});
+test("a request's dealing day and payments follow what the platform said, else the terms, else a usual figure, and say which", async () => {
+  const { r } = await redeemBox(), q = { frequency: "quarterly", noticeDays: 45, settlementDays: 30 }, plan = (rec, terms, cents, kind, today = "2026-11-24") => plain(r.evergreenRedeemPlan({ id: "a", ...rec }, terms, cents, kind, today));
+  assert.equal(r.evergreenWorkday("2027-01-30"), "2027-02-01"); assert.equal(r.evergreenWorkday("2027-01-31"), "2027-02-01"); assert.equal(r.evergreenWorkday("2027-01-29"), "2027-01-29"); assert.equal(r.evergreenWorkday("x"), "");
+  // Filed 10 November with 45 days' notice: the 31 December dealing day; 30 days later is a Saturday, so the Monday.
+  assert.deepEqual(plan({ requested: "2026-11-10" }, q, 1000000), { dealing: "2026-12-31", dealingBasis: "terms", noticeBy: "2026-11-16", total: 1000000, stage: "waiting",
+    tranches: [{ label: "首笔", cents: 1000000, date: "2027-02-01", early: "2027-02-01", late: "2027-02-16", basis: "terms" }] });
+  // Filed after that deadline: the next quarter.
+  const next = plan({ requested: "2026-11-20" }, q, 1000000); assert.deepEqual([next.dealing, next.noticeBy, next.tranches[0].date], ["2027-03-31", "2027-02-14", "2027-04-30"]);
+  // Scaled back to 60% with a tenth of that held back: three payments that add up to the request, the unconfirmed part one period on.
+  const cut = plan({ requested: "2026-11-10", cents: 500000, acceptedPct: 60, tailPct: 10 }, q, 1000000, "evergreen", "2027-01-05");
+  assert.equal(cut.stage, "priced"); assert.equal(cut.total, 500000);
+  assert.deepEqual(cut.tranches.map(t => [t.label, t.cents, t.date, t.late, t.basis]), [["首笔", 270000, "2027-02-01", "2027-02-16", "terms"], ["尾款", 30000, "2027-04-30", "2027-06-29", "audit"], ["顺延部分", 200000, "2027-04-30", "2027-06-14", "rollover"]]);
+  assert.equal(cut.tranches.reduce((a, t) => a + t.cents, 0), 500000);
+  assert.deepEqual(plan({ requested: "2026-11-10", tailPct: 10, tailBy: "2027-03-06" }, q, 1000).tranches[1], { label: "尾款", cents: 100, date: "2027-03-08", early: "2027-03-08", late: "2027-03-13", basis: "platform" });
+  // No settlement term: a usual number of days (45 evergreen, 30 hedge) with a wide range, marked as an estimate; an unreadable holding has no amount.
+  assert.deepEqual(plan({ requested: "2026-11-10" }, { frequency: "quarterly", noticeDays: 45 }, null).tranches, [{ label: "首笔", cents: null, date: "2027-02-15", early: "2027-01-25", late: "2027-04-01", basis: "typical" }]);
+  assert.deepEqual(plan({ requested: "2026-11-10" }, { frequency: "monthly", noticeDays: 30 }, 1000, "hedge").tranches, [{ label: "首笔", cents: 1000, date: "2027-02-01", early: "2027-01-15", late: "2027-03-18", basis: "typical" }]);
+  // No terms at all and nothing from the platform: no date is invented.
+  assert.deepEqual(plan({ requested: "2026-11-10" }, undefined, 1000), { dealing: "", dealingBasis: "", noticeBy: "", total: 1000, stage: "filed", tranches: [{ label: "首笔", cents: 1000, date: "", early: "", late: "", basis: "unknown" }] });
+  assert.deepEqual(plan({ requested: "2026-11-10", acceptedPct: 50 }, undefined, 1000).tranches.map(t => [t.label, t.cents, t.basis]), [["首笔", 500, "unknown"], ["顺延部分", 500, "unknown"]]);
+  // What the platform said wins over the terms; a received payment is marked; one past its latest date asks for a check.
+  const told = plan({ requested: "2026-11-10", dealing: "2026-12-31", cashBy: "2027-02-03", receivedOn: "2027-02-04" }, q, 1000, "evergreen", "2027-03-01");
+  assert.deepEqual([told.dealingBasis, told.noticeBy, told.stage], ["entered", "", "received"]); assert.deepEqual(told.tranches, [{ label: "首笔", cents: 1000, date: "2027-02-03", early: "2027-02-03", late: "2027-02-08", basis: "platform", received: "2027-02-04" }]);
+  assert.equal(plan({ requested: "2026-11-10" }, q, 1000, "evergreen", "2027-02-17").stage, "late"); assert.equal(plan({ requested: "2026-11-10" }, q, 1000, "evergreen", "2027-02-16").stage, "priced");
+  assert.doesNotMatch(redeemBlock, /建议赎回|应当赎回|应该赎回/);
+});
+test("the arrival forecast lists what is still to come by date, totals by month, and answers how much by a given day", async () => {
+  const { r } = await redeemBox(), q = { frequency: "quarterly", noticeDays: 45, settlementDays: 30 }, today = "2026-11-24";
+  const fund = (key, state, amount, extra = {}) => ({ key, name: key.split("|")[1], platform: "P", kind: "evergreen", amount, label: { state }, lotList: [], ...extra });
+  const funds = [fund("P|A <x>", "redeeming", "USD 10,000.00"), fund("P|B", "partial", "USD 5,000.00"), fund("P|C", "redeeming", "USD 1.00"), fund("P|D", "prepare", "USD 800.00", { lotList: [{ amount: "USD 300.00", date: "2020-01-15" }, { amount: "USD 500.00", date: "2026-10-01" }] }),
+    fund("P|E", "redeeming", "未取得"), fund("P|F", "hold", "USD 7.00"), fund("P|G", "redeeming", "USD 9.00")];
+  const redeems = { "P|A <x>": [{ id: "a", requested: "2026-11-10" }], "P|B": [{ id: "b", requested: "2026-11-20", cents: 200000 }, { id: "c", requested: "2026-08-01", cents: 100000, cashBy: "2026-11-02", receivedOn: "2026-11-03" }],
+    "P|E": [{ id: "e", requested: "2026-11-10" }], "P|G": [{ id: "g", requested: "2026-06-01", cashBy: "2026-11-02" }] };
+  const terms = { "P|A <x>": q, "P|B": q, "P|D": { ...q, softLockMonths: 12, earlyFeePct: 2 } }, model = plain(r.evergreenCashModel(funds, redeems, terms, today));
+  assert.deepEqual(model.items.map(x => [x.date, x.name, x.cents, x.basis, x.overdue]), [["2026-11-02", "G", 900, "platform", true], ["2027-02-01", "A <x>", 1000000, "terms", false], ["2027-04-30", "B", 200000, "terms", false]], "a received payment is left out");
+  assert.deepEqual(model.undated.map(x => [x.name, x.cents, x.basis]), [["E", null, "unknown"]]); assert.deepEqual(model.missing, ["C"]);
+  // 准备赎回: only the lots past their fee period, as a what-if that no total includes.
+  assert.deepEqual(model.whatIf, [{ name: "D", notice: "2027-02-14", dealing: "2027-03-31", cash: "2027-04-30", settled: true, lots: 1, cents: 30000 }]);
+  assert.deepEqual(model.months, [{ ym: "2026-11", cents: 900, count: 1, blank: 0, running: 900 }, { ym: "2027-02", cents: 1000000, count: 1, blank: 0, running: 1000900 }, { ym: "2027-04", cents: 200000, count: 1, blank: 0, running: 1200900 }]);
+  assert.equal(model.total, 1200900); assert.equal(model.blank, 1);
+  // By a day: expected counts a payment by its expected date, the cautious figure by its latest.
+  assert.deepEqual(plain(r.evergreenCashBy(model, "2027-02-10")), { by: "2027-02-10", expected: 1000900, safe: 900, later: 2 });
+  assert.deepEqual(plain(r.evergreenCashBy(model, "2027-06-30")), { by: "2027-06-30", expected: 1200900, safe: 1200900, later: 1 }); assert.equal(r.evergreenCashBy(model, ""), null);
+  const view = r.evergreenCashView(model, today, "2027-02-10");
+  assert.ok(view.startsWith('<details class="evergreen-cash" open><summary>赎回到账预测 · 3 笔 · USD 12,009</summary>'));
+  assert.ok(view.includes("<strong>还没登记申请：</strong>C。")); assert.ok(view.includes("<strong>A &lt;x&gt; · 首笔</strong>")); assert.equal(view.includes("<x>"), false);
+  assert.ok(view.includes("30 天内 USD 9 · 90 天内 USD 10,009 · 180 天内 USD 12,009 · 另有 1 笔金额未知"));
+  assert.ok(view.includes('<li data-basis="platform" data-overdue="true">')); assert.ok(view.includes("<b>已过最晚日期，请向平台核对</b>"));
+  assert.ok(view.includes("最早 02-01 · 最晚 02-16 · 按条款推算")); assert.ok(view.includes('<span class="evergreen-cash-date">待定</span>')); assert.ok(view.includes("金额未填"));
+  assert.ok(view.includes('<span class="evergreen-ladder-amount">USD 10,000<small>累计 USD 10,009</small></span>'));
+  assert.ok(view.includes('data-evergreen-cash-by type="date" value="2027-02-10"')); assert.ok(view.includes("到 2027-02-10：预计 <b>USD 10,009</b>，保守 <b>USD 9</b>（每笔都按最晚日期）；之后还有 2 笔"));
+  assert.ok(view.includes("<h4>准备赎回的基金：如果赶本期申请</h4>")); assert.ok(view.includes("通知截止 2027-02-14 → 赎回日 2027-03-31 · 1 笔已过费用期 · 不计入上面的合计"));
+  assert.ok(view.includes("是方向性的估计")); assert.ok(view.includes("以平台通知为准。"));
+  assert.equal(r.evergreenCashView(plain(r.evergreenCashModel([fund("P|F", "hold", "USD 7.00")], {}, {}, today)), today, ""), "", "nothing filed and nothing marked: no card");
+  const text = r.evergreenCashText(model, today);
+  assert.ok(text.startsWith("赎回到账计划（2026-11-24 整理，方向性估计，以平台通知为准）\n2026-11-02 G 首笔 USD 9（最早 2026-11-02，最晚 2026-11-07，平台通知）\n")); assert.ok(text.endsWith("日期待定 E 首笔 金额未填\n合计 USD 12,009（另有 1 笔金额未知）"));
+});
+test("a fund marked 赎回中 or 部分赎回 gets the request form in its 状态 tab, with the steps and each payment", async () => {
+  const { r } = await redeemBox(), q = { frequency: "quarterly", noticeDays: 45, settlementDays: 30 }, today = "2026-11-24";
+  const fund = state => ({ key: "P|A", name: "A", kind: "evergreen", amount: "USD 10,000.00", label: { state } });
+  assert.equal(r.evergreenRedeemView(fund("hold"), [], q, today), ""); assert.equal(r.evergreenRedeemView(fund("prepare"), undefined, q, today), "");
+  for (const state of ["redeeming", "partial"]) { const empty = r.evergreenRedeemView(fund(state), [], q, today); assert.ok(empty.startsWith("<h3>赎回登记</h3>")); assert.ok(empty.includes("data-evergreen-redeem-add>登记一笔赎回申请</button>")); assert.equal(empty.includes("evergreen-redeem-fields"), false); }
+  const view = r.evergreenRedeemView(fund("hold"), [{ id: "a1", requested: "2026-11-10", cents: 250000, tailPct: 10 }], q, today);
+  assert.ok(view.includes('<div class="evergreen-redeem" data-redeem-id="a1">'), "a request is still shown after the state is changed"); assert.ok(view.includes("<strong>第 1 笔 · USD 2,500</strong>")); assert.ok(view.includes('data-state="redeeming">已申请，等赎回日</span>'));
+  assert.deepEqual([...view.matchAll(/<li( data-done="true")?><small>([^<]+)<\/small><b>([^<]+)<\/b><\/li>/g)].map(m => [m[2], m[3], Boolean(m[1])]), [["申请", "26-11-10", true], ["通知截止", "26-11-16", true], ["赎回日", "26-12-31", false], ["预计到账", "27-02-01", false]]);
+  assert.deepEqual([...view.matchAll(/data-evergreen-redeem="(\w+)" type="(\w+)" value="([^"]*)"/g)].map(m => m.slice(1)), [["requested", "date", "2026-11-10"], ["cents", "number", "2500"], ["dealing", "date", ""], ["cashBy", "date", ""], ["acceptedPct", "number", ""], ["tailPct", "number", "10"], ["tailBy", "date", ""], ["receivedOn", "date", ""]]);
+  assert.ok(view.includes("<strong>尾款</strong>")); assert.ok(view.includes("尾款多在年度审计后支付，按次年 4 月底估计")); assert.ok(view.includes("data-evergreen-redeem-del>删除这笔</button>")); assert.ok(view.includes("金额只保存在本机，不进条款包。"));
+  const whole = r.evergreenRedeemView(fund("redeeming"), [{ id: "a1", requested: "2026-11-10" }], undefined, today);
+  assert.ok(whole.includes("<strong>第 1 笔 · 全部</strong>")); assert.ok(whole.includes("已申请，赎回日待定")); assert.ok(whole.includes('placeholder="全部"')); assert.ok(whole.includes("<b>待定</b>"));
+  assert.equal(r.evergreenRedeemView(fund("redeeming"), Array.from({ length: 6 }, (_, i) => ({ id: "x" + i, requested: "2026-11-10" })), q, today).includes("data-evergreen-redeem-add"), false, "six requests a fund at most");
+  // Wiring: the desk hands each fund its form and puts the forecast above the list; fields are 16px so an iPhone does not zoom.
+  assert.match(html, /fund\.redeemHtml=evergreenRedeemView\(fund,redeems\[fund\.key\],terms\[fund\.key\],today\);/);
+  assert.match(html, /const cashHtml=evergreenCashView\(evergreenCashModel\(model\.funds,redeems,terms,today\),today,_evergreenCashBy\);/);
+  assert.match(html, /\.evergreen-cash input,\.evergreen-redeem input\{font-size:16px\}/); assert.match(html, /\.evergreen-note\{[^}]*width:100%[^}]*font-size:16px/);
 });
