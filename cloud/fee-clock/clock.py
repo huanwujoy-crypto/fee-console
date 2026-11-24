@@ -150,15 +150,11 @@ def inspect_runs(github, selected, current_time):
     for status, payload in results:
         busy.extend(validate_runs(payload, current_time(), status))
     expected = [row for row in day if row['event'] in ('schedule', 'workflow_dispatch')
-                and not nonfinancial_run(github, row)]
+                and not nonfinancial_run(github, row) and not idle_schedule_run(github, row)]
     return expected, busy
 
 
-def nonfinancial_run(github, run):
-    # Exclude only completed, positively identified non-fee paths. Unknown,
-    # queued or incomplete metadata remains blocking; titles alone prove nothing.
-    if run['event'] != 'workflow_dispatch' or run['status'] != 'completed':
-        return False
+def job_rows(github, run):
     rows = complete_list(github.jobs(run['id']), 'jobs')
     if (len({row.get('id') for row in rows}) != len(rows)
         or any(type(row.get('id')) is not int or row['id'] <= 0
@@ -167,6 +163,30 @@ def nonfinancial_run(github, run):
                or row.get('conclusion') not in ('success','failure','neutral','cancelled','skipped','timed_out','action_required','startup_failure','stale')
                for row in rows)):
         fail('METADATA_INVALID')
+    return rows
+
+
+def idle_schedule_run(github, run):
+    # Owner 2026-11-24: GitHub delivered a natural slot eleven hours late, after Hong Kong
+    # midnight. It decided nothing was due and produced nothing, yet it counted as that day's
+    # request and the clock stood down. A completed natural run whose period job succeeded and
+    # whose every other job was skipped has requested nothing and never will.
+    if run['event'] != 'schedule' or run['status'] != 'completed':
+        return False
+    rows = job_rows(github, run)
+    periods = [row for row in rows if row['name'] == 'period']
+    producers = [row for row in rows if row['name'].strip() == 'Produce'
+                 or row['name'].startswith(JOB_PREFIX)]
+    return (len(periods) == 1 and periods[0]['conclusion'] == 'success' and bool(producers)
+            and all(row['conclusion'] == 'skipped' for row in rows if row['name'] != 'period'))
+
+
+def nonfinancial_run(github, run):
+    # Exclude only completed, positively identified non-fee paths. Unknown,
+    # queued or incomplete metadata remains blocking; titles alone prove nothing.
+    if run['event'] != 'workflow_dispatch' or run['status'] != 'completed':
+        return False
+    rows = job_rows(github, run)
     periods = [row for row in rows if row['name'] == 'period']
     producers = [row for row in rows if row['name'].strip() == 'Produce'
                  or row['name'].startswith(JOB_PREFIX)]
