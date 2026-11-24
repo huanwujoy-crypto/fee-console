@@ -10,7 +10,7 @@
 <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAABzUlEQVR42u3bsQ2AMAwAwczDhEzKOqGlCBIgBdnxRT+BfU0Kt20/pGHNCASH4BAcgkNwCA7BITgEh+CQ4BAcgkNwCA7BITgEh+AQHBIcgkNwCA7BITgEh+AQHIJDgkNwCA7BITgEh+AQHIJDcAgOCQ7BITgEh+AQHIJDcOi2/vjBwUQyJXAEkhHNBxyxZITyAQcccMABxwIy4viAAw444IADDjjggAMOOOCAAw444IBDcAgOwQEHHHDAAQcccMABBxxwwAEHHHAIDudocDDxeWFwOEeDg4z3a4MDDjjggKMOjh82BwcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAGHQ1Y4HLLCERPH1IHCkRjH7JnCAQcccMBRB8cam4MDDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAQxWDQ3AIDsEhOFQNR/eSfG7hgAMOOOCAAw444PCq4ZCvrOAQHIJDgkNwCA7BITgEh+AQHIJDcEhwCA7BITgEh+AQHIJDcAgOwSHBITgEh+AQHIJDcAgOwSE4pEsnhtvC417hqCsAAAAASUVORK5CYII=">
-<meta name="fee-console-build" content="4.10.48">
+<meta name="fee-console-build" content="4.10.49">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -1204,7 +1204,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.10.48";
+const UI_VERSION_LABEL=" · v4.10.49";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -4621,11 +4621,16 @@ function syncRatioNavigation(){
 }
 // One landing per page load: the verified manager opens on 资产配置 unless a tab was already chosen.
 let _managerLanding=true;
+// refresh-return:v1 (owner request 2026-11-24) — a refresh withdraws authorisation for a moment, which moves the manager off this pane. Remember which view was open and come back to it once the same read verifies; a tab press or a failed read forgets it.
+let _ratioReturn=null;
+function ratioReturnNote(allowed,onRatio,loading,view,held){return allowed?null:onRatio&&loading?view:loading?held:null;}
 async function renderRatioManagement(){
   syncRatioNavigation();
   const allowed=ratioAuthorized(),tab=document.getElementById("ratioTab"),pane=document.getElementById("p-ratio"),notice=document.getElementById("ratioNotice");
   tab.hidden=!allowed;tab.style.display=allowed?"":"none";pane.hidden=!allowed;
   if(allowed&&_managerLanding){_managerLanding=false;if(document.getElementById("p-home").classList.contains("on")){setRatioView("all");document.querySelectorAll("#tabs button").forEach(b=>b.classList.toggle("on",b===tab));document.querySelectorAll("section.pane").forEach(s=>s.classList.toggle("on",s===pane));globalThis.scrollTo?.(0,0);}}
+  if(allowed&&_ratioReturn){const view=_ratioReturn,back=view==="evergreen"?document.getElementById("evergreenTab"):tab;_ratioReturn=null;if(document.getElementById("p-investors").classList.contains("on")){setRatioView(view);document.querySelectorAll("#tabs button").forEach(b=>b.classList.toggle("on",b===back));document.querySelectorAll("section.pane").forEach(s=>s.classList.toggle("on",s===pane));}}
+  _ratioReturn=ratioReturnNote(allowed,pane.classList.contains("on"),isMgr()&&_receiptSource.state==="loading",_ratioView,_ratioReturn);
   if(!allowed){clearRatioManagement();notice.textContent="核验管理人身份后读取。";if(pane.classList.contains("on")){pane.classList.remove("on");document.getElementById("p-investors").classList.add("on");document.querySelectorAll("#tabs button").forEach(b=>b.classList.toggle("on",b.dataset.p==="p-investors"));}return;}
   if(!pane.classList.contains("on")){clearRatioManagement(false);if(!_ratioPreview)preloadRatioSessionView();return;}
   if(!_ratioPreview&&typeof renderIndependentRatio==='function'&&await renderIndependentRatio())return;
@@ -6661,7 +6666,7 @@ function showShare(){
   document.getElementById("share").classList.add("on");}
 
 /* ============ 事件 ============ */
-document.getElementById("tabs").addEventListener("click",e=>{const b=e.target.closest("button[data-p]");if(!b)return;_managerLanding=false;
+document.getElementById("tabs").addEventListener("click",e=>{const b=e.target.closest("button[data-p]");if(!b)return;_managerLanding=false;_ratioReturn=null;
   if(b.dataset.p==="p-ratio"&&(!ratioAuthorized()||b.classList.contains("on")))return;if(b.dataset.p==="p-ratio"&&typeof setRatioView==='function')setRatioView(b.dataset.view);clearRatioRecipientPreview();clearRatioManagement(false);document.querySelectorAll("#tabs button").forEach(x=>x.classList.toggle("on",x===b));document.querySelectorAll("section.pane").forEach(s=>s.classList.toggle("on",s.id===b.dataset.p));globalThis.scrollTo?.(0,0);renderRatioManagement();try{syncJumpChips();}catch{}});
 document.getElementById("cfmCancel").onclick=()=>{_cfmCb=null;document.getElementById("cfm").classList.remove("on");};
 document.getElementById("cfmOk").onclick=()=>{const cb=_cfmCb;_cfmCb=null;document.getElementById("cfm").classList.remove("on");if(cb)cb();};
