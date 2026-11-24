@@ -1305,9 +1305,9 @@ test("the verified manager lands on 资产配置 once, and only the manager sees
   // The report card is hidden until the source is verified, so a first open or a refresh never shows it as pending.
   assert.ok(html.includes('if(source.state==="verified")renderReportPublication(reportView);else{const reportBox=document.getElementById("reportPublicationBox");if(reportBox)reportBox.hidden=true;}'));
   // The landing waits for the same authorisation as the tab itself, happens once, and yields to any tab press.
-  assert.ok(html.includes('let _managerLanding=true;\n'));assert.ok(html.includes('return allowed?null:onRatio&&loading?view:loading?held:null;}\nasync function renderRatioManagement(){'));
+  assert.ok(html.includes('let _managerLanding=true;\n'));assert.ok(html.includes('const keep=loading||away;return allowed?null:onRatio&&keep?view:keep?held:null;}\nasync function renderRatioManagement(){'));
   assert.ok(html.includes('if(allowed&&_managerLanding){_managerLanding=false;if(document.getElementById("p-home").classList.contains("on")){setRatioView("all");'));
-  assert.ok(html.includes('const b=e.target.closest("button[data-p]");if(!b)return;_managerLanding=false;_ratioReturn=null;'));
+  assert.ok(html.includes('const b=e.target.closest("button[data-p]");if(!b)return;_managerLanding=false;_ratioReturn=null;_ratioAway=false;'));
   // refresh-return:v1 — a refresh that moves the manager off the pane brings them back to the same view once it verifies.
   {const note=new Function(html.match(/function ratioReturnNote\([^\n]+/)[0]+';return ratioReturnNote')();
     assert.equal(note(false,true,true,'evergreen',null),'evergreen');assert.equal(note(false,true,true,'all',null),'all');
@@ -1315,6 +1315,13 @@ test("the verified manager lands on 资产配置 once, and only the manager sees
     assert.equal(note(false,false,false,'all','evergreen'),null);          // the read failed
     assert.equal(note(false,true,false,'all',null),null);                  // lost access without a read under way
     assert.equal(note(true,true,false,'all','evergreen'),null);
+    // away-return:v1 — leaving the page withdraws access with no read under way; the note is kept until the read on return begins.
+    assert.equal(note(false,true,false,'evergreen',null,true),'evergreen');assert.equal(note(false,false,false,'all','evergreen',true),'evergreen');
+    assert.equal(note(false,false,false,'all',null,true),null);            // was not on the pane when leaving
+    assert.equal(note(true,true,false,'all','evergreen',true),null);
+    assert.ok(html.includes('{const loading=isMgr()&&_receiptSource.state==="loading";if(loading)_ratioAway=false;_ratioReturn=ratioReturnNote(allowed,pane.classList.contains("on"),loading,_ratioView,_ratioReturn,_ratioAway);}'));
+    assert.ok(html.includes('else{_ratioAway=isMgr();invalidateReceiptSource();lockLedger("已离开页面，编辑锁定；草稿保留");}'));
+    assert.ok(html.includes('window.addEventListener("pagehide",()=>{_ratioAway=isMgr();invalidateReceiptSource();lockLedger();});'));
     assert.ok(html.includes('if(allowed&&_ratioReturn){const view=_ratioReturn,back=view==="evergreen"?document.getElementById("evergreenTab"):tab;_ratioReturn=null;if(document.getElementById("p-investors").classList.contains("on")){setRatioView(view);'));
     const at=html.indexOf('if(allowed&&_ratioReturn){'),set=html.indexOf('_ratioReturn=ratioReturnNote(allowed,'),kick=html.indexOf('if(!allowed){clearRatioManagement();notice.textContent=');assert.ok(at>0&&at<set&&set<kick);}
   // landing-wait:v1 — until access is settled the page shows only the waiting line: every pane follows it as a sibling and is hidden while it is visible.
