@@ -1366,6 +1366,36 @@ test("a redemption request keeps only well-formed values and stays outside the t
   const pack = JSON.stringify(r.evergreenPackBuild([{ key: "P|A", name: "A", platform: "P", strategy: "S", amount: "USD 9.00", lotList: [] }], {}, {}, "2026-11-24", {}, []));
   assert.equal(/cents|500000|redeem|requested/.test(pack), false);
 });
+test("a fund marked 准备赎回 carries a plan: timed at the earliest fee-free dealing day, counted, and always shown as a plan", async () => {
+  // redeem-plan:v1 — synthetic figures only.
+  const { r } = await redeemBox(), today = "2026-11-24", q = { frequency: "quarterly", noticeDays: 28, softLockMonths: 24, earlyFeePct: 5 };
+  const lots = [{ amount: "USD 6,000.00", date: "2025-02-10" }, { amount: "USD 4,000.00", date: "2026-01-15" }];
+  const plan = (rec, terms, more) => plain(r.evergreenRedeemPlan({ id: "a", ...rec }, terms, 1000000, "evergreen", today, more));
+  // Oldest purchase is fee-free from 10 Feb 2027: the first quarter end after that. No settlement term, so the usual 45 days.
+  const p = plan({ estCents: 500000 }, q, { planned: true, lots });
+  assert.equal(p.dealing, "2027-03-31"); assert.equal(p.noticeBy, "2027-03-03"); assert.equal(p.stage, "plan"); assert.equal(p.planned, true); assert.equal(p.dealingBasis, "terms");
+  assert.deepEqual(p.tranches.map(t => [t.label, t.cents, t.date, t.basis, t.planned, t.est]), [["首笔", 500000, "2027-05-17", "typical", true, true]]);
+  // No purchase dates: the next dealing day reachable with notice from today.
+  assert.equal(plan({}, q, { planned: true }).dealing, "2026-12-31");
+  // An entered dealing day wins and it is still a plan; no cycle in the terms leaves the date open rather than guessed.
+  const set = plan({ dealing: "2027-06-30", cents: 250000 }, q, { planned: true, lots }); assert.equal(set.dealing, "2027-06-30"); assert.equal(set.stage, "plan"); assert.equal(set.tranches[0].planned, true); assert.equal(set.noticeBy, "2027-06-02");
+  const open = plan({ cents: 250000 }, {}, { planned: true, lots }); assert.equal(open.dealing, ""); assert.equal(open.stage, "plan"); assert.equal(open.tranches[0].date, "");
+  // Once a filing date is recorded, or without the 准备赎回 mark, nothing is treated as a plan.
+  const filed = plan({ requested: "2026-11-10" }, q, { planned: true, lots }); assert.equal(filed.planned, undefined); assert.equal(filed.stage, "waiting"); assert.equal(filed.tranches[0].planned, undefined);
+  const plainOne = plan({ estCents: 500000 }, q, undefined); assert.equal(plainOne.dealing, ""); assert.equal(plainOne.stage, "filed"); assert.equal(plan({ hold: true }, q, { planned: true, lots }).stage, "hold");
+  // The forecast counts it and says so.
+  const fund = state => ({ key: "P|A", name: "A", kind: "evergreen", amount: "USD 10,000.00", label: { state }, lotList: lots });
+  const m = r.evergreenCashModel([fund("prepare")], { "P|A": [{ id: "a", estCents: 500000 }] }, { "P|A": q }, today);
+  assert.equal(m.planned, 1); assert.equal(m.total, 500000); assert.equal(m.items[0].date, "2027-05-17"); assert.equal(m.items[0].planned, true); assert.equal(m.undated.length, 0);
+  assert.equal(r.evergreenCashModel([fund("partial")], { "P|A": [{ id: "a", estCents: 500000 }] }, { "P|A": q }, today).planned, 0);
+  const card = r.evergreenCashView(m, today, "", { open: true }); assert.ok(card.includes("计划，尚未申请")); assert.ok(card.includes("1 笔为计划（尚未申请，已计入合计）"));
+  assert.ok(r.evergreenCashText(m, today).includes("A 首笔（计划，尚未申请）"));
+  // The form: offered for 准备赎回, adds a plan without a filing date, and labels the steps accordingly.
+  const empty = r.evergreenRedeemView(fund("prepare"), [], q, today); assert.ok(empty.includes('data-evergreen-redeem-add="plan">登记一笔计划赎回</button>')); assert.ok(empty.includes("尚未申请的计划"));
+  const view = r.evergreenRedeemView(fund("prepare"), [{ id: "a", estCents: 500000 }], q, today);
+  assert.ok(view.includes("计划 · 约 27-05-17 到账")); assert.ok(view.includes(">计划中</span>")); assert.ok(view.includes("<small>最迟申请</small><b>27-03-03</b>")); assert.equal(view.includes("<small>申请</small>"), false); assert.ok(view.includes(" · 计划</small>"));
+  assert.ok(html.includes("list.push(add.getAttribute('data-evergreen-redeem-add')==='plan'?{id}:{id,requested:todayStr()});"));
+});
 test("a request's dealing day and payments follow what the platform said, else the terms, else a usual figure, and say which", async () => {
   const { r } = await redeemBox(), q = { frequency: "quarterly", noticeDays: 45, settlementDays: 30 }, plan = (rec, terms, cents, kind, today = "2026-11-24") => plain(r.evergreenRedeemPlan({ id: "a", ...rec }, terms, cents, kind, today));
   assert.equal(r.evergreenWorkday("2027-01-30"), "2027-02-01"); assert.equal(r.evergreenWorkday("2027-01-31"), "2027-02-01"); assert.equal(r.evergreenWorkday("2027-01-29"), "2027-01-29"); assert.equal(r.evergreenWorkday("x"), "");
@@ -1458,8 +1488,8 @@ test("the arrival forecast lists what is still to come by date, totals by month,
 test("a fund marked 赎回中 or 部分赎回 gets the request form in its 状态 tab, with the steps and each payment", async () => {
   const { r } = await redeemBox(), q = { frequency: "quarterly", noticeDays: 45, settlementDays: 30 }, today = "2026-11-24";
   const fund = state => ({ key: "P|A", name: "A", kind: "evergreen", amount: "USD 10,000.00", label: { state } });
-  assert.equal(r.evergreenRedeemView(fund("hold"), [], q, today), ""); assert.equal(r.evergreenRedeemView(fund("prepare"), undefined, q, today), "");
-  for (const state of ["redeeming", "partial"]) { const empty = r.evergreenRedeemView(fund(state), [], q, today); assert.ok(empty.startsWith("<h3>赎回登记</h3>")); assert.ok(empty.includes("data-evergreen-redeem-add>登记一笔赎回申请</button>")); assert.equal(empty.includes("evergreen-redeem-fields"), false); }
+  assert.equal(r.evergreenRedeemView(fund("hold"), [], q, today), ""); assert.equal(r.evergreenRedeemView(fund("watch"), undefined, q, today), "");
+  for (const state of ["redeeming", "partial"]) { const empty = r.evergreenRedeemView(fund(state), [], q, today); assert.ok(empty.startsWith("<h3>赎回登记</h3>")); assert.ok(empty.includes('data-evergreen-redeem-add="filed">登记一笔赎回申请</button>')); assert.equal(empty.includes("evergreen-redeem-fields"), false); }
   const view = r.evergreenRedeemView(fund("hold"), [{ id: "a1", requested: "2026-11-10", cents: 250000, tailPct: 10 }], q, today);
   // compact-desk:v1 — a request is one line until tapped: what, roughly when, and where it stands. Its fields wait under 修改.
   assert.ok(view.includes('<details class="evergreen-redeem" data-redeem-id="a1"><summary class="evergreen-redeem-head"><span class="evergreen-fund-main"><strong>第 1 笔 · USD 2,500</strong><small>约 27-02-01 到账</small></span><span class="evergreen-pill" data-state="redeeming">等赎回日</span></summary>'), "a request is still shown after the state is changed, closed");
