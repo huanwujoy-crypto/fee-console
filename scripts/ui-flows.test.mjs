@@ -907,7 +907,7 @@ async function calendarBox(saved = {}) {
   const memory = new Map(Object.entries(saved).map(([k, v]) => [k, JSON.stringify(v)]));
   const box = { store: { getItem: k => memory.get(k) ?? null, setItem: (k, v) => { memory.set(k, v); }, removeItem: k => { memory.delete(k); } }, todayStr: () => "2026-11-20", URL };
   vm.createContext(box);
-  vm.runInContext(profileBlock + "\n" + calendarBlock + "\n" + evergreenBlock + ";globalThis.c={evergreenProfileClean,evergreenReadingClean,evergreenProfiles,evergreenReading,evergreenProfileView,evergreenReadingView,evergreenUrl,evergreenPackApply,evergreenTermsClean,evergreenTerms,evergreenAddMonths,evergreenAddDays,evergreenDaysBetween,evergreenDealingDay,evergreenLotPlan,evergreenCents,evergreenUsd,evergreenQuarter,evergreenWeek,evergreenPending,evergreenShares,evergreenAssessmentView,evergreenTermsView,evergreenPackBuild,evergreenPackRead,evergreenPackView};", box);
+  vm.runInContext(profileBlock + "\n" + calendarBlock + "\n" + evergreenBlock + ";globalThis.c={evergreenBySize,evergreenProfileClean,evergreenReadingClean,evergreenProfiles,evergreenReading,evergreenProfileView,evergreenReadingView,evergreenUrl,evergreenPackApply,evergreenTermsClean,evergreenTerms,evergreenAddMonths,evergreenAddDays,evergreenDaysBetween,evergreenDealingDay,evergreenLotPlan,evergreenCents,evergreenUsd,evergreenQuarter,evergreenWeek,evergreenPending,evergreenShares,evergreenAssessmentView,evergreenTermsView,evergreenPackBuild,evergreenPackRead,evergreenPackView};", box);
   return { c: box.c, memory };
 }
 const plain = v => JSON.parse(JSON.stringify(v));
@@ -1267,6 +1267,14 @@ test("hedge funds share the page with evergreen funds: one switch, counts and sh
   assert.deepEqual(plain(c.evergreenShares(rows)), { "P|E1": "60.0%", "P|E2": "40.0%", "P|H1": "25.0%", "P|H2": "75.0%" });
   assert.deepEqual(plain(c.evergreenShares([...rows, { key: "P|H3", kind: "hedge", amount: "未取得" }])), { "P|E1": "60.0%", "P|E2": "40.0%" });
   const shares = c.evergreenShares(rows), model = d.evergreenDeskModel(rows, { "P|H1": { state: "watch" } }, "2026-11-21");
+  // fund-order:v1 — the largest holding first; equal and unreadable amounts keep the report's order, unreadable last; pending funds are still lifted to the top.
+  { const row = (key, amount) => ({ key, name: key, platform: "P", strategy: "S", amount, lots: 1, lotList: [] });
+    const list = [row("a", "USD 600.00"), row("x", ""), row("b", "USD 1,200,000.50"), row("c", "USD 9,000.00"), row("d", "USD 9,000.00")];
+    const sized = c.evergreenBySize(list), keys = l => l.map(x => x.key).join(",");
+    assert.equal(keys(sized), "b,c,d,a,x"); assert.equal(keys(list), "a,x,b,c,d"); assert.equal(keys(c.evergreenBySize(null)), "");
+    assert.equal(keys(d.evergreenDeskModel(sized, {}, "2026-11-21").funds), "b,c,d,a,x");
+    assert.equal(keys(d.evergreenDeskModel(sized, {}, "2026-11-21", null, { a: { notice: "2026-11-27" } }).funds), "a,b,c,d,x");
+    assert.ok(html.includes("const rows=evergreenBySize(evergreenRows(report)),today=todayStr()")); }
   for (const fund of model.funds) fund.share = shares[fund.key];
   const kinds = view => [...view.matchAll(/data-evergreen-kind="(\w+)" aria-pressed="(\w+)">([^<]+)</g)].map(m => m.slice(1));
   const chips = view => [...view.matchAll(/data-evergreen-filter="(\w+)" aria-pressed="\w+">([^<]+)</g)].map(m => m[2]);

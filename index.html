@@ -10,7 +10,7 @@
 <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAABzUlEQVR42u3bsQ2AMAwAwczDhEzKOqGlCBIgBdnxRT+BfU0Kt20/pGHNCASH4BAcgkNwCA7BITgEh+CQ4BAcgkNwCA7BITgEh+AQHBIcgkNwCA7BITgEh+AQHIJDgkNwCA7BITgEh+AQHIJDcAgOCQ7BITgEh+AQHIJDcOi2/vjBwUQyJXAEkhHNBxyxZITyAQcccMABxwIy4viAAw444IADDjjggAMOOOCAAw444IBDcAgOwQEHHHDAAQcccMABBxxwwAEHHHAIDudocDDxeWFwOEeDg4z3a4MDDjjggKMOjh82BwcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAGHQ1Y4HLLCERPH1IHCkRjH7JnCAQcccMBRB8cam4MDDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAQxWDQ3AIDsEhOFQNR/eSfG7hgAMOOOCAAw444PCq4ZCvrOAQHIJDgkNwCA7BITgEh+AQHIJDcEhwCA7BITgEh+AQHIJDcAgOwSHBITgEh+AQHIJDcAgOwSE4pEsnhtvC417hqCsAAAAASUVORK5CYII=">
-<meta name="fee-console-build" content="4.10.54">
+<meta name="fee-console-build" content="4.10.55">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -1211,7 +1211,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.10.54";
+const UI_VERSION_LABEL=" · v4.10.55";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -3511,6 +3511,12 @@ function evergreenShares(rows){
   }
   return out;
 }
+// fund-order:v1 (owner request 2026-11-24) — the fund list runs from the largest holding to the smallest, by the amounts
+// the report printed; equal amounts and unreadable ones keep the report's order, unreadable ones last. Funds awaiting a
+// decision this week are still lifted to the top by the list model, and every filter shows the same order.
+function evergreenBySize(rows){
+  return (Array.isArray(rows)?rows:[]).map(r=>[r,evergreenCents(r.amount)]).sort((a,b)=>(b[1]??-1)-(a[1]??-1)).map(([r])=>r);
+}
 // pending-week:v1 (owner request 2026-11-21) — the calendar card is gone; what remains is one question per fund:
 // can a redemption be filed this week without an early-redemption fee? The week is Monday to Sunday, and from
 // Saturday on it is the coming week, because nothing can be filed at a weekend.
@@ -3932,7 +3938,7 @@ function renderEvergreenDesk(root){
   setRatioView(_ratioView);
   let desk=report.querySelector('.evergreen-desk');
   if(!desk){desk=document.createElement('section');desk.className='card evergreen-desk';desk.id='evergreenDesk';report.append(desk);}
-  const rows=evergreenRows(report),today=todayStr(),terms=evergreenTerms(),due={};
+  const rows=evergreenBySize(evergreenRows(report)),today=todayStr(),terms=evergreenTerms(),due={};
   for(const row of rows){const p=evergreenPending(row,terms[row.key],today);if(p)due[row.key]=p;}
   const model=evergreenDeskModel(rows,evergreenLabels(),today,evergreenWeek(today),due),profiles=evergreenProfiles(),shares=evergreenShares(rows);
   const redeems=evergreenRedeems();
