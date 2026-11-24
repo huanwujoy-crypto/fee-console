@@ -858,7 +858,7 @@ test("evergreen labels are cleaned, counted and shown without touching any amoun
   assert.deepEqual([...view.matchAll(/data-evergreen-filter="(\w+)" aria-pressed="(\w+)">([^<]+)</g)].map(m => m.slice(1)), [["all", "true", "全部 3"], ["none", "false", "未标记 1"], ["hold", "false", "持有 1"], ["watch", "false", "观察 1"]]);
   assert.ok(view.includes("<strong>Fund &lt;A&gt;</strong>")); assert.equal(view.includes("<b>"), false);
   // The note is a full-width box of up to 300 characters.
-  assert.ok(view.includes('<textarea class="evergreen-note" data-evergreen-note maxlength="300" rows="3" placeholder="例如：等下一份季报">wait &lt;b&gt;</textarea>'));
+  assert.ok(view.includes('<textarea class="evergreen-note" data-evergreen-note maxlength="300" rows="2" placeholder="例如：等下一份季报">wait &lt;b&gt;</textarea>'));
   // fund-tabs:v1 — a sheet shows one tab at a time; the first is 状态, and 评估 appears only for a fund that has one.
   const tabsOf = v => [...v.matchAll(/data-evergreen-tab="(\w+)" aria-pressed="(\w+)">([^<]+)</g)].slice(0, 6).map(m => m.slice(1).join(" "));
   assert.deepEqual(tabsOf(view), ["status true 状态", "position false 持仓", "terms false 条款", "profile false 概况", "mix false 分布", "news false 动态"]);
@@ -1404,26 +1404,39 @@ test("the arrival forecast lists what is still to come by date, totals by month,
   // By a day: expected counts a payment by its expected date, the cautious figure by its latest.
   assert.deepEqual(plain(r.evergreenCashBy(model, "2027-02-10")), { by: "2027-02-10", expected: 1000900, safe: 900, later: 2 });
   assert.deepEqual(plain(r.evergreenCashBy(model, "2027-06-30")), { by: "2027-06-30", expected: 1200900, safe: 1200900, later: 1 }); assert.equal(r.evergreenCashBy(model, ""), null);
-  const view = r.evergreenCashView(model, today, "2027-02-10");
-  assert.ok(view.startsWith('<details class="evergreen-cash" open><summary>赎回到账预测 · 3 笔 · USD 12,009</summary>'));
-  assert.ok(view.includes("<strong>还没登记申请：</strong>C。")); assert.ok(view.includes("<strong>A &lt;x&gt; · 首笔</strong>")); assert.equal(view.includes("<x>"), false);
-  assert.ok(view.includes("30 天内 USD 9 · 90 天内 USD 10,009 · 180 天内 USD 12,009 · 另有 1 笔金额未知"));
-  assert.ok(view.includes('<li data-basis="platform" data-overdue="true">')); assert.ok(view.includes("<b>已过最晚日期，请向平台核对</b>"));
-  assert.ok(view.includes("最早 02-01 · 最晚 02-16 · 按条款推算")); assert.ok(view.includes('<span class="evergreen-cash-date">待定</span>')); assert.ok(view.includes("金额未填"));
-  assert.ok(view.includes('<span class="evergreen-ladder-amount">USD 10,000<small>累计 USD 10,009</small></span>'));
-  assert.ok(view.includes('data-evergreen-cash-by type="date" value="2027-02-10"')); assert.ok(view.includes("到 2027-02-10：预计 <b>USD 10,009</b>，保守 <b>USD 9</b>（每笔都按最晚日期）；之后还有 2 笔"));
-  assert.ok(view.includes("<h4>准备赎回的基金：如果赶本期申请</h4>")); assert.ok(view.includes("通知截止 2027-02-14 → 赎回日 2027-03-31 · 1 笔已过费用期 · 不计入上面的合计"));
-  assert.ok(view.includes("是方向性的估计")); assert.ok(view.includes("以平台通知为准。"));
+  // compact-desk:v1 — closed until tapped, with the total and the next payment in its one line; inside, one tab at a time.
+  const closed = r.evergreenCashView(model, today, "");
+  assert.ok(closed.startsWith('<details class="evergreen-cash"><summary>赎回到账预测 · 3 笔 · USD 12,009<small>下一笔 02-01</small></summary>'), "the overdue payment is not the next one");
+  assert.ok(closed.includes("<strong>还没登记：</strong>C</p>"));
+  const tabsOf = v => [...v.matchAll(/data-evergreen-cash-tab="(\w+)" aria-pressed="(\w+)">([^<]+)</g)].map(m => m.slice(1).join(" "));
+  assert.deepEqual(tabsOf(closed), ["cash true 回款 4", "whatif false 如果申请 1", "by false 截至某日"]); assert.ok(closed.includes('data-evergreen-cash-panel="cash"')); assert.equal(closed.includes("data-evergreen-cash-by"), false);
+  // 回款: the months, each folded over its own payments; only the month that was opened is open.
+  assert.ok(closed.includes("30 天内 USD 9 · 90 天 USD 10,009 · 180 天 USD 12,009")); assert.equal((closed.match(/<details class="evergreen-month"/g) || []).length, 4); assert.equal(closed.includes('class="evergreen-month" data-evergreen-month="2027-02" open'), false);
+  const view = r.evergreenCashView(model, today, "", { open: true, tab: "cash", month: "2027-02" });
+  assert.ok(view.startsWith('<details class="evergreen-cash" open>')); assert.ok(view.includes('<details class="evergreen-month" data-evergreen-month="2027-02" open><summary><span class="evergreen-ladder-quarter">2027-02</span>')); assert.equal((view.match(/evergreen-month" data-evergreen-month="[^"]+" open/g) || []).length, 1);
+  assert.ok(view.includes('<span class="evergreen-ladder-amount">USD 10,000<small>累计 USD 10,009</small></span></summary><ul class="evergreen-cash-list"><li data-basis="terms"><span class="evergreen-cash-date">02-01</span><span class="evergreen-cash-what"><strong>A &lt;x&gt; · 首笔</strong><small>按条款 · 最晚 02-16</small>'));
+  assert.equal(view.includes("<x>"), false); assert.ok(view.includes('<li data-basis="platform" data-overdue="true">')); assert.ok(view.includes("<b>已过最晚日期，请核对</b>"));
+  assert.ok(view.includes('data-evergreen-month="undated"><summary><span class="evergreen-ladder-quarter">日期待定</span><span></span><span class="evergreen-ladder-amount">1 笔</span>')); assert.ok(view.includes('<span class="evergreen-cash-date">待定</span>')); assert.ok(view.includes("金额未填")); assert.ok(view.includes("1 笔金额未知。"));
+  assert.ok(view.includes("data-evergreen-cash-copy>复制到账计划</button>"));
+  const byTab = r.evergreenCashView(model, today, "2027-02-10", { open: true, tab: "by" });
+  assert.deepEqual(tabsOf(byTab).map(t => t.split(" ")[1]), ["false", "false", "true"]); assert.equal(byTab.includes("evergreen-month"), false);
+  assert.ok(byTab.includes('data-evergreen-cash-by type="date" value="2027-02-10"')); assert.ok(byTab.includes("到 2027-02-10：预计 <b>USD 10,009</b>，保守 <b>USD 9</b>（每笔都按最晚日期）；之后还有 2 笔"));
+  assert.ok(r.evergreenCashView(model, today, "", { tab: "by" }).includes("选一个日期：预计按每笔的预计到账日算，保守按最晚日期算。"));
+  const ifTab = r.evergreenCashView(model, today, "", { tab: "whatif" });
+  assert.ok(ifTab.includes("通知截止 02-14 → 赎回日 2027-03-31 · 1 笔已过费用期")); assert.ok(ifTab.includes("不计入合计。")); assert.equal(tabsOf(r.evergreenCashView(model, today, "", { tab: "nope" }))[0], "cash true 回款 4", "an unknown tab falls back to the first");
+  assert.ok(view.includes("方向性估计，以平台通知为准。"));
   assert.equal(r.evergreenCashView(plain(r.evergreenCashModel([fund("P|F", "hold", "USD 7.00")], {}, {}, today)), today, ""), "", "nothing filed and nothing marked: no card");
   assert.deepEqual(model.held, []); assert.equal(model.est, 0);
   // redeem-facts:v1 — an estimate is counted and marked; a payment reported received leaves the forecast; a request on hold is listed apart and never totalled.
   const real = plain(r.evergreenCashModel([fund("P|S", "partial", "USD 9,999.00"), fund("P|O <o>", "partial", "USD 9,999.00")], { "P|S": [{ id: "s1", shares: 77, estCents: 10000000, dealing: "2026-11-30", cashBy: "2026-12-14" }],
     "P|O <o>": [{ id: "o1", shares: 7.757, estCents: 1118577, received: true }, { id: "o2", shares: 52.711, hold: true, note: "需重提 <b>" }] }, {}, today));
   assert.deepEqual(real.items.map(x => [x.name, x.cents, x.est, x.date]), [["S", 10000000, true, "2026-12-14"]]); assert.deepEqual(real.undated, []); assert.deepEqual(real.held, [{ name: "O <o>", cents: null, est: false, note: "需重提 <b>" }]); assert.equal(real.total, 10000000); assert.equal(real.est, 1);
-  const realView = r.evergreenCashView(real, today, "");
-  assert.ok(realView.includes("其中 1 笔为参考估算")); assert.ok(realView.includes('USD 100,000<small>估</small>')); assert.ok(realView.includes("<h4>待处理：未排期，不计入合计</h4>")); assert.ok(realView.includes("<strong>O &lt;o&gt;</strong><small>需重提 &lt;b&gt;</small>")); assert.equal(realView.includes("<b>"), realView.includes("<b>USD"), "a note is escaped");
+  const realView = r.evergreenCashView(real, today, "", { open: true, month: "2026-12" }), heldView = r.evergreenCashView(real, today, "", { tab: "held" });
+  assert.ok(realView.includes("1 笔为参考估算。")); assert.ok(realView.includes('USD 100,000<small>估</small>')); assert.ok(realView.includes('data-evergreen-cash-tab="held" aria-pressed="false">待处理 1<'));
+  assert.ok(heldView.includes('data-evergreen-cash-panel="held"')); assert.ok(heldView.includes("<strong>O &lt;o&gt;</strong><small>需重提 &lt;b&gt;</small>")); assert.ok(heldView.includes("未排期，不计入合计。")); assert.equal(heldView.includes("<b>"), false, "a note is escaped");
   assert.ok(r.evergreenCashText(real, today).endsWith("合计 USD 100,000（其中 1 笔为参考估算）\n待处理（未排期，不计入合计）：O <o> 金额未填"));
-  const onlyHeld = plain(r.evergreenCashModel([fund("P|O", "partial", "USD 1.00")], { "P|O": [{ id: "o2", hold: true }] }, {}, today)); assert.ok(r.evergreenCashView(onlyHeld, today, "").includes("待处理：未排期，不计入合计"));
+  const onlyHeld = plain(r.evergreenCashModel([fund("P|O", "partial", "USD 1.00")], { "P|O": [{ id: "o2", hold: true }] }, {}, today)), heldOnly = r.evergreenCashView(onlyHeld, today, "");
+  assert.ok(heldOnly.startsWith('<details class="evergreen-cash"><summary>赎回到账预测 · 1 笔待处理</summary>')); assert.ok(heldOnly.includes('data-evergreen-cash-panel="held"')); assert.equal(heldOnly.includes("data-evergreen-cash-tab"), false, "one tab needs no switch");
   const text = r.evergreenCashText(model, today);
   assert.ok(text.startsWith("赎回到账计划（2026-11-24 整理，方向性估计，以平台通知为准）\n2026-11-02 G 首笔 USD 9（最早 2026-11-02，最晚 2026-11-07，平台通知）\n")); assert.ok(text.endsWith("日期待定 E 首笔 金额未填\n合计 USD 12,009（另有 1 笔金额未知）"));
 });
@@ -1433,21 +1446,26 @@ test("a fund marked 赎回中 or 部分赎回 gets the request form in its 状�
   assert.equal(r.evergreenRedeemView(fund("hold"), [], q, today), ""); assert.equal(r.evergreenRedeemView(fund("prepare"), undefined, q, today), "");
   for (const state of ["redeeming", "partial"]) { const empty = r.evergreenRedeemView(fund(state), [], q, today); assert.ok(empty.startsWith("<h3>赎回登记</h3>")); assert.ok(empty.includes("data-evergreen-redeem-add>登记一笔赎回申请</button>")); assert.equal(empty.includes("evergreen-redeem-fields"), false); }
   const view = r.evergreenRedeemView(fund("hold"), [{ id: "a1", requested: "2026-11-10", cents: 250000, tailPct: 10 }], q, today);
-  assert.ok(view.includes('<div class="evergreen-redeem" data-redeem-id="a1">'), "a request is still shown after the state is changed"); assert.ok(view.includes("<strong>第 1 笔 · USD 2,500</strong>")); assert.ok(view.includes('data-state="redeeming">已申请，等赎回日</span>'));
+  // compact-desk:v1 — a request is one line until tapped: what, roughly when, and where it stands. Its fields wait under 修改.
+  assert.ok(view.includes('<details class="evergreen-redeem" data-redeem-id="a1"><summary class="evergreen-redeem-head"><span class="evergreen-fund-main"><strong>第 1 笔 · USD 2,500</strong><small>约 27-02-01 到账</small></span><span class="evergreen-pill" data-state="redeeming">等赎回日</span></summary>'), "a request is still shown after the state is changed, closed");
+  assert.ok(view.includes("<details class=\"evergreen-redeem-edit\" data-evergreen-redeem-edit><summary>修改</summary>"));
+  const opened = r.evergreenRedeemView(fund("hold"), [{ id: "a1", requested: "2026-11-10" }], q, today, { open: new Set(["a1"]), edit: "", ask: "" }); assert.ok(opened.includes('data-redeem-id="a1" open>')); assert.equal(opened.includes("data-evergreen-redeem-edit open"), false);
+  const editing = r.evergreenRedeemView(fund("hold"), [{ id: "a1", requested: "2026-11-10" }], q, today, { open: new Set(), edit: "a1", ask: "a1" }); assert.ok(editing.includes('data-redeem-id="a1" open>')); assert.ok(editing.includes("data-evergreen-redeem-edit open>")); assert.ok(editing.includes("data-evergreen-redeem-del>再点一次确认删除</button>"));
   assert.deepEqual([...view.matchAll(/<li( data-done="true")?><small>([^<]+)<\/small><b>([^<]+)<\/b><\/li>/g)].map(m => [m[2], m[3], Boolean(m[1])]), [["申请", "26-11-10", true], ["通知截止", "26-11-16", true], ["赎回日", "26-12-31", false], ["预计到账", "27-02-01", false]]);
   assert.deepEqual([...view.matchAll(/data-evergreen-redeem="(\w+)" type="(\w+)" value="([^"]*)"/g)].map(m => m.slice(1)), [["requested", "date", "2026-11-10"], ["cents", "number", "2500"], ["shares", "number", ""], ["estCents", "number", ""], ["dealing", "date", ""], ["cashBy", "date", ""], ["acceptedPct", "number", ""], ["tailPct", "number", "10"], ["tailBy", "date", ""], ["receivedOn", "date", ""]]);
-  assert.ok(view.includes("<strong>尾款</strong>")); assert.ok(view.includes("尾款多在年度审计后支付，按次年 4 月底估计")); assert.ok(view.includes("data-evergreen-redeem-del>删除这笔</button>")); assert.ok(view.includes("登记会加密后同步到你的其它管理人设备，不进条款包。"));
+  assert.ok(view.includes("<strong>尾款</strong><small>审计后，估 · 最晚 06-29</small>")); assert.ok(view.includes("data-evergreen-redeem-del>删除这笔</button>")); assert.ok(view.includes("加密同步到你的其它管理人设备。"));
   const whole = r.evergreenRedeemView(fund("redeeming"), [{ id: "a1", requested: "2026-11-10" }], undefined, today);
-  assert.ok(whole.includes("<strong>第 1 笔 · 全部</strong>")); assert.ok(whole.includes("已申请，赎回日待定")); assert.ok(whole.includes('placeholder="全部"')); assert.ok(whole.includes("<b>待定</b>"));
+  assert.ok(whole.includes("<strong>第 1 笔 · 全部</strong><small>到账日待定</small>")); assert.ok(whole.includes('data-state="redeeming">日期待定</span>')); assert.ok(whole.includes('placeholder="全部"')); assert.ok(whole.includes("<b>待定</b>"));
   const facts = r.evergreenRedeemView(fund("partial"), [{ id: "s1", shares: 77, estCents: 10000000, dealing: "2026-11-30", cashBy: "2026-12-14", note: "订单 <待处理>" }, { id: "s2", shares: 52.711, hold: true }, { id: "s3", shares: 7.757, estCents: 1118577, received: true }], q, today);
-  assert.ok(facts.includes("<strong>第 1 笔 · 77 份（约 USD 100,000）</strong>")); assert.ok(facts.includes('<p class="evergreen-meta">订单 &lt;待处理&gt;</p>')); assert.ok(facts.includes('<small>申请</small><b>待定</b>'));
-  assert.ok(facts.includes('USD 100,000<small>估</small>')); assert.ok(facts.includes("<strong>第 2 笔 · 52.711 份</strong>")); assert.ok(facts.includes('data-state="watch">待处理，未排期</span>'));
+  assert.ok(facts.includes("<strong>第 1 笔 · 77 份（约 USD 100,000）</strong><small>约 26-12-14 到账</small>")); assert.ok(facts.includes('<p class="evergreen-meta">订单 &lt;待处理&gt;</p>')); assert.ok(facts.includes('<small>申请</small><b>待定</b>'));
+  assert.ok(facts.includes('USD 100,000<small>估</small>')); assert.ok(facts.includes('<strong>第 2 笔 · 52.711 份</strong></span><span class="evergreen-pill" data-state="watch">待处理</span>'), "on hold: no arrival line");
   assert.ok(facts.includes('<span class="evergreen-cash-date">已到账</span><span class="evergreen-cash-what"><strong>首笔</strong><small>日期待核</small>')); assert.ok(facts.includes('data-evergreen-redeem="hold" type="checkbox" checked>暂不排期（需重提或待核实）')); assert.ok(facts.includes('data-evergreen-redeem="received" type="checkbox" checked>首笔已到账，日期待核'));
   assert.equal((facts.match(/type="checkbox" checked/g) || []).length, 2); assert.ok(facts.includes('data-evergreen-redeem="note" type="text" maxlength="300" value="订单 &lt;待处理&gt;"'));
   assert.equal(r.evergreenRedeemView(fund("redeeming"), Array.from({ length: 6 }, (_, i) => ({ id: "x" + i, requested: "2026-11-10" })), q, today).includes("data-evergreen-redeem-add"), false, "six requests a fund at most");
   // Wiring: the desk hands each fund its form and puts the forecast above the list; fields are 16px so an iPhone does not zoom.
-  assert.match(html, /fund\.redeemHtml=evergreenRedeemView\(fund,redeems\[fund\.key\],terms\[fund\.key\],today\);/);
-  assert.match(html, /const cashHtml=evergreenCashView\(evergreenCashModel\(model\.funds,redeems,terms,today\),today,_evergreenCashBy\);/);
+  assert.match(html, /fund\.redeemHtml=evergreenRedeemView\(fund,redeems\[fund\.key\],terms\[fund\.key\],today,\{open:_evergreenRedeemOpen,edit:_evergreenRedeemEdit,ask:_evergreenRedeemAsk\}\);/);
+  assert.match(html, /const cashHtml=evergreenCashView\(evergreenCashModel\(model\.funds,redeems,terms,today\),today,_evergreenCashBy,\{open:_evergreenCashOpen,tab:_evergreenCashTab,month:_evergreenCashMonth\}\);/);
+  assert.match(html, /if\(has\('evergreen-cash'\)\)_evergreenCashOpen=el\.open;/); assert.match(html, /if\(cashTab\)\{_evergreenCashTab=cashTab\.getAttribute\('data-evergreen-cash-tab'\);_evergreenCashOpen=true;again\(''\);return;\}/);
   assert.match(html, /\.evergreen-cash input,\.evergreen-redeem input\{font-size:16px\}/); assert.match(html, /\.evergreen-note\{[^}]*width:100%[^}]*font-size:16px/);
 });
 
