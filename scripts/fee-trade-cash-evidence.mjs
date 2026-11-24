@@ -264,14 +264,15 @@ function declaredCompactCash(row,text){
  return buy?native===gross+fee:net!==null&&net>0n&&gross-fee===net&&native===net;
 }
 // Wording-independent association (owner 2026-11-18). Each new note format used to need its own
-// grammar above. This one trusts no wording beyond the pointer: the row must name exactly one
+// grammar above. This one trusts no wording beyond the pointer (since 2026-11-24 not even the
+// "NOT external funding" phrase, which a later note format dropped): the row must name exactly one
 // confirmed same-day trade of this portfolio, no other cash row may name that trade, and the row's
 // amount must be that trade's own cash to the cent (quantity x price, plus the fee on a buy, less it
 // on a sale), which must also be the value Sharesight holds for the trade.
 const TRADE_POINTER_RE=/\bTrade([1-9]\d{0,14})(?!\d)/g;
 const pointerOf=row=>{
  const text=typeof row?.description==='string'?row.description:'';
- if(text.length>2000||/[\r\n]/.test(text)||!/\bNOT external funding\b/.test(text))return null;
+ if(text.length>2000||/[\r\n]/.test(text))return null;
  const found=[...text.matchAll(TRADE_POINTER_RE)];
  return found.length===1?found[0][1]:null;
 };
