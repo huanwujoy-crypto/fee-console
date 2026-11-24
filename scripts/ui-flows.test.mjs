@@ -1308,6 +1308,12 @@ test("the verified manager lands on 资产配置 once, and only the manager sees
   assert.ok(html.includes('let _managerLanding=true;\nasync function renderRatioManagement(){'));
   assert.ok(html.includes('if(allowed&&_managerLanding){_managerLanding=false;if(document.getElementById("p-home").classList.contains("on")){setRatioView("all");'));
   assert.ok(html.includes('const b=e.target.closest("button[data-p]");if(!b)return;_managerLanding=false;'));
+  // landing-wait:v1 — until access is settled the page shows only the waiting line: every pane follows it as a sibling and is hidden while it is visible.
+  assert.ok(html.includes('#navigationStatus:not([hidden])~section.pane{display:none}'));
+  assert.ok(html.includes('<p id="navigationStatus" class="hint" role="status">取数中，请稍候…</p>'));
+  {const at=html.indexOf('<p id="navigationStatus"'),panes=[...html.matchAll(/\n<section class="pane[^"]*" id="(p-[a-z]+)"/g)];
+    assert.deepEqual(panes.map(m=>m[1]).sort(),['p-home','p-investors','p-ratio','p-set']);assert.ok(at>0&&panes.every(m=>m.index>at));
+    assert.ok(html.includes('tabs.hidden=pending;tabs.classList.remove(\'hidden\');if(status)status.hidden=!pending;'));}
   assert.match(html, /<button data-p="p-home" class="on">管理人<\/button>/);
 });
 
