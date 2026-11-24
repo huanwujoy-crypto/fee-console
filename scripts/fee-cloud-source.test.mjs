@@ -2846,13 +2846,17 @@ test('a Webull cash row naming one same-day trade is that trade\'s cash only whe
   const sale = {...trade, description_code: 'SELL', brokerage: 1.5, value: -49.7};
   const credit = {...row, amount: 49.7, cash_account_transaction_type: {name: 'DEPOSIT'}, description: 'Webull TQQQ SELL net; NOT external funding. Trade9001.'};
   assert.equal(isTradePointerCash({...base, trades: [sale], row: credit, cashRows: [credit]}), true);
+  // Owner 2026-11-24: the next note format said "Trade settlement" and dropped the phrase; the pointer and figures decide.
+  const settled = {...row, description: 'Webull TQQQ BUY10 USD5.12; cash51.20 fee0.00. Trade9001; source2026-11-17T15:46:40.552Z; date2026-11-17. Trade settlement. key=webull.manual|order|0000000000SYNTHETIC0000000|cash'};
+  assert.equal(isTradePointerCash({...base, row: settled, cashRows: [settled]}), true);
+  const settledSale = {...credit, description: 'Webull TQQQ SELL10 USD5.12; gross51.20 SEC fee1.50 net49.70. Trade9001; date2026-11-17. Trade settlement.'};
+  assert.equal(isTradePointerCash({...base, trades: [sale], row: settledSale, cashRows: [settledSale]}), true);
   const refused = [
     {row: {...row, amount: -51.21}}, {row: {...row, amount: 51.2}}, {trades: [{...trade, value: 51.3}]}, {trades: [{...trade, price: 5.13}]},
     {trades: [{...trade, state: 'unconfirmed'}]}, {trades: [{...trade, transaction_date: '2026-11-16'}]}, {trades: [{...trade, portfolio_id: 2}]},
     {trades: [{...trade, instrument: {code: 'QQQ', currency_code: 'USD'}}]}, {trades: [{...trade, description_code: 'SELL'}]}, {trades: []}, {trades: [trade, {...trade}]},
     {cashRows: [row, {...row, id: 2}]}, {account: 'schwab'}, {portfolioId: 2}, {targetDate: '2026-11-18'},
     {row: {...row, cash_account_transaction_type: {name: 'DEPOSIT'}}}, {row: {...row, payout_id: 5}}, {row: {...row, trade_id: 9002}},
-    {row: {...row, description: row.description.replace('NOT external funding', 'external funding')}},
     {row: {...row, description: row.description.replace('Trade9001.', 'Trade9001. Trade9002.')}},
     {row: {...row, description: row.description.replace('Trade9001.', '')}}, {row: {...row, description: 'TQQQ BUY; NOT external funding. Trade9001.'}},
   ];
