@@ -10,7 +10,7 @@
 <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAABzUlEQVR42u3bsQ2AMAwAwczDhEzKOqGlCBIgBdnxRT+BfU0Kt20/pGHNCASH4BAcgkNwCA7BITgEh+CQ4BAcgkNwCA7BITgEh+AQHBIcgkNwCA7BITgEh+AQHIJDgkNwCA7BITgEh+AQHIJDcAgOCQ7BITgEh+AQHIJDcOi2/vjBwUQyJXAEkhHNBxyxZITyAQcccMABxwIy4viAAw444IADDjjggAMOOOCAAw444IBDcAgOwQEHHHDAAQcccMABBxxwwAEHHHAIDudocDDxeWFwOEeDg4z3a4MDDjjggKMOjh82BwcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAGHQ1Y4HLLCERPH1IHCkRjH7JnCAQcccMBRB8cam4MDDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAQxWDQ3AIDsEhOFQNR/eSfG7hgAMOOOCAAw444PCq4ZCvrOAQHIJDgkNwCA7BITgEh+AQHIJDcEhwCA7BITgEh+AQHIJDcAgOwSHBITgEh+AQHIJDcAgOwSE4pEsnhtvC417hqCsAAAAASUVORK5CYII=">
-<meta name="fee-console-build" content="4.10.47">
+<meta name="fee-console-build" content="4.10.48">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -136,6 +136,8 @@ nav.tabs button{white-space:nowrap}
 /* phone-shell:v1 — the tab bar sits at the bottom, within thumb reach and clear of the home indicator. */
 @media(max-width:600px){nav.tabs{position:fixed;left:0;right:0;bottom:0;z-index:150;margin:0;gap:0;padding:0 max(4px,env(safe-area-inset-right)) env(safe-area-inset-bottom) max(4px,env(safe-area-inset-left));background:var(--surface-1);border-top:1px solid var(--border);border-bottom:none}nav.tabs button{border-bottom:none;border-top:2px solid transparent;margin:-1px 0 0;padding:11px 2px 10px;font-size:13px}nav.tabs button.on{border-top-color:var(--series-1);border-bottom-color:transparent}.wrap{padding-bottom:calc(84px + env(safe-area-inset-bottom))}.toast{bottom:calc(74px + env(safe-area-inset-bottom))}}
 section.pane{display:none} section.pane.on{display:block}
+/* landing-wait:v1 (owner request 2026-11-24) — while access is still being settled the page shows one waiting line and no pane, so a manager never sees the fee page flash before landing on 资产配置. */
+#navigationStatus:not([hidden])~section.pane{display:none}#navigationStatus{text-align:center;padding:72px 0;font-size:14px}
 .card{background:var(--surface-1);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:12px}
 .card h2{font-size:15px;margin:0 0 4px}
 .card .hint{font-size:12px;color:var(--ink-2);margin:0 0 10px}
@@ -357,7 +359,7 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
   <span id="a2hsText"></span><button class="btn sm" id="a2hsOff">知道了</button>
 </div>
 
-<p id="navigationStatus" class="hint" role="status">正在核验访问权限…</p>
+<p id="navigationStatus" class="hint" role="status">取数中，请稍候…</p>
 <nav class="tabs" id="tabs" hidden>
   <button data-p="p-home" class="on">管理人</button>
   <button data-p="p-investors">投资人</button>
@@ -1202,7 +1204,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.10.47";
+const UI_VERSION_LABEL=" · v4.10.48";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
