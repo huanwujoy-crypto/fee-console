@@ -10,7 +10,7 @@
 <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAABzUlEQVR42u3bsQ2AMAwAwczDhEzKOqGlCBIgBdnxRT+BfU0Kt20/pGHNCASH4BAcgkNwCA7BITgEh+CQ4BAcgkNwCA7BITgEh+AQHBIcgkNwCA7BITgEh+AQHIJDgkNwCA7BITgEh+AQHIJDcAgOCQ7BITgEh+AQHIJDcOi2/vjBwUQyJXAEkhHNBxyxZITyAQcccMABxwIy4viAAw444IADDjjggAMOOOCAAw444IBDcAgOwQEHHHDAAQcccMABBxxwwAEHHHAIDudocDDxeWFwOEeDg4z3a4MDDjjggKMOjh82BwcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAGHQ1Y4HLLCERPH1IHCkRjH7JnCAQcccMBRB8cam4MDDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAQxWDQ3AIDsEhOFQNR/eSfG7hgAMOOOCAAw444PCq4ZCvrOAQHIJDgkNwCA7BITgEh+AQHIJDcEhwCA7BITgEh+AQHIJDcAgOwSHBITgEh+AQHIJDcAgOwSE4pEsnhtvC417hqCsAAAAASUVORK5CYII=">
-<meta name="fee-console-build" content="4.10.56">
+<meta name="fee-console-build" content="4.10.57">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -200,7 +200,7 @@ section.pane{display:none} section.pane.on{display:block}
 .evergreen-ladder-title{font-size:12px;margin:14px 0 4px;color:var(--ink-2);font-weight:600}.evergreen-ladder li{display:grid;grid-template-columns:62px minmax(0,1fr) auto;gap:8px;align-items:center;padding:5px 0;font-size:12px}.evergreen-ladder-quarter{color:var(--ink-2);font-variant-numeric:tabular-nums}.evergreen-ladder-track{display:flex;height:10px;background:var(--line);border-radius:5px;overflow:hidden}.evergreen-ladder-track i{display:block;height:100%}.evergreen-free{background:#3f9a78}.evergreen-later{margin:4px 0 2px;border-top:1px solid var(--grid)}.evergreen-later>summary{padding:10px 0;font-size:13px;color:var(--ink-1);cursor:pointer}.evergreen-later>ul{margin-top:0}.evergreen-ladder-amount{display:flex;flex-direction:column;align-items:flex-end;font-variant-numeric:tabular-nums;white-space:nowrap}.evergreen-ladder-amount small{font-size:10px;color:var(--ink-2)}
 .evergreen-terms{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px;margin:4px 0 8px}.evergreen-terms div{min-width:0}.evergreen-terms dt{font-size:10px;color:var(--ink-2)}.evergreen-terms dd{margin:0;font-size:12px;overflow-wrap:anywhere}.evergreen-lot-plans li{display:flex;flex-direction:column;gap:2px;padding:6px 0 6px 10px;border-left:2px solid var(--grid);font-size:12px}.evergreen-lot-plans li+li{margin-top:6px}.evergreen-lot-plans strong{font-weight:600}.evergreen-lot-plans strong[data-status="locked"]{color:#c8553d}.evergreen-lot-plans strong[data-status="fee"]{color:#b07a16}.evergreen-lot-plans small{font-size:11px;color:var(--ink-2)}
 #p-ratio .evergreen-pack{margin-top:14px;border-top:1px solid var(--grid)}.evergreen-sheet input{font-size:16px}.evergreen-pack-text{width:100%;margin-top:8px;font:16px/1.4 ui-monospace,Menlo,monospace;border:1px solid var(--border);border-radius:9px;padding:8px;background:var(--surface-1);color:var(--ink-1);box-sizing:border-box}
-.evergreen-summary{font-size:13px;line-height:1.6;margin:0 0 6px}.evergreen-sheet h4{font-size:11px;font-weight:600;color:var(--ink-2);margin:12px 0 4px}.evergreen-mix,.evergreen-updates,.evergreen-links,.evergreen-reading{list-style:none;margin:0;padding:0}.evergreen-mix li{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr) 44px;gap:8px;align-items:center;font-size:12px;padding:3px 0}.evergreen-mix li>span:first-child{min-width:0;overflow-wrap:anywhere}.evergreen-mix-track{height:6px;background:var(--line);border-radius:3px;overflow:hidden}.evergreen-mix-track i{display:block;height:100%;background:var(--series-1);border-radius:3px}.evergreen-mix b{font-weight:500;text-align:right;font-variant-numeric:tabular-nums}
+.evergreen-summary{font-size:13px;line-height:1.6;margin:0 0 6px}#p-ratio .evergreen-peers{margin:10px 0 0;border-top:1px solid var(--grid)}#p-ratio .evergreen-peers>summary{padding:10px 0 6px;font-size:13px;color:var(--series-1);cursor:pointer}#p-ratio .evergreen-peers table{width:100%;table-layout:fixed;border-collapse:collapse;font-size:12px;line-height:1.45;margin:4px 0}#p-ratio .evergreen-peers th,#p-ratio .evergreen-peers td{width:auto;padding:6px 5px;border:0;border-top:1px solid var(--grid);text-align:left;vertical-align:top;font-weight:400;color:var(--ink-1);overflow-wrap:anywhere;white-space:normal}#p-ratio .evergreen-peers thead th{border-top:0;font-weight:600}#p-ratio .evergreen-peers tr>th:first-child{width:21%;color:var(--ink-2)}#p-ratio .evergreen-peers [data-own="true"]{background:rgba(127,127,127,.1)}.evergreen-sheet h4{font-size:11px;font-weight:600;color:var(--ink-2);margin:12px 0 4px}.evergreen-mix,.evergreen-updates,.evergreen-links,.evergreen-reading{list-style:none;margin:0;padding:0}.evergreen-mix li{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr) 44px;gap:8px;align-items:center;font-size:12px;padding:3px 0}.evergreen-mix li>span:first-child{min-width:0;overflow-wrap:anywhere}.evergreen-mix-track{height:6px;background:var(--line);border-radius:3px;overflow:hidden}.evergreen-mix-track i{display:block;height:100%;background:var(--series-1);border-radius:3px}.evergreen-mix b{font-weight:500;text-align:right;font-variant-numeric:tabular-nums}
 .evergreen-updates li{display:flex;flex-direction:column;gap:2px;padding:6px 0 6px 10px;border-left:2px solid var(--grid);font-size:12px;line-height:1.55}.evergreen-updates li+li{margin-top:6px}.evergreen-updates b{font-weight:600;font-variant-numeric:tabular-nums}.evergreen-updates small,.evergreen-reading small{font-size:11px;color:var(--ink-2)}.evergreen-links li{padding:2px 0}.evergreen-links a,.evergreen-reading a{display:inline-block;padding:6px 0;font-size:13px;color:var(--series-1);text-decoration:underline;overflow-wrap:anywhere}
 .evergreen-reading li{display:flex;flex-direction:column;gap:2px;padding:8px 0;border-top:1px solid var(--grid)}.evergreen-reading a{font-weight:600;padding:2px 0}.evergreen-reading p{font-size:12px;line-height:1.55;margin:2px 0}.evergreen-tags{display:flex;flex-wrap:wrap;gap:4px}.evergreen-tags i{font-style:normal;font-size:10px;padding:2px 7px;border-radius:999px;background:var(--chip);color:var(--ink-2)}
 .evergreen-sub,.evergreen-meta{font-size:12px;color:var(--ink-2);line-height:1.6;margin:4px 0}.evergreen-filter{display:flex;gap:6px;overflow-x:auto;padding:6px 0 8px;scrollbar-width:none}.evergreen-filter button,.evergreen-states button{flex:none;font:inherit;font-size:12px;color:var(--ink-2);background:var(--chip);border:1px solid transparent;border-radius:999px;padding:6px 12px;min-height:32px;cursor:pointer}.evergreen-filter button[aria-pressed="true"],.evergreen-states button[aria-pressed="true"]{color:var(--ink-1);border-color:var(--series-1);font-weight:600}
@@ -1211,7 +1211,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.10.56";
+const UI_VERSION_LABEL=" · v4.10.57";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -3391,6 +3391,12 @@ function evergreenProfileClean(fund){
   const updates=(Array.isArray(fund?.updates)?fund.updates:[]).map(x=>({date:typeof x?.date==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(x.date)?x.date:'',text:evergreenText(x?.text,160),source:evergreenText(x?.source,100)}))
     .filter(x=>x.date&&x.text).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,3);
   if(updates.length)out.updates=updates;
+  // manager-peers:v1 (owner request 2026-11-25) — the fund's manager beside comparable managers: a few named
+  // columns, a few labelled rows with one value per column, a line of context and where it came from. Text only.
+  {const q=p.peers&&typeof p.peers==='object'&&!Array.isArray(p.peers)?p.peers:{},cols=(Array.isArray(q.columns)?q.columns:[]).map(c=>evergreenText(c,20)).slice(0,4);
+    const rows=(Array.isArray(q.rows)?q.rows:[]).map(x=>({label:evergreenText(x?.label,24),values:cols.map((_,i)=>evergreenText(Array.isArray(x?.values)?x.values[i]:'',60))})).filter(x=>x.label&&x.values.some(Boolean)).slice(0,10);
+    if(cols.length>1&&cols.every(Boolean)&&rows.length){out.peers={columns:cols,rows};for(const [k,max] of [['note',200],['source',160],['own',20]]){const t=evergreenText(q[k],max);if(t)out.peers[k]=t;}
+      if(typeof q.asOf==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(q.asOf))out.peers.asOf=q.asOf;}}
   // The one-page assessment prepared for a pending fund: dated, a few titled paragraphs, and where each came from.
   const a=fund?.assessment&&typeof fund.assessment==='object'?fund.assessment:{},sections=(Array.isArray(a.sections)?a.sections:[]).map(x=>({title:evergreenText(x?.title,30),text:evergreenText(x?.text,500)})).filter(x=>x.title&&x.text).slice(0,8);
   if(typeof a.date==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(a.date)&&sections.length)out.assessment={date:a.date,sections,sources:(Array.isArray(a.sources)?a.sources:[]).map(s=>evergreenText(s,160)).filter(Boolean).slice(0,10)};
@@ -3416,7 +3422,11 @@ function evergreenProfileParts(record,own,kind){
   // own-figures:v1 — where the fund has published no return, the owner's own figure from Sharesight stands in, marked as theirs.
   const mine=(f,since)=>f?f.value+'（你的'+(since?'，'+since:'')+(f.note?'，'+f.note:'')+'）':undefined;
   const mix=(title,list)=>'<h4>'+title+'</h4>'+(list?.length?'<ul class="evergreen-mix">'+list.map(x=>'<li><span>'+e(x.name)+'</span>'+(x.pct===undefined?'':'<span class="evergreen-mix-track"><i style="width:'+Math.min(100,x.pct)+'%"></i></span><b>'+e(x.pct)+'%</b>')+'</li>').join('')+'</ul>':dash);
-  return {summary:'<p class="evergreen-summary">'+(r.summary?e(r.summary):'-')+'</p>'
+  // manager-peers:v1 — folded until tapped; the fund's own manager is the marked column.
+  const q=r.peers,peers=q?'<details class="evergreen-peers"><summary>管理人对比 · '+q.columns.map(e).join('／')+'</summary>'+(q.note?'<p class="evergreen-summary">'+e(q.note)+'</p>':'')
+    +'<table><thead><tr><th></th>'+q.columns.map(c=>'<th'+(c===q.own?' data-own="true"':'')+'>'+e(c)+'</th>').join('')+'</tr></thead><tbody>'+q.rows.map(x=>'<tr><th>'+e(x.label)+'</th>'+x.values.map((v,i)=>'<td'+(q.columns[i]===q.own?' data-own="true"':'')+'>'+(v?e(v):'-')+'</td>').join('')+'</tr>').join('')+'</tbody></table>'
+    +'<p class="evergreen-meta">'+(q.asOf?'整理于 '+e(q.asOf):'整理日期未填')+(q.source?' · '+e(q.source):'')+'</p></details>':'';
+  return {peers,summary:'<p class="evergreen-summary">'+(r.summary?e(r.summary):'-')+'</p>'
     +'<dl class="evergreen-terms">'+row('管理人',r.manager)+row('成立时间',r.inception)+row('基金规模',r.size)+row('持仓数量',r.positions)+row('杠杆',r.leverage)+(kind==='hedge'?row('净敞口',r.netExposure)+row('总敞口',r.grossExposure)+row('年化波动',r.volatility)+row('最大回撤',r.maxDrawdown):'')+row('今年以来',pct(r.returnYtd))+row('近一年',pct(r.return1y)??mine(own?.year,''))+row('成立以来年化',pct(r.returnSi)??mine(own?.all,'自买入'))+'</dl>',
     mix:mix('策略分布',r.strategy)+mix('行业分布',r.sector)+mix('地区分布',r.region)+mix('主要持仓',r.holdings),
     meta:'<p class="evergreen-meta">'+(r.asOf?'资料截至 '+e(r.asOf):'资料日期未填')+(r.source?' · '+e(r.source):'')+' · 回报为基金自己公布的数字；标“你的”的来自 Sharesight，按你自己的买入计算</p>',
@@ -3424,7 +3434,7 @@ function evergreenProfileParts(record,own,kind){
 }
 function evergreenProfileView(record,own,kind){
   const p=evergreenProfileParts(record,own,kind);
-  return '<h3>基金概况</h3>'+p.summary+p.mix+p.meta+'<h3>最新动态</h3>'+p.news;
+  return '<h3>基金概况</h3>'+p.summary+p.peers+p.mix+p.meta+'<h3>最新动态</h3>'+p.news;
 }
 function evergreenAssessmentView(record){
   const e=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -3909,7 +3919,7 @@ function evergreenDeskView(model,filter,open,kind,tab,cashHtml){
       +'<p class="evergreen-meta">'+(x.label.updatedAt?'标记更新于 '+e(x.label.updatedAt):'尚未标记')+' · 自动同步到你的其它管理人设备</p>'+(x.redeemHtml||''),
     position:x=>'<div class="evergreen-position"><p><span>'+e(x.platform)+' · '+e(x.strategy)+(x.share?' · 占'+kindName[kindOf(x)]+'合计 '+e(x.share):'')+'</span><span>'+e(x.amount)+'</span></p>'+(x.figuresHtml||'<p class="evergreen-meta">此快照未包含这只基金的收益率。</p>')+'</div>',
     terms:x=>x.termsHtml||'<p class="evergreen-meta">尚未录入条款。在页面底部“条款包”里导入后显示。</p>',
-    profile:x=>(x.profile?.summary||'<p class="evergreen-meta">-</p>')+(x.profile?.meta||''),
+    profile:x=>(x.profile?.summary||'<p class="evergreen-meta">-</p>')+(x.profile?.peers||'')+(x.profile?.meta||''),
     mix:x=>(x.profile?.mix||'<p class="evergreen-meta">-</p>')+(x.profile?.meta||''),
     news:x=>x.profile?.news||'<p class="evergreen-meta">-</p>',
     assessment:x=>x.assessmentHtml||''};
