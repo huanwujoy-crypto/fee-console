@@ -41,6 +41,7 @@ class FakeGithub:
         self.state = 'active'
         self.main_sha = 'a' * 40
         self.confirmed = []
+        self.flaky = []
 
     def workflow(self):
         self.read_count += 1
@@ -52,6 +53,10 @@ class FakeGithub:
     def runs(self, created=None, status=None):
         with self.lock:
             self.run_queries.append({'created': created, 'status': status})
+            if self.flaky:
+                code = self.flaky.pop(0)
+                if code:
+                    raise ClockError(code)
             if created is not None:
                 self.query_count += 1
                 if self.query_count == 2 and self.after_claim:
@@ -109,6 +114,7 @@ class ClockTests(unittest.TestCase):
         self.github, self.store = FakeGithub(), FakeStore()
 
     def go(self, mode='launch', now=NOW, **kwargs):
+        kwargs.setdefault('pause', lambda seconds: None)
         return run_clock(mode, now, self.github, self.store, enabled=True, **kwargs)
 
     def error(self, code, **kwargs):
@@ -273,6 +279,33 @@ class ClockTests(unittest.TestCase):
     def test_incomplete_run_list_cannot_mean_no_run(self):
         self.github.incomplete = True
         self.error('LIST_INCOMPLETE')
+        self.assertEqual(self.github.post_count, 0)
+
+    def test_a_listing_that_fails_once_or_twice_is_read_again(self):
+        for code in ('LIST_INCOMPLETE', 'NETWORK_OR_RESPONSE'):
+            for failures in (1, 2):
+                self.setUp(); self.github.flaky = [code] * failures; waits = []
+                self.assertEqual(self.go(pause=waits.append)['outcome'], 'dispatch-accepted')
+                self.assertEqual((self.github.post_count, waits), (1, [5] * failures))
+        self.setUp(); self.github.flaky = ['LIST_INCOMPLETE']
+        self.error('NOT_REQUESTED', mode='check-start', now=CHECK)
+        # A read after the claim is steadied the same way; the claim is still made once.
+        self.setUp(); self.github.flaky = [None] * 6 + ['LIST_INCOMPLETE']
+        self.assertEqual(self.go()['outcome'], 'dispatch-accepted')
+        self.assertEqual((self.github.post_count, len(self.store.intents)), (1, 1))
+
+    def test_a_listing_that_keeps_failing_and_every_other_refusal_still_stop_the_clock(self):
+        waits = []; self.github.flaky = ['LIST_INCOMPLETE'] * 3
+        self.error('LIST_INCOMPLETE', pause=waits.append)
+        self.assertEqual((self.github.post_count, waits, self.store.intents), (0, [5, 5], {}))
+        for code in ('METADATA_INVALID', 'READ_HTTP_403', 'SCOPE'):
+            self.setUp(); waits = []; self.github.flaky = [code]
+            self.error(code, pause=waits.append)
+            self.assertEqual((self.github.post_count, waits), (0, []))
+        # The wait cannot carry a launch past its slot.
+        self.setUp(); self.github.flaky = ['LIST_INCOMPLETE']; current = [NOW]
+        self.error('OUTSIDE_WINDOW', current_time=lambda: current[0],
+                   pause=lambda seconds: current.__setitem__(0, NOW + timedelta(minutes=5)))
         self.assertEqual(self.github.post_count, 0)
 
     def test_wrong_workflow_or_repo_response_cannot_dispatch(self):
