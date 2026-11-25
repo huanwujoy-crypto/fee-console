@@ -907,7 +907,7 @@ async function calendarBox(saved = {}) {
   const memory = new Map(Object.entries(saved).map(([k, v]) => [k, JSON.stringify(v)]));
   const box = { store: { getItem: k => memory.get(k) ?? null, setItem: (k, v) => { memory.set(k, v); }, removeItem: k => { memory.delete(k); } }, todayStr: () => "2026-11-20", URL };
   vm.createContext(box);
-  vm.runInContext(profileBlock + "\n" + calendarBlock + "\n" + evergreenBlock + ";globalThis.c={evergreenBySize,evergreenProfileClean,evergreenReadingClean,evergreenProfiles,evergreenReading,evergreenProfileView,evergreenReadingView,evergreenUrl,evergreenPackApply,evergreenTermsClean,evergreenTerms,evergreenAddMonths,evergreenAddDays,evergreenDaysBetween,evergreenDealingDay,evergreenLotPlan,evergreenCents,evergreenUsd,evergreenQuarter,evergreenWeek,evergreenPending,evergreenShares,evergreenAssessmentView,evergreenTermsView,evergreenPackBuild,evergreenPackRead,evergreenPackView};", box);
+  vm.runInContext(profileBlock + "\n" + calendarBlock + "\n" + evergreenBlock + ";globalThis.c={evergreenBySize,evergreenProfileClean,evergreenReadingClean,evergreenProfiles,evergreenReading,evergreenProfileParts,evergreenProfileView,evergreenReadingView,evergreenUrl,evergreenPackApply,evergreenTermsClean,evergreenTerms,evergreenAddMonths,evergreenAddDays,evergreenDaysBetween,evergreenDealingDay,evergreenLotPlan,evergreenCents,evergreenUsd,evergreenQuarter,evergreenWeek,evergreenPending,evergreenShares,evergreenAssessmentView,evergreenTermsView,evergreenPackBuild,evergreenPackRead,evergreenPackView};", box);
   return { c: box.c, memory };
 }
 const plain = v => JSON.parse(JSON.stringify(v));
@@ -1109,6 +1109,17 @@ test("a fund's profile keeps only well-formed values and shows one fixed frame o
   for (const bad of ["javascript:alert(1)", "http://example.com", "https://localhost/x", "https://example.com/a b", 'https://example.com/"', "https://example.com/<x>", "//example.com", "", null, 5, "https://" + "a".repeat(600) + ".com"])
     assert.equal(c.evergreenUrl(bad), "", String(bad).slice(0, 30));
   assert.equal(c.evergreenUrl("https://www.reuters.com/commentary/breakingviews/x-2026-09-23/"), "https://www.reuters.com/commentary/breakingviews/x-2026-09-23/");
+  // manager-peers:v1 — a fund's manager beside comparable managers: named columns, labelled rows, folded until tapped.
+  {const peers = { columns: ["Alpha", "Beta <b>", "Gamma"], own: "Alpha", asOf: "2026-11-25", note: "三家同类。", source: "synthetic", junk: 1, rows: [{ label: "总部", values: ["甲地", "乙地", "丙地", "多余"] }, { label: "规模", values: ["1", "", 7] }, { label: "", values: ["x", "y", "z"] }, { label: "空行", values: ["", "", ""] }] };
+    const got = plain(c.evergreenProfileClean({ profile: { peers } }));
+    assert.deepEqual(got, { peers: { columns: ["Alpha", "Beta <b>", "Gamma"], rows: [{ label: "总部", values: ["甲地", "乙地", "丙地"] }, { label: "规模", values: ["1", "", ""] }], note: "三家同类。", source: "synthetic", own: "Alpha", asOf: "2026-11-25" } });
+    for (const bad of [{ columns: ["only"], rows: peers.rows }, { columns: ["a", ""], rows: peers.rows }, { columns: ["a", "b"], rows: [] }, [1], "x"]) assert.deepEqual(plain(c.evergreenProfileClean({ profile: { peers: bad } })), {});
+    assert.equal(c.evergreenProfileClean({ profile: { peers: { ...peers, asOf: "soon" } } }).peers.asOf, undefined);
+    const parts = c.evergreenProfileParts(c.evergreenProfileClean({ profile: { summary: "s", peers } }));
+    assert.ok(parts.peers.startsWith('<details class="evergreen-peers"><summary>管理人对比 · Alpha／Beta &lt;b&gt;／Gamma</summary><p class="evergreen-summary">三家同类。</p><table><thead><tr><th></th><th data-own="true">Alpha</th><th>Beta &lt;b&gt;</th><th>Gamma</th></tr></thead>'));
+    assert.ok(parts.peers.includes('<tr><th>规模</th><td data-own="true">1</td><td>-</td><td>-</td></tr>')); assert.ok(parts.peers.endsWith('<p class="evergreen-meta">整理于 2026-11-25 · synthetic</p></details>'));
+    assert.equal(c.evergreenProfileParts(c.evergreenProfileClean({ profile: { summary: "s" } })).peers, ""); assert.ok(c.evergreenProfileView(c.evergreenProfileClean({ profile: { summary: "s", peers } })).includes('</dl><details class="evergreen-peers">'));
+    assert.match(html, /profile:x=>\(x\.profile\?\.summary\|\|'<p class="evergreen-meta">-<\/p>'\)\+\(x\.profile\?\.peers\|\|''\)\+\(x\.profile\?\.meta\|\|''\),/);}
   assert.deepEqual(plain(c.evergreenProfileClean({})), {}); assert.deepEqual(plain(c.evergreenProfileClean(null)), {}); assert.deepEqual(plain(c.evergreenProfileClean({ profile: [1] })), {});
   const view = c.evergreenProfileView(c.evergreenProfileClean(profileFund));
   for (const text of ["<h3>基金概况</h3>", '<p class="evergreen-summary">投资全球&lt;私募&gt;股权。</p>', "<dt>管理人</dt><dd>Manager &lt;M&gt;</dd>", "<dt>成立时间</dt><dd>2024-01</dd>", "<dt>基金规模</dt><dd>US$6.9bn</dd>",
@@ -1166,7 +1177,7 @@ test("one pack may carry terms, profiles, labels and the reading list, and the p
 test("profiles and the reading list stay on the device, are shown in the sheet and page, and fetch nothing", () => {
   assert.ok(profileBlock.length > 1000);
   assert.doesNotMatch(profileBlock, /changeDraft|EDIT\.|saveLedger|writeRemote|ghRead|fetch\(|ghApi|ratioCore|deriveManager|XMLHttpRequest|innerHTML/i);
-  assert.ok(html.includes("profile:x=>(x.profile?.summary||'<p class=\"evergreen-meta\">-</p>')+(x.profile?.meta||''),"));
+  assert.ok(html.includes("profile:x=>(x.profile?.summary||'<p class=\"evergreen-meta\">-</p>')+(x.profile?.peers||'')+(x.profile?.meta||''),"));
   assert.match(html, /fund\.profile=evergreenProfileParts\(profiles\[fund\.key\],fund\.own,fund\.kind\);/);
   assert.match(html, /evergreenDeskView\(model,_evergreenFilter,_evergreenOpen,_evergreenKind,_evergreenTab,''\)\+evergreenReadingView\(evergreenReading\(\)\)\+evergreenRemoteView\(evergreenStored\(EVERGREEN_REMOTE_KEY,\{\}\)\)\+\(typeof evergreenSyncView==='function'\?evergreenSyncView\(evergreenSyncStamps\(\),_evergreenSyncNote\):''\)\+evergreenPackView\(/);
   // Every link the block writes opens in a new tab without handing the page to it.
