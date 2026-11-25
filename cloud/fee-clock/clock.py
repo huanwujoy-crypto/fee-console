@@ -2,6 +2,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 import re
+import time
 from zoneinfo import ZoneInfo
 
 REPO = 'huanwujoy-crypto/fee-console'
@@ -11,6 +12,7 @@ JOB_PREFIX = 'Produce '
 SCHEMA = 'fee-console.clock-intent.v1'
 ACTIVE = ('queued', 'in_progress', 'waiting', 'pending', 'requested')
 STATUSES = set(ACTIVE) | {'completed'}
+REREAD = ('FEE_CLOCK_LIST_INCOMPLETE', 'FEE_CLOCK_NETWORK_OR_RESPONSE')
 
 
 class ClockError(Exception):
@@ -154,6 +156,20 @@ def inspect_runs(github, selected, current_time):
     return expected, busy
 
 
+def steady_runs(github, selected, current_time, pause):
+    # Owner 2026-11-25: at 08:00 one GitHub listing disagreed with its own count, the clock
+    # gave up at once, and the same listing was whole five minutes later. These are reads and
+    # change nothing, so a listing that is incomplete or unreadable is read again, three times
+    # at most. Every other refusal, and the third failure, stand exactly as before.
+    for attempt in range(3):
+        try:
+            return inspect_runs(github, selected, current_time)
+        except ClockError as error:
+            if error.code not in REREAD or attempt == 2:
+                raise
+            pause(5)
+
+
 def job_rows(github, run):
     rows = complete_list(github.jobs(run['id']), 'jobs')
     if (len({row.get('id') for row in rows}) != len(rows)
@@ -240,7 +256,7 @@ def started_job(payload, run, selected, now):
             'conclusion': row.get('conclusion')}
 
 
-def run_clock(mode, now, github, store, enabled=False, current_time=None, confirmation=None):
+def run_clock(mode, now, github, store, enabled=False, current_time=None, confirmation=None, pause=None):
     if enabled is not True:
         return {'event': 'FEE_CLOCK', 'outcome': 'disabled'}
     # Freeze the four scalar parameters before any external adapter can run.
@@ -249,6 +265,7 @@ def run_clock(mode, now, github, store, enabled=False, current_time=None, confir
         confirmation = dict(confirmation)
     selected = plan(mode, now, confirmation)
     current_time = current_time or (lambda: now)
+    pause = pause or time.sleep
     safe = {key: selected[key] for key in ('slotDate', 'targetDate')}
     if not selected['action']:
         return {'event': 'FEE_CLOCK', 'outcome': 'outside-schedule', **safe}
@@ -261,7 +278,7 @@ def run_clock(mode, now, github, store, enabled=False, current_time=None, confir
     # POST; the producer retains serial execution and publication/source gates.
     # Scheduled launch and observation keep their original full-list checks.
     if mode != 'launch-confirmed':
-        runs, busy = inspect_runs(github, selected, current_time)
+        runs, busy = steady_runs(github, selected, current_time, pause)
         if mode == 'check-start':
             with ThreadPoolExecutor(max_workers=8) as pool:
                 evidence = list(pool.map(lambda row: started_job(github.jobs(row['id']), row, selected, current_time()), runs))
@@ -305,7 +322,7 @@ def run_clock(mode, now, github, store, enabled=False, current_time=None, confir
         # Scheduled launch still narrows the natural-cron race after claiming.
         # The confirmed entry relies on the same producer concurrency and
         # publication preflight even when another request is already queued.
-        runs, busy = inspect_runs(github, selected, current_time)
+        runs, busy = steady_runs(github, selected, current_time, pause)
         if runs or busy:
             store.result({**intent, 'outcome': 'natural-request-visible'})
             return {'event': 'FEE_CLOCK', 'outcome': 'natural-request-visible', **safe}

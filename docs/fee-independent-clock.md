@@ -72,6 +72,12 @@ eleven hours late, after Hong Kong midnight, it found nothing due, and the clock
 stood down for it. A natural run that is unfinished, or in which any other job
 ran, still counts.
 
+A run listing that is incomplete or cannot be read is read again after five
+seconds, three times at most (2026-11-25): one 08:00 listing disagreed with its
+own count and the same listing was whole five minutes later. These are reads;
+the claim, the single dispatch and the slot window are unchanged, and any other
+refusal still stops the clock at once.
+
 ### Confirmed-sync first request
 
 `launch-confirmed` is the existing bounded entry for an operator who has checked
