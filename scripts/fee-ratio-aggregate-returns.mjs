@@ -217,7 +217,7 @@ export function createAggregateReturnsCore(){
   // The secondary class's own ETF ranking, when the summary carries one.
   if(directSecondary)for(const r of exposure.summary.secondaryEtfTop5||[]){
    if(!r.accounts?.length)fail();
-   out.push({category:ETF_TOP,name:r.name,members:unique(r.accounts.map(account=>clean({...r,account}))),basis:'direct-holdings-only'});
+   out.push({category:ETF_TOP,name:r.name,members:unique(r.sourceHoldings?.map(clean)||r.accounts.map(account=>clean({...r,account}))),basis:'direct-holdings-only'});
   }
   if(companyTop&&!directSecondary)for(const r of companyTop){
    const members=r.constituents.filter(c=>c.product===null||c.basis==='product-asset-replacement').map(clean);

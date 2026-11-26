@@ -31,6 +31,11 @@ const ALL_TOGETHER_SCOPE_SHA256 = '25d1c346d1be590d75d906435e2fec752f851dbfc231c
 const secondaryBasis = 'Exposure individual security direct plus ETF look-through, includes cash in class denominator';
 const API_OBSERVED_TIME_BASIS = 'Sharesight API 响应接收时间';
 function buildRankedExposureView(input) {
+  // A ranked row's own parts: every part is a held position of a covered account, and the parts add up to the row.
+  // A secondary row carries parts only when it joins different securities (owner request 2026-11-26: a leveraged
+  // product beside the stock it tracks, at asset value; two ETFs the owner treats as one line).
+  const parts=r=>Array.isArray(r.sourceHoldings)&&r.sourceHoldings.length>0&&r.sourceHoldings.length<=5000&&r.sourceHoldings.every(h=>object(h)&&Object.keys(h).sort().join('|')==='account|market|name|securityCode|valueUSD'&&[h.name,h.securityCode,h.market].every(text)&&input.summary.accounts.includes(h.account)&&amount(h.valueUSD)&&h.valueUSD>=0)&&unique(r.sourceHoldings.map(h=>JSON.stringify([h.account,h.securityCode,h.market])))&&Math.round(sum(r.sourceHoldings.map(h=>h.valueUSD))*100)===Math.round(r.valueUSD*100)&&JSON.stringify([...new Set(r.sourceHoldings.map(h=>h.account))].sort())===JSON.stringify(r.accounts);
+  const joinsSecurities=r=>Array.isArray(r.sourceHoldings)&&new Set(r.sourceHoldings.map(h=>`${h?.securityCode}|${h?.market}`)).size>1&&r.sourceHoldings.some(h=>h?.securityCode===r.securityCode&&h?.market===r.market);
   const official=input?.schema==='xuan.sharesight-exposure-ranked.v2';
   check(object(input) && Object.keys(input).sort().join('|') === 'retrievedAt|retrievedAtBasis|schema|summary'
     && (input.schema === RANKED_EXPOSURE_SCHEMA||official), 'RANKED_SCHEMA');
@@ -63,7 +68,7 @@ function buildRankedExposureView(input) {
       && (n === 0 || g.top5[n - 1].valueUSD >= r.valueUSD)
       && (i !== 3 || text(r.securityCode) && text(r.market))
       && (r.accounts===undefined||Array.isArray(r.accounts)&&r.accounts.length>0&&r.accounts.length<=s.accounts.length&&unique(r.accounts)&&r.accounts.every(a=>s.accounts.includes(a)))
-      && (r.sourceHoldings===undefined||official&&i===2&&Array.isArray(r.sourceHoldings)&&r.sourceHoldings.length>0&&r.sourceHoldings.length<=5000&&r.sourceHoldings.every(h=>object(h)&&Object.keys(h).sort().join('|')==='account|market|name|securityCode|valueUSD'&&[h.name,h.securityCode,h.market].every(text)&&s.accounts.includes(h.account)&&amount(h.valueUSD)&&h.valueUSD>=0)&&unique(r.sourceHoldings.map(h=>JSON.stringify([h.account,h.securityCode,h.market])))&&Math.round(sum(r.sourceHoldings.map(h=>h.valueUSD))*100)===Math.round(r.valueUSD*100)&&JSON.stringify([...new Set(r.sourceHoldings.map(h=>h.account))].sort())===JSON.stringify(r.accounts))
+      && (r.sourceHoldings===undefined||official&&(i===2||i===3&&g.basis==='direct'&&joinsSecurities(r))&&parts(r))
       && !Object.keys(r).some(k => !['name', 'valueUSD', 'securityCode', 'market', 'accounts', 'sourceHoldings'].includes(k))), 'RANKED_ROW');
     // v1 ranks asset values. v2 secondary rows are complete-export economic
     // exposures: a leveraged product's negative residual can make these exceed
@@ -80,11 +85,12 @@ function buildRankedExposureView(input) {
     const rows=s.secondaryEtfTop5,g=s.classes[3],keys=Array.isArray(rows)?rows.map(r=>`${r?.securityCode}|${r?.market}`):[];
     check(g.basis==='direct'&&Array.isArray(rows)&&rows.length<=5&&unique(keys)&&unique(rows.map(r=>r?.name))
       &&!g.top5.some(r=>keys.includes(`${r.securityCode}|${r.market}`))
-      &&rows.every((r,n)=>object(r)&&Object.keys(r).sort().join('|')==='accounts|market|name|securityCode|valueUSD'&&[r.name,r.securityCode,r.market].every(text)&&amount(r.valueUSD)&&r.valueUSD>=0
+      &&unique(rows.flatMap(r=>r?.sourceHoldings?[...new Set(r.sourceHoldings.map(h=>`${h?.securityCode}|${h?.market}`))]:[`${r?.securityCode}|${r?.market}`]))
+      &&rows.every((r,n)=>object(r)&&(Object.keys(r).sort().join('|')==='accounts|market|name|securityCode|valueUSD'||Object.keys(r).sort().join('|')==='accounts|market|name|securityCode|sourceHoldings|valueUSD'&&joinsSecurities(r)&&parts(r))&&[r.name,r.securityCode,r.market].every(text)&&amount(r.valueUSD)&&r.valueUSD>=0
         &&(n===0||rows[n-1].valueUSD>=r.valueUSD)
         &&Array.isArray(r.accounts)&&r.accounts.length>0&&r.accounts.length<=s.accounts.length&&unique(r.accounts)&&r.accounts.every(a=>s.accounts.includes(a)))
       &&sum(rows.map(r=>r.valueUSD))+sum(g.top5.map(r=>r.valueUSD))<=g.totalValueUSD+.05, 'RANKED_ETF');
-    groups[3].etfTop=rows.map(r=>({name:r.name,securityCode:r.securityCode,market:r.market,accounts:[...r.accounts],valueUsd:r.valueUSD,
+    groups[3].etfTop=rows.map(r=>({name:r.name,securityCode:r.securityCode,market:r.market,accounts:[...r.accounts],...(r.sourceHoldings?{sourceHoldings:structuredClone(r.sourceHoldings)}:{}),valueUsd:r.valueUSD,
       portfolioWeightPct:pct(r.valueUSD,s.totalValueUSD),categoryWeightPct:pct(r.valueUSD,g.totalValueUSD)}));
   }
   const residual = s.residualETFs;
