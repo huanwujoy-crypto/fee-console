@@ -16,6 +16,16 @@ export function createOfficialRatioSourceCore(){
   const four=s=>s==='VC/PE'?'PE/VC':s==='对冲基金'||s==='常青基金'?s:'二级市场';
   const names=['PE/VC','对冲基金','常青基金','二级市场'];
   const ETF_TYPES=new Set(['exchange_traded_fund','exchange_traded_funds','etf']);
+  // Owner request (2026-11-26): a single-stock leveraged product ranks with the stock it tracks, at its own
+  // asset value (never multiplied); index products stay ETFs. Two ETFs the owner treats as one line are one row.
+  const LEVERAGED_STOCK={NVDL:['NVDA'],NVDU:['NVDA'],NVDX:['NVDA'],GGLL:['GOOGL','GOOG'],TSLL:['TSLA'],AVGX:['AVGO'],AVL:['AVGO'],VSTL:['VST'],MSFU:['MSFT'],AMZU:['AMZN'],METU:['META'],AAPU:['AAPL'],PLTU:['PLTR'],MSTU:['MSTR'],MSTX:['MSTR'],CONL:['COIN']};
+  const ETF_MERGED=[['CSPX','MXUS']];
+  const leveragedStock=r=>Object.hasOwn(LEVERAGED_STOCK,r.securityCode)?LEVERAGED_STOCK[r.securityCode]:null;
+  const mergedEtf=r=>ETF_MERGED.find(g=>g.includes(r.securityCode))||null;
+  const holding=r=>({account:r.account,name:r.name,securityCode:r.securityCode,market:r.market,valueUSD:r.valueUSD});
+  // A merged row keeps its parts only when it really joins different securities; its accounts follow its parts.
+  const joined=(old,r)=>{if(!old.accounts.includes(r.account))old.accounts.push(r.account);old.accounts.sort();old.valueUSD=(cents(old.valueUSD)+cents(r.valueUSD))/100;const at=old.parts.find(h=>h.account===r.account&&h.securityCode===r.securityCode&&h.market===r.market);if(at)at.valueUSD=(cents(at.valueUSD)+cents(r.valueUSD))/100;else old.parts.push(holding(r));return old;};
+  const settled=({parts,...row})=>new Set(parts.map(h=>h.securityCode+'|'+h.market)).size>1?{...row,sourceHoldings:parts}:row;
   const BENCHMARK_EXCLUDED_BASIS='complete-official-classification-excluding-benchmark-only.v1';
   const LOOK_THROUGH_SECONDARY_BASIS='Exposure individual security direct plus ETF look-through, includes cash in class denominator';
   const benchmarkOnly=r=>r.account.replaceAll('&amp;','&')==='Citi-HK & 地产四期'&&['QQQ.NASDAQ','SPY.NYSE'].includes(r.securityCode+'.'+r.market);
@@ -186,15 +196,25 @@ export function createOfficialRatioSourceCore(){
         // is unknown or anything else still ranks. ETFs stay in the class total.
         const ranked=positions30.filter(p=>p.fourClass===name);
         if(i===3&&typed&&!ranked.some(p=>p.assetType!==null))fail();
-        for(const r of ranked.filter(p=>!(i===3&&typed&&ETF_TYPES.has(String(p.assetType).toLowerCase())))){
+        const merging=i===3&&typed,late=[];
+        for(const r of ranked.filter(p=>!(i===3&&typed&&ETF_TYPES.has(String(p.assetType).toLowerCase())&&!leveragedStock(p)))){
+          if(merging&&leveragedStock(r)){late.push(r);continue;}
           const suffix=i===2?evergreenName(r):null,k=suffix?JSON.stringify(['dated-fund-name',suffix]):key('',r.securityCode,r.market);
-          const old=grouped.get(k)||{name:suffix||r.name,securityCode:r.securityCode,market:r.market,accounts:[],valueUSD:0,...(i===2?{sourceHoldings:[]}: {})};
+          const old=grouped.get(k)||{name:suffix||r.name,securityCode:r.securityCode,market:r.market,accounts:[],valueUSD:0,...(i===2?{sourceHoldings:[]}: {}),...(merging?{parts:[]}:{})};
+          if(merging){grouped.set(k,joined(old,r));continue;}
           if(!old.accounts.includes(r.account))old.accounts.push(r.account);old.accounts.sort();
           old.valueUSD=(cents(old.valueUSD)+cents(r.valueUSD))/100;
           if(i===2)old.sourceHoldings.push({account:r.account,name:r.name,securityCode:r.securityCode,market:r.market,valueUSD:r.valueUSD});
           grouped.set(k,old);
         }
-        const values=[...grouped.values()],counts=new Map();for(const r of values)counts.set(r.name,(counts.get(r.name)||0)+1);
+        // The stock a leveraged product tracks is the largest directly held row with one of its codes; without one
+        // the product ranks under its own code.
+        const direct=[...grouped.values()];
+        for(const r of late){
+          const host=direct.filter(x=>leveragedStock(r).includes(x.securityCode)).sort((a,b)=>b.valueUSD-a.valueUSD||(a.securityCode+a.market<b.securityCode+b.market?-1:1))[0],k=key('',r.securityCode,r.market);
+          if(host)joined(host,r);else grouped.set(k,joined(grouped.get(k)||{name:r.name,securityCode:r.securityCode,market:r.market,accounts:[],valueUSD:0,parts:[]},r));
+        }
+        const values=[...grouped.values()].map(r=>merging?settled(r):r),counts=new Map();for(const r of values)counts.set(r.name,(counts.get(r.name)||0)+1);
         top=values.map(r=>({...r,name:r.name+(counts.get(r.name)>1?' ['+r.securityCode+' · '+r.market+']':'')}));
         for(const r of top)if(r.sourceHoldings)r.sourceHoldings.sort((a,b)=>b.valueUSD-a.valueUSD||canonical(a).localeCompare(canonical(b)));
       }
@@ -208,12 +228,14 @@ export function createOfficialRatioSourceCore(){
     let etfTop=null;
     if(directSecondary&&typed){
       const grouped=new Map();
-      for(const r of positions30.filter(p=>p.fourClass===names[3]&&ETF_TYPES.has(String(p.assetType).toLowerCase()))){
-        const k=key('',r.securityCode,r.market),old=grouped.get(k)||{name:r.name,securityCode:r.securityCode,market:r.market,accounts:[],valueUSD:0};
-        if(!old.accounts.includes(r.account))old.accounts.push(r.account);old.accounts.sort();
-        old.valueUSD=(cents(old.valueUSD)+cents(r.valueUSD))/100;grouped.set(k,old);
+      for(const r of positions30.filter(p=>p.fourClass===names[3]&&ETF_TYPES.has(String(p.assetType).toLowerCase())&&!leveragedStock(p))){
+        const set=mergedEtf(r),k=set?JSON.stringify(['merged-etf',set[0]]):key('',r.securityCode,r.market);
+        grouped.set(k,joined(grouped.get(k)||{name:r.name,securityCode:r.securityCode,market:r.market,accounts:[],valueUSD:0,parts:[]},r));
       }
-      const values=[...grouped.values()],counts=new Map();for(const r of values)counts.set(r.name,(counts.get(r.name)||0)+1);
+      // A merged row is named after its largest security.
+      const values=[...grouped.values()].map(r=>{const by=new Map();for(const h of r.parts)by.set(h.securityCode+'|'+h.market,(by.get(h.securityCode+'|'+h.market)||0)+cents(h.valueUSD));
+        const lead=[...r.parts].sort((a,b)=>by.get(b.securityCode+'|'+b.market)-by.get(a.securityCode+'|'+a.market)||(a.securityCode+a.market<b.securityCode+b.market?-1:1))[0];
+        const row=settled({...r,name:lead.name,securityCode:lead.securityCode,market:lead.market});if(row.sourceHoldings)row.sourceHoldings.sort((a,b)=>b.valueUSD-a.valueUSD||canonical(a).localeCompare(canonical(b)));return row;}),counts=new Map();for(const r of values)counts.set(r.name,(counts.get(r.name)||0)+1);
       etfTop=values.map(r=>({...r,name:r.name+(counts.get(r.name)>1?' ['+r.securityCode+' · '+r.market+']':'')})).sort((a,b)=>b.valueUSD-a.valueUSD||(a.name<b.name?-1:a.name>b.name?1:0)).slice(0,5);
     }
     const total=sum(rows),residual=sum(rows.filter(r=>r.ownership==='Residual'));

@@ -120,6 +120,37 @@ test('the ETFs the secondary ranking leaves out are ranked on their own, by the 
     const bad=structuredClone(good);edit(bad);assert.throws(()=>view(bad));
   }
 });
+test('a leveraged product ranks with the stock it tracks at asset value, and two named ETFs are one row',()=>{
+  // Synthetic positions cloned from the fixture's one ETF: same account, a new code, a new value.
+  const add=(c,code,value)=>{const h=structuredClone(c.report.holdings.find(x=>x.instrument.code==='TQQQ'));h.id=9000+c.report.holdings.length;h.instrument.code=code;h.instrument.name='Synthetic '+code;h.value=value;c.report.holdings.push(h);c.report.value=Math.round((c.report.value+value)*100)/100;};
+  const s=apiOriginal(c=>{add(c,'GGLL',10);add(c,'CSPX',20);add(c,'MXUS',30);}).built.input.exposure.summary;
+  // GGLL joins the larger of the two share classes held, at 10 and not at twice 10; the other class is untouched.
+  const goog=s.classes[3].top5.find(r=>r.securityCode==='GOOG'),googl=s.classes[3].top5.find(r=>r.securityCode==='GOOGL');
+  assert.equal(goog.valueUSD,57.25);assert.deepEqual(goog.sourceHoldings.map(h=>[h.securityCode,h.valueUSD]),[['GOOG',41],['GGLL',10],['GOOG',6.25]]);
+  assert.equal(googl.valueUSD,42);assert.equal(Object.hasOwn(googl,'sourceHoldings'),false);
+  assert.equal(s.classes[3].top5.filter(r=>r.securityCode!=='GOOG').some(r=>Object.hasOwn(r,'sourceHoldings')),false,'a row of one security carries no parts');
+  // The ETF ranking no longer lists the leveraged product, and the two named ETFs are one row named after the larger.
+  assert.deepEqual(s.secondaryEtfTop5.map(r=>[r.securityCode,r.valueUSD]),[['TQQQ',130],['MXUS',50]]);
+  assert.deepEqual(s.secondaryEtfTop5[1].sourceHoldings.map(h=>[h.securityCode,h.valueUSD]),[['MXUS',30],['CSPX',20]]);
+  assert.equal(Object.hasOwn(s.secondaryEtfTop5[0],'sourceHoldings'),false);
+  // Nothing is counted twice: the class total is the sum of its positions and cash, as before.
+  const plain=apiOriginal().built.input.exposure.summary;assert.equal(Math.round((s.classes[3].totalValueUSD-plain.classes[3].totalValueUSD)*100),6000);
+  // A product whose stock is not held ranks under its own code, alone; only one of the two ETFs held is an ordinary row.
+  const alone=apiOriginal(c=>{add(c,'TSLL',200);add(c,'CSPX',20);}).built.input.exposure.summary;
+  assert.deepEqual(Object.keys(alone.classes[3].top5[0]).sort(),['accounts','market','name','securityCode','valueUSD']);assert.equal(alone.classes[3].top5[0].securityCode,'TSLL');assert.equal(alone.classes[3].top5[0].valueUSD,200);
+  assert.deepEqual(alone.secondaryEtfTop5.map(r=>Object.keys(r).length),[5,5]);
+  // The validating view keeps the parts, and refuses parts that do not add up, name one security only, or miss the row's own.
+  const exposureCore=createRankedExposureCore(),view=x=>exposureCore.buildRankedExposureView(x),good=apiOriginal(c=>{add(c,'GGLL',10);add(c,'CSPX',20);add(c,'MXUS',30);}).built.input.exposure,v=view(good);
+  assert.equal(v.groups[3].top.find(r=>r.securityCode==='GOOG').sourceHoldings.length,3);assert.equal(v.groups[3].etfTop[1].sourceHoldings.length,2);
+  for(const edit of [x=>{x.summary.secondaryEtfTop5[1].sourceHoldings[0].valueUSD=31;},x=>{x.summary.secondaryEtfTop5[1].sourceHoldings.pop();},x=>{x.summary.secondaryEtfTop5[1].securityCode='ZZZZ';},
+    x=>{const r=x.summary.classes[3].top5.find(r=>r.securityCode==='GOOG');r.sourceHoldings=r.sourceHoldings.filter(h=>h.securityCode==='GOOG');},x=>{x.summary.secondaryEtfTop5[0].sourceHoldings=structuredClone(x.summary.secondaryEtfTop5[1].sourceHoldings);}]){
+    const bad=structuredClone(good);edit(bad);assert.throws(()=>view(bad));
+  }
+  // Return targets follow the parts, so a merged row's return covers every security in it.
+  const targets=createAggregateReturnsCore().topTargets(good);
+  assert.deepEqual(targets.find(t=>t.category==='二级市场ETF'&&t.members.length===2).members.map(m=>m.securityCode).sort(),['CSPX','MXUS']);
+  assert.deepEqual([...new Set(targets.find(t=>t.category==='二级市场'&&t.members.some(m=>m.securityCode==='GGLL')).members.map(m=>m.securityCode))].sort(),['GGLL','GOOG']);
+});
 test('only the provider\'s own asset type removes a holding from the secondary ranking',()=>{
   const top=edit=>apiOriginal(edit).built.input.exposure.summary.classes[3].top5.map(r=>r.securityCode);
   const type=(c,code,value)=>{for(const h of c.report.holdings)if(h.instrument.code===code){if(value===undefined)delete h.instrument.friendly_instrument_description_code;else h.instrument.friendly_instrument_description_code=value;}};
@@ -283,4 +314,19 @@ test('a negative cash balance in one account is carried as given, from the repor
   assert.match(html,/<span>Synthetic 3<\/span><span>USD -3\.00<\/span>/);assert.doesNotMatch(html,/NaN|undefined/);
   // A value that is not a number is still refused.
   refused(x=>x.report.cash_accounts[0].value=NaN,'CASH_VALUE');
+});
+
+test('the page shows each ranking\'s subtotal and names every security of a merged row',async()=>{
+  const add=(c,code,value)=>{const h=structuredClone(c.report.holdings.find(x=>x.instrument.code==='TQQQ'));h.id=9000+c.report.holdings.length;h.instrument.code=code;h.instrument.name='Synthetic '+code;h.value=value;c.report.holdings.push(h);c.report.value=Math.round((c.report.value+value)*100)/100;};
+  const f=await apiSnapshot(c=>{add(c,'GGLL',10);add(c,'CSPX',20);add(c,'MXUS',30);}),result=await f.snapshot.verify(f.signed,f.manager,{now:NOW}),html=f.ratio.render(result.model);
+  const ranking=h=>html.split('<h3>'+h+'</h3>')[1].split('</section>')[0];
+  // Stocks: 57.25 + 44.50 + 43 + 42 + 40 = 226.75 of a class of 418.75 (synthetic).
+  assert.match(ranking('二级市场 · 股票前五'),/<p class="ratio-top-sum">前五合计 [^<]*226\.75 · 占本类 54\.15%<\/p>/);
+  assert.match(ranking('二级市场 · 股票前五'),/title="Synthetic GOOG">1\. GOOG＋GGLL</);assert.match(ranking('二级市场 · 股票前五'),/合并持仓 · 3笔/);
+  // ETFs: fewer than five rows say how many they are.
+  assert.match(ranking('二级市场 · ETF前五'),/<p class="ratio-top-sum">共 2 项合计 [^<]*180\.00 · 占本类 42\.99%<\/p>/);
+  assert.match(ranking('二级市场 · ETF前五'),/2\. MXUS＋CSPX</);
+  // The three fund classes carry the same line.
+  for(const h of ['PE/VC','对冲基金','常青基金'])assert.match(ranking(h+' · 持仓前五'),/class="ratio-top-sum">前五合计 /);
+  assert.ok(html.includes('个股杠杆产品按自身市值并入所跟踪的股票；CSPX 与 MXUS 合并为一行。'));
 });
