@@ -10,7 +10,7 @@
 <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAABzUlEQVR42u3bsQ2AMAwAwczDhEzKOqGlCBIgBdnxRT+BfU0Kt20/pGHNCASH4BAcgkNwCA7BITgEh+CQ4BAcgkNwCA7BITgEh+AQHBIcgkNwCA7BITgEh+AQHIJDgkNwCA7BITgEh+AQHIJDcAgOCQ7BITgEh+AQHIJDcOi2/vjBwUQyJXAEkhHNBxyxZITyAQcccMABxwIy4viAAw444IADDjjggAMOOOCAAw444IBDcAgOwQEHHHDAAQcccMABBxxwwAEHHHAIDudocDDxeWFwOEeDg4z3a4MDDjjggKMOjh82BwcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAGHQ1Y4HLLCERPH1IHCkRjH7JnCAQcccMBRB8cam4MDDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAQxWDQ3AIDsEhOFQNR/eSfG7hgAMOOOCAAw444PCq4ZCvrOAQHIJDgkNwCA7BITgEh+AQHIJDcEhwCA7BITgEh+AQHIJDcAgOwSHBITgEh+AQHIJDcAgOwSE4pEsnhtvC417hqCsAAAAASUVORK5CYII=">
-<meta name="fee-console-build" content="4.10.62">
+<meta name="fee-console-build" content="4.10.63">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -191,7 +191,7 @@ section.pane{display:none} section.pane.on{display:block}
 #p-ratio input[type=checkbox]{width:auto;margin-right:7px}#p-ratio .btn{min-height:44px;max-width:100%;white-space:normal;margin:4px 4px 4px 0}
 @media(max-width:600px){.ratio-asset-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.ratio-exposure-grid,.ratio-plan-grid{grid-template-columns:minmax(0,1fr)}#p-ratio .ratio-tools .btn{width:100%;margin-right:0}}
 @media(max-width:360px){#p-ratio th,#p-ratio td{padding:7px 3px;font-size:11px}#p-ratio th{font-size:10px}.ratio-asset-pct{font-size:21px}}
-#p-ratio .ratio-top-sum{font-size:12px;font-weight:600;margin:2px 0 4px;font-variant-numeric:tabular-nums}#p-ratio .ratio-stock-ref{display:block;color:var(--ink-2);font-size:10px;line-height:1.4;font-weight:400;margin-top:2px;white-space:nowrap;letter-spacing:-.2px}#p-ratio .ratio-stock-ref-note{font-size:11px;color:var(--ink-2);margin:4px 0 0}.ratio-top-codes,.ratio-return-scope{display:block;color:var(--ink-2);font-size:11px;line-height:1.5;margin:2px 0 4px}.ratio-holding-accounts{display:block;color:var(--ink-2);font-size:11px;line-height:1.5;margin:2px 0 4px}.ratio-stock-allocation{margin-bottom:10px}.ratio-stock-allocation h2{margin-bottom:4px}
+#p-ratio .ratio-top-sum{font-size:12px;font-weight:600;margin:2px 0 4px;font-variant-numeric:tabular-nums}#p-ratio .ratio-stock-ref{display:block;color:var(--ink-2);font-size:10px;line-height:1.4;font-weight:400;margin-top:2px;white-space:nowrap;letter-spacing:-.2px}#p-ratio .ratio-stock-ref-note{font-size:11px;color:var(--ink-2);margin:4px 0 0}#p-ratio .ratio-exit-plan{margin:12px 0 4px}#p-ratio .ratio-exit-plan:empty{display:none}.pe-exit-line>span:first-child{min-width:0}.pe-exit-line small{display:block;font-size:11px;color:var(--ink-2);font-weight:400;margin:1px 0 0 13px}.pe-exit-line.tot small{margin-left:0}.ratio-exit-plan .risk-chips button[aria-pressed="true"]{background:var(--chip);color:var(--ink-1);font-weight:600}.ratio-top-codes,.ratio-return-scope{display:block;color:var(--ink-2);font-size:11px;line-height:1.5;margin:2px 0 4px}.ratio-holding-accounts{display:block;color:var(--ink-2);font-size:11px;line-height:1.5;margin:2px 0 4px}.ratio-stock-allocation{margin-bottom:10px}.ratio-stock-allocation h2{margin-bottom:4px}
 .ratio-distribution-category{margin-top:12px}.ratio-distribution-category h3{font-size:12px;margin:0 0 6px}.ratio-distribution-account{padding:6px 0;border-top:1px solid var(--grid)}
 .ratio-distribution-account h4,.ratio-fund-holding{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:baseline;gap:10px;font-size:11px;line-height:1.6;margin:0;padding:4px 0}
 .ratio-distribution-account h4 span:first-child,.ratio-fund-holding-name{min-width:0;overflow-wrap:anywhere}.ratio-distribution-account h4 span:last-child,.ratio-fund-holding>span:last-child{white-space:nowrap;font-variant-numeric:tabular-nums}.ratio-distribution-account ul{list-style:none;margin:0;padding:0}
@@ -1211,7 +1211,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.10.62";
+const UI_VERSION_LABEL=" · v4.10.63";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -3137,7 +3137,10 @@ function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
     const assetRows=asset?.groups.map((g,i)=>'<tr><td>'+esc(assetLabel(g.name))+'<small class="ratio-overview-weights">'+(asset.totalCents>0?(g.valueCents/asset.totalCents*100).toFixed(2)+'%':'—')+'／'+g.targetPct+'%</small></td><td>'+preciseUsd(g.valueCents)+targetGap(assetGaps?.[i],'All Together 六类资产总额')+'</td><td>'+compactReturns(g.name)+'</td></tr>').join('');
     const assetAccounts=asset?.groups.map(g=>'<section><h3>'+esc(assetLabel(g.name))+'</h3><ul>'+g.accounts.map(r=>'<li><span>'+esc(r.name)+'</span><span>'+money(r.valueCents)+'</span></li>').join('')+'</ul>'+(g.accounts.length?'':'<p>本类暂无持仓。</p>')+'</section>').join('');
     const totalSummary=asset?'<div class="ratio-total-summary"><div class="ratio-total-heading"><h3>总资产（USD）</h3><div class="ratio-total-value">'+preciseUsd(asset.totalCents)+'</div></div>'+(performance?'<div class="ratio-total-returns"><p class="ratio-total-returns-label">收益率 / 收益金额（USD）</p>'+compactReturns('All Together')+'</div>':'')+'</div>':'';
-    const overview=asset?'<section class="card ratio-asset-overview ratio-six-allocation"><h2>资产配置总览</h2><p>All Together · 10账户 · USD · 资产分类截至 '+esc(classification.asOf)+'</p><p class="ratio-overview-units">分类下方为当前占比／参考目标；市值下方括号为目标差额。</p><table class="ratio-overview-table"><thead><tr><th>分类</th><th>市值（USD）</th><th>收益率</th></tr></thead><tbody>'+assetRows+'</tbody></table>'+totalSummary+'<div class="ratio-overview-disclosures">'+commonReturnNotes+'<details class="ratio-asset-notes"><summary>分类、账户与参考目标</summary><p>六类互斥，按同日直接资产市值归类。股票市场仅含美国底仓、美国科技、非美发达、新兴市场；现金防御类为 Cash Accounts 加全部防御资产，主题投资单列。穿透和杠杆敞口不另加总。</p>'+(benchmarkExcluded?'<p>Citi-HK &amp; 地产四期中的 QQQ／SPY 仅作基准取值，已从投资资产、占比分母及穿透中排除；其他账户的真实持仓保留。</p>':'')+'<p>参考目标合计100%。目标差额＝本模块基数×目标比例−当前市值；尾数美分按最大余数分配。正号表示低于目标，负号表示高于目标；仅作配置比较，未计预算、资本承诺或交易限制。PE/VC目标0%不代表卖出指令。</p><p>黄金（GLD）：'+money(Math.round(classification.gold.valueUSD*100))+'；已计入所属分类，不另加总。</p>'+assetAccounts+(performance?'<section class="ratio-secondary-return-supplement"><h3>二级市场整体收益</h3><p>此范围含股票、防御和主题投资，不等于上方股票市场子集；现金收益沿用原报表设置。</p>'+returns('二级市场')+'</section><p class="ratio-return-date">收益截至 '+esc(performance.asOf)+'；收益口径见本页统一说明。</p>':'')+'</details></div></section>':legacyOverview;
+    // pe-exit:v1 (owner request 2026-11-27) — the six classes' own values and reference targets, handed to the page's
+    // small calculator of where a PE/VC exit would go. Nothing here is computed; the calculator is display only.
+    const exitPlanData=asset&&assetGaps&&asset.groups.some(g=>g.name==='PE/VC'&&g.valueCents>0)?'<div class="ratio-exit-plan" data-exit-rows="'+esc(JSON.stringify(asset.groups.map(g=>[assetLabel(g.name),g.valueCents,g.targetPct])))+'"></div>':'';
+    const overview=asset?'<section class="card ratio-asset-overview ratio-six-allocation"><h2>资产配置总览</h2><p>All Together · 10账户 · USD · 资产分类截至 '+esc(classification.asOf)+'</p><p class="ratio-overview-units">分类下方为当前占比／参考目标；市值下方括号为目标差额。</p><table class="ratio-overview-table"><thead><tr><th>分类</th><th>市值（USD）</th><th>收益率</th></tr></thead><tbody>'+assetRows+'</tbody></table>'+totalSummary+exitPlanData+'<div class="ratio-overview-disclosures">'+commonReturnNotes+'<details class="ratio-asset-notes"><summary>分类、账户与参考目标</summary><p>六类互斥，按同日直接资产市值归类。股票市场仅含美国底仓、美国科技、非美发达、新兴市场；现金防御类为 Cash Accounts 加全部防御资产，主题投资单列。穿透和杠杆敞口不另加总。</p>'+(benchmarkExcluded?'<p>Citi-HK &amp; 地产四期中的 QQQ／SPY 仅作基准取值，已从投资资产、占比分母及穿透中排除；其他账户的真实持仓保留。</p>':'')+'<p>参考目标合计100%。目标差额＝本模块基数×目标比例−当前市值；尾数美分按最大余数分配。正号表示低于目标，负号表示高于目标；仅作配置比较，未计预算、资本承诺或交易限制。PE/VC目标0%不代表卖出指令。</p><p>黄金（GLD）：'+money(Math.round(classification.gold.valueUSD*100))+'；已计入所属分类，不另加总。</p>'+assetAccounts+(performance?'<section class="ratio-secondary-return-supplement"><h3>二级市场整体收益</h3><p>此范围含股票、防御和主题投资，不等于上方股票市场子集；现金收益沿用原报表设置。</p>'+returns('二级市场')+'</section><p class="ratio-return-date">收益截至 '+esc(performance.asOf)+'；收益口径见本页统一说明。</p>':'')+'</details></div></section>':legacyOverview;
     // Owner request 2026-11-15: the stock and ETF rankings show the security code, not the company name. The name stays
     // as the hover title and remains the key of the row's return. Two rows with one code are told apart by market.
     const shown=(r,rows,byCode)=>{if(!(byCode&&r.securityCode))return r.name;if(r.label)return r.label;
@@ -4465,6 +4468,7 @@ function ratioHoldingDisplayName(raw,securityCode=''){
 }
 function styleRatioReport(root){
   try{renderEvergreenDesk(root);}catch{}
+  if(typeof peExitMount==='function')peExitMount(root);
   const report=root?.querySelector?.('.ratio-report');
   if(!report||report.classList.contains('ratio-styled'))return;
   for(const label of report.querySelectorAll('.ratio-fund-holding-name')){const original=label.textContent;label.textContent=ratioHoldingDisplayName(original,label.dataset.securityCode)||original;}
@@ -6305,6 +6309,48 @@ function renderBal(feeView,st,B,G){
     <div class="line"><span>累计管理费（${B.n} 个月）</span><span>${usd(B.mgmt)}</span></div>    <div class="line"><span>累计 Carry</span><span>${usd(B.carry)}</span></div>
     <div class="line"><span>减：已付款</span><span>−${usd(B.paid)}</span></div>
     <div class="line tot"><span>应付费用</span><span class="${G.hold?'hold':(B.due>0?'':'pos')}">${G.hold?"暂不可用":usd(B.due)}</span></div>`;}
+/* pe-exit:start */
+// pe-exit:v1 (owner request 2026-11-27) — where money leaving PE/VC would go under the owner's own reference targets.
+// Rule: every class below its target takes a share in proportion to how far below it is; a class at or above its
+// target takes nothing. Total assets do not change. Display only: no order, no advice, no figure is stored.
+function peExitPlan(rows,exitCents){
+  const list=Array.isArray(rows)?rows.map(r=>({label:String(Array.isArray(r)?r[0]??"":""),value:Array.isArray(r)?r[1]:NaN,target:Array.isArray(r)?r[2]:NaN})):[];
+  if(list.length<2||list.length>8||list.some(r=>!r.label||!Number.isSafeInteger(r.value)||r.value<0||!Number.isSafeInteger(r.target)||r.target<0||r.target>100)||list.reduce((n,r)=>n+r.target,0)!==100)return null;
+  const from=list.findIndex(r=>r.label==="PE/VC");if(from<0||list[from].value<=0)return null;
+  const total=list.reduce((n,r)=>n+r.value,0);if(!Number.isSafeInteger(total))return null;
+  const exit=Math.min(list[from].value,Math.max(0,Math.round(Number(exitCents)||0)));
+  const gaps=list.map((r,i)=>i===from?0:Math.max(0,Math.round(total*r.target/100)-r.value)),room=gaps.reduce((n,g)=>n+g,0),placed=Math.min(exit,room);
+  const add=gaps.map(g=>room>0?Number(BigInt(placed)*BigInt(g)/BigInt(room)):0),rest=gaps.map((g,i)=>[room>0?BigInt(placed)*BigInt(g)%BigInt(room):0n,i]).sort((a,b)=>a[0]===b[0]?a[1]-b[1]:a[0]>b[0]?-1:1);
+  let left=placed-add.reduce((n,a)=>n+a,0);for(const [,i] of rest){if(left<=0)break;if(add[i]<gaps[i]){add[i]++;left--;}}
+  const pct=v=>total>0?v/total*100:0;
+  return {total,exit,placed,unplaced:exit-placed,from:{label:list[from].label,index:from,before:list[from].value,after:list[from].value-exit,beforePct:pct(list[from].value),afterPct:pct(list[from].value-exit),target:list[from].target},
+    parts:list.map((r,i)=>({label:r.label,index:i,target:r.target,gap:gaps[i],add:add[i],beforePct:pct(r.value),afterPct:pct(r.value+add[i])})).filter(p=>p.index!==from)};
+}
+function peExitView(plan,share){
+  if(!plan)return "";
+  const p1=v=>v.toFixed(1)+"%",got=plan.parts.filter(p=>p.add>0),none=plan.parts.filter(p=>p.add===0);
+  const lines=got.map(p=>`<div class="line pe-exit-line"><span><i class="ratio-alloc-dot ratio-alloc-c${p.index}"></i>${esc(p.label)}<small>${p1(p.beforePct)} → ${p1(p.afterPct)}／目标 ${p.target}%</small></span><span>+${usd(p.add/100,0)}</span></div>`).join("");
+  return `<div class="risk-sub">PE/VC 退出后，钱分到哪</div>
+<div class="risk-ctl"><label for="peExitShare">退出金额</label><output id="peExitLabel" for="peExitShare">${usd(plan.exit/100,0)}</output></div>
+<div class="risk-chips">${[10,25,50,100].map(v=>`<button type="button" data-pe-exit-share="${v}"${v===share?' aria-pressed="true"':""}>${v===100?"全部":v+"%"}</button>`).join("")}</div>
+<input class="risk-range" id="peExitShare" type="range" min="0" max="100" step="1" value="${share}" aria-label="退出金额占 PE/VC 的比例（百分比）">
+<div class="res" aria-live="polite">${lines||'<div class="line"><span>没有低于参考目标的类别</span><span>—</span></div>'}${plan.unplaced>0?`<div class="line"><span>超出各类缺口，未分配</span><span>${usd(plan.unplaced/100,0)}</span></div>`:""}<div class="line tot pe-exit-line"><span>PE/VC 剩余<small>${p1(plan.from.beforePct)} → ${p1(plan.from.afterPct)}／目标 ${plan.from.target}%</small></span><span>${usd(plan.from.after/100,0)}</span></div></div>
+${none.length?`<p class="hint pe-exit-none">不分配：${none.map(p=>esc(p.label)).join("、")}（已达到或高于参考目标）。</p>`:""}<p class="hint">算法：按各类低于参考目标的金额大小，按比例分配。只是按你设定的参考目标做的演算，不是买卖建议；未计税费、到账时间和最低申购额。</p>`;
+}
+function peExitMount(root){
+  for(const box of root?.querySelectorAll?.(".ratio-exit-plan")||[]){
+    let rows=null;try{rows=JSON.parse(box.getAttribute("data-exit-rows")||"null");}catch{}
+    const draw=share=>{const full=peExitPlan(rows,Number.MAX_SAFE_INTEGER);if(!full){box.innerHTML="";return;}
+      const s=Math.min(100,Math.max(0,Math.round(Number(share)||0))),plan=peExitPlan(rows,Math.round(full.from.before*s/100));box.dataset.share=String(s);box.innerHTML=peExitView(plan,s);};
+    if(box.dataset.mounted==="1")continue;box.dataset.mounted="1";draw(25);
+    box.addEventListener("click",e=>{const b=e.target?.closest?.("[data-pe-exit-share]");if(b)draw(b.getAttribute("data-pe-exit-share"));});
+    box.addEventListener("input",e=>{if(e.target?.id!=="peExitShare")return;const s=Number(e.target.value),full=peExitPlan(rows,Number.MAX_SAFE_INTEGER),plan=full&&peExitPlan(rows,Math.round(full.from.before*s/100));if(!plan)return;
+      // Redraw only the figures while the slider is held, so the thumb keeps its grip.
+      const fresh=document.createElement("div");fresh.innerHTML=peExitView(plan,s);box.dataset.share=String(s);
+      for(const sel of [".res","#peExitLabel",".risk-chips",".pe-exit-none"]){const a=box.querySelector(sel),b=fresh.querySelector(sel);if(a&&b)a.innerHTML=b.innerHTML;else if(a&&!b)a.remove();else if(!a&&b)box.querySelector(".res")?.after(b);}});
+  }
+}
+/* pe-exit:end */
 /* payable-forecast:start */
 // payable-forecast:v1 — a directional month-end estimate of the payable fee. Display only; the receipt stays the only source of the real figure.
 // The month in progress has not crystallized, so a loss can take back Carry it has accrued so far; earlier months cannot be taken back.
