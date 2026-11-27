@@ -1795,3 +1795,33 @@ test("two manager devices sharing one private store settle on the same marks, an
   phone.d.evergreenLabelSet("P|C", { state: "hold" }); phone.box.ghApi = async () => { throw Error("offline"); };
   assert.equal(await phone.d.evergreenSyncPush(), "failed"); assert.equal(phone.d.evergreenLabels()["P|C"].state, "hold"); assert.equal(phone.d.evergreenSyncStamps().dirty, true); assert.equal(phone.box.registered(), null);
 });
+
+test('a PE/VC exit is shared among the classes below their reference target, in proportion to the shortfall',async()=>{
+  const fs=await import('node:fs'),vm=await import('node:vm');
+  const html=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8'),box={};vm.createContext(box);
+  vm.runInContext("const esc=v=>String(v??'').replace(/[&<>\"']/g,c=>'&#'+c.charCodeAt(0)+';');const usd=(v,d=2)=>(v<0?'-$':'$')+Math.abs(Number(v)).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});",box);
+  vm.runInContext(html.slice(html.indexOf('/* pe-exit:start */'),html.indexOf('/* pe-exit:end */'))+';globalThis.P=peExitPlan;globalThis.V=peExitView;',box);
+  // Synthetic: total 1,000.00. PE/VC 400 (target 0); A 100 of 300 (short 200); B 250 of 300 (short 50); C 250 of 200 (over); D 0 of 200 (short 200).
+  const rows=[['PE/VC',40000,0],['A',10000,30],['B',25000,30],['C',25000,20],['D',0,20]],plan=box.P(rows,9000),by=Object.fromEntries(plan.parts.map(p=>[p.label,p]));
+  // 90.00 over shortfalls of 200 : 50 : 200 is 40 : 10 : 40. The class above its target takes nothing.
+  assert.deepEqual(plan.parts.map(p=>[p.label,p.add]),[['A',4000],['B',1000],['C',0],['D',4000]]);
+  assert.deepEqual([plan.total,plan.exit,plan.placed,plan.unplaced,plan.from.before,plan.from.after],[100000,9000,9000,0,40000,31000]);
+  const near=(x,y)=>assert.ok(Math.abs(x-y)<1e-9,x+' vs '+y);near(by.A.beforePct,10);near(by.A.afterPct,14);near(plan.from.afterPct,31);assert.equal(by.C.afterPct,by.C.beforePct);
+  // The whole holding fills every shortfall exactly (the shortfalls are what PE/VC and the class above target hold beyond target, so PE/VC alone never overfills).
+  const all=box.P(rows,Number.MAX_SAFE_INTEGER);assert.equal(all.exit,40000);assert.equal(all.parts.reduce((n,p)=>n+p.add,0),40000);assert.ok(all.parts.every(p=>p.add<=p.gap));assert.equal(all.unplaced,0);
+  // Cents are never lost or invented: an amount that does not divide evenly still adds up, and no class passes its shortfall.
+  for(const x of [1,2,3,7,3333,39999]){const q=box.P(rows,x);assert.equal(q.parts.reduce((n,p)=>n+p.add,0),x);assert.ok(q.parts.every(p=>Number.isInteger(p.add)&&p.add>=0&&p.add<=p.gap));}
+  assert.equal(box.P(rows,-5).exit,0);assert.equal(box.P(rows,0).parts.every(p=>p.add===0),true);
+  // With every other class at or above target there is nowhere to place it, and the plan says so instead of guessing.
+  const full=box.P([['PE/VC',10000,10],['A',60000,60],['B',30000,30]],5000);assert.deepEqual([full.placed,full.unplaced],[0,5000]);assert.match(box.V(full,50),/没有低于参考目标的类别/);assert.match(box.V(full,50),/超出各类缺口，未分配/);
+  // No plan without a PE/VC holding, with targets that do not total 100, or with malformed rows.
+  for(const bad of [null,[],[['A',1,50],['B',1,50]],[['PE/VC',0,0],['A',100,100]],[['PE/VC',100,0],['A',100,90]],[['PE/VC',1.5,0],['A',100,100]],[['PE/VC',100,0],['',100,100]],[['PE/VC',100,0],['A',-1,100]]])assert.equal(box.P(bad,10),null);
+  // The view: the amount, one line per class that receives, the classes that do not, what is left, and the plain statement of what this is.
+  const view=box.V(plan,25),text=view.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ');
+  assert.match(text,/退出金额 \$90 /);assert.match(text,/A 10\.0% → 14\.0%／目标 30% \+\$40 /);assert.match(text,/D 0\.0% → 4\.0%／目标 20% \+\$40 /);assert.doesNotMatch(text,/C \d/);
+  assert.match(text,/不分配：C（已达到或高于参考目标）。/);assert.match(text,/PE\/VC 剩余 40\.0% → 31\.0%／目标 0% \$310 /);assert.match(text,/不是买卖建议/);
+  assert.match(view,/data-pe-exit-share="25" aria-pressed="true"/);assert.equal((view.match(/aria-pressed/g)||[]).length,1);assert.match(view,/id="peExitShare" type="range" min="0" max="100" step="1" value="25"/);
+  // Wiring: the renderer hands over labels, cent values and targets only; the page mounts the calculator once and stores nothing.
+  assert.match(html,/const exitPlanData=asset&&assetGaps&&asset\.groups\.some\(g=>g\.name==='PE\/VC'&&g\.valueCents>0\)/);assert.match(html,/if\(typeof peExitMount==='function'\)peExitMount\(root\);/);
+  const blockText=html.slice(html.indexOf('/* pe-exit:start */'),html.indexOf('/* pe-exit:end */'));assert.doesNotMatch(blockText,/localStorage|fetch\(|sessionStorage/);
+});
