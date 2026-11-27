@@ -10,7 +10,7 @@
 <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAABzUlEQVR42u3bsQ2AMAwAwczDhEzKOqGlCBIgBdnxRT+BfU0Kt20/pGHNCASH4BAcgkNwCA7BITgEh+CQ4BAcgkNwCA7BITgEh+AQHBIcgkNwCA7BITgEh+AQHIJDgkNwCA7BITgEh+AQHIJDcAgOCQ7BITgEh+AQHIJDcOi2/vjBwUQyJXAEkhHNBxyxZITyAQcccMABxwIy4viAAw444IADDjjggAMOOOCAAw444IBDcAgOwQEHHHDAAQcccMABBxxwwAEHHHAIDudocDDxeWFwOEeDg4z3a4MDDjjggKMOjh82BwcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAGHQ1Y4HLLCERPH1IHCkRjH7JnCAQcccMBRB8cam4MDDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAQxWDQ3AIDsEhOFQNR/eSfG7hgAMOOOCAAw444PCq4ZCvrOAQHIJDgkNwCA7BITgEh+AQHIJDcEhwCA7BITgEh+AQHIJDcAgOwSHBITgEh+AQHIJDcAgOwSE4pEsnhtvC417hqCsAAAAASUVORK5CYII=">
-<meta name="fee-console-build" content="4.10.59">
+<meta name="fee-console-build" content="4.10.60">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -191,7 +191,7 @@ section.pane{display:none} section.pane.on{display:block}
 #p-ratio input[type=checkbox]{width:auto;margin-right:7px}#p-ratio .btn{min-height:44px;max-width:100%;white-space:normal;margin:4px 4px 4px 0}
 @media(max-width:600px){.ratio-asset-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.ratio-exposure-grid,.ratio-plan-grid{grid-template-columns:minmax(0,1fr)}#p-ratio .ratio-tools .btn{width:100%;margin-right:0}}
 @media(max-width:360px){#p-ratio th,#p-ratio td{padding:7px 3px;font-size:11px}#p-ratio th{font-size:10px}.ratio-asset-pct{font-size:21px}}
-#p-ratio .ratio-top-sum{font-size:12px;font-weight:600;margin:2px 0 4px;font-variant-numeric:tabular-nums}.ratio-holding-accounts{display:block;color:var(--ink-2);font-size:11px;line-height:1.5;margin:2px 0 4px}.ratio-stock-allocation{margin-bottom:10px}.ratio-stock-allocation h2{margin-bottom:4px}
+#p-ratio .ratio-top-sum{font-size:12px;font-weight:600;margin:2px 0 4px;font-variant-numeric:tabular-nums}.ratio-top-codes,.ratio-return-scope{display:block;color:var(--ink-2);font-size:11px;line-height:1.5;margin:2px 0 4px}.ratio-holding-accounts{display:block;color:var(--ink-2);font-size:11px;line-height:1.5;margin:2px 0 4px}.ratio-stock-allocation{margin-bottom:10px}.ratio-stock-allocation h2{margin-bottom:4px}
 .ratio-distribution-category{margin-top:12px}.ratio-distribution-category h3{font-size:12px;margin:0 0 6px}.ratio-distribution-account{padding:6px 0;border-top:1px solid var(--grid)}
 .ratio-distribution-account h4,.ratio-fund-holding{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:baseline;gap:10px;font-size:11px;line-height:1.6;margin:0;padding:4px 0}
 .ratio-distribution-account h4 span:first-child,.ratio-fund-holding-name{min-width:0;overflow-wrap:anywhere}.ratio-distribution-account h4 span:last-child,.ratio-fund-holding>span:last-child{white-space:nowrap;font-variant-numeric:tabular-nums}.ratio-distribution-account ul{list-style:none;margin:0;padding:0}
@@ -1211,7 +1211,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.10.59";
+const UI_VERSION_LABEL=" · v4.10.60";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -1990,6 +1990,8 @@ function buildRankedExposureView(input) {
   // A secondary row carries parts only when it joins different securities (owner request 2026-11-26: a leveraged
   // product beside the stock it tracks, at asset value; two ETFs the owner treats as one line).
   const parts=r=>Array.isArray(r.sourceHoldings)&&r.sourceHoldings.length>0&&r.sourceHoldings.length<=5000&&r.sourceHoldings.every(h=>object(h)&&Object.keys(h).sort().join('|')==='account|market|name|securityCode|valueUSD'&&[h.name,h.securityCode,h.market].every(text)&&input.summary.accounts.includes(h.account)&&amount(h.valueUSD)&&h.valueUSD>=0)&&unique(r.sourceHoldings.map(h=>JSON.stringify([h.account,h.securityCode,h.market])))&&Math.round(sum(r.sourceHoldings.map(h=>h.valueUSD))*100)===Math.round(r.valueUSD*100)&&JSON.stringify([...new Set(r.sourceHoldings.map(h=>h.account))].sort())===JSON.stringify(r.accounts);
+  // A joined row's own short name: plain text, short, and only on a row that really joins securities.
+  const label=r=>typeof r.label==='string'&&r.label.length>0&&r.label.length<=24&&r.label===r.label.trim()&&!/[<>&"'\u0000-\u001f]/.test(r.label);
   const joinsSecurities=r=>Array.isArray(r.sourceHoldings)&&new Set(r.sourceHoldings.map(h=>`${h?.securityCode}|${h?.market}`)).size>1&&r.sourceHoldings.some(h=>h?.securityCode===r.securityCode&&h?.market===r.market);
   const official=input?.schema==='xuan.sharesight-exposure-ranked.v2';
   check(object(input) && Object.keys(input).sort().join('|') === 'retrievedAt|retrievedAtBasis|schema|summary'
@@ -2024,7 +2026,8 @@ function buildRankedExposureView(input) {
       && (i !== 3 || text(r.securityCode) && text(r.market))
       && (r.accounts===undefined||Array.isArray(r.accounts)&&r.accounts.length>0&&r.accounts.length<=s.accounts.length&&unique(r.accounts)&&r.accounts.every(a=>s.accounts.includes(a)))
       && (r.sourceHoldings===undefined||official&&(i===2||i===3&&g.basis==='direct'&&joinsSecurities(r))&&parts(r))
-      && !Object.keys(r).some(k => !['name', 'valueUSD', 'securityCode', 'market', 'accounts', 'sourceHoldings'].includes(k))), 'RANKED_ROW');
+      && (r.label===undefined||label(r)&&i===3&&g.basis==='direct'&&joinsSecurities(r))
+      && !Object.keys(r).some(k => !['name', 'valueUSD', 'securityCode', 'market', 'accounts', 'sourceHoldings', 'label'].includes(k))), 'RANKED_ROW');
     // v1 ranks asset values. v2 secondary rows are complete-export economic
     // exposures: a leveraged product's negative residual can make these exceed
     // asset NAV. Its full-source association is recomputed before publication.
@@ -2033,7 +2036,7 @@ function buildRankedExposureView(input) {
     const directSecondary = i === 3 && g.basis === 'direct';
     check(official && i === 3 && !directSecondary || sum(g.top5.map(r => r.valueUSD)) <= g.totalValueUSD + .05, 'RANKED_TOTAL');
     return {category: g.name, totalUsd: g.totalValueUSD, ...(directSecondary ? {directOnly: true} : {}), top: g.top5.map(r => ({name: r.name,
-      ...(r.securityCode ? {securityCode: r.securityCode, market: r.market} : {}), ...(r.accounts?{accounts:[...r.accounts]}:{}), ...(r.sourceHoldings?{sourceHoldings:structuredClone(r.sourceHoldings)}:{}), valueUsd: r.valueUSD,
+      ...(r.securityCode ? {securityCode: r.securityCode, market: r.market} : {}), ...(r.accounts?{accounts:[...r.accounts]}:{}), ...(r.label?{label:r.label}:{}), ...(r.sourceHoldings?{sourceHoldings:structuredClone(r.sourceHoldings)}:{}), valueUsd: r.valueUSD,
       portfolioWeightPct: pct(r.valueUSD, s.totalValueUSD), categoryWeightPct: pct(r.valueUSD, g.totalValueUSD)}))};
   });
   if(etf){
@@ -2041,11 +2044,11 @@ function buildRankedExposureView(input) {
     check(g.basis==='direct'&&Array.isArray(rows)&&rows.length<=5&&unique(keys)&&unique(rows.map(r=>r?.name))
       &&!g.top5.some(r=>keys.includes(`${r.securityCode}|${r.market}`))
       &&unique(rows.flatMap(r=>r?.sourceHoldings?[...new Set(r.sourceHoldings.map(h=>`${h?.securityCode}|${h?.market}`))]:[`${r?.securityCode}|${r?.market}`]))
-      &&rows.every((r,n)=>object(r)&&(Object.keys(r).sort().join('|')==='accounts|market|name|securityCode|valueUSD'||Object.keys(r).sort().join('|')==='accounts|market|name|securityCode|sourceHoldings|valueUSD'&&joinsSecurities(r)&&parts(r))&&[r.name,r.securityCode,r.market].every(text)&&amount(r.valueUSD)&&r.valueUSD>=0
+      &&rows.every((r,n)=>object(r)&&(Object.keys(r).sort().join('|')==='accounts|market|name|securityCode|valueUSD'||['accounts|market|name|securityCode|sourceHoldings|valueUSD','accounts|label|market|name|securityCode|sourceHoldings|valueUSD'].includes(Object.keys(r).sort().join('|'))&&joinsSecurities(r)&&parts(r)&&(r.label===undefined||label(r)))&&[r.name,r.securityCode,r.market].every(text)&&amount(r.valueUSD)&&r.valueUSD>=0
         &&(n===0||rows[n-1].valueUSD>=r.valueUSD)
         &&Array.isArray(r.accounts)&&r.accounts.length>0&&r.accounts.length<=s.accounts.length&&unique(r.accounts)&&r.accounts.every(a=>s.accounts.includes(a)))
       &&sum(rows.map(r=>r.valueUSD))+sum(g.top5.map(r=>r.valueUSD))<=g.totalValueUSD+.05, 'RANKED_ETF');
-    groups[3].etfTop=rows.map(r=>({name:r.name,securityCode:r.securityCode,market:r.market,accounts:[...r.accounts],...(r.sourceHoldings?{sourceHoldings:structuredClone(r.sourceHoldings)}:{}),valueUsd:r.valueUSD,
+    groups[3].etfTop=rows.map(r=>({name:r.name,securityCode:r.securityCode,market:r.market,accounts:[...r.accounts],...(r.label?{label:r.label}:{}),...(r.sourceHoldings?{sourceHoldings:structuredClone(r.sourceHoldings)}:{}),valueUsd:r.valueUSD,
       portfolioWeightPct:pct(r.valueUSD,s.totalValueUSD),categoryWeightPct:pct(r.valueUSD,g.totalValueUSD)}));
   }
   const residual = s.residualETFs;
@@ -2263,12 +2266,20 @@ function createOfficialRatioSourceCore(){
   // asset value (never multiplied); index products stay ETFs. Two ETFs the owner treats as one line are one row.
   const LEVERAGED_STOCK={NVDL:['NVDA'],NVDU:['NVDA'],NVDX:['NVDA'],GGLL:['GOOGL','GOOG'],TSLL:['TSLA'],AVGX:['AVGO'],AVL:['AVGO'],VSTL:['VST'],MSFU:['MSFT'],AMZU:['AMZN'],METU:['META'],AAPU:['AAPL'],PLTU:['PLTR'],MSTU:['MSTR'],MSTX:['MSTR'],CONL:['COIN']};
   const ETF_MERGED=[['CSPX','MXUS']];
+  // Owner request (2026-11-27): the share classes of one company are one row, and a joined row carries a short
+  // name of its own, chosen by its leading security. A joined row without a name here is shown by its codes.
+  const STOCK_MERGED=[['GOOG','GOOGL']];
+  const JOINED_LABEL={GOOG:'Alphabet',GOOGL:'Alphabet',NVDA:'NVIDIA',TSLA:'Tesla',AVGO:'Broadcom',VST:'Vistra',MSFT:'Microsoft',AMZN:'Amazon',META:'Meta',AAPL:'Apple',PLTR:'Palantir',MSTR:'Strategy',COIN:'Coinbase',CSPX:'美国大中盘',MXUS:'美国大中盘'};
+  const mergedStock=r=>STOCK_MERGED.find(g=>g.includes(r.securityCode))||null;
   const leveragedStock=r=>Object.hasOwn(LEVERAGED_STOCK,r.securityCode)?LEVERAGED_STOCK[r.securityCode]:null;
   const mergedEtf=r=>ETF_MERGED.find(g=>g.includes(r.securityCode))||null;
   const holding=r=>({account:r.account,name:r.name,securityCode:r.securityCode,market:r.market,valueUSD:r.valueUSD});
   // A merged row keeps its parts only when it really joins different securities; its accounts follow its parts.
   const joined=(old,r)=>{if(!old.accounts.includes(r.account))old.accounts.push(r.account);old.accounts.sort();old.valueUSD=(cents(old.valueUSD)+cents(r.valueUSD))/100;const at=old.parts.find(h=>h.account===r.account&&h.securityCode===r.securityCode&&h.market===r.market);if(at)at.valueUSD=(cents(at.valueUSD)+cents(r.valueUSD))/100;else old.parts.push(holding(r));return old;};
-  const settled=({parts,...row})=>new Set(parts.map(h=>h.securityCode+'|'+h.market)).size>1?{...row,sourceHoldings:parts}:row;
+  const settled=({parts,...row})=>new Set(parts.map(h=>h.securityCode+'|'+h.market)).size>1?{...row,...(Object.hasOwn(JOINED_LABEL,row.securityCode)?{label:JOINED_LABEL[row.securityCode]}:{}),sourceHoldings:parts}:row;
+  // A joined row is identified by its largest security; a leveraged product leads only a row made of nothing else.
+  const led=r=>{const by=new Map(),id=h=>h.securityCode+'|'+h.market,own=r.parts.some(h=>!leveragedStock(h))?r.parts.filter(h=>!leveragedStock(h)):r.parts;for(const h of own)by.set(id(h),(by.get(id(h))||0)+cents(h.valueUSD));
+    const lead=[...own].sort((a,b)=>by.get(id(b))-by.get(id(a))||(id(a)<id(b)?-1:1))[0];return {...r,name:lead.name,securityCode:lead.securityCode,market:lead.market};};
   const BENCHMARK_EXCLUDED_BASIS='complete-official-classification-excluding-benchmark-only.v1';
   const LOOK_THROUGH_SECONDARY_BASIS='Exposure individual security direct plus ETF look-through, includes cash in class denominator';
   const benchmarkOnly=r=>r.account.replaceAll('&amp;','&')==='Citi-HK & 地产四期'&&['QQQ.NASDAQ','SPY.NYSE'].includes(r.securityCode+'.'+r.market);
@@ -2442,7 +2453,7 @@ function createOfficialRatioSourceCore(){
         const merging=i===3&&typed,late=[];
         for(const r of ranked.filter(p=>!(i===3&&typed&&ETF_TYPES.has(String(p.assetType).toLowerCase())&&!leveragedStock(p)))){
           if(merging&&leveragedStock(r)){late.push(r);continue;}
-          const suffix=i===2?evergreenName(r):null,k=suffix?JSON.stringify(['dated-fund-name',suffix]):key('',r.securityCode,r.market);
+          const suffix=i===2?evergreenName(r):null,same=merging?mergedStock(r):null,k=suffix?JSON.stringify(['dated-fund-name',suffix]):same?JSON.stringify(['merged-stock',same[0]]):key('',r.securityCode,r.market);
           const old=grouped.get(k)||{name:suffix||r.name,securityCode:r.securityCode,market:r.market,accounts:[],valueUSD:0,...(i===2?{sourceHoldings:[]}: {}),...(merging?{parts:[]}:{})};
           if(merging){grouped.set(k,joined(old,r));continue;}
           if(!old.accounts.includes(r.account))old.accounts.push(r.account);old.accounts.sort();
@@ -2450,14 +2461,14 @@ function createOfficialRatioSourceCore(){
           if(i===2)old.sourceHoldings.push({account:r.account,name:r.name,securityCode:r.securityCode,market:r.market,valueUSD:r.valueUSD});
           grouped.set(k,old);
         }
-        // The stock a leveraged product tracks is the largest directly held row with one of its codes; without one
+        // The stock a leveraged product tracks is the largest directly held row with one of its codes in it; without one
         // the product ranks under its own code.
         const direct=[...grouped.values()];
         for(const r of late){
-          const host=direct.filter(x=>leveragedStock(r).includes(x.securityCode)).sort((a,b)=>b.valueUSD-a.valueUSD||(a.securityCode+a.market<b.securityCode+b.market?-1:1))[0],k=key('',r.securityCode,r.market);
+          const host=direct.filter(x=>x.parts.some(h=>leveragedStock(r).includes(h.securityCode))).sort((a,b)=>b.valueUSD-a.valueUSD||(a.securityCode+a.market<b.securityCode+b.market?-1:1))[0],k=key('',r.securityCode,r.market);
           if(host)joined(host,r);else grouped.set(k,joined(grouped.get(k)||{name:r.name,securityCode:r.securityCode,market:r.market,accounts:[],valueUSD:0,parts:[]},r));
         }
-        const values=[...grouped.values()].map(r=>merging?settled(r):r),counts=new Map();for(const r of values)counts.set(r.name,(counts.get(r.name)||0)+1);
+        const values=[...grouped.values()].map(r=>merging?settled(led(r)):r),counts=new Map();for(const r of values)counts.set(r.name,(counts.get(r.name)||0)+1);
         top=values.map(r=>({...r,name:r.name+(counts.get(r.name)>1?' ['+r.securityCode+' · '+r.market+']':'')}));
         for(const r of top)if(r.sourceHoldings)r.sourceHoldings.sort((a,b)=>b.valueUSD-a.valueUSD||canonical(a).localeCompare(canonical(b)));
       }
@@ -2475,10 +2486,7 @@ function createOfficialRatioSourceCore(){
         const set=mergedEtf(r),k=set?JSON.stringify(['merged-etf',set[0]]):key('',r.securityCode,r.market);
         grouped.set(k,joined(grouped.get(k)||{name:r.name,securityCode:r.securityCode,market:r.market,accounts:[],valueUSD:0,parts:[]},r));
       }
-      // A merged row is named after its largest security.
-      const values=[...grouped.values()].map(r=>{const by=new Map();for(const h of r.parts)by.set(h.securityCode+'|'+h.market,(by.get(h.securityCode+'|'+h.market)||0)+cents(h.valueUSD));
-        const lead=[...r.parts].sort((a,b)=>by.get(b.securityCode+'|'+b.market)-by.get(a.securityCode+'|'+a.market)||(a.securityCode+a.market<b.securityCode+b.market?-1:1))[0];
-        const row=settled({...r,name:lead.name,securityCode:lead.securityCode,market:lead.market});if(row.sourceHoldings)row.sourceHoldings.sort((a,b)=>b.valueUSD-a.valueUSD||canonical(a).localeCompare(canonical(b)));return row;}),counts=new Map();for(const r of values)counts.set(r.name,(counts.get(r.name)||0)+1);
+      const values=[...grouped.values()].map(r=>{const row=settled(led(r));if(row.sourceHoldings)row.sourceHoldings.sort((a,b)=>b.valueUSD-a.valueUSD||canonical(a).localeCompare(canonical(b)));return row;}),counts=new Map();for(const r of values)counts.set(r.name,(counts.get(r.name)||0)+1);
       etfTop=values.map(r=>({...r,name:r.name+(counts.get(r.name)>1?' ['+r.securityCode+' · '+r.market+']':'')})).sort((a,b)=>b.valueUSD-a.valueUSD||(a.name<b.name?-1:a.name>b.name?1:0)).slice(0,5);
     }
     const total=sum(rows),residual=sum(rows.filter(r=>r.ownership==='Residual'));
@@ -2694,28 +2702,55 @@ function createAggregateReturnsCore(){
  // Only current ranked entries are eligible. The historical return scope can
  // retain sold members of the same exact product; no display-name fuzzy join.
  const topId=t=>canon([t.category,t.name]),ETF_TOP='二级市场ETF';
- function topTargets(exposure,companyTop=null){
+ function topTargets(exposure,companyTop=null,wholeRows=false){
   const out=[];
+  // merged-row-return:v1 (2026-11-27). A secondary row that joins different securities has a return only where the
+  // provider itself totals exactly those securities (they share one category of the owner's custom group). Such a
+  // row's target is the whole row (wholeRows: true for all, or the ids of the rows concerned). Any other joined row
+  // targets its own security alone and shows that security's native return. Nothing is blended here.
+  const own=(r,category)=>!r.sourceHoldings||wholeRows===true||wholeRows instanceof Set&&wholeRows.has(topId({category,name:r.name}))?r.sourceHoldings:r.sourceHoldings.filter(h=>h.securityCode===r.securityCode&&h.market===r.market);
   const clean=m=>({account:m.account.replaceAll('&amp;','&'),market:m.market,securityCode:m.securityCode});
   const unique=xs=>[...new Map(xs.map(m=>[memberKey(m),m])).values()].sort((a,b)=>memberKey(a).localeCompare(memberKey(b)));
   // A secondary class declared 'direct' ranks actually held securities, so its
   // targets are those same rows. Company look-through targets are legacy only.
   const directSecondary=exposure.summary.classes[3]?.basis==='direct';
   for(const g of exposure.summary.classes.slice(0,directSecondary?4:3))for(const r of g.top5){
-   const members=r.sourceHoldings?.map(clean)||r.accounts?.map(account=>clean({...r,account}));
+   const members=(g.name==='二级市场'?own(r,g.name):r.sourceHoldings)?.map(clean)||r.accounts?.map(account=>clean({...r,account}));
    if(!members?.length)fail();
    out.push({category:g.name,name:r.name,members:unique(members),basis:g.name==='二级市场'?'direct-holdings-only':'fund-holding'});
   }
   // The secondary class's own ETF ranking, when the summary carries one.
   if(directSecondary)for(const r of exposure.summary.secondaryEtfTop5||[]){
    if(!r.accounts?.length)fail();
-   out.push({category:ETF_TOP,name:r.name,members:unique(r.sourceHoldings?.map(clean)||r.accounts.map(account=>clean({...r,account}))),basis:'direct-holdings-only'});
+   out.push({category:ETF_TOP,name:r.name,members:unique(own(r,ETF_TOP)?.map(clean)||r.accounts.map(account=>clean({...r,account}))),basis:'direct-holdings-only'});
   }
   if(companyTop&&!directSecondary)for(const r of companyTop){
    const members=r.constituents.filter(c=>c.product===null||c.basis==='product-asset-replacement').map(clean);
    out.push({category:'二级市场',name:r.name,members:unique(members),basis:'direct-holdings-only'});
   }
   return out;
+ }
+ // The joined rows whose target differs between the two forms, as [own-security target, whole-row target] pairs.
+ const joinedTargets=(exposure,companyTop)=>{const own=topTargets(exposure,companyTop,false),whole=topTargets(exposure,companyTop,true);return own.map((t,i)=>[t,whole[i]]).filter(([a,b])=>!same(a,b));};
+ // Reading side. Each joined row is expected in the form the stored targets actually use for it; `use` then
+ // checks the stored targets against exactly that expectation, so anything else is still refused. Returns the ids
+ // of the rows whose return is the whole row's, for the page to word the others' scope.
+ function acceptTop(exposure,companyTop,actualTargets,use){
+  const wholeRows=new Set(),actual=Array.isArray(actualTargets)?actualTargets:[];
+  for(const [own,whole] of joinedTargets(exposure,companyTop)){
+   const stored=actual.find(t=>t&&t.category===own.category&&t.name===own.name);
+   if(stored&&same(stored.members,whole.members))wholeRows.add(topId(own));
+  }
+  return {wholeRows,value:use(topTargets(exposure,companyTop,wholeRows))};
+ }
+ // Writing side. Ask for every joined row whole; a row the provider gave no total for, in either period, is asked
+ // for again as its own security. `run` is the pure performance build for a given list of targets.
+ function settleTop(exposure,run){
+  const joined=joinedTargets(exposure,null),first=run(topTargets(exposure,null,true));
+  if(!joined.length)return first;
+  const lost=new Set();for(const r of first?.topHoldings?.reports||[])for(const u of r.unavailable||[])lost.add(topId(u.target));
+  const whole=new Set(joined.map(([own])=>topId(own)).filter(id=>!lost.has(id)));
+  return whole.size===joined.length?first:run(topTargets(exposure,null,whole));
  }
  function datedName(r){
   for(const value of [r.securityCode,r.name]){
@@ -2849,7 +2884,7 @@ function createAggregateReturnsCore(){
   const note=stockScope(item.scope)?'股票市场小计只包含四个股票分类的历史成员，不含现金账户、防御资产或主题投资。':cash.includes('unknown')?'现金账户收益覆盖未获来源确认。':cash.includes('mixed')||cash.length>1?'现金收益覆盖分别保留各期原报表设置。':cash[0]==='included'?'含现金账户收益。':cash[0]==='excluded'?'未含现金账户收益。':'';
   return '<details class="ratio-returns"><summary>收益率</summary><div class="ratio-return-pair">'+rows+'</div><p class="ratio-return-scope">'+esc(accounts.join(' · '))+' · USD · Sharesight 原生口径</p><p>只显示组合或分类原生收益；已平仓计入历史，不用当前市值权重或穿透敞口重算。'+note+'</p></details>';
  }
- return {SCHEMA,build,validateInceptionBindings,select,render:renderAggregate,scopeKey,oneYearBefore,topTargets,buildTop,selectTop,renderTop,renderCompact,renderInline,datedName,ETF_TOP,HOLDING_RETURNS,selectHolding,renderHolding};
+ return {SCHEMA,build,validateInceptionBindings,select,render:renderAggregate,scopeKey,oneYearBefore,topTargets,topId,acceptTop,settleTop,buildTop,selectTop,renderTop,renderCompact,renderInline,datedName,ETF_TOP,HOLDING_RETURNS,selectHolding,renderHolding};
 }
 function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
   const companyCore=createFeeCompanyExposureCore(),returnsCore=createAggregateReturnsCore();
@@ -2944,7 +2979,8 @@ function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
     if(Object.hasOwn(m,'performance')){
       const apiBook=m.book?.browserEvidence?.transport==='official-api';
       if(!official||m.performance.asOf!==m.sourceDates.performance||m.performance.asOf>m.report.targetDate||apiBook!==(m.performance.transport==='official-api'))fail();
-      returnsCore.build(m.performance,{expectedAccounts:m.exposure.summary.accounts.map(x=>x.replaceAll('&amp;','&')),expectedAsOf:m.sourceDates.performance,...(m.companyExposure?{topTargets:returnsCore.topTargets(m.exposure,companyCore.validate(m.companyExposure,m.exposure,m.book?.sourceSha256).top)}:apiBook?{topTargets:returnsCore.topTargets(m.exposure)}:{})});
+      const checked=topTargets=>returnsCore.build(m.performance,{expectedAccounts:m.exposure.summary.accounts.map(x=>x.replaceAll('&amp;','&')),expectedAsOf:m.sourceDates.performance,...(topTargets?{topTargets}:{})});
+      if(m.companyExposure||apiBook)returnsCore.acceptTop(m.exposure,m.companyExposure?companyCore.validate(m.companyExposure,m.exposure,m.book?.sourceSha256).top:null,m.performance.topHoldings?.targets,checked);else checked(null);
     }
     const scope=await digest(m.exposure.summary.accounts.map(x=>x.replaceAll('&amp;','&')).sort());
     if(scope!==exposureCore.ALL_TOGETHER_SCOPE_SHA256)fail();
@@ -3069,7 +3105,7 @@ function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
   function renderRatioModel(m){
     const view=exposureCore.buildRankedExposureView(m.exposure),classification=m.classificationSummary;
     const performance=m.performance?returnsCore.build(m.performance,{expectedAccounts:m.exposure.summary.accounts.map(x=>x.replaceAll('&amp;','&')),expectedAsOf:m.sourceDates.performance}):null;
-    if(performance?.topHoldings)returnsCore.buildTop(m.performance.topHoldings,m.performance,returnsCore.topTargets(m.exposure,m.companyExposure?companyCore.validate(m.companyExposure,m.exposure,m.book?.sourceSha256).top:null));
+    const topScope=performance?.topHoldings?returnsCore.acceptTop(m.exposure,m.companyExposure?companyCore.validate(m.companyExposure,m.exposure,m.book?.sourceSha256).top:null,m.performance.topHoldings.targets,t=>returnsCore.buildTop(m.performance.topHoldings,m.performance,t)):null;
     const topReturns=(category,name)=>returnsCore.renderTop(returnsCore.selectTop(performance,{category,name}));
     const returns=(name,parent=null)=>performance?returnsCore.renderInline(returnsCore.select(performance,{type:parent?'fund-strategy':name==='All Together'?'portfolio':'classification',name,parent})):'';
     // 现金类 is the 防御资产 holdings plus the cash accounts, and the provider reports no return covering both.
@@ -3104,19 +3140,24 @@ function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
     const overview=asset?'<section class="card ratio-asset-overview ratio-six-allocation"><h2>资产配置总览</h2><p>All Together · 10账户 · USD · 资产分类截至 '+esc(classification.asOf)+'</p><p class="ratio-overview-units">分类下方为当前占比／参考目标；市值下方括号为目标差额。</p><table class="ratio-overview-table"><thead><tr><th>分类</th><th>市值（USD）</th><th>收益率</th></tr></thead><tbody>'+assetRows+'</tbody></table>'+totalSummary+'<div class="ratio-overview-disclosures">'+commonReturnNotes+'<details class="ratio-asset-notes"><summary>分类、账户与参考目标</summary><p>六类互斥，按同日直接资产市值归类。股票市场仅含美国底仓、美国科技、非美发达、新兴市场；现金防御类为 Cash Accounts 加全部防御资产，主题投资单列。穿透和杠杆敞口不另加总。</p>'+(benchmarkExcluded?'<p>Citi-HK &amp; 地产四期中的 QQQ／SPY 仅作基准取值，已从投资资产、占比分母及穿透中排除；其他账户的真实持仓保留。</p>':'')+'<p>参考目标合计100%。目标差额＝本模块基数×目标比例−当前市值；尾数美分按最大余数分配。正号表示低于目标，负号表示高于目标；仅作配置比较，未计预算、资本承诺或交易限制。PE/VC目标0%不代表卖出指令。</p><p>黄金（GLD）：'+money(Math.round(classification.gold.valueUSD*100))+'；已计入所属分类，不另加总。</p>'+assetAccounts+(performance?'<section class="ratio-secondary-return-supplement"><h3>二级市场整体收益</h3><p>此范围含股票、防御和主题投资，不等于上方股票市场子集；现金收益沿用原报表设置。</p>'+returns('二级市场')+'</section><p class="ratio-return-date">收益截至 '+esc(performance.asOf)+'；收益口径见本页统一说明。</p>':'')+'</details></div></section>':legacyOverview;
     // Owner request 2026-11-15: the stock and ETF rankings show the security code, not the company name. The name stays
     // as the hover title and remains the key of the row's return. Two rows with one code are told apart by market.
-    const shown=(r,rows,byCode)=>{if(!(byCode&&r.securityCode))return r.name;
+    const shown=(r,rows,byCode)=>{if(!(byCode&&r.securityCode))return r.name;if(r.label)return r.label;
       // top-merged:v1 (owner request 2026-11-26) — a row that joins different securities names each of them, its own first.
       const codes=[...new Set([r.securityCode,...(r.sourceHoldings||[]).map(h=>h.securityCode)])];
       return codes.length>1?codes.join('＋'):r.securityCode+(rows.filter(x=>x.securityCode===r.securityCode).length>1?' · '+r.market:'');};
     // top-sum:v1 (owner request 2026-11-26) — what the listed rows add up to, and their share of the class.
     const topSum=(rows,g)=>{const c=rows.reduce((n,r)=>n+Math.round(r.valueUsd*100),0);return rows.length&&g.totalUsd>0?'<p class="ratio-top-sum">'+(rows.length===5?'前五':'共 '+rows.length+' 项')+'合计 '+money(c)+' · 占本类 '+(c/Math.round(g.totalUsd*100)*100).toFixed(2)+'%</p>':'';};
-    const table=(rows,category,byCode=false)=>'<table><thead><tr><th>名称</th><th>USD金额</th><th>占总资产／占本类资产</th></tr></thead><tbody>'+rows.map((r,i)=>'<tr><td data-security-code="'+esc(r.securityCode||'')+'"'+(byCode&&r.securityCode?' title="'+esc(r.name)+'"':'')+'>'+(i+1)+'. '+esc(shown(r,rows,byCode))+(r.accounts?.length?'<span class="ratio-holding-accounts">'+esc(r.accounts.join(' · '))+'</span>':'')+(r.sourceHoldings?.length>1?'<details><summary>合并持仓 · '+r.sourceHoldings.length+'笔</summary><ul>'+r.sourceHoldings.map(h=>'<li>'+esc(h.securityCode)+' · '+money(Math.round(h.valueUSD*100))+'<span class="ratio-holding-accounts">'+esc(h.account)+'</span></li>').join('')+'</ul></details>':'')+topReturns(category,r.name)+'</td><td>'+money(Math.round(r.valueUsd*100))+'</td><td>'+r.portfolioWeightPct.toFixed(2)+'%／'+r.categoryWeightPct.toFixed(2)+'%</td></tr>').join('')+'</tbody></table>';
+    // joined-label:v1 (owner request 2026-11-27) — a joined row that has a name shows it, with its codes on a second line.
+    const joinedCodes=(r,byCode)=>byCode&&r.label&&r.sourceHoldings?'<span class="ratio-top-codes">'+esc([...new Set([r.securityCode,...r.sourceHoldings.map(h=>h.securityCode)])].join(' · '))+'</span>':'';
+    // merged-row-return:v1 — a merged row's return is its own security's; the row says so and names what is left out.
+    const returnScope=(r,byCode,category)=>{const others=byCode&&r.securityCode&&topScope&&!topScope.wholeRows.has(returnsCore.topId({category,name:r.name}))?[...new Set((r.sourceHoldings||[]).map(h=>h.securityCode))].filter(c=>c!==r.securityCode):[];
+      return others.length&&performance?.topHoldings?'<span class="ratio-return-scope">下方收益率仅为 '+esc(r.securityCode)+'，不含 '+esc(others.join('、'))+'</span>':'';};
+    const table=(rows,category,byCode=false)=>'<table><thead><tr><th>名称</th><th>USD金额</th><th>占总资产／占本类资产</th></tr></thead><tbody>'+rows.map((r,i)=>'<tr><td data-security-code="'+esc(r.securityCode||'')+'"'+(byCode&&r.securityCode?' title="'+esc(r.name)+'"':'')+'>'+(i+1)+'. '+esc(shown(r,rows,byCode))+joinedCodes(r,byCode)+(r.accounts?.length?'<span class="ratio-holding-accounts">'+esc(r.accounts.join(' · '))+'</span>':'')+(r.sourceHoldings?.length>1?'<details><summary>合并持仓 · '+r.sourceHoldings.length+'笔</summary><ul>'+r.sourceHoldings.map(h=>'<li>'+esc(h.securityCode)+' · '+money(Math.round(h.valueUSD*100))+'<span class="ratio-holding-accounts">'+esc(h.account)+'</span></li>').join('')+'</ul></details>':'')+returnScope(r,byCode,category)+topReturns(category,r.name)+'</td><td>'+money(Math.round(r.valueUsd*100))+'</td><td>'+r.portfolioWeightPct.toFixed(2)+'%／'+r.categoryWeightPct.toFixed(2)+'%</td></tr>').join('')+'</tbody></table>';
     // A snapshot whose secondary class is declared 'direct' ranks actually held
     // securities at asset value. Company look-through is rendered for older
     // snapshots only; it never replaces a direct ranking.
     const directSecondary=view.groups[3].directOnly===true;
     const groups=view.groups.map((g,i)=>'<section><h3>'+esc(g.category)+(i===3&&!directSecondary?(company?.top?' · 公司经济敞口前五':' · 原证券口径前五'):i===3&&g.etfTop?' · 股票前五':' · 持仓前五')+'</h3><p>Exposure截至 '+esc(view.valuationDate)+' · 本类资产 '+money(Math.round(g.totalUsd*100))+'</p>'+(i===3&&!directSecondary&&company?.top?companyCore.render(m.companyExposure,m.exposure,b?.sourceSha256,r=>topReturns('二级市场',r.name)):topSum(g.top,g)+table(g.top,g.category,i===3&&directSecondary))+'</section>'+(i===3&&directSecondary&&g.etfTop?'<section><h3>'+esc(g.category)+' · ETF前五</h3><p>Exposure截至 '+esc(view.valuationDate)+' · 本类资产 '+money(Math.round(g.totalUsd*100))+'</p>'+(g.etfTop.length?topSum(g.etfTop,g)+table(g.etfTop,returnsCore.ETF_TOP,true):'<p>本类暂无 ETF 持仓。</p>')+'</section>':'')).join('');
-    const companyStatus=directSecondary?'<p class="ratio-key-status">四类均按实际持有的证券或基金市值排名；'+(view.groups[3].etfTop?'二级市场按 Sharesight 资产类型分列股票前五与ETF前五（两者都计入本类资产）':'二级市场前五不含ETF（ETF仍计入本类资产）')+'，不做ETF穿透、不乘杠杆倍数。个股杠杆产品按自身市值并入所跟踪的股票；CSPX 与 MXUS 合并为一行。</p>':company?.top?'<p class="ratio-key-status">公司经济敞口含显式杠杆，比例可能超过100%；不改变总资产、类别资产及管理费。</p>':company?companyCore.render(m.companyExposure,m.exposure,b?.sourceSha256):'<p class="ratio-key-status">旧快照仅有证券前五，未由同份完整原件重算公司排名；不猜测合并后的前五。</p>';
+    const companyStatus=directSecondary?'<p class="ratio-key-status">四类均按实际持有的证券或基金市值排名；'+(view.groups[3].etfTop?'二级市场按 Sharesight 资产类型分列股票前五与ETF前五（两者都计入本类资产）':'二级市场前五不含ETF（ETF仍计入本类资产）')+'，不做ETF穿透、不乘杠杆倍数。同一公司的不同股份类别合并为一行，其个股杠杆产品按自身市值并入；CSPX 与 MXUS 合并为一行。</p>':company?.top?'<p class="ratio-key-status">公司经济敞口含显式杠杆，比例可能超过100%；不改变总资产、类别资产及管理费。</p>':company?companyCore.render(m.companyExposure,m.exposure,b?.sourceSha256):'<p class="ratio-key-status">旧快照仅有证券前五，未由同份完整原件重算公司排名；不猜测合并后的前五。</p>';
     const exposure='<section class="card sharesight-exposure"><h2>All Together · 四类前五</h2>'+companyStatus+groups+'</section>';
     const stockGaps=a?targetGaps(a.totalCents,a.categories):null;
     const rows=a?a.categories.map((c,i)=>'<tr><td>'+esc(c.label)+'</td><td>'+preciseUsd(c.valueCents)+targetGap(stockGaps?.[i],'仅 IB-HK 四类股票市值合计')+'</td><td>'+(a.totalCents>0?(c.valueCents/a.totalCents*100).toFixed(2)+'%':'—')+'／'+c.targetPct+'%</td></tr>').join(''):'';
@@ -3200,7 +3241,7 @@ function verifyBrowserSourceAssociations(raw,input,{scopeHash,now=new Date()}={}
     const core=createAggregateReturnsCore(),performance=raw.performance;
     // Native returns retain the owner's accepted small benchmark positions.
     // Membership-derived disclosure does not change allocation exclusions.
-    core.build(performance,{expectedAccounts:raw.accounts,expectedAsOf:performance?.asOf,topTargets:core.topTargets(input.exposure,facts.companyExposure?createFeeCompanyExposureCore().validate(facts.companyExposure,input.exposure,input.book.sourceSha256).top:undefined)});
+    core.acceptTop(input.exposure,facts.companyExposure?createFeeCompanyExposureCore().validate(facts.companyExposure,input.exposure,input.book.sourceSha256).top:undefined,performance?.topHoldings?.targets,topTargets=>core.build(performance,{expectedAccounts:raw.accounts,expectedAsOf:performance?.asOf,topTargets}));
     core.validateInceptionBindings(performance,raw.allocation.classification.positions,{now});
     const captured=time(raw.performanceCapturedAt),clock=now.getTime(),age=hkAge(clock,performance.asOf);
     if(performance.asOf>facts.asOf||age<0||age>4||clock<captured||clock-captured>36*3600000||createOfficialRatioSourceCore().canonical(input.performance)!==createOfficialRatioSourceCore().canonical(performance))fail();
@@ -4473,7 +4514,10 @@ function styleRatioReport(root){
           const line=make('span','ratio-holding-fullname');line.textContent=fullName;line.setAttribute('hidden','');card.append(line);
           name.classList.add('ratio-holding-tap');name.setAttribute('role','button');name.setAttribute('tabindex','0');name.setAttribute('aria-expanded','false');
         }
+        // joined-label:v1 — a joined row's codes sit under its name; the note on its return's scope follows the accounts.
+        const codes=nameCell.querySelector('.ratio-top-codes');if(codes)card.append(codes);
         const accounts=nameCell.querySelector('.ratio-holding-accounts');if(accounts)card.append(accounts);
+        const scopeNote=nameCell.querySelector('.ratio-return-scope');if(scopeNote)card.append(scopeNote);
         const weights=make('dl','ratio-holding-weights'),values=weightCell.textContent.split('／'),weightLabels=labels[2].split('／');
         for(let i=0;i<2;i++){
           const item=make('div'),label=make('dt'),value=make('dd');

@@ -202,28 +202,55 @@ export function createAggregateReturnsCore(){
  // Only current ranked entries are eligible. The historical return scope can
  // retain sold members of the same exact product; no display-name fuzzy join.
  const topId=t=>canon([t.category,t.name]),ETF_TOP='二级市场ETF';
- function topTargets(exposure,companyTop=null){
+ function topTargets(exposure,companyTop=null,wholeRows=false){
   const out=[];
+  // merged-row-return:v1 (2026-11-27). A secondary row that joins different securities has a return only where the
+  // provider itself totals exactly those securities (they share one category of the owner's custom group). Such a
+  // row's target is the whole row (wholeRows: true for all, or the ids of the rows concerned). Any other joined row
+  // targets its own security alone and shows that security's native return. Nothing is blended here.
+  const own=(r,category)=>!r.sourceHoldings||wholeRows===true||wholeRows instanceof Set&&wholeRows.has(topId({category,name:r.name}))?r.sourceHoldings:r.sourceHoldings.filter(h=>h.securityCode===r.securityCode&&h.market===r.market);
   const clean=m=>({account:m.account.replaceAll('&amp;','&'),market:m.market,securityCode:m.securityCode});
   const unique=xs=>[...new Map(xs.map(m=>[memberKey(m),m])).values()].sort((a,b)=>memberKey(a).localeCompare(memberKey(b)));
   // A secondary class declared 'direct' ranks actually held securities, so its
   // targets are those same rows. Company look-through targets are legacy only.
   const directSecondary=exposure.summary.classes[3]?.basis==='direct';
   for(const g of exposure.summary.classes.slice(0,directSecondary?4:3))for(const r of g.top5){
-   const members=r.sourceHoldings?.map(clean)||r.accounts?.map(account=>clean({...r,account}));
+   const members=(g.name==='二级市场'?own(r,g.name):r.sourceHoldings)?.map(clean)||r.accounts?.map(account=>clean({...r,account}));
    if(!members?.length)fail();
    out.push({category:g.name,name:r.name,members:unique(members),basis:g.name==='二级市场'?'direct-holdings-only':'fund-holding'});
   }
   // The secondary class's own ETF ranking, when the summary carries one.
   if(directSecondary)for(const r of exposure.summary.secondaryEtfTop5||[]){
    if(!r.accounts?.length)fail();
-   out.push({category:ETF_TOP,name:r.name,members:unique(r.sourceHoldings?.map(clean)||r.accounts.map(account=>clean({...r,account}))),basis:'direct-holdings-only'});
+   out.push({category:ETF_TOP,name:r.name,members:unique(own(r,ETF_TOP)?.map(clean)||r.accounts.map(account=>clean({...r,account}))),basis:'direct-holdings-only'});
   }
   if(companyTop&&!directSecondary)for(const r of companyTop){
    const members=r.constituents.filter(c=>c.product===null||c.basis==='product-asset-replacement').map(clean);
    out.push({category:'二级市场',name:r.name,members:unique(members),basis:'direct-holdings-only'});
   }
   return out;
+ }
+ // The joined rows whose target differs between the two forms, as [own-security target, whole-row target] pairs.
+ const joinedTargets=(exposure,companyTop)=>{const own=topTargets(exposure,companyTop,false),whole=topTargets(exposure,companyTop,true);return own.map((t,i)=>[t,whole[i]]).filter(([a,b])=>!same(a,b));};
+ // Reading side. Each joined row is expected in the form the stored targets actually use for it; `use` then
+ // checks the stored targets against exactly that expectation, so anything else is still refused. Returns the ids
+ // of the rows whose return is the whole row's, for the page to word the others' scope.
+ function acceptTop(exposure,companyTop,actualTargets,use){
+  const wholeRows=new Set(),actual=Array.isArray(actualTargets)?actualTargets:[];
+  for(const [own,whole] of joinedTargets(exposure,companyTop)){
+   const stored=actual.find(t=>t&&t.category===own.category&&t.name===own.name);
+   if(stored&&same(stored.members,whole.members))wholeRows.add(topId(own));
+  }
+  return {wholeRows,value:use(topTargets(exposure,companyTop,wholeRows))};
+ }
+ // Writing side. Ask for every joined row whole; a row the provider gave no total for, in either period, is asked
+ // for again as its own security. `run` is the pure performance build for a given list of targets.
+ function settleTop(exposure,run){
+  const joined=joinedTargets(exposure,null),first=run(topTargets(exposure,null,true));
+  if(!joined.length)return first;
+  const lost=new Set();for(const r of first?.topHoldings?.reports||[])for(const u of r.unavailable||[])lost.add(topId(u.target));
+  const whole=new Set(joined.map(([own])=>topId(own)).filter(id=>!lost.has(id)));
+  return whole.size===joined.length?first:run(topTargets(exposure,null,whole));
  }
  function datedName(r){
   for(const value of [r.securityCode,r.name]){
@@ -357,5 +384,5 @@ export function createAggregateReturnsCore(){
   const note=stockScope(item.scope)?'股票市场小计只包含四个股票分类的历史成员，不含现金账户、防御资产或主题投资。':cash.includes('unknown')?'现金账户收益覆盖未获来源确认。':cash.includes('mixed')||cash.length>1?'现金收益覆盖分别保留各期原报表设置。':cash[0]==='included'?'含现金账户收益。':cash[0]==='excluded'?'未含现金账户收益。':'';
   return '<details class="ratio-returns"><summary>收益率</summary><div class="ratio-return-pair">'+rows+'</div><p class="ratio-return-scope">'+esc(accounts.join(' · '))+' · USD · Sharesight 原生口径</p><p>只显示组合或分类原生收益；已平仓计入历史，不用当前市值权重或穿透敞口重算。'+note+'</p></details>';
  }
- return {SCHEMA,build,validateInceptionBindings,select,render:renderAggregate,scopeKey,oneYearBefore,topTargets,buildTop,selectTop,renderTop,renderCompact,renderInline,datedName,ETF_TOP,HOLDING_RETURNS,selectHolding,renderHolding};
+ return {SCHEMA,build,validateInceptionBindings,select,render:renderAggregate,scopeKey,oneYearBefore,topTargets,topId,acceptTop,settleTop,buildTop,selectTop,renderTop,renderCompact,renderInline,datedName,ETF_TOP,HOLDING_RETURNS,selectHolding,renderHolding};
 }
