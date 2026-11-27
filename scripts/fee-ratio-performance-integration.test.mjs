@@ -417,6 +417,13 @@ test('missing or invalid comparison basis yields a dash without weakening model 
  const zero=model([0,0,0,0,0,0],[0,0,0,0]),html=core.render(zero);assert.doesNotMatch(html,/NaN|Infinity/);assert.equal(gaps(html).length,0);
  const negative=model();negative.classificationSummary.assetAllocation.groups[0].valueCents=-1;assert.throws(()=>core.render(negative),/RATIO_MANAGER_REFUSED/);
 });
+test('each stock class names the owner\'s reference ETFs under it, as a label only',()=>{
+ const html=core.render(model()),stock=table(html,'ratio-stock-table');
+ for(const [label,codes]of [['美国底仓','MXUS · USSC'],['美国科技','EQAC'],['非美发达','EXUS'],['新兴市场','EIMI']])assert.ok(stock.includes('<td>'+label+'<span class="ratio-stock-ref">'+codes+'</span></td>'),label);
+ assert.equal(stock.match(/class="ratio-stock-ref"/g).length,4);assert.match(html,/<\/table><p class="ratio-stock-ref-note">分类下方小字是你为该类设定的参考 ETF，仅作标注。<\/p>/);
+ // The label changes no figure: amounts, gaps and percentages are what they were without it.
+ assert.equal(stock.replace(/<span class="ratio-stock-ref">[^<]*<\/span>/g,'').includes('ratio-stock-ref'),false);
+});
 test('stock currency is in header and exact current values remain above target differences',()=>{
  const html=core.render(model()),stock=table(html,'ratio-stock-table');
  assert.match(stock,/<th>当前市值（USD）<\/th>/);
