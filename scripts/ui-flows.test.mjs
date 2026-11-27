@@ -1800,7 +1800,7 @@ test('a PE/VC exit is shared among the classes below their reference target, in 
   const fs=await import('node:fs'),vm=await import('node:vm');
   const html=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8'),box={};vm.createContext(box);
   vm.runInContext("const esc=v=>String(v??'').replace(/[&<>\"']/g,c=>'&#'+c.charCodeAt(0)+';');const usd=(v,d=2)=>(v<0?'-$':'$')+Math.abs(Number(v)).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});",box);
-  vm.runInContext(html.slice(html.indexOf('/* pe-exit:start */'),html.indexOf('/* pe-exit:end */'))+';globalThis.P=peExitPlan;globalThis.V=peExitView;',box);
+  vm.runInContext(html.slice(html.indexOf('/* pe-exit:start */'),html.indexOf('/* pe-exit:end */'))+';globalThis.P=peExitPlan;globalThis.V=peExitView;globalThis.S=peExitShare;',box);
   // Synthetic: total 1,000.00. PE/VC 400 (target 0); A 100 of 300 (short 200); B 250 of 300 (short 50); C 250 of 200 (over); D 0 of 200 (short 200).
   const rows=[['PE/VC',40000,0],['A',10000,30],['B',25000,30],['C',25000,20],['D',0,20]],plan=box.P(rows,9000),by=Object.fromEntries(plan.parts.map(p=>[p.label,p]));
   // 90.00 over shortfalls of 200 : 50 : 200 is 40 : 10 : 40. The class above its target takes nothing.
@@ -1813,14 +1813,21 @@ test('a PE/VC exit is shared among the classes below their reference target, in 
   for(const x of [1,2,3,7,3333,39999]){const q=box.P(rows,x);assert.equal(q.parts.reduce((n,p)=>n+p.add,0),x);assert.ok(q.parts.every(p=>Number.isInteger(p.add)&&p.add>=0&&p.add<=p.gap));}
   assert.equal(box.P(rows,-5).exit,0);assert.equal(box.P(rows,0).parts.every(p=>p.add===0),true);
   // With every other class at or above target there is nowhere to place it, and the plan says so instead of guessing.
-  const full=box.P([['PE/VC',10000,10],['A',60000,60],['B',30000,30]],5000);assert.deepEqual([full.placed,full.unplaced],[0,5000]);assert.match(box.V(full,50),/没有低于参考目标的类别/);assert.match(box.V(full,50),/超出各类缺口，未分配/);
+  const full=box.P([['PE/VC',10000,10],['A',60000,60],['B',30000,30]],5000);assert.deepEqual([full.placed,full.unplaced],[0,5000]);assert.match(box.V(full),/没有低于参考目标的类别/);assert.match(box.V(full),/超出各类缺口，未分配/);
   // No plan without a PE/VC holding, with targets that do not total 100, or with malformed rows.
   for(const bad of [null,[],[['A',1,50],['B',1,50]],[['PE/VC',0,0],['A',100,100]],[['PE/VC',100,0],['A',100,90]],[['PE/VC',1.5,0],['A',100,100]],[['PE/VC',100,0],['',100,100]],[['PE/VC',100,0],['A',-1,100]]])assert.equal(box.P(bad,10),null);
-  // The view: the amount, one line per class that receives, the classes that do not, what is left, and the plain statement of what this is.
-  const view=box.V(plan,25),text=view.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ');
-  assert.match(text,/退出金额 \$90 /);assert.match(text,/A 10\.0% → 14\.0%／目标 30% \+\$40 /);assert.match(text,/D 0\.0% → 4\.0%／目标 20% \+\$40 /);assert.doesNotMatch(text,/C \d/);
-  assert.match(text,/不分配：C（已达到或高于参考目标）。/);assert.match(text,/PE\/VC 剩余 40\.0% → 31\.0%／目标 0% \$310 /);assert.match(text,/不是买卖建议/);
-  assert.match(view,/data-pe-exit-share="25" aria-pressed="true"/);assert.equal((view.match(/aria-pressed/g)||[]).length,1);assert.match(view,/id="peExitShare" type="range" min="0" max="100" step="1" value="25"/);
+  // The view: an amount field, the share buttons, one line per class that receives, the classes that do not, and what is left.
+  const view=box.V(plan),text=view.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ');
+  assert.match(view,/<input id="peExitAmount" type="text" inputmode="numeric" autocomplete="off" value="90"/);assert.doesNotMatch(view,/type="range"/);
+  assert.match(text,/A 10\.0% → 14\.0%／目标 30% \+\$40 /);assert.match(text,/D 0\.0% → 4\.0%／目标 20% \+\$40 /);assert.doesNotMatch(text,/C \d/);
+  assert.match(text,/不分配：C（已达到或高于参考目标）。/);assert.match(text,/PE\/VC 剩余 40\.0% → 31\.0%／目标 0% \$310 /);assert.match(text,/PE\/VC 现有 \$400，输入超过这个数按全部计。/);assert.match(text,/不是买卖建议/);
+  // A share button is marked only when the amount is exactly that share of the holding.
+  assert.equal(box.S(plan),null);assert.equal((view.match(/aria-pressed/g)||[]).length,0);
+  const quarter=box.P(rows,10000);assert.equal(box.S(quarter),25);assert.match(box.V(quarter),/data-pe-exit-share="25" aria-pressed="true"/);assert.equal((box.V(quarter).match(/aria-pressed/g)||[]).length,1);assert.equal(box.S(all),100);
+  // Nothing entered is a prompt, not a list of classes that "receive nothing".
+  const zero=box.V(box.P(rows,0));assert.match(zero,/点一个比例，或输入退出金额/);assert.doesNotMatch(zero,/不分配：|没有低于参考目标的类别|PE\/VC 剩余/);
+  // The tool is its own full-width block: the code that turns the card's plain DIVs into tiles leaves it alone.
+  assert.match(html,/!n\.classList\.contains\('ratio-total-summary'\)&&!n\.classList\.contains\('ratio-exit-plan'\)\)\)\{\n    item\.classList\.add\('kpi'\);/);
   // Wiring: the renderer hands over labels, cent values and targets only; the page mounts the calculator once and stores nothing.
   assert.match(html,/const exitPlanData=asset&&assetGaps&&asset\.groups\.some\(g=>g\.name==='PE\/VC'&&g\.valueCents>0\)/);assert.match(html,/if\(typeof peExitMount==='function'\)peExitMount\(root\);/);
   const blockText=html.slice(html.indexOf('/* pe-exit:start */'),html.indexOf('/* pe-exit:end */'));assert.doesNotMatch(blockText,/localStorage|fetch\(|sessionStorage/);
