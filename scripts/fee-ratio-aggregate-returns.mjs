@@ -202,28 +202,42 @@ export function createAggregateReturnsCore(){
  // Only current ranked entries are eligible. The historical return scope can
  // retain sold members of the same exact product; no display-name fuzzy join.
  const topId=t=>canon([t.category,t.name]),ETF_TOP='二级市场ETF';
- function topTargets(exposure,companyTop=null){
+ function topTargets(exposure,companyTop=null,wholeMergedRow=false){
   const out=[];
+  // merged-row-return:v1 (2026-11-27). A secondary row that joins different securities has no return of its own
+  // from the provider, and none is worked out here. Its target is the row's own security alone, so it shows that
+  // security's native return as before the rows were joined. The first day's snapshots asked for the whole row
+  // (wholeMergedRow); they stay readable through acceptTop below.
+  const own=r=>wholeMergedRow||!r.sourceHoldings?r.sourceHoldings:r.sourceHoldings.filter(h=>h.securityCode===r.securityCode&&h.market===r.market);
   const clean=m=>({account:m.account.replaceAll('&amp;','&'),market:m.market,securityCode:m.securityCode});
   const unique=xs=>[...new Map(xs.map(m=>[memberKey(m),m])).values()].sort((a,b)=>memberKey(a).localeCompare(memberKey(b)));
   // A secondary class declared 'direct' ranks actually held securities, so its
   // targets are those same rows. Company look-through targets are legacy only.
   const directSecondary=exposure.summary.classes[3]?.basis==='direct';
   for(const g of exposure.summary.classes.slice(0,directSecondary?4:3))for(const r of g.top5){
-   const members=r.sourceHoldings?.map(clean)||r.accounts?.map(account=>clean({...r,account}));
+   const members=(g.name==='二级市场'?own(r):r.sourceHoldings)?.map(clean)||r.accounts?.map(account=>clean({...r,account}));
    if(!members?.length)fail();
    out.push({category:g.name,name:r.name,members:unique(members),basis:g.name==='二级市场'?'direct-holdings-only':'fund-holding'});
   }
   // The secondary class's own ETF ranking, when the summary carries one.
   if(directSecondary)for(const r of exposure.summary.secondaryEtfTop5||[]){
    if(!r.accounts?.length)fail();
-   out.push({category:ETF_TOP,name:r.name,members:unique(r.sourceHoldings?.map(clean)||r.accounts.map(account=>clean({...r,account}))),basis:'direct-holdings-only'});
+   out.push({category:ETF_TOP,name:r.name,members:unique(own(r)?.map(clean)||r.accounts.map(account=>clean({...r,account}))),basis:'direct-holdings-only'});
   }
   if(companyTop&&!directSecondary)for(const r of companyTop){
    const members=r.constituents.filter(c=>c.product===null||c.basis==='product-asset-replacement').map(clean);
    out.push({category:'二级市场',name:r.name,members:unique(members),basis:'direct-holdings-only'});
   }
   return out;
+ }
+ // Runs a check against the targets of today's rule; only when that refuses and the summary really has a merged
+ // secondary row, against the first day's. Says which one held, so the page can word the return's scope.
+ function acceptTop(exposure,companyTop,use){
+  try{return {wholeMergedRow:false,value:use(topTargets(exposure,companyTop))};}
+  catch(e){
+   const s=exposure?.summary,merged=s?.classes?.[3]?.basis==='direct'&&[...s.classes[3].top5,...(s.secondaryEtfTop5||[])].some(r=>r?.sourceHoldings);
+   if(!merged)throw e;return {wholeMergedRow:true,value:use(topTargets(exposure,companyTop,true))};
+  }
  }
  function datedName(r){
   for(const value of [r.securityCode,r.name]){
@@ -357,5 +371,5 @@ export function createAggregateReturnsCore(){
   const note=stockScope(item.scope)?'股票市场小计只包含四个股票分类的历史成员，不含现金账户、防御资产或主题投资。':cash.includes('unknown')?'现金账户收益覆盖未获来源确认。':cash.includes('mixed')||cash.length>1?'现金收益覆盖分别保留各期原报表设置。':cash[0]==='included'?'含现金账户收益。':cash[0]==='excluded'?'未含现金账户收益。':'';
   return '<details class="ratio-returns"><summary>收益率</summary><div class="ratio-return-pair">'+rows+'</div><p class="ratio-return-scope">'+esc(accounts.join(' · '))+' · USD · Sharesight 原生口径</p><p>只显示组合或分类原生收益；已平仓计入历史，不用当前市值权重或穿透敞口重算。'+note+'</p></details>';
  }
- return {SCHEMA,build,validateInceptionBindings,select,render:renderAggregate,scopeKey,oneYearBefore,topTargets,buildTop,selectTop,renderTop,renderCompact,renderInline,datedName,ETF_TOP,HOLDING_RETURNS,selectHolding,renderHolding};
+ return {SCHEMA,build,validateInceptionBindings,select,render:renderAggregate,scopeKey,oneYearBefore,topTargets,acceptTop,buildTop,selectTop,renderTop,renderCompact,renderInline,datedName,ETF_TOP,HOLDING_RETURNS,selectHolding,renderHolding};
 }

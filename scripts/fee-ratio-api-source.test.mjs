@@ -146,10 +146,21 @@ test('a leveraged product ranks with the stock it tracks at asset value, and two
     x=>{const r=x.summary.classes[3].top5.find(r=>r.securityCode==='GOOG');r.sourceHoldings=r.sourceHoldings.filter(h=>h.securityCode==='GOOG');},x=>{x.summary.secondaryEtfTop5[0].sourceHoldings=structuredClone(x.summary.secondaryEtfTop5[1].sourceHoldings);}]){
     const bad=structuredClone(good);edit(bad);assert.throws(()=>view(bad));
   }
-  // Return targets follow the parts, so a merged row's return covers every security in it.
-  const targets=createAggregateReturnsCore().topTargets(good);
-  assert.deepEqual(targets.find(t=>t.category==='二级市场ETF'&&t.members.length===2).members.map(m=>m.securityCode).sort(),['CSPX','MXUS']);
-  assert.deepEqual([...new Set(targets.find(t=>t.category==='二级市场'&&t.members.some(m=>m.securityCode==='GGLL')).members.map(m=>m.securityCode))].sort(),['GGLL','GOOG']);
+  // A merged row's return target is its own security alone: the provider has no return for the joined row, and none is
+  // worked out. The other class and every single-security row keep the targets they had.
+  const returns=createAggregateReturnsCore(),targets=returns.topTargets(good),codes=t=>[...new Set(t.members.map(m=>m.securityCode))];
+  assert.deepEqual(codes(targets.find(t=>t.category==='二级市场'&&t.name==='Synthetic GOOG')),['GOOG']);assert.equal(targets.find(t=>t.category==='二级市场'&&t.name==='Synthetic GOOG').members.length,2,'both accounts that hold it');
+  assert.deepEqual(codes(targets.find(t=>t.category==='二级市场ETF'&&t.name==='Synthetic MXUS')),['MXUS']);
+  assert.equal(targets.some(t=>t.members.some(m=>['GGLL','CSPX'].includes(m.securityCode))),false);
+  assert.deepEqual(targets.filter(t=>!['Synthetic GOOG','Synthetic MXUS'].includes(t.name)),returns.topTargets(good,null,true).filter(t=>!['Synthetic GOOG','Synthetic MXUS'].includes(t.name)));
+  // The first day's snapshots asked for the whole row. They are still accepted, and the caller is told which rule held.
+  const whole=returns.topTargets(good,null,true);assert.deepEqual(codes(whole.find(t=>t.name==='Synthetic GOOG')).sort(),['GGLL','GOOG']);assert.deepEqual(codes(whole.find(t=>t.name==='Synthetic MXUS')).sort(),['CSPX','MXUS']);
+  const same=(a,b)=>{assert.deepEqual(a,b);return 'ok';};
+  assert.deepEqual(returns.acceptTop(good,null,t=>same(t,targets)),{wholeMergedRow:false,value:'ok'});
+  assert.deepEqual(returns.acceptTop(good,null,t=>same(t,whole)),{wholeMergedRow:true,value:'ok'});
+  assert.throws(()=>returns.acceptTop(good,null,()=>{throw Error('neither');}),{message:'neither'});
+  // A summary without a merged row has one rule only: a refusal is a refusal, with no second attempt.
+  let calls=0;assert.throws(()=>returns.acceptTop(apiOriginal().built.input.exposure,null,()=>{calls++;throw Error('plain');}),{message:'plain'});assert.equal(calls,1);
 });
 test('only the provider\'s own asset type removes a holding from the secondary ranking',()=>{
   const top=edit=>apiOriginal(edit).built.input.exposure.summary.classes[3].top5.map(r=>r.securityCode);
