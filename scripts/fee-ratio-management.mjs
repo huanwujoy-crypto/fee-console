@@ -274,8 +274,12 @@ export function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
     const companyStatus=directSecondary?'<p class="ratio-key-status">四类均按实际持有的证券或基金市值排名；'+(view.groups[3].etfTop?'二级市场按 Sharesight 资产类型分列股票前五与ETF前五（两者都计入本类资产）':'二级市场前五不含ETF（ETF仍计入本类资产）')+'，不做ETF穿透、不乘杠杆倍数。同一公司的不同股份类别合并为一行，其个股杠杆产品按自身市值并入；CSPX 与 MXUS 合并为一行。</p>':company?.top?'<p class="ratio-key-status">公司经济敞口含显式杠杆，比例可能超过100%；不改变总资产、类别资产及管理费。</p>':company?companyCore.render(m.companyExposure,m.exposure,b?.sourceSha256):'<p class="ratio-key-status">旧快照仅有证券前五，未由同份完整原件重算公司排名；不猜测合并后的前五。</p>';
     const exposure='<section class="card sharesight-exposure"><h2>All Together · 四类前五</h2>'+companyStatus+groups+'</section>';
     const stockGaps=a?targetGaps(a.totalCents,a.categories):null;
-    const rows=a?a.categories.map((c,i)=>'<tr><td>'+esc(c.label)+'</td><td>'+preciseUsd(c.valueCents)+targetGap(stockGaps?.[i],'仅 IB-HK 四类股票市值合计')+'</td><td>'+(a.totalCents>0?(c.valueCents/a.totalCents*100).toFixed(2)+'%':'—')+'／'+c.targetPct+'%</td></tr>').join(''):'';
-    const alloc=rows?'<table class="ratio-stock-table"><thead><tr><th>分类</th><th>当前市值（USD）</th><th>当前／参考目标</th></tr></thead><tbody>'+rows+'</tbody></table>':'<p>Sharesight 完整分类持仓未取得。</p>';
+    // stock-reference:v1 (owner request 2026-11-27) — the ETFs the owner names as the reference for each stock class,
+    // printed under the class as a label. They are the owner's own note: nothing is computed from them.
+    const STOCK_REFERENCE={'美国底仓':['MXUS','USSC'],'美国科技':['EQAC'],'非美发达':['EXUS'],'新兴市场':['EIMI']};
+    const stockReference=label=>Object.hasOwn(STOCK_REFERENCE,label)?'<span class="ratio-stock-ref">'+esc(STOCK_REFERENCE[label].join(' · '))+'</span>':'';
+    const rows=a?a.categories.map((c,i)=>'<tr><td>'+esc(c.label)+stockReference(c.label)+'</td><td>'+preciseUsd(c.valueCents)+targetGap(stockGaps?.[i],'仅 IB-HK 四类股票市值合计')+'</td><td>'+(a.totalCents>0?(c.valueCents/a.totalCents*100).toFixed(2)+'%':'—')+'／'+c.targetPct+'%</td></tr>').join(''):'';
+    const alloc=rows?'<table class="ratio-stock-table"><thead><tr><th>分类</th><th>当前市值（USD）</th><th>当前／参考目标</th></tr></thead><tbody>'+rows+'</tbody></table>'+(a.categories.some(c=>Object.hasOwn(STOCK_REFERENCE,c.label))?'<p class="ratio-stock-ref-note">分类下方小字是你为该类设定的参考 ETF，仅作标注。</p>':''):'<p>Sharesight 完整分类持仓未取得。</p>';
     const allocation='<section class="card ratio-stock-allocation"><h2>股票四类配置</h2><p class="ratio-stock-asof">数据截至 '+(a?esc(b.asOf):'未取得')+'</p><p>仅 IB-HK 四类股票市值为基数；不含现金、防御及主题投资，与总览分母不同。括号为目标差额。</p>'+alloc+'</section>';
     const distributions=(classification?.fundDistributions||[]).map(f=>{
       // Largest remainder in hundredths of a percent: displayed nonzero totals sum to 100%.
