@@ -23,7 +23,7 @@ export function syntheticCapture(){
   const holding=(a,code,market,group,value,quantity=2)=>({id:hid++,instrument:{code,market_code:market,name:'Synthetic '+code,currency_code:'USD',...(market==='PRIVATE'?{}:{friendly_instrument_description_code:code==='TQQQ'?'exchange_traded_fund':'ordinary_shares'})},quantity,value,valid_position:true,limited:false,portfolio:portfolio(a),group_id:group.length,group_name:group,total_gain:0,total_gain_percent:0});
   const holdings=[];
   for(let i=0;i<3;i++)for(let j=0;j<5;j++)holdings.push(holding(accounts[i+2],'F'+i+j,'PRIVATE',['VC/PE','对冲基金','常青基金'][i],110-j));
-  for(const [code,market,group,value]of [['VST','NYSE','美国底仓',40],['GOOG','NASDAQ','美国科技',41],['GOOGL','NASDAQ','非美发达',42],['OTHER','TEST','新兴市场',43],['USSC','TEST','美国底仓',44.5],['TQQQ','NASDAQ','主题投资',130]])holdings.push(holding(accounts[0],code,market,group,value));
+  for(const [code,market,group,value]of [['VST','NYSE','美国底仓',40],['GOOG','NASDAQ','美国科技',41],['GOOX','NASDAQ','非美发达',42],['OTHER','TEST','新兴市场',43],['USSC','TEST','美国底仓',44.5],['TQQQ','NASDAQ','主题投资',130]])holdings.push(holding(accounts[0],code,market,group,value));
   holdings.push(holding(accounts[4],'GOOG','NASDAQ','美国科技',6.25,null));
   const cash=a=>({id:cid++,key:cid,name:'Synthetic USD cash',source:'manual',value:6,currency:{code:'USD'},portfolio:portfolio(a)});
   const cash_accounts=[cash(accounts[0]),cash(accounts[1])];
@@ -125,7 +125,7 @@ test('a leveraged product ranks with the stock it tracks at asset value, and two
   const add=(c,code,value)=>{const h=structuredClone(c.report.holdings.find(x=>x.instrument.code==='TQQQ'));h.id=9000+c.report.holdings.length;h.instrument.code=code;h.instrument.name='Synthetic '+code;h.value=value;c.report.holdings.push(h);c.report.value=Math.round((c.report.value+value)*100)/100;};
   const s=apiOriginal(c=>{add(c,'GGLL',10);add(c,'CSPX',20);add(c,'MXUS',30);}).built.input.exposure.summary;
   // GGLL joins the larger of the two share classes held, at 10 and not at twice 10; the other class is untouched.
-  const goog=s.classes[3].top5.find(r=>r.securityCode==='GOOG'),googl=s.classes[3].top5.find(r=>r.securityCode==='GOOGL');
+  const goog=s.classes[3].top5.find(r=>r.securityCode==='GOOG'),googl=s.classes[3].top5.find(r=>r.securityCode==='GOOX');
   assert.equal(goog.valueUSD,57.25);assert.deepEqual(goog.sourceHoldings.map(h=>[h.securityCode,h.valueUSD]),[['GOOG',41],['GGLL',10],['GOOG',6.25]]);
   assert.equal(googl.valueUSD,42);assert.equal(Object.hasOwn(googl,'sourceHoldings'),false);
   assert.equal(s.classes[3].top5.filter(r=>r.securityCode!=='GOOG').some(r=>Object.hasOwn(r,'sourceHoldings')),false,'a row of one security carries no parts');
@@ -146,20 +146,42 @@ test('a leveraged product ranks with the stock it tracks at asset value, and two
     x=>{const r=x.summary.classes[3].top5.find(r=>r.securityCode==='GOOG');r.sourceHoldings=r.sourceHoldings.filter(h=>h.securityCode==='GOOG');},x=>{x.summary.secondaryEtfTop5[0].sourceHoldings=structuredClone(x.summary.secondaryEtfTop5[1].sourceHoldings);}]){
     const bad=structuredClone(good);edit(bad);assert.throws(()=>view(bad));
   }
-  // Return targets follow the parts, so a merged row's return covers every security in it.
-  const targets=createAggregateReturnsCore().topTargets(good);
-  assert.deepEqual(targets.find(t=>t.category==='二级市场ETF'&&t.members.length===2).members.map(m=>m.securityCode).sort(),['CSPX','MXUS']);
-  assert.deepEqual([...new Set(targets.find(t=>t.category==='二级市场'&&t.members.some(m=>m.securityCode==='GGLL')).members.map(m=>m.securityCode))].sort(),['GGLL','GOOG']);
+  // A merged row's return target is its own security alone: the provider has no return for the joined row, and none is
+  // worked out. The other class and every single-security row keep the targets they had.
+  const returns=createAggregateReturnsCore(),targets=returns.topTargets(good),codes=t=>[...new Set(t.members.map(m=>m.securityCode))];
+  assert.deepEqual(codes(targets.find(t=>t.category==='二级市场'&&t.name==='Synthetic GOOG')),['GOOG']);assert.equal(targets.find(t=>t.category==='二级市场'&&t.name==='Synthetic GOOG').members.length,2,'both accounts that hold it');
+  assert.deepEqual(codes(targets.find(t=>t.category==='二级市场ETF'&&t.name==='Synthetic MXUS')),['MXUS']);
+  assert.equal(targets.some(t=>t.members.some(m=>['GGLL','CSPX'].includes(m.securityCode))),false);
+  assert.deepEqual(targets.filter(t=>!['Synthetic GOOG','Synthetic MXUS'].includes(t.name)),returns.topTargets(good,null,true).filter(t=>!['Synthetic GOOG','Synthetic MXUS'].includes(t.name)));
+  // Where the provider totals a joined row itself, the target is the whole row; this can be said row by row.
+  const whole=returns.topTargets(good,null,true);assert.deepEqual(codes(whole.find(t=>t.name==='Synthetic GOOG')).sort(),['GGLL','GOOG']);assert.deepEqual(codes(whole.find(t=>t.name==='Synthetic MXUS')).sort(),['CSPX','MXUS']);
+  const etfId=returns.topId({category:'二级市场ETF',name:'Synthetic MXUS'}),stockId=returns.topId({category:'二级市场',name:'Synthetic GOOG'}),mixed=returns.topTargets(good,null,new Set([etfId]));
+  assert.deepEqual(codes(mixed.find(t=>t.name==='Synthetic MXUS')).sort(),['CSPX','MXUS']);assert.deepEqual(codes(mixed.find(t=>t.name==='Synthetic GOOG')),['GOOG']);
+  // Reading: each joined row is expected in the form the stored targets use for it, and the check stays exact.
+  const same=expected=>stored=>{assert.deepEqual(stored,expected);return 'ok';};
+  for(const [stored,ids] of [[targets,[]],[whole,[stockId,etfId]],[mixed,[etfId]]])assert.deepEqual(returns.acceptTop(good,null,stored,same(stored)),{wholeRows:new Set(ids),value:'ok'});
+  // Stored targets in neither form are expected as the own-security form, so the exact check refuses them.
+  const odd=structuredClone(targets);odd.find(t=>t.name==='Synthetic GOOG').members.pop();assert.throws(()=>returns.acceptTop(good,null,odd,same(odd)));
+  assert.throws(()=>returns.acceptTop(good,null,targets,()=>{throw Error('refused');}),{message:'refused'});
+  assert.deepEqual(returns.acceptTop(apiOriginal().built.input.exposure,null,null,t=>t.length),{wholeRows:new Set(),value:21});
+  // Writing: every joined row is asked for whole; a row the provider totals nothing for is asked again as its own security.
+  const asked=[],run=lost=>t=>{asked.push(t);return {topHoldings:{reports:[{unavailable:[]},{unavailable:t.filter(x=>lost.includes(x.name)&&codes(x).length>1).map(x=>({target:{category:x.category,name:x.name},reason:'native-aggregate-not-provided'}))}]}};};
+  returns.settleTop(good,run([]));assert.deepEqual(asked,[whole]);
+  asked.length=0;returns.settleTop(good,run(['Synthetic GOOG']));assert.deepEqual(asked,[whole,mixed]);
+  asked.length=0;returns.settleTop(good,run(['Synthetic GOOG','Synthetic MXUS']));assert.deepEqual(asked,[whole,targets]);
+  // A row of one security that has no return does not start a second attempt.
+  asked.length=0;returns.settleTop(good,t=>{asked.push(t);return {topHoldings:{reports:[{unavailable:[{target:{category:'二级市场',name:'Synthetic VST'},reason:'native-aggregate-not-provided'}]}]}};});assert.equal(asked.length,1);
+  asked.length=0;returns.settleTop(apiOriginal().built.input.exposure,t=>{asked.push(t);return {};});assert.equal(asked.length,1);
 });
 test('only the provider\'s own asset type removes a holding from the secondary ranking',()=>{
   const top=edit=>apiOriginal(edit).built.input.exposure.summary.classes[3].top5.map(r=>r.securityCode);
   const type=(c,code,value)=>{for(const h of c.report.holdings)if(h.instrument.code===code){if(value===undefined)delete h.instrument.friendly_instrument_description_code;else h.instrument.friendly_instrument_description_code=value;}};
-  assert.deepEqual(top(),['GOOG','USSC','OTHER','GOOGL','VST']);
+  assert.deepEqual(top(),['GOOG','USSC','OTHER','GOOX','VST']);
   // Every spelling the fee report already treats as an ETF, in any letter case.
-  for(const spelling of ['exchange_traded_fund','exchange_traded_funds','etf','ETF','Exchange_Traded_Fund'])assert.deepEqual(top(c=>type(c,'TQQQ',spelling)),['GOOG','USSC','OTHER','GOOGL','VST'],spelling);
+  for(const spelling of ['exchange_traded_fund','exchange_traded_funds','etf','ETF','Exchange_Traded_Fund'])assert.deepEqual(top(c=>type(c,'TQQQ',spelling)),['GOOG','USSC','OTHER','GOOX','VST'],spelling);
   // Anything else still ranks: an ordinary share, another fund type, an unknown or a missing type. Never a name or a code.
-  for(const other of ['ordinary_shares','managed_fund','bond','something_new',undefined,'','x'.repeat(129)])assert.deepEqual(top(c=>type(c,'TQQQ',other)),['TQQQ','GOOG','USSC','OTHER','GOOGL'],String(other).slice(0,20));
-  assert.deepEqual(top(c=>{type(c,'TQQQ','ordinary_shares');c.report.holdings.find(h=>h.instrument.code==='TQQQ').instrument.name='Synthetic ETF UCITS ETF';}),['TQQQ','GOOG','USSC','OTHER','GOOGL']);
+  for(const other of ['ordinary_shares','managed_fund','bond','something_new',undefined,'','x'.repeat(129)])assert.deepEqual(top(c=>type(c,'TQQQ',other)),['TQQQ','GOOG','USSC','OTHER','GOOX'],String(other).slice(0,20));
+  assert.deepEqual(top(c=>{type(c,'TQQQ','ordinary_shares');c.report.holdings.find(h=>h.instrument.code==='TQQQ').instrument.name='Synthetic ETF UCITS ETF';}),['TQQQ','GOOG','USSC','OTHER','GOOX']);
   // The other three classes are never filtered by type.
   assert.equal(apiOriginal(c=>type(c,'F00','etf')).built.input.exposure.summary.classes[0].top5[0].securityCode,'F00');
   // Fail closed rather than publish a wrong or short list: fewer than five non-ETF securities, or a report in which
@@ -169,7 +191,7 @@ test('only the provider\'s own asset type removes a holding from the secondary r
   // An earlier API original, written before the type was kept, is still rebuilt exactly as it was published.
   const old=apiOriginal(),raw=structuredClone(old.raw);for(const r of raw.classification.positions)delete r.assetType;
   const bytes=Buffer.from(JSON.stringify(raw)),rebuilt=createOfficialRatioSourceCore().build(raw,{sourceSha256:sha(bytes),sourceBytes:bytes.length});
-  assert.deepEqual(rebuilt.input.exposure.summary.classes[3].top5.map(r=>r.securityCode),['TQQQ','GOOG','USSC','OTHER','GOOGL']);
+  assert.deepEqual(rebuilt.input.exposure.summary.classes[3].top5.map(r=>r.securityCode),['TQQQ','GOOG','USSC','OTHER','GOOX']);
   // A mixed original (some positions typed, some not) and a non-string type are refused.
   const mixed=structuredClone(old.raw);delete mixed.classification.positions[0].assetType;assert.throws(()=>createOfficialRatioSourceCore().build(mixed,{sourceSha256:'1'.repeat(64),sourceBytes:10}),{message:'RATIO_OFFICIAL_SOURCE_REFUSED'});
   const bad=structuredClone(old.raw);bad.classification.positions[0].assetType=7;assert.throws(()=>createOfficialRatioSourceCore().build(bad,{sourceSha256:'1'.repeat(64),sourceBytes:10}),{message:'RATIO_OFFICIAL_SOURCE_REFUSED'});
@@ -180,7 +202,7 @@ test('an API original projects to a direct top five for all four classes and nam
   assert.deepEqual(s.classes.map(g=>g.basis),['direct','direct','direct','direct']);
   // The secondary ranking never lists an ETF, however large: the largest holding here is one. The same security in
   // two accounts merges; different securities stay separate.
-  assert.deepEqual(s.classes[3].top5.map(r=>[r.securityCode,r.valueUSD,r.accounts]),[['GOOG',47.25,['IB-HK','Synthetic 2']],['USSC',44.5,['IB-HK']],['OTHER',43,['IB-HK']],['GOOGL',42,['IB-HK']],['VST',40,['IB-HK']]]);
+  assert.deepEqual(s.classes[3].top5.map(r=>[r.securityCode,r.valueUSD,r.accounts]),[['GOOG',47.25,['IB-HK','Synthetic 2']],['USSC',44.5,['IB-HK']],['OTHER',43,['IB-HK']],['GOOX',42,['IB-HK']],['VST',40,['IB-HK']]]);
   // The ETF is only left out of the ranking: it still counts in the class total and in the classification.
   assert.equal(s.classes[3].totalValueUSD,(13000+4725+4450+4300+4200+4000+1200)/100);
   assert.equal(f.raw.classification.positions.find(x=>x.securityCode==='TQQQ').assetType,'exchange_traded_fund');
@@ -322,11 +344,36 @@ test('the page shows each ranking\'s subtotal and names every security of a merg
   const ranking=h=>html.split('<h3>'+h+'</h3>')[1].split('</section>')[0];
   // Stocks: 57.25 + 44.50 + 43 + 42 + 40 = 226.75 of a class of 418.75 (synthetic).
   assert.match(ranking('二级市场 · 股票前五'),/<p class="ratio-top-sum">前五合计 [^<]*226\.75 · 占本类 54\.15%<\/p>/);
-  assert.match(ranking('二级市场 · 股票前五'),/title="Synthetic GOOG">1\. GOOG＋GGLL</);assert.match(ranking('二级市场 · 股票前五'),/合并持仓 · 3笔/);
+  assert.match(ranking('二级市场 · 股票前五'),/title="Synthetic GOOG">1\. Alphabet<span class="ratio-top-codes">GOOG · GGLL<\/span>/);assert.match(ranking('二级市场 · 股票前五'),/合并持仓 · 3笔/);
   // ETFs: fewer than five rows say how many they are.
   assert.match(ranking('二级市场 · ETF前五'),/<p class="ratio-top-sum">共 2 项合计 [^<]*180\.00 · 占本类 42\.99%<\/p>/);
-  assert.match(ranking('二级市场 · ETF前五'),/2\. MXUS＋CSPX</);
+  assert.match(ranking('二级市场 · ETF前五'),/2\. 美国大中盘<span class="ratio-top-codes">MXUS · CSPX<\/span>/);
+  // A row of one security has neither a name of its own nor a second line.
+  assert.match(ranking('二级市场 · 股票前五'),/>2\. USSC<span class="ratio-holding-accounts">/);
   // The three fund classes carry the same line.
   for(const h of ['PE/VC','对冲基金','常青基金'])assert.match(ranking(h+' · 持仓前五'),/class="ratio-top-sum">前五合计 /);
-  assert.ok(html.includes('个股杠杆产品按自身市值并入所跟踪的股票；CSPX 与 MXUS 合并为一行。'));
+  assert.ok(html.includes('同一公司的不同股份类别合并为一行，其个股杠杆产品按自身市值并入；CSPX 与 MXUS 合并为一行。'));
+});
+
+test('the share classes of one company are one named row, and a name belongs to joined rows only',()=>{
+  // Synthetic: a second share class and a sixth stock beside the fixture's five, and the leveraged product.
+  const add=(c,from,code,value)=>{const h=structuredClone(c.report.holdings.find(x=>x.instrument.code===from));h.id=9000+c.report.holdings.length;h.instrument.code=code;h.instrument.name='Synthetic '+code;h.value=value;c.report.holdings.push(h);c.report.value=Math.round((c.report.value+value)*100)/100;};
+  const built=apiOriginal(c=>{add(c,'VST','GOOGL',30);add(c,'VST','SIXTH',20);add(c,'TQQQ','GGLL',10);add(c,'TQQQ','CSPX',20);}).built.input.exposure,s=built.summary,row=s.classes[3].top5[0];
+  // GOOG 41 + 6.25, GOOGL 30 and GGLL 10 are one row of 87.25, led by the larger share class and named once.
+  assert.deepEqual([row.securityCode,row.name,row.label,row.valueUSD],['GOOG','Synthetic GOOG','Alphabet',87.25]);
+  assert.deepEqual(row.sourceHoldings.map(h=>[h.securityCode,h.valueUSD]),[['GOOG',41],['GOOGL',30],['GGLL',10],['GOOG',6.25]]);
+  assert.deepEqual(s.classes[3].top5.map(r=>r.securityCode),['GOOG','USSC','OTHER','GOOX','VST']);
+  // A larger second class leads the row instead; the leveraged product never does while a share class is held.
+  const other=apiOriginal(c=>{add(c,'VST','GOOGL',90);add(c,'VST','SIXTH',20);add(c,'TQQQ','GGLL',500);}).built.input.exposure.summary.classes[3].top5[0];
+  assert.deepEqual([other.securityCode,other.label,other.valueUSD],['GOOGL','Alphabet',637.25]);
+  // One of two named ETFs held alone is an ordinary row: no parts and no name.
+  assert.deepEqual(Object.keys(s.secondaryEtfTop5.find(r=>r.securityCode==='CSPX')).sort(),['accounts','market','name','securityCode','valueUSD']);
+  // The view carries the name; a name on a single-security row, an empty or marked-up one, or one on a fund row is refused.
+  const exposureCore=createRankedExposureCore(),view=x=>exposureCore.buildRankedExposureView(x);
+  assert.equal(view(built).groups[3].top[0].label,'Alphabet');assert.equal(Object.hasOwn(view(built).groups[3].top[1],'label'),false);
+  for(const edit of [x=>{x.summary.classes[3].top5[1].label='Alone';},x=>{x.summary.classes[3].top5[0].label='';},x=>{x.summary.classes[3].top5[0].label='<b>x</b>';},x=>{x.summary.classes[3].top5[0].label='x'.repeat(25);},
+    x=>{x.summary.classes[2].top5[0].label='Fund';},x=>{x.summary.secondaryEtfTop5[0].label='Alone';}]){const bad=structuredClone(built);edit(bad);assert.throws(()=>view(bad));}
+  // Return targets: the whole row is all three securities, its own security is the leading share class alone.
+  const returns=createAggregateReturnsCore(),codes=t=>[...new Set(t.members.map(m=>m.securityCode))].sort(),pick=list=>list.find(t=>t.category==='二级市场'&&t.name==='Synthetic GOOG');
+  assert.deepEqual(codes(pick(returns.topTargets(built,null,true))),['GGLL','GOOG','GOOGL']);assert.deepEqual(codes(pick(returns.topTargets(built))),['GOOG']);
 });
