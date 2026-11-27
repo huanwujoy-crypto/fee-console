@@ -146,10 +146,32 @@ test('a leveraged product ranks with the stock it tracks at asset value, and two
     x=>{const r=x.summary.classes[3].top5.find(r=>r.securityCode==='GOOG');r.sourceHoldings=r.sourceHoldings.filter(h=>h.securityCode==='GOOG');},x=>{x.summary.secondaryEtfTop5[0].sourceHoldings=structuredClone(x.summary.secondaryEtfTop5[1].sourceHoldings);}]){
     const bad=structuredClone(good);edit(bad);assert.throws(()=>view(bad));
   }
-  // Return targets follow the parts, so a merged row's return covers every security in it.
-  const targets=createAggregateReturnsCore().topTargets(good);
-  assert.deepEqual(targets.find(t=>t.category==='二级市场ETF'&&t.members.length===2).members.map(m=>m.securityCode).sort(),['CSPX','MXUS']);
-  assert.deepEqual([...new Set(targets.find(t=>t.category==='二级市场'&&t.members.some(m=>m.securityCode==='GGLL')).members.map(m=>m.securityCode))].sort(),['GGLL','GOOG']);
+  // A merged row's return target is its own security alone: the provider has no return for the joined row, and none is
+  // worked out. The other class and every single-security row keep the targets they had.
+  const returns=createAggregateReturnsCore(),targets=returns.topTargets(good),codes=t=>[...new Set(t.members.map(m=>m.securityCode))];
+  assert.deepEqual(codes(targets.find(t=>t.category==='二级市场'&&t.name==='Synthetic GOOG')),['GOOG']);assert.equal(targets.find(t=>t.category==='二级市场'&&t.name==='Synthetic GOOG').members.length,2,'both accounts that hold it');
+  assert.deepEqual(codes(targets.find(t=>t.category==='二级市场ETF'&&t.name==='Synthetic MXUS')),['MXUS']);
+  assert.equal(targets.some(t=>t.members.some(m=>['GGLL','CSPX'].includes(m.securityCode))),false);
+  assert.deepEqual(targets.filter(t=>!['Synthetic GOOG','Synthetic MXUS'].includes(t.name)),returns.topTargets(good,null,true).filter(t=>!['Synthetic GOOG','Synthetic MXUS'].includes(t.name)));
+  // Where the provider totals a joined row itself, the target is the whole row; this can be said row by row.
+  const whole=returns.topTargets(good,null,true);assert.deepEqual(codes(whole.find(t=>t.name==='Synthetic GOOG')).sort(),['GGLL','GOOG']);assert.deepEqual(codes(whole.find(t=>t.name==='Synthetic MXUS')).sort(),['CSPX','MXUS']);
+  const etfId=returns.topId({category:'二级市场ETF',name:'Synthetic MXUS'}),stockId=returns.topId({category:'二级市场',name:'Synthetic GOOG'}),mixed=returns.topTargets(good,null,new Set([etfId]));
+  assert.deepEqual(codes(mixed.find(t=>t.name==='Synthetic MXUS')).sort(),['CSPX','MXUS']);assert.deepEqual(codes(mixed.find(t=>t.name==='Synthetic GOOG')),['GOOG']);
+  // Reading: each joined row is expected in the form the stored targets use for it, and the check stays exact.
+  const same=expected=>stored=>{assert.deepEqual(stored,expected);return 'ok';};
+  for(const [stored,ids] of [[targets,[]],[whole,[stockId,etfId]],[mixed,[etfId]]])assert.deepEqual(returns.acceptTop(good,null,stored,same(stored)),{wholeRows:new Set(ids),value:'ok'});
+  // Stored targets in neither form are expected as the own-security form, so the exact check refuses them.
+  const odd=structuredClone(targets);odd.find(t=>t.name==='Synthetic GOOG').members.pop();assert.throws(()=>returns.acceptTop(good,null,odd,same(odd)));
+  assert.throws(()=>returns.acceptTop(good,null,targets,()=>{throw Error('refused');}),{message:'refused'});
+  assert.deepEqual(returns.acceptTop(apiOriginal().built.input.exposure,null,null,t=>t.length),{wholeRows:new Set(),value:21});
+  // Writing: every joined row is asked for whole; a row the provider totals nothing for is asked again as its own security.
+  const asked=[],run=lost=>t=>{asked.push(t);return {topHoldings:{reports:[{unavailable:[]},{unavailable:t.filter(x=>lost.includes(x.name)&&codes(x).length>1).map(x=>({target:{category:x.category,name:x.name},reason:'native-aggregate-not-provided'}))}]}};};
+  returns.settleTop(good,run([]));assert.deepEqual(asked,[whole]);
+  asked.length=0;returns.settleTop(good,run(['Synthetic GOOG']));assert.deepEqual(asked,[whole,mixed]);
+  asked.length=0;returns.settleTop(good,run(['Synthetic GOOG','Synthetic MXUS']));assert.deepEqual(asked,[whole,targets]);
+  // A row of one security that has no return does not start a second attempt.
+  asked.length=0;returns.settleTop(good,t=>{asked.push(t);return {topHoldings:{reports:[{unavailable:[{target:{category:'二级市场',name:'Synthetic VST'},reason:'native-aggregate-not-provided'}]}]}};});assert.equal(asked.length,1);
+  asked.length=0;returns.settleTop(apiOriginal().built.input.exposure,t=>{asked.push(t);return {};});assert.equal(asked.length,1);
 });
 test('only the provider\'s own asset type removes a holding from the secondary ranking',()=>{
   const top=edit=>apiOriginal(edit).built.input.exposure.summary.classes[3].top5.map(r=>r.securityCode);

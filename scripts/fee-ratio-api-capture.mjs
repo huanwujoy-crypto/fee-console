@@ -171,9 +171,10 @@ async function captureWork({env,event,now=new Date(),fetchImpl=globalThis.fetch,
     const official=createOfficialRatioSourceCore(),returns=createAggregateReturnsCore();
     // The ranking does not depend on the original's hash, so the targets can be taken before the original exists.
     const provisional=official.build(allocationRaw,{sourceSha256:'0'.repeat(64),sourceBytes:1}).input;
-    const performance=performanceCore.build({schema:performanceCore.CAPTURE,asOf:d,allStartDate,accounts,reports,
+    // A joined row is asked for whole first, then as its own security where the provider totals nothing for it.
+    const performance=returns.settleTop(provisional.exposure,topTargets=>performanceCore.build({schema:performanceCore.CAPTURE,asOf:d,allStartDate,accounts,reports,
       holdings:{sha256:sha(holdingHashes.join('|')),capturedAt:holdingsCapturedAt,rows:holdingRows},trades:{rows:tradeRows},
-      cash:{sha256:sha(cashHashes.join('|')),capturedAt:cashCapturedAt,accounts:cashAccounts,transactions:cashTransactions}},{topTargets:returns.topTargets(provisional.exposure)});
+      cash:{sha256:sha(cashHashes.join('|')),capturedAt:cashCapturedAt,accounts:cashAccounts,transactions:cashTransactions}},{topTargets}));
     const raw={schemaVersion:'sharesight-private-performance-v1',accounts:[...allocationRaw.accounts],allocation:allocationRaw,performance,performanceCapturedAt:new Date(clock()).toISOString()};
     const originalBytes=Buffer.from(JSON.stringify(raw));
     const allocation=official.build(allocationRaw,{sourceSha256:sha(originalBytes),sourceBytes:originalBytes.length}).input;

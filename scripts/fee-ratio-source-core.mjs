@@ -29,7 +29,7 @@ function verifyBrowserSourceAssociations(raw,input,{scopeHash,now=new Date()}={}
     const core=createAggregateReturnsCore(),performance=raw.performance;
     // Native returns retain the owner's accepted small benchmark positions.
     // Membership-derived disclosure does not change allocation exclusions.
-    core.build(performance,{expectedAccounts:raw.accounts,expectedAsOf:performance?.asOf,topTargets:core.topTargets(input.exposure,facts.companyExposure?createFeeCompanyExposureCore().validate(facts.companyExposure,input.exposure,input.book.sourceSha256).top:undefined)});
+    core.acceptTop(input.exposure,facts.companyExposure?createFeeCompanyExposureCore().validate(facts.companyExposure,input.exposure,input.book.sourceSha256).top:undefined,performance?.topHoldings?.targets,topTargets=>core.build(performance,{expectedAccounts:raw.accounts,expectedAsOf:performance?.asOf,topTargets}));
     core.validateInceptionBindings(performance,raw.allocation.classification.positions,{now});
     const captured=time(raw.performanceCapturedAt),clock=now.getTime(),age=hkAge(clock,performance.asOf);
     if(performance.asOf>facts.asOf||age<0||age>4||clock<captured||clock-captured>36*3600000||createOfficialRatioSourceCore().canonical(input.performance)!==createOfficialRatioSourceCore().canonical(performance))fail();

@@ -93,7 +93,8 @@ export function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
     if(Object.hasOwn(m,'performance')){
       const apiBook=m.book?.browserEvidence?.transport==='official-api';
       if(!official||m.performance.asOf!==m.sourceDates.performance||m.performance.asOf>m.report.targetDate||apiBook!==(m.performance.transport==='official-api'))fail();
-      returnsCore.build(m.performance,{expectedAccounts:m.exposure.summary.accounts.map(x=>x.replaceAll('&amp;','&')),expectedAsOf:m.sourceDates.performance,...(m.companyExposure?{topTargets:returnsCore.topTargets(m.exposure,companyCore.validate(m.companyExposure,m.exposure,m.book?.sourceSha256).top)}:apiBook?{topTargets:returnsCore.topTargets(m.exposure)}:{})});
+      const checked=topTargets=>returnsCore.build(m.performance,{expectedAccounts:m.exposure.summary.accounts.map(x=>x.replaceAll('&amp;','&')),expectedAsOf:m.sourceDates.performance,...(topTargets?{topTargets}:{})});
+      if(m.companyExposure||apiBook)returnsCore.acceptTop(m.exposure,m.companyExposure?companyCore.validate(m.companyExposure,m.exposure,m.book?.sourceSha256).top:null,m.performance.topHoldings?.targets,checked);else checked(null);
     }
     const scope=await digest(m.exposure.summary.accounts.map(x=>x.replaceAll('&amp;','&')).sort());
     if(scope!==exposureCore.ALL_TOGETHER_SCOPE_SHA256)fail();
@@ -218,7 +219,7 @@ export function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
   function renderRatioModel(m){
     const view=exposureCore.buildRankedExposureView(m.exposure),classification=m.classificationSummary;
     const performance=m.performance?returnsCore.build(m.performance,{expectedAccounts:m.exposure.summary.accounts.map(x=>x.replaceAll('&amp;','&')),expectedAsOf:m.sourceDates.performance}):null;
-    if(performance?.topHoldings)returnsCore.buildTop(m.performance.topHoldings,m.performance,returnsCore.topTargets(m.exposure,m.companyExposure?companyCore.validate(m.companyExposure,m.exposure,m.book?.sourceSha256).top:null));
+    const topScope=performance?.topHoldings?returnsCore.acceptTop(m.exposure,m.companyExposure?companyCore.validate(m.companyExposure,m.exposure,m.book?.sourceSha256).top:null,m.performance.topHoldings.targets,t=>returnsCore.buildTop(m.performance.topHoldings,m.performance,t)):null;
     const topReturns=(category,name)=>returnsCore.renderTop(returnsCore.selectTop(performance,{category,name}));
     const returns=(name,parent=null)=>performance?returnsCore.renderInline(returnsCore.select(performance,{type:parent?'fund-strategy':name==='All Together'?'portfolio':'classification',name,parent})):'';
     // 现金类 is the 防御资产 holdings plus the cash accounts, and the provider reports no return covering both.
@@ -259,7 +260,10 @@ export function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
       return codes.length>1?codes.join('＋'):r.securityCode+(rows.filter(x=>x.securityCode===r.securityCode).length>1?' · '+r.market:'');};
     // top-sum:v1 (owner request 2026-11-26) — what the listed rows add up to, and their share of the class.
     const topSum=(rows,g)=>{const c=rows.reduce((n,r)=>n+Math.round(r.valueUsd*100),0);return rows.length&&g.totalUsd>0?'<p class="ratio-top-sum">'+(rows.length===5?'前五':'共 '+rows.length+' 项')+'合计 '+money(c)+' · 占本类 '+(c/Math.round(g.totalUsd*100)*100).toFixed(2)+'%</p>':'';};
-    const table=(rows,category,byCode=false)=>'<table><thead><tr><th>名称</th><th>USD金额</th><th>占总资产／占本类资产</th></tr></thead><tbody>'+rows.map((r,i)=>'<tr><td data-security-code="'+esc(r.securityCode||'')+'"'+(byCode&&r.securityCode?' title="'+esc(r.name)+'"':'')+'>'+(i+1)+'. '+esc(shown(r,rows,byCode))+(r.accounts?.length?'<span class="ratio-holding-accounts">'+esc(r.accounts.join(' · '))+'</span>':'')+(r.sourceHoldings?.length>1?'<details><summary>合并持仓 · '+r.sourceHoldings.length+'笔</summary><ul>'+r.sourceHoldings.map(h=>'<li>'+esc(h.securityCode)+' · '+money(Math.round(h.valueUSD*100))+'<span class="ratio-holding-accounts">'+esc(h.account)+'</span></li>').join('')+'</ul></details>':'')+topReturns(category,r.name)+'</td><td>'+money(Math.round(r.valueUsd*100))+'</td><td>'+r.portfolioWeightPct.toFixed(2)+'%／'+r.categoryWeightPct.toFixed(2)+'%</td></tr>').join('')+'</tbody></table>';
+    // merged-row-return:v1 — a merged row's return is its own security's; the row says so and names what is left out.
+    const returnScope=(r,byCode,category)=>{const others=byCode&&r.securityCode&&topScope&&!topScope.wholeRows.has(returnsCore.topId({category,name:r.name}))?[...new Set((r.sourceHoldings||[]).map(h=>h.securityCode))].filter(c=>c!==r.securityCode):[];
+      return others.length&&performance?.topHoldings?'<span class="ratio-holding-accounts ratio-return-scope">下方收益率仅为 '+esc(r.securityCode)+'，不含 '+esc(others.join('、'))+'</span>':'';};
+    const table=(rows,category,byCode=false)=>'<table><thead><tr><th>名称</th><th>USD金额</th><th>占总资产／占本类资产</th></tr></thead><tbody>'+rows.map((r,i)=>'<tr><td data-security-code="'+esc(r.securityCode||'')+'"'+(byCode&&r.securityCode?' title="'+esc(r.name)+'"':'')+'>'+(i+1)+'. '+esc(shown(r,rows,byCode))+(r.accounts?.length?'<span class="ratio-holding-accounts">'+esc(r.accounts.join(' · '))+'</span>':'')+(r.sourceHoldings?.length>1?'<details><summary>合并持仓 · '+r.sourceHoldings.length+'笔</summary><ul>'+r.sourceHoldings.map(h=>'<li>'+esc(h.securityCode)+' · '+money(Math.round(h.valueUSD*100))+'<span class="ratio-holding-accounts">'+esc(h.account)+'</span></li>').join('')+'</ul></details>':'')+returnScope(r,byCode,category)+topReturns(category,r.name)+'</td><td>'+money(Math.round(r.valueUsd*100))+'</td><td>'+r.portfolioWeightPct.toFixed(2)+'%／'+r.categoryWeightPct.toFixed(2)+'%</td></tr>').join('')+'</tbody></table>';
     // A snapshot whose secondary class is declared 'direct' ranks actually held
     // securities at asset value. Company look-through is rendered for older
     // snapshots only; it never replaces a direct ranking.
