@@ -437,8 +437,13 @@ test('the fund hurdle table compares each annualised fund return with an assumed
     assert.equal(pv.split('fund-hurdle-amount').length,4);assert.match(pv,/<small class="fund-hurdle-amount">\$300<\/small>/);
     // The fund returns themselves are never averaged: no weighted return appears anywhere in the model.
     assert.deepEqual(Object.keys(pm.value).sort(),['above','aboveShare','compared','gap','hurdle','official','rest','restShare']);
+    // fund-hurdle:v3 — a class figure whose report does not say whether it is annualised is shown, marked, and left uncoloured.
+    {const off={pct:9.4,annualised:false,unspecified:true},x=plain(box.M(priced,a,off)),xv=box.V(box.M(priced,a,off),a);
+      assert.equal(x.value.official,9.4);assert.equal(x.value.unspecified,true);assert.ok(Math.abs(x.value.gap-(-.95))<1e-9);
+      assert.match(xv,/9\.40% 对 10\.35%　<i>−0\.95<\/i>/);assert.match(xv,/左：Sharesight 本类收益率，含已平仓，原报表未注明是否年化；右：各笔门槛按市值加权/);
+      assert.equal(Object.hasOwn(pm.value,'unspecified'),false);assert.doesNotMatch(pv,/未注明是否年化；右/);}
     // A class figure that is not annualised, or absent, is not compared; the weighted hurdle still shows.
-    for(const off of [null,{pct:9.4,annualised:false},{pct:NaN,annualised:true}]){const x=plain(box.M(priced,a,off));assert.equal(Object.hasOwn(x.value,'official'),false);assert.match(box.V(box.M(priced,a,off),a),/加权门槛 10\.35%/);}
+    for(const off of [null,{pct:9.4,annualised:false},{pct:9.4,annualised:false,unspecified:false},{pct:NaN,annualised:true},{pct:NaN,annualised:false,unspecified:true}]){const x=plain(box.M(priced,a,off));assert.equal(Object.hasOwn(x.value,'official'),false);assert.match(box.V(box.M(priced,a,off),a),/加权门槛 10\.35%/);}
     // One missing amount anywhere leaves the value reading out rather than understating a side.
     assert.equal(box.M(priced.map((it,i)=>i===2?{...it,amount:NaN}:it),a,official).value,null);assert.equal(box.M(priced.map((it,i)=>i===0?{...it,amount:0}:it),a,official).value,null);}
   // Nothing to compare still shows the assumptions and says why.
