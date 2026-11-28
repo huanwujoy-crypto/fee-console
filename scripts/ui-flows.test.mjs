@@ -1827,7 +1827,11 @@ test('a PE/VC exit is shared among the classes below their reference target, in 
   assert.match(text,/不分配：C（已达到或高于参考目标）。/);assert.match(text,/PE\/VC 剩余 40\.0% → 31\.0%／目标 0% \$310 /);assert.match(text,/PE\/VC 现有 \$400，输入超过这个数按全部计。/);assert.match(text,/不是买卖建议/);
   // A share button is marked only when the amount is exactly that share of the holding.
   assert.equal(box.S(plan),null);assert.equal((view.match(/aria-pressed/g)||[]).length,0);
-  const quarter=box.P(rows,10000);assert.equal(box.S(quarter),25);assert.match(box.V(quarter),/data-pe-exit-share="25" aria-pressed="true"/);assert.equal((box.V(quarter).match(/aria-pressed/g)||[]).length,1);assert.equal(box.S(all),100);
+  // Owner 2026-11-28: the buttons are 1%, 3%, 5% and 10% of the holding, and the tool opens at 3%.
+  const three=box.P(rows,1200);assert.equal(box.S(three),3);assert.match(box.V(three),/data-pe-exit-share="3" aria-pressed="true"/);assert.equal((box.V(three).match(/aria-pressed/g)||[]).length,1);
+  assert.deepEqual([...box.V(three).matchAll(/data-pe-exit-share="(\d+)"[^>]*>([^<]+)</g)].map(m=>[m[1],m[2]]),[['1','1%'],['3','3%'],['5','5%'],['10','10%']]);
+  assert.equal(box.S(box.P(rows,4000)),10);assert.equal(box.S(box.P(rows,10000)),null);assert.equal(box.S(all),null);
+  assert.match(html,/const PE_EXIT_SHARES=\[1,3,5,10\],PE_EXIT_DEFAULT=3;/);assert.match(html,/peExitView\(peExitPlan\(rows,Math\.round\(full\.from\.before\*PE_EXIT_DEFAULT\/100\)\)\)/);
   // Nothing entered is a prompt, not a list of classes that "receive nothing".
   const zero=box.V(box.P(rows,0));assert.match(zero,/点一个比例，或输入退出金额/);assert.doesNotMatch(zero,/不分配：|没有低于参考目标的类别|PE\/VC 剩余/);
   // The tool is its own full-width block: the code that turns the card's plain DIVs into tiles leaves it alone.
