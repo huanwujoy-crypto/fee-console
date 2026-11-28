@@ -10,7 +10,7 @@
 <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAABzUlEQVR42u3bsQ2AMAwAwczDhEzKOqGlCBIgBdnxRT+BfU0Kt20/pGHNCASH4BAcgkNwCA7BITgEh+CQ4BAcgkNwCA7BITgEh+AQHBIcgkNwCA7BITgEh+AQHIJDgkNwCA7BITgEh+AQHIJDcAgOCQ7BITgEh+AQHIJDcOi2/vjBwUQyJXAEkhHNBxyxZITyAQcccMABxwIy4viAAw444IADDjjggAMOOOCAAw444IBDcAgOwQEHHHDAAQcccMABBxxwwAEHHHAIDudocDDxeWFwOEeDg4z3a4MDDjjggKMOjh82BwcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAEHHHDAAQcccMABBxxwwAGHQ1Y4HLLCERPH1IHCkRjH7JnCAQcccMBRB8cam4MDDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAQxWDQ3AIDsEhOFQNR/eSfG7hgAMOOOCAAw444PCq4ZCvrOAQHIJDgkNwCA7BITgEh+AQHIJDcEhwCA7BITgEh+AQHIJDcAgOwSHBITgEh+AQHIJDcAgOwSE4pEsnhtvC417hqCsAAAAASUVORK5CYII=">
-<meta name="fee-console-build" content="4.10.69">
+<meta name="fee-console-build" content="4.10.70">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -69,7 +69,7 @@ h1{font-size:19px;margin:0}
 .brief{padding:6px 12px}.brief h2{font-size:12px;font-weight:600;color:var(--ink-2);margin:6px 2px 2px}.brief-row{display:flex;align-items:baseline;gap:10px;width:100%;border:0;border-top:1px solid var(--border);background:transparent;color:var(--ink-1);padding:10px 2px;font-size:14px;font-family:inherit;text-align:left;cursor:pointer}.brief-row:first-of-type{border-top:0}.brief-row .lab{flex:0 0 3.2em;font-size:12px;color:var(--ink-2)}.brief-row .txt{flex:1 1 auto;min-width:0;line-height:1.45}.brief-row .go{flex:0 0 auto;color:var(--ink-2)}.brief-row.brief-alert{background:color-mix(in srgb,var(--series-2) 14%,transparent);border-radius:8px;padding-left:8px;padding-right:8px;border-top-color:transparent}.brief-row.brief-alert+.brief-row{border-top-color:transparent}.brief-bad{color:var(--critical);font-weight:600}.brief-warn{color:var(--series-2);font-weight:600}.brief-ok{color:var(--good-text);font-weight:600}
 .risk-carry{margin:0 0 10px}.risk-link{border:1px solid var(--series-1);background:transparent;color:var(--series-1);border-radius:999px;padding:3px 10px;font-size:13px;font-weight:600;font-family:inherit;cursor:pointer}
 .risk-status{border-radius:10px;border:1px solid var(--border);padding:9px 12px;margin:8px 0 0;font-size:13px;line-height:1.55}.risk-status ul{margin:4px 0 0;padding-left:18px}.risk-status li,.risk-status li b{color:var(--ink-1)}div.risk-status.risk-bad{border-color:var(--critical);background:rgba(208,59,59,.07)}
-.fund-hurdle{margin-top:10px;border-top:1px solid var(--border);padding-top:6px}.fund-hurdle>summary{font-size:13px;font-weight:600;cursor:pointer;min-height:36px;display:flex;align-items:center}.fund-hurdle-sum{font-size:13px;line-height:1.5;margin:4px 0 8px}.fund-hurdle-table{width:100%;table-layout:fixed;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}.fund-hurdle-table th,.fund-hurdle-table td{padding:6px 2px;border-top:1px solid var(--border);text-align:right;vertical-align:top}.fund-hurdle-table th{font-size:11px;font-weight:500;color:var(--ink-2);border-top:0}.fund-hurdle-table th:first-child,.fund-hurdle-table td:first-child{text-align:left;width:40%}.fund-hurdle-table td small{display:block;font-size:10px;line-height:1.4;color:var(--ink-2);font-weight:400;overflow-wrap:anywhere}.fund-hurdle-name{display:block;overflow-wrap:anywhere;font-weight:600}.fund-hurdle-table td:last-child{font-weight:600}.fund-hurdle-assume{display:grid;grid-template-columns:1fr 1fr;gap:8px 12px;margin:12px 0 6px}.fund-hurdle-assume h4{grid-column:1/-1;font-size:12px;font-weight:600;color:var(--ink-2);margin:0}.fund-hurdle-assume label{display:flex;align-items:center;gap:6px;font-size:12px;min-width:0}.fund-hurdle-assume label span{flex:1 1 auto;min-width:0}.fund-hurdle-assume input{width:4.2em;min-height:36px;font:inherit;font-size:14px;text-align:right;border:1px solid var(--border);border-radius:8px;background:transparent;color:var(--ink-1);padding:2px 6px}.fund-hurdle-assume i{font-style:normal;color:var(--ink-2)}.fund-hurdle-note{font-size:11px;line-height:1.55;color:var(--ink-2);margin:6px 0 0}.risk-ok{color:var(--good-text)}.risk-warn{color:var(--series-2)}.risk-bad{color:var(--critical)}#riskDesk[hidden]{display:none}
+.fund-hurdle{margin-top:10px;border-top:1px solid var(--border);padding-top:6px}.fund-hurdle>summary{font-size:13px;font-weight:600;cursor:pointer;min-height:36px;display:flex;align-items:center}.fund-hurdle-sum{font-size:13px;line-height:1.5;margin:4px 0 8px}.fund-hurdle-table{width:100%;table-layout:fixed;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}.fund-hurdle-table th,.fund-hurdle-table td{padding:6px 2px;border-top:1px solid var(--border);text-align:right;vertical-align:top}.fund-hurdle-table th{font-size:11px;font-weight:500;color:var(--ink-2);border-top:0}.fund-hurdle-table th:first-child,.fund-hurdle-table td:first-child{text-align:left;width:40%}.fund-hurdle-table td small{display:block;font-size:10px;line-height:1.4;color:var(--ink-2);font-weight:400;overflow-wrap:anywhere}.fund-hurdle-whole{display:grid;gap:8px;margin:0 0 10px}.fund-hurdle-whole>div{border:1px solid var(--border);border-radius:10px;padding:8px 10px;font-variant-numeric:tabular-nums}.fund-hurdle-whole span{display:block;font-size:11px;color:var(--ink-2)}.fund-hurdle-whole b{display:block;font-size:15px;line-height:1.5}.fund-hurdle-whole b i{font-style:normal}.fund-hurdle-whole small{display:block;font-size:11px;line-height:1.5;color:var(--ink-2)}.fund-hurdle-table td small.fund-hurdle-amount{color:var(--ink-1)}.fund-hurdle-name{display:block;overflow-wrap:anywhere;font-weight:600}.fund-hurdle-table td:last-child{font-weight:600}.fund-hurdle-assume{display:grid;grid-template-columns:1fr 1fr;gap:8px 12px;margin:12px 0 6px}.fund-hurdle-assume h4{grid-column:1/-1;font-size:12px;font-weight:600;color:var(--ink-2);margin:0}.fund-hurdle-assume label{display:flex;align-items:center;gap:6px;font-size:12px;min-width:0}.fund-hurdle-assume label span{flex:1 1 auto;min-width:0}.fund-hurdle-assume input{width:4.2em;min-height:36px;font:inherit;font-size:14px;text-align:right;border:1px solid var(--border);border-radius:8px;background:transparent;color:var(--ink-1);padding:2px 6px}.fund-hurdle-assume i{font-style:normal;color:var(--ink-2)}.fund-hurdle-note{font-size:11px;line-height:1.55;color:var(--ink-2);margin:6px 0 0}.risk-ok{color:var(--good-text)}.risk-warn{color:var(--series-2)}.risk-bad{color:var(--critical)}#riskDesk[hidden]{display:none}
 .rr{display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding:5px 0;font-size:14px}
 .rr span{color:var(--ink-2)}
 .rr b{font-size:19px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
@@ -1211,7 +1211,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.10.69";
+const UI_VERSION_LABEL=" · v4.10.70";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -4472,47 +4472,70 @@ function fundHurdleProxy(cls,strategy,a){
   if(/地产|基建/.test(t))return {label:"股票与高收益债各半",pct:.5*a.stock+.5*a.credit};
   return {label:"全球股票",pct:a.stock};
 }
-function fundHurdleModel(items,a){
-  const rows=[];let young=0,blank=0;
-  for(const it of Array.isArray(items)?items:[]){
-    if(it.status==="under-one-year"){young++;continue;}
-    if(it.status!=="annualised"||!Number.isFinite(it.pct)){blank++;continue;}
+// fund-hurdle:v2 (owner request 2026-11-28) — each lot also carries its printed market value, and the card adds two
+// whole-class readings that recompute no return: how much of the compared value sits at or above its hurdle, and the
+// class's own Sharesight annualised figure (closed positions included) beside the hurdles weighted by value. Fund
+// returns are never averaged: their periods differ and the lots still held leave out what was already redeemed.
+function fundHurdleModel(items,a,official){
+  const rows=[],list=Array.isArray(items)?items:[],worth=v=>Number.isFinite(v)&&v>0;let young=0,blank=0,restValue=0;
+  for(const it of list){
+    if(it.status==="under-one-year"){young++;restValue+=worth(it.amount)?it.amount:0;continue;}
+    if(it.status!=="annualised"||!Number.isFinite(it.pct)){blank++;restValue+=worth(it.amount)?it.amount:0;continue;}
     const proxy=fundHurdleProxy(it.cls,it.strategy,a),hurdle=proxy.pct+a.premium;
-    rows.push({name:String(it.name||""),strategy:String(it.strategy||""),since:String(it.since||""),pct:it.pct,proxy:proxy.label,hurdle,gap:it.pct-hurdle});
+    rows.push({name:String(it.name||""),strategy:String(it.strategy||""),since:String(it.since||""),amount:worth(it.amount)?it.amount:null,pct:it.pct,proxy:proxy.label,hurdle,gap:it.pct-hurdle});
   }
   rows.sort((x,y)=>y.gap-x.gap||(x.name<y.name?-1:x.name>y.name?1:0));
-  return {rows,above:rows.filter(r=>r.gap>=0).length,young,blank};
+  // The value readings need every lot's amount; one missing amount leaves them out rather than understating a side.
+  let value=null;
+  if(rows.length&&list.every(it=>worth(it.amount))){
+    const compared=rows.reduce((n,r)=>n+r.amount,0),above=rows.filter(r=>r.gap>=0).reduce((n,r)=>n+r.amount,0),hurdle=rows.reduce((n,r)=>n+r.hurdle*r.amount,0)/compared;
+    value={compared,above,aboveShare:above/compared,rest:restValue,restShare:restValue/(compared+restValue),hurdle,
+      ...(official&&official.annualised===true&&Number.isFinite(official.pct)?{official:official.pct,gap:official.pct-hurdle}:{})};
+  }
+  return {rows,above:rows.filter(r=>r.gap>=0).length,young,blank,value};
 }
 function fundHurdleView(m,a){
   const n=v=>(Math.round(v*100)/100).toFixed(2),signed=v=>(v>=0?"+":"−")+n(Math.abs(v));
-  const body=m.rows.map(r=>`<tr><td><span class="fund-hurdle-name">${esc(r.name)}</span><small>${esc(r.strategy)}${r.since?" · "+esc(r.since):""}</small></td><td>${n(r.pct)}%</td><td>${n(r.hurdle)}%<small>${esc(r.proxy)}</small></td><td class="${r.gap>=0?"risk-ok":"risk-bad"}">${signed(r.gap)}</td></tr>`).join("");
+  const cash=v=>"$"+Math.round(v).toLocaleString("en-US"),share=v=>(v*100).toFixed(1)+"%";
+  const body=m.rows.map(r=>`<tr><td><span class="fund-hurdle-name">${esc(r.name)}</span><small>${esc(r.strategy)}${r.since?" · "+esc(r.since):""}</small>${r.amount==null?"":`<small class="fund-hurdle-amount">${cash(r.amount)}</small>`}</td><td>${n(r.pct)}%</td><td>${n(r.hurdle)}%<small>${esc(r.proxy)}</small></td><td class="${r.gap>=0?"risk-ok":"risk-bad"}">${signed(r.gap)}</td></tr>`).join("");
   const left=[m.young?`${m.young} 笔未满一年`:"",m.blank?`${m.blank} 笔暂无年化收益率`:""].filter(Boolean).join("，");
-  const head=m.rows.length?`<p class="fund-hurdle-sum">已满一年的 ${m.rows.length} 笔中，${m.above} 笔不低于门槛${left?"；另有 "+left+"，未比较":""}。</p><table class="fund-hurdle-table"><thead><tr><th>基金</th><th>年化</th><th>门槛</th><th>差距</th></tr></thead><tbody>${body}</tbody></table>`:`<p class="fund-hurdle-sum">暂无已满一年且有年化收益率的持仓${left?"（"+left+"）":""}。</p>`;
+  const v=m.value,whole=v?`<div class="fund-hurdle-whole"><div><span>按市值</span><b>${share(v.aboveShare)} 不低于门槛</b><small>已比较 ${cash(v.compared)}，其中 ${cash(v.above)}${v.rest>0?`；未比较 ${cash(v.rest)}，占本类持仓 ${share(v.restShare)}`:""}</small></div>`
+    +(Object.hasOwn(v,"official")?`<div><span>本类整体</span><b>${n(v.official)}% 对 ${n(v.hurdle)}%　<i class="${v.gap>=0?"risk-ok":"risk-bad"}">${signed(v.gap)}</i></b><small>左：Sharesight 本类年化，含已平仓；右：各笔门槛按市值加权</small></div>`:`<div><span>本类整体</span><b>加权门槛 ${n(v.hurdle)}%</b><small>各笔门槛按市值加权；本类暂无可对照的官方年化</small></div>`)+`</div>`:"";
+  const head=m.rows.length?`<p class="fund-hurdle-sum">已满一年的 ${m.rows.length} 笔中，${m.above} 笔不低于门槛${left?"；另有 "+left+"，未比较":""}。</p>${whole}<table class="fund-hurdle-table"><thead><tr><th>基金</th><th>年化</th><th>门槛</th><th>差距</th></tr></thead><tbody>${body}</tbody></table>`:`<p class="fund-hurdle-sum">暂无已满一年且有年化收益率的持仓${left?"（"+left+"）":""}。</p>`;
   const field=(k,label)=>`<label><span>${label}</span><input type="number" inputmode="decimal" min="0" max="30" step="0.1" data-hurdle="${k}" value="${a[k]}"><i>%</i></label>`;
-  return head+`<div class="fund-hurdle-assume"><h4>假设（可改，只存在本机）</h4>${field("stock","股票年化")}${field("cash","现金年化")}${field("credit","高收益债")}${field("premium","流动性补偿")}</div><p class="fund-hurdle-note">年化为 Sharesight 对该笔持仓自首次买入起的原值，按净值记录，银行渠道费用可能未计入。门槛＝替身的假设年化＋流动性补偿；替身按基金类别与名称首字段选定。默认值是粗略的长期假设，不是这段时间的实际涨幅，请按你的判断修改。仅供比较，不构成买卖建议。</p>`;
+  return head+`<div class="fund-hurdle-assume"><h4>假设（可改，只存在本机）</h4>${field("stock","股票年化")}${field("cash","现金年化")}${field("credit","高收益债")}${field("premium","流动性补偿")}</div><p class="fund-hurdle-note">年化为 Sharesight 对该笔持仓自首次买入起的原值，按净值记录，银行渠道费用可能未计入。门槛＝替身的假设年化＋流动性补偿；替身按基金类别与名称首字段选定。默认值是粗略的长期假设，不是这段时间的实际涨幅，请按你的判断修改。“本类整体”不把各基金的收益率加权平均：各笔起算日不同，且现有持仓不含已赎回的基金。仅供比较，不构成买卖建议。</p>`;
 }
 function fundHurdleCollect(section){
   const cls=String(section.querySelector("h2")?.textContent||"").replace(/分布$/,""),items=[];
-  const read=(el,name,strategy)=>{
+  const figure=el=>Number.parseFloat(String(el?.textContent||"").replace(/[^0-9.]/g,""));
+  const read=(el,name,strategy,amount)=>{
     const fig=el?.querySelector(".ratio-holding-yield-figure"),badge=String(fig?.querySelector("small")?.textContent||""),pct=Number.parseFloat(String(fig?.querySelector("strong")?.textContent||""));
     const since=String(el?.querySelector(".ratio-holding-yield-since")?.textContent||"").replace(/^(首次买入|期初记录)\s*/,"").slice(0,7);
-    items.push({cls,strategy,name,since,pct,status:badge==="年化"?"annualised":badge==="未满一年"?"under-one-year":"none"});
+    items.push({cls,strategy,name,since,amount,pct,status:badge==="年化"?"annualised":badge==="未满一年"?"under-one-year":"none"});
   };
   for(const cat of section.querySelectorAll(".ratio-distribution-category")){
     const strategy=String(cat.querySelector("h3")?.textContent||"").split(" · ")[0];
     for(const li of cat.querySelectorAll("li.ratio-fund-holding")){
       const name=String(li.querySelector(".ratio-fund-holding-name")?.textContent||""),lots=li.querySelectorAll(".ratio-holding-lots li");
-      if(lots.length)for(const lot of lots)read(lot.querySelector(".ratio-holding-yield"),name,strategy);else read(li.querySelector(".ratio-holding-yield"),name,strategy);
+      if(lots.length)for(const lot of lots)read(lot.querySelector(".ratio-holding-yield"),name,strategy,figure(lot.querySelector(".ratio-holding-lot-amount")));
+      else read(li.querySelector(".ratio-holding-yield"),name,strategy,figure(Array.from(li.children).find(c=>c.tagName==="SPAN"&&!c.className)));
     }
   }
   return items;
 }
+// The class's own annualised figure, as the six-class table states it in its accessible label.
+function fundHurdleOfficial(report,cls){
+  const row=Array.from(report.querySelectorAll(".ratio-six-allocation .ratio-overview-table tbody tr")).find(r=>String(r.cells[0]?.textContent||"").includes(cls));
+  const label=String(row?.cells[2]?.querySelector(".ratio-return-compact-line")?.getAttribute("aria-label")||""),hit=label.match(/^全部：(-?\d+(?:\.\d+)?)%；(.*)$/);
+  return hit?{pct:Number(hit[1]),annualised:hit[2].startsWith("年化")}:null;
+}
 function fundHurdleMount(report){
   for(const section of report.querySelectorAll("section.ratio-fund-distribution")){
     const items=fundHurdleCollect(section);if(!items.some(i=>i.status!=="none"))continue;
+    const official=fundHurdleOfficial(report,items[0].cls);
     const box=document.createElement("details"),summary=document.createElement("summary"),body=document.createElement("div");
     box.className="fund-hurdle";summary.textContent="回报门槛对照";body.className="fund-hurdle-body";box.append(summary,body);
-    const draw=()=>{const a=fundHurdleParams();body.innerHTML=fundHurdleView(fundHurdleModel(items,a),a);};
+    const draw=()=>{const a=fundHurdleParams();body.innerHTML=fundHurdleView(fundHurdleModel(items,a,official),a);};
     body.addEventListener("change",e=>{const k=e.target?.dataset?.hurdle,v=Number(e.target?.value);if(!k||!Object.hasOwn(FUND_HURDLE_DEFAULT,k))return;
       const a=fundHurdleParams();a[k]=Number.isFinite(v)&&v>=0&&v<=30?v:FUND_HURDLE_DEFAULT[k];try{store?.setItem(FUND_HURDLE_KEY,JSON.stringify(a));}catch(_){}
       for(const other of report.querySelectorAll(".fund-hurdle-body"))other.dispatchEvent(new CustomEvent("fund-hurdle-redraw"));});
