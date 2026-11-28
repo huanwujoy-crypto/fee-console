@@ -425,6 +425,22 @@ test('the fund hurdle table compares each annualised fund return with an assumed
   assert.match(view,/<td class="risk-ok">\+1\.50<\/td>/);assert.match(view,/<td class="risk-ok">\+0\.00<\/td>/);assert.match(view,/<td class="risk-bad">−4\.00<\/td>/);
   assert.match(view,/Fund &lt;A>/);assert.doesNotMatch(view,/Fund C|Fund D|NaN|undefined/);
   assert.match(text,/仅供比较，不构成买卖建议。/);assert.equal(view.split('data-hurdle="').length,5);
+  // fund-hurdle:v2 — without every lot's amount there is no value reading, and no amount line.
+  assert.equal(m.value,null);assert.doesNotMatch(view,/fund-hurdle-whole|fund-hurdle-amount/);
+  {const worth=[300,100,50,25,600],priced=items.map((it,i)=>({...it,amount:worth[i]})),official={pct:9.4,annualised:true};
+    const pm=plain(box.M(priced,a,official)),pv=box.V(box.M(priced,a,official),a),pt=pv.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ');
+    // Compared 300+100+600; at or above the hurdle 300+600; not compared 50+25. The weighted hurdle is (10.5*900+9*100)/1000.
+    assert.deepEqual([pm.value.compared,pm.value.above,pm.value.rest],[1000,900,75]);assert.equal(pm.value.aboveShare,.9);
+    assert.ok(Math.abs(pm.value.hurdle-10.35)<1e-9);assert.ok(Math.abs(pm.value.gap-(-.95))<1e-9);assert.ok(Math.abs(pm.value.restShare-75/1075)<1e-12);
+    assert.match(pt,/按市值 90\.0% 不低于门槛 已比较 \$1,000，其中 \$900；未比较 \$75，占本类持仓 7\.0%/);
+    assert.match(pt,/本类整体 9\.40% 对 10\.35%\s+−0\.95 左：Sharesight 本类年化，含已平仓；右：各笔门槛按市值加权/);assert.match(pv,/<i class="risk-bad">−0\.95<\/i>/);
+    assert.equal(pv.split('fund-hurdle-amount').length,4);assert.match(pv,/<small class="fund-hurdle-amount">\$300<\/small>/);
+    // The fund returns themselves are never averaged: no weighted return appears anywhere in the model.
+    assert.deepEqual(Object.keys(pm.value).sort(),['above','aboveShare','compared','gap','hurdle','official','rest','restShare']);
+    // A class figure that is not annualised, or absent, is not compared; the weighted hurdle still shows.
+    for(const off of [null,{pct:9.4,annualised:false},{pct:NaN,annualised:true}]){const x=plain(box.M(priced,a,off));assert.equal(Object.hasOwn(x.value,'official'),false);assert.match(box.V(box.M(priced,a,off),a),/加权门槛 10\.35%/);}
+    // One missing amount anywhere leaves the value reading out rather than understating a side.
+    assert.equal(box.M(priced.map((it,i)=>i===2?{...it,amount:NaN}:it),a,official).value,null);assert.equal(box.M(priced.map((it,i)=>i===0?{...it,amount:0}:it),a,official).value,null);}
   // Nothing to compare still shows the assumptions and says why.
   assert.match(box.V(box.M([items[2]],a),a),/暂无已满一年且有年化收益率的持仓（1 笔未满一年）。/);
   // Saved assumptions are read back; anything out of range falls back to the default.
