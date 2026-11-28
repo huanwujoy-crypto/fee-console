@@ -338,6 +338,19 @@ test('a negative cash balance in one account is carried as given, from the repor
   refused(x=>x.report.cash_accounts[0].value=NaN,'CASH_VALUE');
 });
 
+// Owner's source 2026-11-28: a loan recorded as negative cash exceeded the cash and defensive assets together.
+test('the cash class may total below zero and is shown with its sign; no other class may',async()=>{
+  // Synthetic: twelve more stocks so the two rankings stay inside the class total, and a loan of 300 against 12 of cash.
+  const loan=c=>{for(let i=0;i<12;i++){const h=structuredClone(c.report.holdings.find(x=>x.instrument.code==='VST'));h.id=9100+i;h.instrument.code='S'+i;h.instrument.name='Synthetic S'+i;h.value=200;c.report.holdings.push(h);c.report.value=Math.round(c.report.value*100+20000)/100;}
+    const a=c.accounts[5];c.report.cash_accounts.push({id:7999,key:7999,name:'Synthetic loan',source:'manual',value:-300,currency:{code:'USD'},portfolio:{id:a.id,consolidated:false,name:a.name}});c.report.value=Math.round(c.report.value*100-30000)/100;};
+  const f=await apiSnapshot(loan),result=await f.snapshot.verify(f.signed,f.manager,{now:NOW}),html=f.ratio.render(result.model),groups=result.model.classificationSummary.assetAllocation.groups;
+  assert.deepEqual(groups.map(g=>[g.name,g.valueCents<0]),[['PE/VC',false],['对冲基金',false],['常青基金',false],['股票市场',false],['现金类',true],['主题投资',false]]);
+  const cash=groups[4];assert.equal(cash.valueCents,-28800);
+  assert.match(html,/-7\.06%／8%<\/small><\/td><td><span class="ratio-money-precise">-288\.00<\/span><small class="ratio-target-gap"[^>]*>\(\+614\.30\)<\/small>/);assert.doesNotMatch(html,/NaN|undefined|Infinity/);
+  assert.match(html,/data-exit-rows="[^"]*-28800[^"]*"/);
+  // The same sign on any other class is still refused.
+  for(const i of [0,1,2,3,5]){const bad=structuredClone(result.model);const g=bad.classificationSummary.assetAllocation.groups;g[i].valueCents=-Math.abs(g[i].valueCents)-1;await assert.rejects(f.ratio.validateModel(bad));}
+});
 test('the page shows each ranking\'s subtotal and names every security of a merged row',async()=>{
   const add=(c,code,value)=>{const h=structuredClone(c.report.holdings.find(x=>x.instrument.code==='TQQQ'));h.id=9000+c.report.holdings.length;h.instrument.code=code;h.instrument.name='Synthetic '+code;h.value=value;c.report.holdings.push(h);c.report.value=Math.round((c.report.value+value)*100)/100;};
   const f=await apiSnapshot(c=>{add(c,'GGLL',10);add(c,'CSPX',20);add(c,'MXUS',30);}),result=await f.snapshot.verify(f.signed,f.manager,{now:NOW}),html=f.ratio.render(result.model);
