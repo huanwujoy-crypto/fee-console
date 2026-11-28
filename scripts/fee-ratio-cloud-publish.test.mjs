@@ -309,8 +309,8 @@ test('future, stale, over-36h and changed sources are refused before signing und
   // projection itself, before any input pair or plan can exist.
   await assert.rejects(fixture(t,{prior,now:new Date('2026-11-09T23:45:00.000Z'),edit:raw=>dated(raw,{classification:'2026-11-11',exposure:'2026-11-11',capturedAt:'2026-11-09T23:30:00.000Z'})}),/RATIO_OFFICIAL_SOURCE_REFUSED/);
   for(const [label,edit,clock,stage] of [
-    ['five Hong Kong days old',raw=>dated(raw,{classification:'2026-11-05',exposure:'2026-11-05',capturedAt:'2026-11-09T23:30:00.000Z'}),'2026-11-09T23:45:00.000Z','SOURCE'],
-    ['capture older than 36 hours',raw=>dated(raw,{classification:'2026-11-10',exposure:'2026-11-10',capturedAt:'2026-11-09T23:30:00.000Z'}),'2026-11-11T11:30:00.001Z','SOURCE'],
+    ['five Hong Kong days old',raw=>dated(raw,{classification:'2026-11-05',exposure:'2026-11-05',capturedAt:'2026-11-09T23:30:00.000Z'}),'2026-11-09T23:45:00.000Z','SOURCE:ASSOCIATION'],
+    ['capture older than 36 hours',raw=>dated(raw,{classification:'2026-11-10',exposure:'2026-11-10',capturedAt:'2026-11-09T23:30:00.000Z'}),'2026-11-11T11:30:00.001Z','SOURCE:ASSOCIATION'],
   ]){
     const f=await fixture(t,{prior,now:new Date(clock),edit});const result=await f.run();
     assert.equal(result.status,'REFUSED',label);assert.equal(result.stage,stage,label);assert.equal(f.state.patches.length,0,label);assert.equal(f.state.claimCalls,0,label);
@@ -416,9 +416,9 @@ test('a scheduled run follows the verified current snapshot; an operator placeho
 test('the plan and the pinned original must agree on the source kind; a mismatch stops before the fee gate, claim or write',async t=>{
   // An API original under a Library-bound plan.
   const a=await fixture(t),api=apiInputs(a),bound=await a.run({plan:{...api.plan,library:a.plan.library}});
-  assert.deepEqual([bound.status,bound.stage,bound.claim,bound.patchAttempts],['REFUSED','SOURCE','NOT_ATTEMPTED',0]);
+  assert.deepEqual([bound.status,bound.stage,bound.claim,bound.patchAttempts],['REFUSED','SOURCE:PINNED','NOT_ATTEMPTED',0]);
   // A workbook original under a plan that declares no Library file.
   const b=await fixture(t),unbound=await b.run({plan:{...b.plan,library:null}});
-  assert.deepEqual([unbound.status,unbound.stage,unbound.claim,unbound.patchAttempts],['REFUSED','SOURCE','NOT_ATTEMPTED',0]);
+  assert.deepEqual([unbound.status,unbound.stage,unbound.claim,unbound.patchAttempts],['REFUSED','SOURCE:PINNED','NOT_ATTEMPTED',0]);
   for(const f of [a,b]){assert.equal(f.state.patches.length,0);assert.equal(f.state.events.includes('fee-readback'),false);assert.equal(f.state.claimCalls,0);}
 });

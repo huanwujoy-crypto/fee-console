@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {RATIO_SOURCE_CODES} from './fee-ratio-cloud-publish.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -114,6 +115,9 @@ test('safe receipt atomic save refuses extra fields and cannot overwrite pending
 });
 test('fee gate statuses and fixed stage:code pairs are closed; free text is refused',()=>{
  assert.deepEqual(safeRatioReceipt({...safe(),status:'WAITING_FEE_READBACK_NO_WRITE',stage:'FEE_READBACK:FEE_PUBLICATION_LIVE'}).stage,'FEE_READBACK:FEE_PUBLICATION_LIVE');
+ // A source refusal names the fixed check that stopped it; an unlisted code is not a stage.
+ for(const code of RATIO_SOURCE_CODES)assert.equal(safeRatioReceipt({...safe(),status:'REFUSED',stage:'SOURCE:'+code}).stage,'SOURCE:'+code);
+ assert.equal(RATIO_SOURCE_CODES.includes('EXPOSURE_RANKED_ROW')&&RATIO_SOURCE_CODES.includes('SIZE')&&RATIO_SOURCE_CODES.every(c=>/^[A-Z_]+$/.test(c)),true);assert.throws(()=>safeRatioReceipt({...safe(),status:'REFUSED',stage:'SOURCE:Synthetic text'}));
  for(const stage of ['FEE_READBACK','FEE_RECHECK','FEE_RECHECK:FEE_PUBLICATION_CHANGED'])assert.equal(safeRatioReceipt({...safe(),stage}).stage,stage);
  for(const stage of ['FEE_READBACK:'+canary,'FEE_RECHECK:FEE_PUBLICATION_EXPIRED','FEE_PUBLICATION_LIVE'])assert.throws(()=>safeRatioReceipt({...safe(),stage}),/REFUSED/);
 });
