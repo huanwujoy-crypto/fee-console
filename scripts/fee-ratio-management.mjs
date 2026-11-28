@@ -61,7 +61,7 @@ export function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
         const a=c.assetAllocation,labels=['PE/VC','对冲基金','常青基金','股票市场','现金类','主题投资'],targets=[0,15,35,40,8,2],accounts=new Set(m.exposure.summary.accounts);
         if(!exact(a,['totalCents','groups'])||!cents(a.totalCents)||a.totalCents!==Math.round(c.totalValueUSD*100)||!Array.isArray(a.groups)||a.groups.length!==6)fail();
         for(const [i,g]of a.groups.entries()){
-          if(!exact(g,['name','valueCents','targetPct','accounts'])||g.name!==labels[i]||g.targetPct!==targets[i]||!cents(g.valueCents)||!Array.isArray(g.accounts)||g.accounts.length>accounts.size)fail();
+          if(!exact(g,['name','valueCents','targetPct','accounts'])||g.name!==labels[i]||g.targetPct!==targets[i]||!cents(i===4?Math.abs(g.valueCents):g.valueCents)||!Array.isArray(g.accounts)||g.accounts.length>accounts.size)fail();
           const seen=new Set();let total=0,prior=Infinity;
           for(const r of g.accounts){if(!exact(r,['name','valueCents'])||!accounts.has(r.name)||seen.has(r.name)||!cents(Math.abs(r.valueCents))||r.valueCents>prior)fail();seen.add(r.name);total+=r.valueCents;prior=r.valueCents;}
           if(!Number.isSafeInteger(total)||total!==g.valueCents||i<3&&g.valueCents!==Math.round(c.classes[i].totalValueUSD*100))fail();
@@ -165,15 +165,17 @@ export function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
   }
   const esc=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const money=n=>n===null?'未取得':'USD '+(n/100).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
-  function preciseUsd(valueCents){
-    if(!cents(valueCents))fail();
-    const value=BigInt(valueCents),label=(value/100n).toLocaleString('en-US')+'.'+(value%100n).toString().padStart(2,'0');
+  // negative-cash-class:v1 (2026-11-28). A loan recorded as negative cash can exceed the cash held, so the cash
+  // class alone may total below zero; it is shown with its sign. Every other amount is still refused if negative.
+  function preciseUsd(valueCents,signed=false){
+    if(!cents(signed?Math.abs(valueCents):valueCents))fail();
+    const value=BigInt(Math.abs(valueCents)),label=(valueCents<0?'-':'')+(value/100n).toLocaleString('en-US')+'.'+(value%100n).toString().padStart(2,'0');
     return '<span class="ratio-money-precise">'+label+'</span>';
   }
   // Display-only comparison with an existing target. Allocate the remainder
   // cents in fixed row order; no position, source or executable budget changes.
   function targetGaps(totalCents,rows){
-    if(!cents(totalCents)||totalCents===0||!Array.isArray(rows)||!rows.length||rows.some(r=>!cents(r.valueCents)||!Number.isSafeInteger(r.targetPct)||r.targetPct<0||r.targetPct>100)||rows.reduce((n,r)=>n+r.targetPct,0)!==100||rows.reduce((n,r)=>n+BigInt(r.valueCents),0n)!==BigInt(totalCents))return null;
+    if(!cents(totalCents)||totalCents===0||!Array.isArray(rows)||!rows.length||rows.some(r=>!cents(Math.abs(r.valueCents))||!Number.isSafeInteger(r.targetPct)||r.targetPct<0||r.targetPct>100)||rows.reduce((n,r)=>n+r.targetPct,0)!==100||rows.reduce((n,r)=>n+BigInt(r.valueCents),0n)!==BigInt(totalCents))return null;
     const total=BigInt(totalCents),targets=rows.map((r,i)=>{const numerator=total*BigInt(r.targetPct);return {i,value:numerator/100n,remainder:numerator%100n};});
     let left=total-targets.reduce((n,t)=>n+t.value,0n);
     for(const t of [...targets].sort((x,y)=>x.remainder===y.remainder?x.i-y.i:x.remainder>y.remainder?-1:1)){if(left===0n)break;t.value++;left--;}
@@ -248,7 +250,7 @@ export function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
     const commonReturnNotes=(performance?'<details class="ratio-overview-return-notes"><summary>收益说明</summary><ol class="ratio-return-note-list"><li>收益沿用 Sharesight 对应范围的官方原值，含已平仓；不平均百分比、不按当前市值加权重算。收益金额为同一官方合计的美元期间收益，非年化金额。</li><li>仅凭官方证据标注年化、期间收益或未满一年；无标记时未确认年化。— 表示来源或匹配小计缺失，不代表0%。</li><li>股票前五只显示直接持仓收益，不含 ETF 穿透敞口，也不乘杠杆倍数。各项实际起止日、账户范围及特殊缺项可展开“详情”。</li>'+(benchmarkCount?'<li>总资产收益含 '+benchmarkCount+' 项程序取值模拟基准；'+(benchmarkExcluded?'资产配置已排除它们，口径不同。':'此历史快照的资产总额保留原口径。')+'</li>':'')+'</ol></details>':'');
     const legacyOverview='<section class="card ratio-asset-overview"><h2>四类资产配置总览</h2><p>All Together · 10账户 · USD · 资产分类截至 '+esc(overviewView.valuationDate)+'</p>'+overviewView.groups.map(g=>'<div><strong>'+esc(g.category)+'</strong> · '+money(Math.round(g.totalUsd*100))+' · '+(g.totalUsd/overviewView.portfolioTotalUsd*100).toFixed(2)+'%<div role="meter" aria-label="'+esc(g.category)+'占总资产" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+(g.totalUsd/overviewView.portfolioTotalUsd*100).toFixed(4)+'" style="height:8px;background:#edf0f5;margin:6px 0 12px"><span style="display:block;height:100%;background:#4778b8;width:'+Math.max(0,Math.min(100,g.totalUsd/overviewView.portfolioTotalUsd*100))+'%"></span></div></div>').join('')+gold+'<p>类别合计与总资产舍入差 '+delta.toFixed(2)+' USD，保留原差异。</p>'+commonReturnNotes+'</section>';
     const assetGaps=asset?targetGaps(asset.totalCents,asset.groups):null;
-    const assetRows=asset?.groups.map((g,i)=>'<tr><td>'+esc(assetLabel(g.name))+'<small class="ratio-overview-weights">'+(asset.totalCents>0?(g.valueCents/asset.totalCents*100).toFixed(2)+'%':'—')+'／'+g.targetPct+'%</small></td><td>'+preciseUsd(g.valueCents)+targetGap(assetGaps?.[i],'All Together 六类资产总额')+'</td><td>'+compactReturns(g.name)+'</td></tr>').join('');
+    const assetRows=asset?.groups.map((g,i)=>'<tr><td>'+esc(assetLabel(g.name))+'<small class="ratio-overview-weights">'+(asset.totalCents>0?(g.valueCents/asset.totalCents*100).toFixed(2)+'%':'—')+'／'+g.targetPct+'%</small></td><td>'+preciseUsd(g.valueCents,g.name==='现金类')+targetGap(assetGaps?.[i],'All Together 六类资产总额')+'</td><td>'+compactReturns(g.name)+'</td></tr>').join('');
     const assetAccounts=asset?.groups.map(g=>'<section><h3>'+esc(assetLabel(g.name))+'</h3><ul>'+g.accounts.map(r=>'<li><span>'+esc(r.name)+'</span><span>'+money(r.valueCents)+'</span></li>').join('')+'</ul>'+(g.accounts.length?'':'<p>本类暂无持仓。</p>')+'</section>').join('');
     const totalSummary=asset?'<div class="ratio-total-summary"><div class="ratio-total-heading"><h3>总资产（USD）</h3><div class="ratio-total-value">'+preciseUsd(asset.totalCents)+'</div></div>'+(performance?'<div class="ratio-total-returns"><p class="ratio-total-returns-label">收益率 / 收益金额（USD）</p>'+compactReturns('All Together')+'</div>':'')+'</div>':'';
     // pe-exit:v1 (owner request 2026-11-27) — the six classes' own values and reference targets, handed to the page's

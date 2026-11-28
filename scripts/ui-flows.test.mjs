@@ -1809,13 +1809,17 @@ test('a PE/VC exit is shared among the classes below their reference target, in 
   const near=(x,y)=>assert.ok(Math.abs(x-y)<1e-9,x+' vs '+y);near(by.A.beforePct,10);near(by.A.afterPct,14);near(plan.from.afterPct,31);assert.equal(by.C.afterPct,by.C.beforePct);
   // The whole holding fills every shortfall exactly (the shortfalls are what PE/VC and the class above target hold beyond target, so PE/VC alone never overfills).
   const all=box.P(rows,Number.MAX_SAFE_INTEGER);assert.equal(all.exit,40000);assert.equal(all.parts.reduce((n,p)=>n+p.add,0),40000);assert.ok(all.parts.every(p=>p.add<=p.gap));assert.equal(all.unplaced,0);
+  // A class below zero (a loan beyond the cash held) is simply further below its target; a total that is not positive has no plan.
+  const debt=box.P([['PE/VC',40000,0],['A',70000,60],['Cash',-10000,40]],Number.MAX_SAFE_INTEGER),cash=debt.parts.find(p=>p.label==='Cash');
+  assert.deepEqual([debt.total,cash.gap,cash.add,debt.parts.find(p=>p.label==='A').add],[100000,50000,40000,0]);assert.ok(cash.beforePct<0&&cash.afterPct>0);
+  assert.equal(box.P([['PE/VC',100,0],['Cash',-100,100]],50),null);
   // Cents are never lost or invented: an amount that does not divide evenly still adds up, and no class passes its shortfall.
   for(const x of [1,2,3,7,3333,39999]){const q=box.P(rows,x);assert.equal(q.parts.reduce((n,p)=>n+p.add,0),x);assert.ok(q.parts.every(p=>Number.isInteger(p.add)&&p.add>=0&&p.add<=p.gap));}
   assert.equal(box.P(rows,-5).exit,0);assert.equal(box.P(rows,0).parts.every(p=>p.add===0),true);
   // With every other class at or above target there is nowhere to place it, and the plan says so instead of guessing.
   const full=box.P([['PE/VC',10000,10],['A',60000,60],['B',30000,30]],5000);assert.deepEqual([full.placed,full.unplaced],[0,5000]);assert.match(box.V(full),/没有低于参考目标的类别/);assert.match(box.V(full),/超出各类缺口，未分配/);
   // No plan without a PE/VC holding, with targets that do not total 100, or with malformed rows.
-  for(const bad of [null,[],[['A',1,50],['B',1,50]],[['PE/VC',0,0],['A',100,100]],[['PE/VC',100,0],['A',100,90]],[['PE/VC',1.5,0],['A',100,100]],[['PE/VC',100,0],['',100,100]],[['PE/VC',100,0],['A',-1,100]]])assert.equal(box.P(bad,10),null);
+  for(const bad of [null,[],[['A',1,50],['B',1,50]],[['PE/VC',0,0],['A',100,100]],[['PE/VC',100,0],['A',100,90]],[['PE/VC',1.5,0],['A',100,100]],[['PE/VC',100,0],['',100,100]],[['PE/VC',100,0],['A',-100,100]],[['PE/VC',100,0],['A',-101,100]]])assert.equal(box.P(bad,10),null);
   // The view: an amount field, the share buttons, one line per class that receives, the classes that do not, and what is left.
   const view=box.V(plan),text=view.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ');
   assert.match(view,/<input id="peExitAmount" type="text" inputmode="numeric" autocomplete="off" value="90"/);assert.doesNotMatch(view,/type="range"/);
