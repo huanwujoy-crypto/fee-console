@@ -66,6 +66,12 @@ export function validateRatioCloudPlan(plan){
   pinnedObject(plan.original,prefix,'original.json');pinnedObject(plan.input,prefix,'input.json');
 }
 
+// source-refusal-code:v1 (2026-11-28). A refusal while the pinned source is prepared names which fixed check
+// stopped it, as 'SOURCE:<code>'. The codes are constants: no amount, name, date or source text is carried.
+const EXPOSURE_CODES=Object.freeze(['CLASS_TOTALS','DATE','DUPLICATE_EXPOSURE','OBSERVED_TIME_BASIS','RANKED_API_DIRECT','RANKED_CLASSES','RANKED_COVERAGE','RANKED_ETF','RANKED_KEYS','RANKED_ROW','RANKED_SCHEMA','RANKED_SOURCE','RANKED_TOTAL','RANKED_TOTAL_DATE','RESIDUAL','SCOPE']);
+export const RATIO_SOURCE_CODES=Object.freeze(['PINNED','ASSOCIATION','EXPOSURE',...EXPOSURE_CODES.map(c=>'EXPOSURE_'+c),'MODEL','SIZE','ORIGINAL','CANDIDATE','AUTHENTICATE','VERIFY']);
+const MODEL_BYTES=2*1024*1024;
+
 export function createRatioCloudPublisher({exposureCore=createRankedExposureCore()}={}){
   const ratio=createFeeRatioCore(exposureCore,crypto.webcrypto);
   const snapshot=createRatioSnapshotCore(ratio,exposureCore,createRatioSourceCore,parse,crypto.webcrypto);
@@ -81,23 +87,34 @@ export function createRatioCloudPublisher({exposureCore=createRankedExposureCore
     if(expected!==null&&result.watermark.id!==expected)refuse();
     return {packet,result};
   }
-  async function prepare({plan,originalBytes,inputBytes,manager,previous,now}){
+  async function prepare({plan,originalBytes,inputBytes,manager,previous,now,mark=()=>{}}){
+    mark('PINNED');
     const raw=parse(originalBytes),input=parse(inputBytes);
     if(sha(originalBytes)!==plan.original.sha256||sha(inputBytes)!==plan.input.sha256||!((raw.schemaVersion==='sharesight-private-full-v2'&&input.schema==='fee-console.ratio-sources.v2')||(raw.schemaVersion==='sharesight-private-performance-v1'&&input.schema==='fee-console.ratio-sources.v3')||(raw.schemaVersion==='sharesight-api-full-v1'&&input.schema==='fee-console.ratio-sources.v2')))refuse();
     const apiSource=(raw.allocation??raw).schemaVersion==='sharesight-api-full-v1';if(apiSource!==(plan.library===null))refuse();
     // Exact approved Library identity and version are bound to the uploaded
     // object's hash/generation by the future transport. A hash is not consent.
     const source=createRatioSourceCore(accounts=>sha(JSON.stringify(accounts.map(s=>s.replaceAll('&amp;','&')).sort())));
+    mark('ASSOCIATION');
     const facts=source.verifyBrowserSourceAssociations(raw,input,{scopeHash:exposureCore.ALL_TOGETHER_SCOPE_SHA256,now});
+    // The ranking's own format check, on its own so that its fixed code can be named.
+    mark('EXPOSURE');
+    try{exposureCore.buildRankedExposureView(input.exposure);}catch(error){const code=/^SHARESIGHT_EXPOSURE_([A-Z_]+)$/.exec(typeof error?.message==='string'?error.message:'')?.[1];if(EXPOSURE_CODES.includes(code))mark('EXPOSURE_'+code);throw error;}
+    mark('MODEL');
     const model=await buildRatioModel(input,{kind:'snapshot',targetDate:input.exposure.summary.asOf,feeAccountingThrough:null,now,viewCore:ratio,previewOnly:true});
     const {companyExposure,sourceDates,classificationSummary,performance,...association}=facts;
     const capturedAt=Date.parse(association.observedAt);if(!Number.isFinite(capturedAt))refuse();
     model.book.browserEvidence={...model.book.browserEvidence,integrity:apiSource?'verified-original-api-association':'verified-original-library-association',associationId:await ratio.digest([plan.original.sha256,plan.input.sha256,plan.library,manager.recipient.scopeId]),managerScopeId:manager.recipient.scopeId,...(apiSource?{}:{sourceVersion:plan.library.version}),migrationPending:association.migrationPending,classificationDeltaCents:association.classificationDeltaCents,exposureDeltaCents:association.exposureDeltaCents};
     if(companyExposure!==undefined)model.companyExposure=companyExposure;model.sourceDates=sourceDates;model.classificationSummary=classificationSummary;if(performance)model.performance=performance;
+    mark('SIZE');if(Buffer.byteLength(ratio.canonical(model))>MODEL_BYTES)refuse();
+    mark('ORIGINAL');
     const proof=await snapshot.verifyOriginal({originalBytes,inputBytes,model,recipient:manager.recipient,sourceSha256:plan.original.sha256,inputSha256:plan.input.sha256,...(apiSource?{}:{libraryVersion:plan.library.version}),now});
     if(previous.body.source.sourceSha256===proof.evidence.sourceSha256&&previous.body.source.inputSha256===proof.evidence.inputSha256) return {sameSource:true};
+    mark('CANDIDATE');
     const candidate=await snapshot.candidate({model,recipient:manager.recipient,proof,previous,now});
+    mark('AUTHENTICATE');
     const signed=await snapshot.authenticate(candidate,proof,manager,{previous,profileSha256:await profile(),now});
+    mark('VERIFY');
     await snapshot.verify(signed,manager,{now});
     return {sameSource:false,signed,capturedAt};
   }
@@ -148,7 +165,8 @@ export function createRatioCloudPublisher({exposureCore=createRankedExposureCore
       };
       originalBytes=await get(plan.original);inputBytes=await get(plan.input);
       receipt.stage='SOURCE';
-      const prepared=await prepare({plan,originalBytes,inputBytes,manager,previous:prior.packet,now:time()});
+      const prepared=await prepare({plan,originalBytes,inputBytes,manager,previous:prior.packet,now:time(),mark:code=>{receipt.stage='SOURCE:'+code;}});
+      receipt.stage='SOURCE';
       if(prepared.sameSource){receipt.status='UNCHANGED_SOURCE_NO_WRITE';return;}
       // A successful producer job or candidate is not a published fee report.
       // The fixed runtime verifies the handed-over fee publication on the

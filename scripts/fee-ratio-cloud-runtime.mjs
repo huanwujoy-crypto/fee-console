@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {fileURLToPath} from 'node:url';
-import {createRatioCloudPublisher,RATIO_CLOUD_FILE,validateRatioCloudPlan} from './fee-ratio-cloud-publish.mjs';
+import {createRatioCloudPublisher,RATIO_CLOUD_FILE,RATIO_SOURCE_CODES,validateRatioCloudPlan} from './fee-ratio-cloud-publish.mjs';
 import {createFeeRatioCore} from './fee-ratio-management.mjs';
 import {createRankedExposureCore} from './xuan-ib-sharesight-exposure.mjs';
 import {createLegacyPolicy} from './fee-legacy-policy.mjs';
@@ -169,7 +169,7 @@ export function createRatioTransport({fetchImpl=fetch,gistId,managerToken,access
 
 const statuses=['REFUSED','VERIFIED_CURRENT_NO_WRITE','UNCHANGED_SOURCE_NO_WRITE','WAITING_FEE_READBACK_NO_WRITE','PUBLISHED_CONFIRMED','WRITE_UNCONFIRMED'];
 const stages=['ADMISSION','MAIN','MAIN_TOKEN','MAIN_FETCH','MAIN_HTTP','MAIN_RESPONSE','MAIN_HEAD','CREDENTIALS','PLAN','CURRENT','INPUT','SOURCE','SOURCE_ROUND','FEE_READBACK','CLAIM','PREWRITE','FEE_RECHECK','WRITE_INTENT','READBACK','COMPLETE',
-  ...['FEE_READBACK','FEE_RECHECK'].flatMap(stage=>FEE_PUBLICATION_CODES.map(code=>stage+':'+code))];
+  ...['FEE_READBACK','FEE_RECHECK'].flatMap(stage=>FEE_PUBLICATION_CODES.map(code=>stage+':'+code)),...RATIO_SOURCE_CODES.map(code=>'SOURCE:'+code)];
 export function safeRatioReceipt(v){
   const keys=['schema','status','stage','claim','patchAttempts','bodySha256','contentSha256','cleanup'];
   if(!v||Object.keys(v).sort().join(',')!==keys.sort().join(',')||v.schema!=='fee-console.ratio-cloud-safe-result.v1'||!statuses.includes(v.status)||!stages.includes(v.stage)||!['NOT_ATTEMPTED','UNKNOWN','EXISTS','OWNED'].includes(v.claim)||![0,1].includes(v.patchAttempts)||![v.bodySha256,v.contentSha256].every(x=>x===null||hex(x))||!['NOT_RUN','LOCAL_AND_PINNED_INPUTS','LOCAL_ONLY','NO_INPUTS_READ','INCOMPLETE'].includes(v.cleanup))fail();
