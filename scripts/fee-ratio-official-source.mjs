@@ -19,6 +19,9 @@ export function createOfficialRatioSourceCore(){
   // Owner request (2026-11-26): a single-stock leveraged product ranks with the stock it tracks, at its own
   // asset value (never multiplied); index products stay ETFs. Two ETFs the owner treats as one line are one row.
   const LEVERAGED_STOCK={NVDL:['NVDA'],NVDU:['NVDA'],NVDX:['NVDA'],GGLL:['GOOGL','GOOG'],TSLL:['TSLA'],AVGX:['AVGO'],AVL:['AVGO'],VSTL:['VST'],MSFU:['MSFT'],AMZU:['AMZN'],METU:['META'],AAPU:['AAPL'],PLTU:['PLTR'],MSTU:['MSTR'],MSTX:['MSTR'],CONL:['COIN']};
+  // leverage-exposure:v1 (owner request 2026-11-28). The daily multiple each leveraged product targets, so the six-class
+  // overview can show the stock classes' exposure beside their assets. The same products as the page's risk card.
+  const LEVERAGE_MULTIPLE={TQQQ:3,QLD:2,UPRO:3,SPXL:3,SSO:2,SOXL:3,TECL:3,NVDL:2,NVDU:2,NVDX:2,GGLL:2,TSLL:2,AVGX:2,AVL:2,VSTL:2,MSFU:2,AMZU:2,METU:2,AAPU:2,PLTU:2,MSTU:2,MSTX:2,CONL:2};
   const ETF_MERGED=[['CSPX','MXUS']];
   // Owner request (2026-11-27): the share classes of one company are one row, and a joined row carries a short
   // name of its own, chosen by its leading security. A joined row without a name here is shown by its codes.
@@ -88,6 +91,8 @@ export function createOfficialRatioSourceCore(){
       const g=groups[i],value=cents(r.valueUSD);g.valueCents+=value;
       // cash-borrowed:v1 (owner request 2026-11-28). Only a cash account may be below zero; their sum is kept so the page can show the class before borrowing.
       if(value<0)g.borrowedCents=(g.borrowedCents||0)+value;
+      // leverage-exposure:v1 — what the leveraged products add beyond their own value, for the two classes that hold stocks. Assets and the denominator are untouched.
+      if((i===3||i===5)&&value>0&&typeof r.securityCode==='string'&&Object.hasOwn(LEVERAGE_MULTIPLE,r.securityCode))g.leveragedExtraCents=(g.leveragedExtraCents||0)+value*(LEVERAGE_MULTIPLE[r.securityCode]-1);
       g.accounts.set(r.account,(g.accounts.get(r.account)||0)+value);
       if(!Number.isSafeInteger(g.valueCents))fail();
     }
