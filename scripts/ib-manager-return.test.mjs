@@ -316,6 +316,11 @@ test('the daily brief states margin-call distance, the Carry line and the payabl
   assert.match(box.V(all,'2026-11-18'),/<button type="button" class="brief-row" data-jump="balBox">/);
   // The tone follows the distance; the nearest account decides.
   assert.equal(box.I({risk:risk(.05)})[0].tone,'bad');assert.equal(box.I({risk:risk(.25)})[0].tone,'ok');
+  // call-alert:v1 — inside 25% the line is tinted; at 25% or beyond, and on the other lines, it is not.
+  assert.equal(box.I({risk:risk(.22)})[0].tone,'warn');assert.equal(box.I({risk:risk(.22)})[0].alert,true);assert.equal(box.I({risk:risk(.05)})[0].alert,true);assert.equal(box.I({risk:risk(0)})[0].alert,true);
+  assert.equal(Object.hasOwn(box.I({risk:risk(.25)})[0],'alert'),false);assert.deepEqual(all.map(i=>i.alert===true),[true,false,false]);
+  assert.match(box.V(all,'2026-11-18'),/<button type="button" class="brief-row brief-alert" data-jump="riskDesk">/);assert.equal(box.V(all,'2026-11-18').split('brief-alert').length,2);
+  assert.doesNotMatch(box.V(plain(box.I({risk:risk(.3),carry,pay})),'2026-11-18'),/brief-alert/);
   assert.equal(box.I({risk:risk(0)})[0].head,'已低于维持保证金');
   assert.equal(box.I({risk:{borrowed:5,margin:[{callDropSpx:null}]}})[0].head,'不会触发');
   assert.equal(box.I({risk:{borrowed:0,margin:[]}})[0].head,'无融资');
@@ -396,4 +401,35 @@ test('the payments page shows how much of the accrued fee is paid and offers a d
   // The one-tap entry is an ordinary draft row through the same guarded path as a manual one, and locks with the other edit controls.
   assert.match(html,/if\(T\.id==="btnAddFeeDue"\)\{const fill=_feeDueFill;if\(fill\)changeDraft\(d=>d\.fees\.push\(\{id:crypto\.randomUUID\(\),date:todayStr\(\),amount:fill\.amount,ccy:"USD",fx:"",note:fill\.note\}\)\);return;\}/);
   assert.match(html,/#btnAddFee,#btnAddFeeDue,\[data-delfee\]/);assert.match(html,/<button class="btn" id="btnAddFeeDue" hidden><\/button>/);
+});
+
+// fund-hurdle:v1 (owner request 2026-11-28). Synthetic figures only.
+test('the fund hurdle table compares each annualised fund return with an assumed stand-in plus a premium',()=>{
+  const html=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8'),block=html.slice(html.indexOf('/* fund-hurdle:start */'),html.indexOf('/* fund-hurdle:end */')),box={};vm.createContext(box);
+  const memory=new Map();box.store={getItem:k=>memory.has(k)?memory.get(k):null,setItem:(k,v)=>memory.set(k,String(v))};
+  vm.runInContext("const esc=v=>String(v??'').replace(/&/g,'&amp;').replace(/</g,'&lt;');"+block+';globalThis.P=fundHurdleParams;globalThis.X=fundHurdleProxy;globalThis.M=fundHurdleModel;globalThis.V=fundHurdleView;',box);
+  const plain=v=>JSON.parse(JSON.stringify(v)),a=plain(box.P());
+  assert.deepEqual(a,{stock:8,cash:4,credit:6.5,premium:2.5});
+  // The stand-in follows the class and the first field of the name.
+  assert.deepEqual(plain(box.X('对冲基金','多策略',a)),{label:'四成股票＋六成现金',pct:5.6});
+  assert.deepEqual(plain(box.X('常青基金','私募债',a)),{label:'高收益债',pct:6.5});
+  assert.deepEqual(plain(box.X('常青基金','基建',a)),{label:'股票与高收益债各半',pct:7.25});
+  assert.deepEqual(plain(box.X('常青基金','私募二级 Secondary',a)),{label:'全球股票',pct:8});
+  const items=[{cls:'常青基金',strategy:'软件PE',name:'Fund <A>',since:'2024-04',pct:12,status:'annualised'},{cls:'常青基金',strategy:'私募债',name:'Fund B',since:'2024-02',pct:5,status:'annualised'},
+    {cls:'常青基金',strategy:'基建',name:'Fund C',since:'2026-03',pct:30,status:'under-one-year'},{cls:'常青基金',strategy:'地产',name:'Fund D',since:'',pct:NaN,status:'none'},{cls:'常青基金',strategy:'软件PE',name:'Fund E',since:'2025-01',pct:10.5,status:'annualised'}];
+  const m=plain(box.M(items,a));
+  assert.deepEqual(m.rows.map(r=>[r.name,r.hurdle,r.gap]),[['Fund <A>',10.5,1.5],['Fund E',10.5,0],['Fund B',9,-4]]);
+  assert.deepEqual([m.above,m.young,m.blank],[2,1,1]);
+  const view=box.V(box.M(items,a),a),text=view.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ');
+  assert.match(text,/已满一年的 3 笔中，2 笔不低于门槛；另有 1 笔未满一年，1 笔暂无年化收益率，未比较。/);
+  assert.match(view,/<td class="risk-ok">\+1\.50<\/td>/);assert.match(view,/<td class="risk-ok">\+0\.00<\/td>/);assert.match(view,/<td class="risk-bad">−4\.00<\/td>/);
+  assert.match(view,/Fund &lt;A>/);assert.doesNotMatch(view,/Fund C|Fund D|NaN|undefined/);
+  assert.match(text,/仅供比较，不构成买卖建议。/);assert.equal(view.split('data-hurdle="').length,5);
+  // Nothing to compare still shows the assumptions and says why.
+  assert.match(box.V(box.M([items[2]],a),a),/暂无已满一年且有年化收益率的持仓（1 笔未满一年）。/);
+  // Saved assumptions are read back; anything out of range falls back to the default.
+  memory.set('fee-fund-hurdle-v1',JSON.stringify({stock:10,cash:-1,credit:'x',premium:99}));assert.deepEqual(plain(box.P()),{stock:10,cash:4,credit:6.5,premium:2.5});
+  memory.set('fee-fund-hurdle-v1','{broken');assert.deepEqual(plain(box.P()),{stock:8,cash:4,credit:6.5,premium:2.5});
+  // Display only: the block reaches no ledger, draft, publication or network, and never touches a status label.
+  assert.doesNotMatch(block,/changeDraft|EDIT\.|saveLedger|fetch\(|ghApi|ratioCore|XMLHttpRequest|sendBeacon/);
 });

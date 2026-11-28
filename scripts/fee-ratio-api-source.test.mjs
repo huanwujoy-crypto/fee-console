@@ -397,3 +397,18 @@ test('the share classes of one company are one named row, and a name belongs to 
   const returns=createAggregateReturnsCore(),codes=t=>[...new Set(t.members.map(m=>m.securityCode))].sort(),pick=list=>list.find(t=>t.category==='二级市场'&&t.name==='Synthetic GOOG');
   assert.deepEqual(codes(pick(returns.topTargets(built,null,true))),['GGLL','GOOG','GOOGL']);assert.deepEqual(codes(pick(returns.topTargets(built))),['GOOG']);
 });
+
+// leverage-exposure:v1 (owner request 2026-11-28). The synthetic fixture holds one 3x product worth 130 in the theme class.
+test('a stock class with a leveraged product also shows its exposure at the product\'s multiple',async()=>{
+  const f=await apiSnapshot(),result=await f.snapshot.verify(f.signed,f.manager,{now:NOW}),html=f.ratio.render(result.model),asset=result.model.classificationSummary.assetAllocation,groups=asset.groups,g=groups[5];
+  // Twice the product's own value is added as exposure; the class's assets and the six-class total are untouched.
+  assert.deepEqual(groups.map(x=>Object.hasOwn(x,'leveragedExtraCents')),[false,false,false,false,false,true]);
+  assert.equal(g.valueCents,13000);assert.equal(g.leveragedExtraCents,26000);assert.equal(groups.reduce((n,x)=>n+x.valueCents,0),asset.totalCents);
+  assert.ok(html.includes('<small class="ratio-cash-gross">杠杆折算 '+(39000/asset.totalCents*100).toFixed(2)+'%</small></td>'));assert.ok(html.includes('<small class="ratio-cash-gross">杠杆折算 390.00</small></td>'));assert.doesNotMatch(html,/NaN|undefined|Infinity/);
+  // A snapshot without the field validates and shows no second line (only the note mentions the term).
+  {const old=structuredClone(result.model);delete old.classificationSummary.assetAllocation.groups[5].leveragedExtraCents;await f.ratio.validateModel(old);assert.doesNotMatch(f.ratio.render(old),/<small class="ratio-cash-gross">杠杆折算/);}
+  // Refused on a class that holds no stocks, when not above zero, when not whole cents, and beyond what a 3x product can add.
+  for(const edit of [x=>{x[2].leveragedExtraCents=1;},x=>{x[4].leveragedExtraCents=1;},x=>{x[5].leveragedExtraCents=0;},x=>{x[5].leveragedExtraCents=-5;},x=>{x[5].leveragedExtraCents=1.5;},x=>{x[5].leveragedExtraCents=26001;}]){const bad=structuredClone(result.model);edit(bad.classificationSummary.assetAllocation.groups);await assert.rejects(f.ratio.validateModel(bad));}
+  // The stock class may carry it too.
+  {const ok=structuredClone(result.model);ok.classificationSummary.assetAllocation.groups[3].leveragedExtraCents=100;await f.ratio.validateModel(ok);}
+});
