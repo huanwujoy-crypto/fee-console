@@ -346,8 +346,15 @@ test('the cash class may total below zero and is shown with its sign; no other c
   const f=await apiSnapshot(loan),result=await f.snapshot.verify(f.signed,f.manager,{now:NOW}),html=f.ratio.render(result.model),groups=result.model.classificationSummary.assetAllocation.groups;
   assert.deepEqual(groups.map(g=>[g.name,g.valueCents<0]),[['PE/VC',false],['对冲基金',false],['常青基金',false],['股票市场',false],['现金类',true],['主题投资',false]]);
   const cash=groups[4];assert.equal(cash.valueCents,-28800);
-  assert.match(html,/-7\.06%／8%<\/small><\/td><td><span class="ratio-money-precise">-288\.00<\/span><small class="ratio-target-gap"[^>]*>\(\+614\.30\)<\/small>/);assert.doesNotMatch(html,/NaN|undefined|Infinity/);
+  assert.match(html,/-7\.06%／8%<\/small><small[^>]*>[^<]*<\/small><\/td><td><span class="ratio-money-precise">-288\.00<\/span><small class="ratio-target-gap"[^>]*>\(\+614\.30\)<\/small>/);assert.doesNotMatch(html,/NaN|undefined|Infinity/);
   assert.match(html,/data-exit-rows="[^"]*-28800[^"]*"/);
+  // cash-borrowed:v1 — the loan is kept beside the net figure, and the row adds the class before borrowing (12.00).
+  assert.equal(cash.borrowedCents,-30000);assert.deepEqual(groups.map(g=>Object.hasOwn(g,'borrowedCents')),[false,false,false,false,true,false]);
+  assert.match(html,/-7\.06%／8%<\/small><small class="ratio-cash-gross">不含借款 0\.29%<\/small><\/td>/);assert.match(html,/<small class="ratio-cash-gross">不含借款 12\.00<\/small><\/td>/);assert.equal(html.split('不含借款').length,3);
+  // A snapshot published before this field still validates and simply has no second line.
+  {const old=structuredClone(result.model);delete old.classificationSummary.assetAllocation.groups[4].borrowedCents;await f.ratio.validateModel(old);assert.doesNotMatch(f.ratio.render(old),/不含借款/);}
+  // The field is refused anywhere else, when it is not below zero, and when it would leave the rest of the class negative.
+  for(const edit of [g=>{g[3].borrowedCents=-1;},g=>{g[4].borrowedCents=0;},g=>{g[4].borrowedCents=30000;},g=>{g[4].borrowedCents=-28799;},g=>{g[4].borrowedCents=-300.5;}]){const bad=structuredClone(result.model);edit(bad.classificationSummary.assetAllocation.groups);await assert.rejects(f.ratio.validateModel(bad));}
   // The same sign on any other class is still refused.
   for(const i of [0,1,2,3,5]){const bad=structuredClone(result.model);const g=bad.classificationSummary.assetAllocation.groups;g[i].valueCents=-Math.abs(g[i].valueCents)-1;await assert.rejects(f.ratio.validateModel(bad));}
 });

@@ -86,6 +86,8 @@ export function createOfficialRatioSourceCore(){
     for(const r of positions.concat(cash)){
       const i=categories.get(r.sharesightCategory);if(i===undefined)fail();
       const g=groups[i],value=cents(r.valueUSD);g.valueCents+=value;
+      // cash-borrowed:v1 (owner request 2026-11-28). Only a cash account may be below zero; their sum is kept so the page can show the class before borrowing.
+      if(value<0)g.borrowedCents=(g.borrowedCents||0)+value;
       g.accounts.set(r.account,(g.accounts.get(r.account)||0)+value);
       if(!Number.isSafeInteger(g.valueCents))fail();
     }
